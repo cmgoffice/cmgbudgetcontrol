@@ -1,0 +1,178 @@
+/* =============================
+   Base
+   ============================= */
+.App {
+  font-family: sans-serif;
+  text-align: center;
+}
+
+/* =============================
+   Page / Menu Transitions — OPACITY ONLY (no transform to avoid breaking fixed positioning)
+   ============================= */
+@keyframes pageIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+[data-menu-page]:not([style*="display: none"]) {
+  animation: pageIn 0.3s ease forwards;
+}
+
+.page-animate {
+  animation: pageIn 0.3s ease forwards;
+}
+
+/* =============================
+   Modal Backdrop Fade
+   ============================= */
+@keyframes modalBackdropIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-in.fade-in {
+  animation: modalBackdropIn 0.2s ease forwards;
+}
+
+.animate-in {
+  animation-fill-mode: forwards;
+}
+
+/* === Global: ensure all fixed overlay modals are above the sticky header (z-20) === */
+div.fixed.inset-0 {
+  z-index: 500 !important;
+  /* Push modal card below the sticky page header (~64px tall) */
+  padding-top: 68px;
+  /* Compensate so card stays centered in remaining space */
+  align-items: center;
+  box-sizing: border-box;
+}
+
+/* =============================
+   Sidebar Item Slide-in
+   ============================= */
+@keyframes sidebarItemIn {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+nav button {
+  animation: sidebarItemIn 0.28s ease forwards;
+}
+
+nav button:nth-child(1) {
+  animation-delay: 0.04s;
+}
+
+nav button:nth-child(2) {
+  animation-delay: 0.08s;
+}
+
+nav button:nth-child(3) {
+  animation-delay: 0.12s;
+}
+
+nav button:nth-child(4) {
+  animation-delay: 0.16s;
+}
+
+nav button:nth-child(5) {
+  animation-delay: 0.20s;
+}
+
+nav button:nth-child(6) {
+  animation-delay: 0.24s;
+}
+
+nav button:nth-child(7) {
+  animation-delay: 0.28s;
+}
+
+nav button:nth-child(8) {
+  animation-delay: 0.32s;
+}
+
+nav button:nth-child(9) {
+  animation-delay: 0.36s;
+}
+
+nav button:nth-child(10) {
+  animation-delay: 0.40s;
+}
+
+/* =============================
+   Card & Box Hover — transitions only, no static transform
+   ============================= */
+.bg-white.rounded-lg,
+.bg-white.rounded-xl,
+.bg-white.rounded-2xl {
+  transition: box-shadow 0.22s ease;
+}
+
+/* =============================
+   Table Row Hover — color only, no transform on rows
+   ============================= */
+tbody tr {
+  transition: background-color 0.15s ease;
+}
+
+/* =============================
+   Button Transitions
+   ============================= */
+button {
+  transition: background-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+}
+
+/* =============================
+   Badge Pulse (Notification dot)
+   ============================= */
+@keyframes badgePulse {
+
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5);
+  }
+
+  50% {
+    box-shadow: 0 0 0 5px rgba(239, 68, 68, 0);
+  }
+}
+
+/* Only small pill badges — must be rounded-full AND bg-red */
+span[class*="bg-red"][class*="rounded-full"],
+div[class*="bg-red"][class*="rounded-full"] {
+  animation: badgePulse 2.5s infinite;
+}
+
+/* =============================
+   Input / Select Focus Ring
+   ============================= */
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+/* =============================
+   Checkbox Check
+   ============================= */
+input[type="checkbox"] {
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
