@@ -164,12 +164,15 @@ const PURCHASE_TYPES = [
 const PURCHASE_TYPE_CODES = {
   "จัดซื้อจัดจ้าง > WA, ST, ML, CS, SA": ["WA", "ST", "ML", "CS", "SA"],
   "อุปกรณ์ใหม่ > WA, ST, ML, CS, SA": ["WA", "ST", "ML", "CS", "SA"],
-  "ขอซื้อเช่า > RE": ["RE"],
+  "ขอซื้อเช่า > RE": ["ST", "SI"], // ST=เช่าภายนอก, SI=เช่าภายใน (ใช้ใน PR No. แทน RE)
   "เงินสดย่อย > PT": ["PT"],
   "คอนกรีต > CC": ["CC"],
   "น้ำมัน > OL": ["OL"],
   "ค่าแรง/เงินเดือน > SM, DC": ["SM", "DC"],
 };
+
+const PURCHASE_TYPE_RENTAL_LABEL = "ขอซื้อเช่า > RE"; // ชื่อประเภทที่ใช้ dropdown "Type การเช่า"
+const PURCHASE_TYPE_EQUIPMENT = "อุปกรณ์ใหม่ > WA, ST, ML, CS, SA"; // ไม่มี Sub-Code, PR No = EQM
 
 const DELIVERY_LOCATIONS = [
   "Headoffice",
@@ -2228,14 +2231,17 @@ const AuthenticatedApp = () => {
                 <InputGroup label="Job No.">
                   <input
                     type="text"
-                    className={`w-full border rounded p-2 text-sm ${editingProjectId ? "bg-gray-100 text-gray-500" : ""
-                      }`}
+                    className={`w-full border rounded p-2 text-sm ${
+                      editingProjectId && userRole !== "Administrator"
+                        ? "bg-gray-100 text-gray-500"
+                        : ""
+                    }`}
                     value={formData.jobNo}
                     onChange={(e) =>
                       setFormData({ ...formData, jobNo: e.target.value })
                     }
                     placeholder="JOB-XX-XXX"
-                    disabled={!!editingProjectId}
+                    disabled={!!editingProjectId && userRole !== "Administrator"}
                   />
                 </InputGroup>
                 <InputGroup label="Contract Value">
@@ -2358,6 +2364,8 @@ const AuthenticatedApp = () => {
     const [reasonModalType, setReasonModalType] = useState("revision"); // 'revision' | 'reject'
     const [reasonModalValue, setReasonModalValue] = useState("");
     const [reasonModalContext, setReasonModalContext] = useState({ budgetId: null, subItemId: null });
+    const [selectedBudgetIds, setSelectedBudgetIds] = useState([]); // สำหรับหน้า 001-009: เลือกรายการงบ
+    const [actionDropdownOpen, setActionDropdownOpen] = useState(false);
     const [formData, setFormData] = useState({
       code: "",
       description: "",
@@ -3007,6 +3015,84 @@ const AuthenticatedApp = () => {
             "success"
           );
         }
+      );
+    };
+
+    // ล้างการเลือกเมื่อเปลี่ยนหมวด
+    useEffect(() => {
+      setSelectedBudgetIds([]);
+      setActionDropdownOpen(false);
+    }, [budgetCategory]);
+
+    const handleBulkSubmitBudgets = () => {
+      setActionDropdownOpen(false);
+      if (selectedBudgetIds.length === 0) {
+        showAlert("กรุณาเลือกรายการ", "กรุณาเลือกรายการที่ต้องการส่งอนุมัติก่อน (ติ๊กถูกหน้าบรรทัด)", "warning");
+        return;
+      }
+      const toSubmit = selectedBudgetIds.filter((id) => {
+        const b = budgets.find((x) => x.id === id);
+        return b && b.status === "Draft";
+      });
+      if (toSubmit.length === 0) {
+        showAlert("ไม่สามารถส่งได้", "ไม่มีรายการที่สถานะ Draft ในรายการที่เลือก (ส่งได้เฉพาะรายการแบบร่าง)", "warning");
+        return;
+      }
+      openConfirm(
+        "ยืนยันส่ง MD Approve",
+        `ส่งรายการที่เลือก ${toSubmit.length} รายการไปยัง MD อนุมัติใช่หรือไม่?`,
+        async () => {
+          try {
+            for (const id of toSubmit) {
+              await updateDoc(
+                doc(db, "artifacts", appId, "public", "data", "budgets", id),
+                { status: "Wait MD Approve" }
+              );
+            }
+            await logAction("Bulk", `Sent ${toSubmit.length} budgets to Wait MD Approve`);
+            setSelectedBudgetIds([]);
+            setActionDropdownOpen(false);
+            showAlert("สำเร็จ", `ส่ง ${toSubmit.length} รายการไปยัง MD อนุมัติแล้ว`, "success");
+          } catch (e) {
+            showAlert("เกิดข้อผิดพลาด", e?.message || "ไม่สามารถส่งได้", "error");
+          }
+        }
+      );
+    };
+
+    const handleBulkDeleteBudgets = () => {
+      setActionDropdownOpen(false);
+      if (selectedBudgetIds.length === 0) {
+        showAlert("กรุณาเลือกรายการ", "กรุณาเลือกรายการที่ต้องการลบก่อน (ติ๊กถูกหน้าบรรทัด)", "warning");
+        return;
+      }
+      const toDelete = selectedBudgetIds.filter((id) => {
+        const b = budgets.find((x) => x.id === id);
+        return b && (b.status === "Draft" || userRole === "MD" || userRole === "Administrator");
+      });
+      if (toDelete.length === 0) {
+        showAlert("ไม่สามารถลบได้", "ไม่มีรายการที่ลบได้ในรายการที่เลือก (เฉพาะ Draft หรือ MD/Admin ลบได้)", "warning");
+        return;
+      }
+      openConfirm(
+        "ยืนยันลบหลายรายการ",
+        `คุณต้องการลบรายการที่เลือก ${toDelete.length} รายการใช่หรือไม่? การดำเนินการนี้ไม่สามารถย้อนกลับได้`,
+        async () => {
+          try {
+            for (const id of toDelete) {
+              await deleteDoc(
+                doc(db, "artifacts", appId, "public", "data", "budgets", id)
+              );
+            }
+            await logAction("Bulk", `Deleted ${toDelete.length} budgets`);
+            setSelectedBudgetIds([]);
+            setActionDropdownOpen(false);
+            showAlert("สำเร็จ", `ลบ ${toDelete.length} รายการเรียบร้อย`, "success");
+          } catch (e) {
+            showAlert("เกิดข้อผิดพลาด", e?.message || "ไม่สามารถลบได้", "error");
+          }
+        },
+        "danger"
       );
     };
 
@@ -3834,7 +3920,50 @@ const AuthenticatedApp = () => {
           </>
         ) : (
           <>
-            <div className="flex justify-end gap-2 mb-2">
+            <div className="flex justify-between items-center gap-2 mb-2 flex-wrap">
+              <div className="flex gap-2 items-center">
+                {budgetCategory !== "OVERVIEW" && (
+                  <div className="relative z-[100]">
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 px-3 py-1.5 h-8 rounded-md font-medium text-xs shadow-sm bg-slate-600 text-white hover:bg-slate-700"
+                      onClick={(e) => { e.stopPropagation(); setActionDropdownOpen((v) => !v); }}
+                    >
+                      Action
+                      <ChevronDown size={12} className={actionDropdownOpen ? "rotate-180" : ""} />
+                    </button>
+                    {actionDropdownOpen && (
+                      <>
+                        <div
+                          className="fixed inset-0 z-[99]"
+                          aria-hidden
+                          onClick={() => setActionDropdownOpen(false)}
+                        />
+                        <div
+                          className="absolute left-0 top-full mt-1 z-[100] py-1 bg-white border border-slate-200 rounded-lg shadow-lg min-w-[200px]"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            type="button"
+                            className="w-full text-left px-3 py-2 text-xs hover:bg-green-50 text-green-700 flex items-center gap-2"
+                            onClick={(e) => { e.stopPropagation(); handleBulkSubmitBudgets(); }}
+                          >
+                            ส่งไปยัง MD Approve ({selectedBudgetIds.length} รายการ)
+                          </button>
+                          <button
+                            type="button"
+                            className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 text-red-700 flex items-center gap-2"
+                            onClick={(e) => { e.stopPropagation(); handleBulkDeleteBudgets(); }}
+                          >
+                            ลบหลายรายการที่เลือก ({selectedBudgetIds.length})
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-2 flex-wrap">
               <Button
                 variant="outline"
                 onClick={handleClearAllBudgets}
@@ -3870,11 +3999,26 @@ const AuthenticatedApp = () => {
               >
                 <Plus size={14} /> ตั้งงบประมาณ (Budget)
               </Button>
+              </div>
             </div>
-            <Card className="overflow-x-auto">
-              <table className="w-full text-left text-xs text-slate-600 whitespace-nowrap">
+            <Card className="overflow-hidden">
+              <table className="w-full text-left text-xs text-slate-600 table-fixed">
                 <thead className="bg-slate-200 text-slate-900 uppercase font-bold border-b text-sm">
                   <tr>
+                    {budgetCategory !== "OVERVIEW" && (
+                      <th className="py-3 px-2 border-r w-12 text-center align-middle">
+                        <input
+                          type="checkbox"
+                          className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                          checked={sortedBudgets.length > 0 && selectedBudgetIds.length === sortedBudgets.length}
+                          onChange={(e) => {
+                            if (e.target.checked) setSelectedBudgetIds(sortedBudgets.map((b) => b.id));
+                            else setSelectedBudgetIds([]);
+                          }}
+                        />
+                        <span className="block text-[9px] text-slate-500 mt-0.5">Select all</span>
+                      </th>
+                    )}
                     <th
                       className="py-3 px-4 border-r w-36 cursor-pointer hover:bg-slate-300 transition-colors"
                       onClick={() => requestSort("code")}
@@ -3889,7 +4033,7 @@ const AuthenticatedApp = () => {
                           ))}
                       </div>
                     </th>
-                    <th className="py-3 px-4 border-r min-w-[220px]">รายการ</th>
+                    <th className="py-3 px-4 border-r w-[220px] max-w-[220px]">รายการ</th>
                     <th className="py-3 px-4 text-right bg-blue-100">Budget</th>
                     <th className="py-3 px-4 text-center">สถานะ</th>
                     <th className="py-3 px-4 text-right text-green-800 font-bold border-r">
@@ -3925,6 +4069,20 @@ const AuthenticatedApp = () => {
                           className={`cursor-pointer transition-colors group ${isExpanded ? "bg-amber-50/80 ring-1 ring-amber-200 ring-inset" : "hover:bg-blue-50 odd:bg-white even:bg-slate-50"}`}
                           onClick={() => toggleRow(b.id)}
                         >
+                          {budgetCategory !== "OVERVIEW" && (
+                            <td className="py-1 px-2 border-r w-12 text-center align-middle" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                checked={selectedBudgetIds.includes(b.id)}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  if (e.target.checked) setSelectedBudgetIds((prev) => [...prev, b.id]);
+                                  else setSelectedBudgetIds((prev) => prev.filter((id) => id !== b.id));
+                                }}
+                              />
+                            </td>
+                          )}
                           <td className="py-1 px-3 border-r font-medium text-slate-900">
                             <div className="flex items-center gap-2">
                               {hasSubItems && (
@@ -3943,17 +4101,17 @@ const AuthenticatedApp = () => {
                               {b.code}
                             </div>
                           </td>
-                          <td className="py-1 px-3 border-r">
-                            <div className="flex items-center justify-between group">
-                              <div className="flex flex-col">
-                                <span>{b.description}</span>
+                          <td className="py-1 px-3 border-r w-[220px] max-w-[220px] overflow-hidden" title={b.description}>
+                            <div className="flex items-center justify-between group min-w-0">
+                              <div className="flex flex-col min-w-0 flex-1">
+                                <span className="truncate block" title={b.description}>{b.description}</span>
                                 {b.revisionReason && (
-                                  <span className="text-xs text-orange-600 bg-orange-50 px-1 rounded w-fit mt-1">
+                                  <span className="text-xs text-orange-600 bg-orange-50 px-1 rounded w-fit mt-1 truncate block max-w-full" title={b.revisionReason}>
                                     เหตุผลขอแก้: {b.revisionReason}
                                   </span>
                                 )}
                                 {b.rejectReason && (
-                                  <span className="text-xs text-red-600 bg-red-50 px-1.5 py-0.5 rounded border border-red-200 w-fit mt-1 inline-block">
+                                  <span className="text-xs text-red-600 bg-red-50 px-1.5 py-0.5 rounded border border-red-200 w-fit mt-1 inline-block truncate max-w-full" title={b.rejectReason}>
                                     เหตุผลปฏิเสธ: {b.rejectReason}
                                   </span>
                                 )}
@@ -4112,32 +4270,37 @@ const AuthenticatedApp = () => {
                                 key={sub.id}
                                 className="bg-slate-50/50 text-xs group"
                               >
+                                {budgetCategory !== "OVERVIEW" && (
+                                  <td className="py-1 px-2 border-r bg-slate-50/50 w-12" />
+                                )}
                                 <td className="py-1 px-3 border-r text-right text-slate-500 pr-4 font-mono relative">
                                   <span className="text-[9px] font-bold text-slate-400 absolute left-2 top-2.5">
                                     QTY
                                   </span>
                                   {sub.quantity}
                                 </td>
-                                <td className="py-1 px-3 border-r pl-8 flex items-center justify-between text-slate-600">
-                                  <div className="flex flex-col gap-0.5">
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-slate-400 w-4 text-center">
-                                        {index + 1}
-                                      </span>
-                                      <CornerDownRight
-                                        size={12}
-                                        className="text-slate-300"
-                                      />
-                                      {sub.description}
-                                    </div>
+                                <td className="py-1 px-3 border-r pl-8 w-[220px] max-w-[220px] overflow-hidden text-slate-600" title={sub.description}>
+                                  <div className="flex items-center justify-between min-w-0 gap-1">
+                                    <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                                      <div className="flex items-center gap-2 min-w-0">
+                                        <span className="text-slate-400 w-4 text-center shrink-0">
+                                          {index + 1}
+                                        </span>
+                                        <CornerDownRight
+                                          size={12}
+                                          className="text-slate-300 shrink-0"
+                                        />
+                                        <span className="truncate" title={sub.description}>{sub.description}</span>
+                                      </div>
                                     {sub.status === "Rejected" && sub.rejectReason && (
-                                      <span className="text-[10px] text-red-600 bg-red-50 px-1.5 py-0.5 rounded border border-red-200 w-fit mt-1 inline-block pl-6">
+                                      <span className="text-[10px] text-red-600 bg-red-50 px-1.5 py-0.5 rounded border border-red-200 w-fit mt-1 inline-block pl-6 truncate max-w-full" title={sub.rejectReason}>
                                         เหตุผลปฏิเสธ: {sub.rejectReason}
                                       </span>
                                     )}
-                                  </div>
-                                  <div className="text-slate-400 text-[10px]">
-                                    @ {formatCurrency(sub.unitPrice)}
+                                    </div>
+                                    <div className="text-slate-400 text-[10px] shrink-0">
+                                      @ {formatCurrency(sub.unitPrice)}
+                                    </div>
                                   </div>
                                 </td>
                                 <td className="py-1 px-3 text-right text-red-600 pr-4 font-medium border-b border-slate-100">
@@ -4688,20 +4851,29 @@ const AuthenticatedApp = () => {
       requestor: "",
       requestorEmail: "",
       costCode: "",
+      selectedBudgetId: "", // รหัสงบที่เลือก (ใช้แสดงยอดคงเหลือที่ตรงรายการ)
       urgency: "Normal",
       purchaseType: "",
       deliveryLocation: "",
       attachment: null,
     });
 
-    // Generate PR No. automatically
-    const generatePrNo = (subCode) => {
-      if (!selectedProjectId || !subCode) return "";
+    // Generate PR No. automatically (อุปกรณ์ใหม่ = EQM; ขอซื้อเช่า = ST/SI; อื่นๆ = subCode)
+    const generatePrNo = (subCode, purchaseType) => {
+      if (!selectedProjectId) return "";
       const currentProject = projects.find((p) => p.id === selectedProjectId);
       if (!currentProject) return "";
       const jobNoClean = (currentProject.jobNo || "").replace(/-/g, "");
-      // Count existing PRs with the same prefix in this project
-      const prefix = `${jobNoClean}-${subCode}-`;
+      let prefix;
+      if (purchaseType === PURCHASE_TYPE_EQUIPMENT) {
+        prefix = `${jobNoClean}-EQM-`;
+      } else if (purchaseType === PURCHASE_TYPE_RENTAL_LABEL || (PURCHASE_TYPE_CODES[PURCHASE_TYPE_RENTAL_LABEL] || []).includes(subCode)) {
+        if (!subCode) return "";
+        prefix = `${jobNoClean}-${subCode}-`;
+      } else {
+        if (!subCode) return "";
+        prefix = `${jobNoClean}-${subCode}-`;
+      }
       const existingCount = prs.filter(
         (pr) => pr.projectId === selectedProjectId && pr.prNo && pr.prNo.startsWith(prefix)
       ).length;
@@ -4735,10 +4907,11 @@ const AuthenticatedApp = () => {
       return approved
         .map((b) => {
           const relatedPRs = prs.filter(
-            (p) =>
-              p.projectId === selectedProjectId &&
-              p.costCode === b.code &&
-              p.status !== "Rejected"
+            (p) => {
+              if (p.projectId !== selectedProjectId || p.status === "Rejected") return false;
+              if (p.budgetId) return p.budgetId === b.id;
+              return p.costCode === b.code;
+            }
           );
           const usedAmount = relatedPRs.reduce(
             (sum, p) => sum + (Number(p.totalAmount) || 0),
@@ -4754,9 +4927,8 @@ const AuthenticatedApp = () => {
         })
         .filter((b) => {
           // If budget has sub-items, always show it so sub-items can be individually selected.
-          // The per-sub-item filtering happens inside the modal render (line ~5776).
           if (b.subItems && b.subItems.length > 0) return true;
-          // For budgets without sub-items, hide if fully used.
+          // For budgets without sub-items: แสดงจนกว่าคงเหลือจะหมด (เปิด PR ซ้ำได้จนงบหมด)
           return b.remainingBalance > 0;
         });
     }, [budgets, prs, selectedProjectId]);
@@ -4816,6 +4988,7 @@ const AuthenticatedApp = () => {
         requestor: pr.requestor,
         requestorEmail: pr.requestorEmail || "",
         costCode: pr.costCode,
+        selectedBudgetId: pr.budgetId || "",
         urgency: pr.urgency || "Normal",
         purchaseType: pr.purchaseType || "",
         deliveryLocation: pr.deliveryLocation || "",
@@ -4841,10 +5014,9 @@ const AuthenticatedApp = () => {
         );
       }
 
-      const budgetItem = budgets.find(
-        (b) =>
-          b.code === headerData.costCode && b.projectId === selectedProjectId
-      );
+      const budgetItem = headerData.selectedBudgetId
+        ? budgets.find((b) => b.id === headerData.selectedBudgetId && b.projectId === selectedProjectId)
+        : budgets.find((b) => b.code === headerData.costCode && b.projectId === selectedProjectId);
       if (!budgetItem)
         return showAlert(
           "ไม่พบ Cost Code",
@@ -4853,13 +5025,11 @@ const AuthenticatedApp = () => {
         );
 
       const currentPrTotal = prs
-        .filter(
-          (pr) =>
-            pr.costCode === headerData.costCode &&
-            pr.projectId === selectedProjectId &&
-            pr.status !== "Rejected" &&
-            pr.id !== editingPRId
-        )
+        .filter((pr) => {
+          if (pr.projectId !== selectedProjectId || pr.status === "Rejected" || pr.id === editingPRId) return false;
+          if (headerData.selectedBudgetId && pr.budgetId) return pr.budgetId === headerData.selectedBudgetId;
+          return pr.costCode === headerData.costCode;
+        })
         .reduce((sum, pr) => sum + Number(pr.totalAmount), 0);
       const thisPrTotal = calculateTotal();
       const totalBudget =
@@ -4884,6 +5054,7 @@ const AuthenticatedApp = () => {
       let success = false;
       const prPayload = {
         ...headerData,
+        budgetId: headerData.selectedBudgetId || undefined,
         projectId: selectedProjectId,
         items: lineItems,
         totalAmount: thisPrTotal,
@@ -4909,6 +5080,7 @@ const AuthenticatedApp = () => {
           requestor: "",
           requestorEmail: "",
           costCode: "",
+          selectedBudgetId: "",
           urgency: "Normal",
           purchaseType: "",
           deliveryLocation: "",
@@ -4920,25 +5092,29 @@ const AuthenticatedApp = () => {
       }
     };
 
-    const handleToggleSubItem = (sub, budgetCode) => {
+    const handleToggleSubItem = (sub, budgetCode, budgetId) => {
       setSelectedSubItemsForPR((prev) => {
-        // Enforce single budget source
-        if (prev.length > 0 && prev[0].parentCode !== budgetCode) {
-          return [{ ...sub, parentCode: budgetCode }];
+        const withBudgetId = { ...sub, parentCode: budgetCode, parentBudgetId: budgetId || (typeof sub.id === "string" && sub.id.startsWith("main-") ? sub.id.replace("main-", "") : null) };
+        // Enforce single budget source (same code or same budget id)
+        if (prev.length > 0) {
+          const first = prev[0];
+          const sameSource = (first.parentBudgetId && withBudgetId.parentBudgetId && first.parentBudgetId === withBudgetId.parentBudgetId) || first.parentCode === budgetCode;
+          if (!sameSource) return [withBudgetId];
         }
-        // Check ID match
         const exists = prev.find((i) => i.id === sub.id);
         if (exists) return prev.filter((i) => i.id !== sub.id);
-        return [...prev, { ...sub, parentCode: budgetCode }];
+        return [...prev, withBudgetId];
       });
     };
 
     const handleAddSelectedSubItems = () => {
       if (selectedSubItemsForPR.length === 0) return;
-      const budgetCode = selectedSubItemsForPR[0].parentCode;
+      const first = selectedSubItemsForPR[0];
+      const budgetCode = first.parentCode;
+      const budgetId = first.parentBudgetId || (first.id && String(first.id).startsWith("main-") ? String(first.id).replace("main-", "") : null);
 
-      // Update Header
-      setHeaderData((prev) => ({ ...prev, costCode: budgetCode }));
+      // Update Header (เก็บรหัสงบที่เลือกเพื่อแสดงยอดคงเหลือของรายการนั้นโดยเฉพาะ)
+      setHeaderData((prev) => ({ ...prev, costCode: budgetCode, selectedBudgetId: budgetId || "" }));
 
       // Add Items
       const newItems = selectedSubItemsForPR.map((sub) => {
@@ -5010,6 +5186,7 @@ const AuthenticatedApp = () => {
                 requestor: userData ? `${userData.firstName || ""} ${userData.lastName || ""}`.trim() : "",
                 requestorEmail: userData?.email || "",
                 costCode: "",
+                selectedBudgetId: "",
                 urgency: "Normal",
                 purchaseType: "",
                 deliveryLocation: "",
@@ -5375,12 +5552,15 @@ const AuthenticatedApp = () => {
                           onChange={(e) => {
                             const newType = e.target.value;
                             const codes = PURCHASE_TYPE_CODES[newType] || [];
-                            const autoCode = codes.length === 1 ? codes[0] : "";
-                            const newPrNo = autoCode ? generatePrNo(autoCode) : "";
+                            const isEquipment = newType === PURCHASE_TYPE_EQUIPMENT;
+                            const isRental = newType === PURCHASE_TYPE_RENTAL_LABEL;
+                            const autoCode = codes.length === 1 && !isRental ? codes[0] : "";
+                            const newSubCode = isEquipment ? "" : autoCode;
+                            const newPrNo = isEquipment ? generatePrNo("", newType) : (newSubCode ? generatePrNo(newSubCode, newType) : "");
                             setHeaderData({
                               ...headerData,
                               purchaseType: newType,
-                              subCode: autoCode,
+                              subCode: newSubCode,
                               prNo: newPrNo,
                             });
                           }}
@@ -5393,17 +5573,18 @@ const AuthenticatedApp = () => {
                           ))}
                         </select>
                       </div>
-                      {headerData.purchaseType && (PURCHASE_TYPE_CODES[headerData.purchaseType] || []).length > 1 ? (
+                      {headerData.purchaseType && headerData.purchaseType !== PURCHASE_TYPE_EQUIPMENT && (PURCHASE_TYPE_CODES[headerData.purchaseType] || []).length > 1 ? (
                         <div>
                           <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
-                            <CircleDot size={11} className="text-slate-500" /> Sub-Code
+                            <CircleDot size={11} className="text-slate-500" />
+                            {headerData.purchaseType === PURCHASE_TYPE_RENTAL_LABEL ? "Type การเช่า" : "Sub-Code"}
                           </label>
                           <select
                             className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all cursor-pointer"
                             value={headerData.subCode}
                             onChange={(e) => {
                               const newSubCode = e.target.value;
-                              const newPrNo = generatePrNo(newSubCode);
+                              const newPrNo = generatePrNo(newSubCode, headerData.purchaseType);
                               setHeaderData({
                                 ...headerData,
                                 subCode: newSubCode,
@@ -5414,7 +5595,7 @@ const AuthenticatedApp = () => {
                             <option value="">-- เลือก --</option>
                             {(PURCHASE_TYPE_CODES[headerData.purchaseType] || []).map((code) => (
                               <option key={code} value={code}>
-                                {code}
+                                {code}{headerData.purchaseType === PURCHASE_TYPE_RENTAL_LABEL ? (code === "ST" ? " (เช่าภายนอก)" : code === "SI" ? " (เช่าภายใน)" : "") : ""}
                               </option>
                             ))}
                           </select>
@@ -5518,8 +5699,8 @@ const AuthenticatedApp = () => {
                   </div>
                   <div className="p-5">
                     <div className="grid grid-cols-6 gap-x-4 gap-y-4">
-                      {/* Row 2 */}
-                      {headerData.purchaseType && (PURCHASE_TYPE_CODES[headerData.purchaseType] || []).length > 1 && (
+                      {/* Row 2: วันที่ขอซื้อ (เมื่อมี Sub-Code/Type การเช่า ไม่แสดงสำหรับอุปกรณ์ใหม่) */}
+                      {headerData.purchaseType && headerData.purchaseType !== PURCHASE_TYPE_EQUIPMENT && (PURCHASE_TYPE_CODES[headerData.purchaseType] || []).length > 1 && (
                         <div>
                           <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
                             <Calendar size={11} className="text-slate-500" /> วันที่ขอซื้อ
@@ -5560,22 +5741,20 @@ const AuthenticatedApp = () => {
                           />
                           <ListFilter className="absolute right-3 top-2.5 text-slate-500" size={14} />
                         </div>
-                        {headerData.costCode &&
-                          availableBudgets.find(
-                            (b) => b.code === headerData.costCode
-                          ) && (
+                        {headerData.costCode && (() => {
+                          const selectedBudget = headerData.selectedBudgetId
+                            ? availableBudgets.find((b) => b.id === headerData.selectedBudgetId)
+                            : availableBudgets.find((b) => b.code === headerData.costCode);
+                          return selectedBudget ? (
                             <div className="flex items-center gap-1 mt-1.5 px-2 py-0.5 bg-slate-100 rounded-lg w-fit ml-auto">
                               <Wallet size={10} className="text-slate-500" />
                               <span className="text-[10px] text-slate-600 font-semibold">
                                 คงเหลือ:{" "}
-                                {formatCurrency(
-                                  availableBudgets.find(
-                                    (b) => b.code === headerData.costCode
-                                  ).remainingBalance
-                                )}
+                                {formatCurrency(selectedBudget.remainingBalance)}
                               </span>
                             </div>
-                          )}
+                          ) : null;
+                        })()}
                       </div>
                       <div className="flex items-end pb-1">
                         <div>
@@ -5942,7 +6121,7 @@ const AuthenticatedApp = () => {
                                               unit: "Lot",
                                               unitPrice: b.remainingBalance,
                                               amount: b.remainingBalance
-                                            }, b.code)}
+                                            }, b.code, b.id)}
                                           />
                                         )}
 
@@ -6007,7 +6186,7 @@ const AuthenticatedApp = () => {
                                           key={`${b.id}-sub-${sIdx}`}
                                           className={`bg-slate-50/50 ${sub.status !== "Approved" ? "opacity-60" : "cursor-pointer hover:bg-blue-50"}`}
                                           onClick={() => {
-                                            if (sub.status === "Approved") handleToggleSubItem(sub, b.code);
+                                            if (sub.status === "Approved") handleToggleSubItem(sub, b.code, b.id);
                                           }}
                                         >
                                           <td className="p-3 pl-8 text-center border-l-2 border-blue-100">
@@ -6019,7 +6198,7 @@ const AuthenticatedApp = () => {
                                                 disabled={sub.status !== "Approved"}
                                                 onClick={(e) => e.stopPropagation()} // Prevent double toggle
                                                 onChange={() => {
-                                                  if (sub.status === "Approved") handleToggleSubItem(sub, b.code);
+                                                  if (sub.status === "Approved") handleToggleSubItem(sub, b.code, b.id);
                                                 }}
                                               />
                                             </div>
@@ -6092,6 +6271,7 @@ const AuthenticatedApp = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isVendorModalOpen, setIsVendorModalOpen] = useState(false);
     const [expandedPoRows, setExpandedPoRows] = useState({});
+    const [editingPoId, setEditingPoId] = useState(null);
 
     const togglePoRow = (id) => {
       setExpandedPoRows((prev) => ({
@@ -6102,7 +6282,7 @@ const AuthenticatedApp = () => {
 
     // Form Data State
     const [formData, setFormData] = useState({
-      poNo: "", // Manual Input
+      poNo: "", // Auto-generated: JobNo-PO-001, 002, ... 999, then 1000, 1001, ...
       vendorId: "",
       requiredDate: "",
       vatType: "ex-vat", // "inc-vat" | "ex-vat"
@@ -6110,6 +6290,21 @@ const AuthenticatedApp = () => {
       items: [], // Array of selected items with order details
       note: ""
     });
+
+    // Auto-generate PO No.: Job No.-PO-XXX (001..999 แล้วเป็น 1000, 1001, ...)
+    const generatePoNo = () => {
+      if (!selectedProjectId) return "";
+      const currentProject = projects.find((p) => p.id === selectedProjectId);
+      if (!currentProject || !currentProject.jobNo) return "";
+      const jobNo = String(currentProject.jobNo).trim();
+      const prefix = `${jobNo}-PO-`;
+      const existingCount = pos.filter(
+        (po) => po.projectId === selectedProjectId && po.poNo && po.poNo.startsWith(prefix)
+      ).length;
+      const nextNo = existingCount + 1;
+      const suffix = nextNo <= 999 ? String(nextNo).padStart(3, "0") : String(nextNo);
+      return `${prefix}${suffix}`;
+    };
 
     // Vendor Modal Form State is handled in separate VendorView, 
     // but here we might need a quick add. For now, let's use the main Vendor list.
@@ -6276,7 +6471,7 @@ const AuthenticatedApp = () => {
 
       const totals = calculateTotals();
 
-      const poPayload = {
+      const basePayload = {
         poNo: formData.poNo,
         projectId: selectedProjectId,
         vendorId: formData.vendorId,
@@ -6284,20 +6479,32 @@ const AuthenticatedApp = () => {
         vatType: formData.vatType,
         items: formData.items,
         amount: totals.total,
-        status: "Pending PCM", // Start Flow
-        createdDate: new Date().toISOString()
+        status: "Pending PCM", // กลับเข้าสู่ Flow อนุมัติใหม่ทุกครั้งที่บันทึก
+        createdDate: new Date().toISOString(),
+        rejectReason: "",
       };
 
-      const success = await addData("pos", poPayload);
-      if (success) {
-        // Update PR status to "PO Issued" for all involved PRs
-        // Note: Ideally, check if PR is *fully* closed, but "PO Issued" is good enough
-        const uniquePrIds = [...new Set(formData.items.map(i => i.prId))];
-        for (const prId of uniquePrIds) {
-          await updateData("prs", prId, { status: "PO Issued" });
-        }
+      let success = false;
 
+      if (editingPoId) {
+        // แก้ไข PO ที่ถูก Reject แล้วส่งอนุมัติใหม่
+        success = await updateData("pos", editingPoId, basePayload);
+      } else {
+        // สร้าง PO ใหม่
+        success = await addData("pos", basePayload);
+        if (success) {
+          // Update PR status to "PO Issued" for all involved PRs
+          // Note: Ideally, check if PR is *fully* closed, but "PO Issued" is good enough
+          const uniquePrIds = [...new Set(formData.items.map(i => i.prId))];
+          for (const prId of uniquePrIds) {
+            await updateData("prs", prId, { status: "PO Issued" });
+          }
+        }
+      }
+
+      if (success) {
         setIsModalOpen(false);
+        setEditingPoId(null);
         setFormData({
           poNo: "", vendorId: "", requiredDate: "", vatType: "ex-vat", selectedPrIds: [], items: [], note: ""
         });
@@ -6356,7 +6563,23 @@ const AuthenticatedApp = () => {
             selectedId={selectedProjectId}
             onChange={(e) => setSelectedProjectId(e.target.value)}
           />
-          <Button onClick={() => setIsModalOpen(true)} variant="warning">
+          <Button
+            onClick={() => {
+              const nextPoNo = generatePoNo();
+              setEditingPoId(null);
+              setFormData({
+                poNo: nextPoNo,
+                vendorId: "",
+                requiredDate: "",
+                vatType: "ex-vat",
+                selectedPrIds: [],
+                items: [],
+                note: "",
+              });
+              setIsModalOpen(true);
+            }}
+            variant="warning"
+          >
             <Plus size={14} /> สร้างใบสั่งซื้อ (PO)
           </Button>
         </div>
@@ -6432,6 +6655,30 @@ const AuthenticatedApp = () => {
                               <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px]" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>
                             </>
                           )}
+                          {po.status === "Rejected" && (userRole === "Procurement" || userRole === "Administrator") && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              className="px-2 py-0.5 text-[10px]"
+                              onClick={() => {
+                                // เตรียมฟอร์มสำหรับแก้ไข PO ที่ถูก Reject
+                                const prIdsFromItems = po.items ? [...new Set(po.items.map(i => i.prId))] : (po.prRefId ? [po.prRefId] : []);
+                                setFormData({
+                                  poNo: po.poNo || "",
+                                  vendorId: po.vendorId || "",
+                                  requiredDate: po.requiredDate || "",
+                                  vatType: po.vatType || "ex-vat",
+                                  selectedPrIds: prIdsFromItems,
+                                  items: po.items || [],
+                                  note: po.note || "",
+                                });
+                                setEditingPoId(po.id);
+                                setIsModalOpen(true);
+                              }}
+                            >
+                              Edit
+                            </Button>
+                          )}
 
                           <button
                             className="text-red-500 hover:text-red-700 p-1"
@@ -6447,9 +6694,23 @@ const AuthenticatedApp = () => {
                         <tr className="bg-slate-50/50">
                           <td colSpan={8} className="p-4 border-b cursor-default" onClick={(e) => e.stopPropagation()}>
                             <div className="bg-white rounded-lg border border-slate-200 p-3 shadow-sm ml-8">
-                              <h5 className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-2">
+                              <h5 className="text-xs font-bold text-slate-700 mb-1 flex items-center gap-2">
                                 <ShoppingCart size={14} /> รายการสั่งซื้อใน PO: {po.poNo}
                               </h5>
+                              <div className="flex justify-between items-center text-[11px] text-slate-500 mb-2">
+                                <div>
+                                  Vendor:{" "}
+                                  <span className="font-semibold text-slate-700">
+                                    {vendor?.name || "-"}
+                                  </span>
+                                </div>
+                                <div>
+                                  วันรับของ:{" "}
+                                  <span className="font-semibold text-slate-700">
+                                    {po.requiredDate || "-"}
+                                  </span>
+                                </div>
+                              </div>
                               <table className="w-full text-xs text-left">
                                 <thead className="bg-orange-50 text-orange-800 border-b border-orange-100">
                                   <tr>
@@ -6527,11 +6788,12 @@ const AuthenticatedApp = () => {
                         </label>
                         <input
                           type="text"
-                          className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-slate-50 text-slate-900 font-mono font-semibold shadow-inner hover:border-red-300 focus:border-red-500 focus:ring-2 focus:ring-red-100 transition-all"
-                          placeholder="ระบุเลขที่ PO"
+                          readOnly
+                          className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-slate-100 text-slate-700 font-mono font-semibold cursor-default"
+                          placeholder="(Auto)"
                           value={formData.poNo}
-                          onChange={e => setFormData({ ...formData, poNo: e.target.value })}
                         />
+                        <p className="text-[10px] text-slate-500 mt-0.5">รูปแบบ: Job No.-PO-001 (รันอัตโนมัติ)</p>
                       </div>
                       <div className="col-span-2">
                         <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1.5 uppercase tracking-wider">
@@ -7251,7 +7513,7 @@ const AuthenticatedApp = () => {
           <SidebarGroup
             icon={<ShoppingCart size={20} />}
             label="Purchase Order (PO)"
-            isActive={activeMenu === "po" || activeMenu === "po-table"}
+            isActive={activeMenu === "po" || activeMenu === "po-table" || activeMenu === "vendor"}
           >
             <SidebarSubItem
               label="ระบบ PO"
@@ -7263,13 +7525,12 @@ const AuthenticatedApp = () => {
               active={activeMenu === "po-table"}
               onClick={() => handleMenuChange("po-table")}
             />
+            <SidebarSubItem
+              label="Vendor Management"
+              active={activeMenu === "vendor"}
+              onClick={() => handleMenuChange("vendor")}
+            />
           </SidebarGroup>
-          <SidebarItem
-            icon={<Users size={20} />}
-            label="Vendor Management"
-            active={activeMenu === "vendor"}
-            onClick={() => handleMenuChange("vendor")}
-          />
           <SidebarItem
             icon={<FileInput size={20} />}
             label="Invoice Receive"
