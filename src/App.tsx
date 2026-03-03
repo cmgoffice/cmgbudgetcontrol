@@ -153,7 +153,7 @@ const USER_ROLES = [
 
 const PURCHASE_TYPES = [
   "จัดซื้อจัดจ้าง > WA, ST, ML, CS, SA",
-  "อุปกรณ์ใหม่ > WA, ST, ML, CS, SA",
+  "อุปกรณ์ใหม่ > EQM",
   "ขอซื้อเช่า > RE",
   "เงินสดย่อย > PT",
   "คอนกรีต > CC",
@@ -163,8 +163,8 @@ const PURCHASE_TYPES = [
 
 const PURCHASE_TYPE_CODES = {
   "จัดซื้อจัดจ้าง > WA, ST, ML, CS, SA": ["WA", "ST", "ML", "CS", "SA"],
-  "อุปกรณ์ใหม่ > WA, ST, ML, CS, SA": ["WA", "ST", "ML", "CS", "SA"],
-  "ขอซื้อเช่า > RE": ["ST", "SI"], // ST=เช่าภายนอก, SI=เช่าภายใน (ใช้ใน PR No. แทน RE)
+  "อุปกรณ์ใหม่ > EQM": ["WA", "ST", "ML", "CS", "SA"],
+  "ขอซื้อเช่า > RE": ["RT", "RI"], // Type การเช่า: RT, RI (ใช้ใน PR No. แทน RE)
   "เงินสดย่อย > PT": ["PT"],
   "คอนกรีต > CC": ["CC"],
   "น้ำมัน > OL": ["OL"],
@@ -172,7 +172,7 @@ const PURCHASE_TYPE_CODES = {
 };
 
 const PURCHASE_TYPE_RENTAL_LABEL = "ขอซื้อเช่า > RE"; // ชื่อประเภทที่ใช้ dropdown "Type การเช่า"
-const PURCHASE_TYPE_EQUIPMENT = "อุปกรณ์ใหม่ > WA, ST, ML, CS, SA"; // ไม่มี Sub-Code, PR No = EQM
+const PURCHASE_TYPE_EQUIPMENT = "อุปกรณ์ใหม่ > EQM"; // ไม่มี Sub-Code, PR No = EQM
 
 const DELIVERY_LOCATIONS = [
   "Headoffice",
@@ -2366,6 +2366,8 @@ const AuthenticatedApp = () => {
     const [reasonModalContext, setReasonModalContext] = useState({ budgetId: null, subItemId: null });
     const [selectedBudgetIds, setSelectedBudgetIds] = useState([]); // สำหรับหน้า 001-009: เลือกรายการงบ
     const [actionDropdownOpen, setActionDropdownOpen] = useState(false);
+    const [pendingSelectedBudgetIds, setPendingSelectedBudgetIds] = useState([]); // สำหรับ Pending Approval Tasks
+    const [pendingActionDropdownOpen, setPendingActionDropdownOpen] = useState(false);
     const [formData, setFormData] = useState({
       code: "",
       description: "",
@@ -3096,6 +3098,79 @@ const AuthenticatedApp = () => {
       );
     };
 
+    const handleBulkApprovePendingBudgets = () => {
+      setPendingActionDropdownOpen(false);
+      if (pendingSelectedBudgetIds.length === 0) {
+        showAlert("กรุณาเลือกรายการ", "กรุณาเลือกรายการงบที่ต้องการ Approve ก่อน (ติ๊กถูกหน้าบรรทัด)", "warning");
+        return;
+      }
+      const toApprove = pendingSelectedBudgetIds.filter((id) => {
+        const b = pendingBudgetsForProject.find((x) => x.id === id);
+        return !!b;
+      });
+      if (toApprove.length === 0) {
+        showAlert("ไม่พบรายการ", "ไม่มีรายการรออนุมัติที่ตรงกับการเลือก", "warning");
+        return;
+      }
+      openConfirm(
+        "ยืนยัน Approve หลายรายการ",
+        `คุณต้องการ Approve Budget ที่เลือก ${toApprove.length} รายการใช่หรือไม่?`,
+        async () => {
+          try {
+            for (const id of toApprove) {
+              await updateDoc(
+                doc(db, "artifacts", appId, "public", "data", "budgets", id),
+                { status: "Approved", revisionReason: "", rejectReason: "" }
+              );
+            }
+            await logAction("Bulk", `Approved ${toApprove.length} pending budgets from dashboard`);
+            setPendingSelectedBudgetIds([]);
+            setPendingActionDropdownOpen(false);
+            showAlert("สำเร็จ", `Approve งบประมาณ ${toApprove.length} รายการเรียบร้อย`, "success");
+          } catch (e) {
+            showAlert("เกิดข้อผิดพลาด", e?.message || "ไม่สามารถ Approve ได้", "error");
+          }
+        }
+      );
+    };
+
+    const handleBulkRejectPendingBudgets = () => {
+      setPendingActionDropdownOpen(false);
+      if (pendingSelectedBudgetIds.length === 0) {
+        showAlert("กรุณาเลือกรายการ", "กรุณาเลือกรายการงบที่ต้องการ Reject ก่อน (ติ๊กถูกหน้าบรรทัด)", "warning");
+        return;
+      }
+      const toReject = pendingSelectedBudgetIds.filter((id) => {
+        const b = pendingBudgetsForProject.find((x) => x.id === id);
+        return !!b;
+      });
+      if (toReject.length === 0) {
+        showAlert("ไม่พบรายการ", "ไม่มีรายการรออนุมัติที่ตรงกับการเลือก", "warning");
+        return;
+      }
+      openConfirm(
+        "ยืนยัน Reject หลายรายการ",
+        `คุณต้องการ Reject Budget ที่เลือก ${toReject.length} รายการใช่หรือไม่?`,
+        async () => {
+          try {
+            for (const id of toReject) {
+              await updateDoc(
+                doc(db, "artifacts", appId, "public", "data", "budgets", id),
+                { status: "Rejected" }
+              );
+            }
+            await logAction("Bulk", `Rejected ${toReject.length} pending budgets from dashboard`);
+            setPendingSelectedBudgetIds([]);
+            setPendingActionDropdownOpen(false);
+            showAlert("สำเร็จ", `Reject งบประมาณ ${toReject.length} รายการเรียบร้อย`, "success");
+          } catch (e) {
+            showAlert("เกิดข้อผิดพลาด", e?.message || "ไม่สามารถ Reject ได้", "error");
+          }
+        },
+        "danger"
+      );
+    };
+
     const handleRequestRevision = async () => {
       if (!selectedBudget || !revisionReason) return;
       await updateDoc(
@@ -3545,15 +3620,58 @@ const AuthenticatedApp = () => {
                 {/* ----- Budget Approval Table (MD only) ----- */}
                 {pendingBudgetsForProject.length > 0 && (
                   <Card className="overflow-x-auto border-l-4 border-l-blue-500">
-                    <div className="p-3 bg-blue-50 border-b flex items-center gap-2">
-                      <CheckCircle size={15} className="text-blue-600" />
-                      <h4 className="font-bold text-xs text-blue-800 uppercase tracking-wide">
-                        Project Budget — รออนุมัติ ({pendingBudgetsForProject.length} รายการ)
-                      </h4>
+                    <div className="p-3 bg-blue-50 border-b flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle size={15} className="text-blue-600" />
+                        <h4 className="font-bold text-xs text-blue-800 uppercase tracking-wide">
+                          Project Budget — รออนุมัติ ({pendingBudgetsForProject.length} รายการ)
+                        </h4>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="relative">
+                          <button
+                            type="button"
+                            className="flex items-center gap-1 px-3 py-1.5 h-8 rounded-md font-medium text-[11px] shadow-sm bg-slate-700 text-white hover:bg-slate-800"
+                            onClick={() => setPendingActionDropdownOpen((v) => !v)}
+                          >
+                            Action
+                            <ChevronDown size={12} className={pendingActionDropdownOpen ? "rotate-180" : ""} />
+                          </button>
+                          {pendingActionDropdownOpen && (
+                            <div className="absolute right-0 top-full mt-1 z-20 py-1 bg-white border border-slate-200 rounded-lg shadow-lg min-w-[220px]">
+                              <button
+                                type="button"
+                                className="w-full text-left px-3 py-2 text-xs hover:bg-green-50 text-green-700 flex items-center gap-2"
+                                onClick={handleBulkApprovePendingBudgets}
+                              >
+                                Approve ({pendingSelectedBudgetIds.length} รายการ)
+                              </button>
+                              <button
+                                type="button"
+                                className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 text-red-700 flex items-center gap-2"
+                                onClick={handleBulkRejectPendingBudgets}
+                              >
+                                Reject ({pendingSelectedBudgetIds.length} รายการ)
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </div>
                     <table className="w-full text-left text-xs text-slate-600 whitespace-nowrap">
                       <thead className="bg-slate-200 text-slate-800 uppercase font-bold border-b text-sm">
                         <tr>
+                          <th className="py-2.5 px-3 text-center">
+                            <input
+                              type="checkbox"
+                              className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                              checked={pendingSelectedBudgetIds.length > 0 && pendingSelectedBudgetIds.length === pendingBudgetsForProject.length}
+                              onChange={(e) => {
+                                if (e.target.checked) setPendingSelectedBudgetIds(pendingBudgetsForProject.map((b) => b.id));
+                                else setPendingSelectedBudgetIds([]);
+                              }}
+                            />
+                          </th>
                           <th className="py-2.5 px-4">Cost Code</th>
                           <th className="py-2.5 px-4">รายการ</th>
                           <th className="py-2.5 px-4 text-right">จำนวนเงิน</th>
@@ -3570,6 +3688,20 @@ const AuthenticatedApp = () => {
                           const isRevisionPending = b.status === "Revision Pending";
                           return (
                             <tr key={b.id} className={`hover:bg-blue-50/50 ${isRevisionPending ? "bg-orange-50/30" : ""}`}>
+                              <td className="py-2 px-3 text-center align-middle">
+                                <input
+                                  type="checkbox"
+                                  className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                  checked={pendingSelectedBudgetIds.includes(b.id)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setPendingSelectedBudgetIds((prev) => [...prev, b.id]);
+                                    } else {
+                                      setPendingSelectedBudgetIds((prev) => prev.filter((id) => id !== b.id));
+                                    }
+                                  }}
+                                />
+                              </td>
                               <td className="py-2 px-3 font-mono font-bold text-slate-800">{b.code}</td>
                               <td className="py-2 px-3">
                                 <div>
@@ -3923,42 +4055,34 @@ const AuthenticatedApp = () => {
             <div className="flex justify-between items-center gap-2 mb-2 flex-wrap">
               <div className="flex gap-2 items-center">
                 {budgetCategory !== "OVERVIEW" && (
-                  <div className="relative z-[100]">
+                  <div className="relative z-[10]">
                     <button
                       type="button"
                       className="flex items-center gap-1 px-3 py-1.5 h-8 rounded-md font-medium text-xs shadow-sm bg-slate-600 text-white hover:bg-slate-700"
-                      onClick={(e) => { e.stopPropagation(); setActionDropdownOpen((v) => !v); }}
+                      onClick={() => setActionDropdownOpen((v) => !v)}
                     >
                       Action
                       <ChevronDown size={12} className={actionDropdownOpen ? "rotate-180" : ""} />
                     </button>
                     {actionDropdownOpen && (
-                      <>
-                        <div
-                          className="fixed inset-0 z-[99]"
-                          aria-hidden
-                          onClick={() => setActionDropdownOpen(false)}
-                        />
-                        <div
-                          className="absolute left-0 top-full mt-1 z-[100] py-1 bg-white border border-slate-200 rounded-lg shadow-lg min-w-[200px]"
-                          onClick={(e) => e.stopPropagation()}
+                      <div
+                        className="absolute left-0 top-full mt-1 z-[20] py-1 bg-white border border-slate-200 rounded-lg shadow-lg min-w-[220px]"
+                      >
+                        <button
+                          type="button"
+                          className="w-full text-left px-3 py-2 text-xs hover:bg-green-50 text-green-700 flex items-center gap-2"
+                          onClick={handleBulkSubmitBudgets}
                         >
-                          <button
-                            type="button"
-                            className="w-full text-left px-3 py-2 text-xs hover:bg-green-50 text-green-700 flex items-center gap-2"
-                            onClick={(e) => { e.stopPropagation(); handleBulkSubmitBudgets(); }}
-                          >
-                            ส่งไปยัง MD Approve ({selectedBudgetIds.length} รายการ)
-                          </button>
-                          <button
-                            type="button"
-                            className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 text-red-700 flex items-center gap-2"
-                            onClick={(e) => { e.stopPropagation(); handleBulkDeleteBudgets(); }}
-                          >
-                            ลบหลายรายการที่เลือก ({selectedBudgetIds.length})
-                          </button>
-                        </div>
-                      </>
+                          ส่งไปยัง MD Approve ({selectedBudgetIds.length} รายการ)
+                        </button>
+                        <button
+                          type="button"
+                          className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 text-red-700 flex items-center gap-2"
+                          onClick={handleBulkDeleteBudgets}
+                        >
+                          ลบหลายรายการที่เลือก ({selectedBudgetIds.length})
+                        </button>
+                      </div>
                     )}
                   </div>
                 )}
@@ -5595,7 +5719,7 @@ const AuthenticatedApp = () => {
                             <option value="">-- เลือก --</option>
                             {(PURCHASE_TYPE_CODES[headerData.purchaseType] || []).map((code) => (
                               <option key={code} value={code}>
-                                {code}{headerData.purchaseType === PURCHASE_TYPE_RENTAL_LABEL ? (code === "ST" ? " (เช่าภายนอก)" : code === "SI" ? " (เช่าภายใน)" : "") : ""}
+                                {code}{headerData.purchaseType === PURCHASE_TYPE_RENTAL_LABEL ? (code === "RT" ? " (RT)" : code === "RI" ? " (RI)" : "") : ""}
                               </option>
                             ))}
                           </select>
