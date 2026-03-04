@@ -134,6 +134,91 @@ tbody tr {
 }
 
 /* =============================
+   Table: Fixed Row Height + Text Truncate
+   — ล็อคความสูง row ไม่ให้ขยายตาม content
+     ตัวหนังสือเกินจะถูก clip + เม้าชี้ดูด้วย title attribute
+   ============================= */
+
+/* ล็อค layout ไม่ให้คอลัมน์อ้วนขึ้นตาม content */
+table {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 0;
+}
+
+table.table-auto {
+  table-layout: auto;
+}
+
+/* ล็อคความสูง th — ไม่ขยายตาม content */
+thead th {
+  height: 36px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* td: กำหนดความสูงขั้นต่ำ แต่ไม่ clip
+   (overflow: hidden บน td จะตัดปุ่มและ Badge ด้วย — ไม่ใช้)
+   การ truncate ทำผ่าน .cell-text แทน */
+tbody td {
+  height: 36px;
+  white-space: nowrap;
+}
+
+/* input/select ใน td ไม่ล้นออกนอก td */
+tbody td input,
+tbody td select {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* th > div (sort header) ไม่ล้น */
+thead th > div {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* ===== Utility: เซลล์ที่มีข้อความเต็ม — ใช้คู่กับ title attribute ===== */
+.cell-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+/* ===== ล็อคตาราง: ป้องกัน wrapper ขยายตาม table ===== */
+.table-wrapper {
+  width: 100%;
+  overflow-x: hidden;
+  min-width: 0;
+}
+
+.table-wrapper table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+/* ===== Custom Scrollbar ===== */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.35);
+  border-radius: 9999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.6);
+}
+
+/* =============================
    Button Transitions
    ============================= */
 button {

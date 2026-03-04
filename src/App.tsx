@@ -173,18 +173,25 @@ const PURCHASE_TYPES = [
   "เงินสดย่อย > PT",
   "คอนกรีต > CC",
   "น้ำมัน > OL",
-  "ค่าแรง/เงินเดือน > SM, DC",
+  "ค่าแรง > DC",
+  "เงินเดือน > SM",
 ];
 
 const PURCHASE_TYPE_CODES = {
   "จัดซื้อจัดจ้าง > WA, ST, ML, CS, SA": ["WA", "ST", "ML", "CS", "SA"],
   "อุปกรณ์ใหม่ > EQM": ["WA", "ST", "ML", "CS", "SA"],
-  "ขอซื้อเช่า > RE": ["RT", "RI"], // Type การเช่า: RT, RI (ใช้ใน PR No. แทน RE)
+  "ขอซื้อเช่า > RE": ["RT", "RI"],
   "เงินสดย่อย > PT": ["PT"],
   "คอนกรีต > CC": ["CC"],
   "น้ำมัน > OL": ["OL"],
-  "ค่าแรง/เงินเดือน > SM, DC": ["SM", "DC"],
+  "ค่าแรง > DC": ["DC"],
+  "เงินเดือน > SM": ["SM"],
+  "ค่าแรง/เงินเดือน > SM, DC": ["SM", "DC"], // backward compat for existing PRs
 };
+
+// แสดงเฉพาะชื่อประเภท (ไม่แสดง Sub-Code) ใน dropdown
+const getPurchaseTypeDisplayLabel = (key) =>
+  key && key.includes(" > ") ? key.split(" > ")[0].trim() : key || "";
 
 const PURCHASE_TYPE_RENTAL_LABEL = "ขอซื้อเช่า > RE"; // ชื่อประเภทที่ใช้ dropdown "Type การเช่า"
 const PURCHASE_TYPE_EQUIPMENT = "อุปกรณ์ใหม่ > EQM"; // ไม่มี Sub-Code, PR No = EQM
@@ -1343,14 +1350,14 @@ const AdminDashboard = () => {
             <tbody className="divide-y divide-slate-100">
               {users.map((u) => (
                 <tr key={u.id} className="hover:bg-slate-50">
-                  <td className="p-4">
-                    <div className="font-medium text-slate-900">
+                  <td className="p-4" title={`${u.firstName || ""} ${u.lastName || ""} | ${u.email || ""}`}>
+                    <div className="font-medium text-slate-900 cell-text">
                       {u.firstName} {u.lastName}
                     </div>
-                    <div className="text-xs text-slate-500">{u.email}</div>
+                    <div className="text-xs text-slate-500 cell-text">{u.email}</div>
                   </td>
                   <td className="p-4">
-                    <span className="bg-slate-100 px-2 py-1 rounded text-xs font-semibold">
+                    <span className="bg-slate-100 px-2 py-1 rounded text-xs font-semibold cell-text" title={u.role}>
                       {u.role}
                     </span>
                   </td>
@@ -1587,11 +1594,13 @@ const AuthenticatedApp = () => {
   const userRole = userData?.role || "Staff";
 
   const [activeMenu, setActiveMenu] = useState("dashboard");
+  const [isFullScreenModalOpen, setIsFullScreenModalOpen] = useState(false);
 
   // Data States
   const [projects, setProjects] = useState([]);
   const [budgets, setBudgets] = useState([]);
   const [vendors, setVendors] = useState([]);
+  const [materials, setMaterials] = useState([]);
   const [prs, setPrs] = useState([]);
   const [pos, setPos] = useState([]);
   const [invoices, setInvoices] = useState([]);
@@ -1621,6 +1630,7 @@ const AuthenticatedApp = () => {
     po: "ระบบ PO",
     "po-table": "ตารางข้อมูล PO",
     vendor: "Vendor Management",
+    material: "Material",
     invoice: "Invoice Receive",
     profile: "ข้อมูลส่วนตัว",
     admin: "Admin Dashboard",
@@ -1917,6 +1927,7 @@ const AuthenticatedApp = () => {
     });
     const unsubBudgets = syncCollection("budgets", setBudgets);
     const unsubVendors = syncCollection("vendors", setVendors);
+    const unsubMaterials = syncCollection("materials", setMaterials);
     const unsubPrs = syncCollection("prs", setPrs);
     const unsubPos = syncCollection("pos", setPos);
     const unsubInvoices = syncCollection("invoices", setInvoices);
@@ -1925,6 +1936,7 @@ const AuthenticatedApp = () => {
       unsubProjects();
       unsubBudgets();
       unsubVendors();
+      unsubMaterials();
       unsubPrs();
       unsubPos();
       unsubInvoices();
@@ -2225,21 +2237,21 @@ const AuthenticatedApp = () => {
             <tbody className="divide-y divide-slate-100">
               {projects.map((p) => (
                 <tr key={p.id} className="hover:bg-slate-50">
-                  <td className="py-2 px-3 font-medium text-slate-900">
-                    {p.jobNo}
+                  <td className="py-2 px-3 font-medium text-slate-900" title={p.jobNo}>
+                    <span className="cell-text">{p.jobNo}</span>
                   </td>
-                  <td className="py-2 px-3 font-medium">{p.name}</td>
-                  <td className="py-2 px-3 text-slate-500">{p.location}</td>
+                  <td className="py-2 px-3 font-medium" title={p.name}><span className="cell-text">{p.name}</span></td>
+                  <td className="py-2 px-3 text-slate-500" title={p.location}><span className="cell-text">{p.location}</span></td>
                   <td className="py-2 px-3 text-right font-semibold text-blue-700">
                     {formatCurrency(p.contractValue)}
                   </td>
-                  <td className="py-2 px-3 text-xs">{p.startDate}</td>
-                  <td className="py-2 px-3 text-xs">{p.endDate}</td>
-                  <td className="py-2 px-3 text-blue-600 font-medium">
-                    {p.pmName}
+                  <td className="py-2 px-3 text-xs" title={p.startDate}><span className="cell-text">{p.startDate}</span></td>
+                  <td className="py-2 px-3 text-xs" title={p.endDate}><span className="cell-text">{p.endDate}</span></td>
+                  <td className="py-2 px-3 text-blue-600 font-medium" title={p.pmName}>
+                    <span className="cell-text">{p.pmName}</span>
                   </td>
-                  <td className="py-2 px-3 text-green-600 font-medium">
-                    {p.cmName}
+                  <td className="py-2 px-3 text-green-600 font-medium" title={p.cmName}>
+                    <span className="cell-text">{p.cmName}</span>
                   </td>
                   <td className="py-2 px-3 text-right flex justify-end gap-1">
                     <button
@@ -3744,21 +3756,9 @@ const AuthenticatedApp = () => {
                                   }}
                                 />
                               </td>
-                              <td className="py-2 px-3 font-mono font-bold text-slate-800">{b.code}</td>
-                              <td className="py-2 px-3">
-                                <div>
-                                  <span>{b.description}</span>
-                                  {b.revisionReason && (
-                                    <div className="text-xs text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded mt-0.5 border border-orange-200 inline-block">
-                                      เหตุผลขอแก้: {b.revisionReason}
-                                    </div>
-                                  )}
-                                  {b.rejectReason && (
-                                    <div className="text-xs text-red-600 bg-red-50 px-1.5 py-0.5 rounded mt-0.5 border border-red-200 inline-block">
-                                      เหตุผลปฏิเสธ: {b.rejectReason}
-                                    </div>
-                                  )}
-                                </div>
+                              <td className="py-2 px-3 font-mono font-bold text-slate-800" title={b.code}><span className="cell-text">{b.code}</span></td>
+                              <td className="py-2 px-3" title={b.description + (b.revisionReason ? ` | ขอแก้: ${b.revisionReason}` : "") + (b.rejectReason ? ` | ปฏิเสธ: ${b.rejectReason}` : "")}>
+                                <span className="cell-text">{b.description}</span>
                               </td>
                               <td className="py-2 px-3 text-right font-semibold text-blue-700">
                                 {formatCurrency(totalBudget)}
@@ -3772,17 +3772,17 @@ const AuthenticatedApp = () => {
                                     <>
                                       <Button
                                         variant="success"
-                                        className="px-3 py-1 text-[11px]"
+                                        className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                         onClick={() => handleApproveBudget(b.id)}
                                       >
-                                        <CheckCircle size={12} /> Approve
+                                        <CheckCircle size={11} /> Approve
                                       </Button>
                                       <Button
                                         variant="danger"
-                                        className="px-3 py-1 text-[11px]"
+                                        className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                         onClick={() => openRejectModal(b)}
                                       >
-                                        <XCircle size={12} /> Reject
+                                        <XCircle size={11} /> Reject
                                       </Button>
                                     </>
                                   )}
@@ -3790,14 +3790,14 @@ const AuthenticatedApp = () => {
                                     <>
                                       <Button
                                         variant="warning"
-                                        className="px-3 py-1 text-[11px]"
+                                        className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                         onClick={() => handleAllowEdit(b.id)}
                                       >
                                         อนุญาตแก้ไข
                                       </Button>
                                       <Button
                                         variant="secondary"
-                                        className="px-3 py-1 text-[11px]"
+                                        className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                         onClick={() => handleRejectRevision(b.id)}
                                       >
                                         ไม่อนุญาตแก้ไข
@@ -3895,20 +3895,20 @@ const AuthenticatedApp = () => {
                                       <div className="flex justify-center gap-1">
                                         {sub.status === "Revision Pending" ? (
                                           <>
-                                            <Button variant="warning" className="px-3 py-1 text-[11px]" onClick={() => handleAllowEditSubItem(b.id, sub.id)}>
+                                            <Button variant="warning" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAllowEditSubItem(b.id, sub.id)}>
                                               อนุญาตแก้ไข
                                             </Button>
-                                            <Button variant="secondary" className="px-3 py-1 text-[11px]" onClick={() => handleRejectRevisionSubItem(b.id, sub.id)}>
+                                            <Button variant="secondary" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleRejectRevisionSubItem(b.id, sub.id)}>
                                               ไม่อนุญาตแก้ไข
                                             </Button>
                                           </>
                                         ) : (
                                           <>
-                                            <Button variant="success" className="px-3 py-1 text-[11px]" onClick={() => handleApproveSubItem(b.id, sub.id)}>
-                                              <CheckCircle size={12} /> Approve
+                                            <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleApproveSubItem(b.id, sub.id)}>
+                                              <CheckCircle size={11} /> Approve
                                             </Button>
-                                            <Button variant="danger" className="px-3 py-1 text-[11px]" onClick={() => openReasonModal("reject", b.id, sub.id)}>
-                                              <XCircle size={12} /> Reject
+                                            <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => openReasonModal("reject", b.id, sub.id)}>
+                                              <XCircle size={11} /> Reject
                                             </Button>
                                           </>
                                         )}
@@ -3973,15 +3973,15 @@ const AuthenticatedApp = () => {
 
                           return (
                             <tr key={pr.id} className="hover:bg-green-50/40">
-                              <td className="py-2 px-3 font-medium text-slate-800">{pr.prNo}</td>
-                              <td className="py-2 px-3 text-slate-500">{pr.requestDate}</td>
+                              <td className="py-2 px-3 font-medium text-slate-800" title={pr.prNo}><span className="cell-text">{pr.prNo}</span></td>
+                              <td className="py-2 px-3 text-slate-500" title={pr.requestDate}><span className="cell-text">{pr.requestDate}</span></td>
                               <td className="py-2 px-3">
-                                <span className="bg-gray-100 px-2 py-0.5 rounded text-xs border border-gray-200">
+                                <span className="bg-gray-100 px-2 py-0.5 rounded text-xs border border-gray-200 cell-text" title={pr.costCode}>
                                   {pr.costCode}
                                 </span>
                               </td>
-                              <td className="py-2 px-3">{pr.purchaseType}</td>
-                              <td className="py-2 px-3">{pr.requestor}</td>
+                              <td className="py-2 px-3" title={pr.purchaseType}><span className="cell-text">{getPurchaseTypeDisplayLabel(pr.purchaseType)}</span></td>
+                              <td className="py-2 px-3" title={pr.requestor}><span className="cell-text">{pr.requestor}</span></td>
                               <td className="py-2 px-3 text-right font-semibold text-green-700">
                                 {formatCurrency(pr.totalAmount || pr.amount)}
                               </td>
@@ -3992,17 +3992,17 @@ const AuthenticatedApp = () => {
                                 <div className="flex justify-center gap-1">
                                   <Button
                                     variant="success"
-                                    className="px-3 py-1 text-[11px]"
+                                    className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                     onClick={() => handlePRAction(pr.id, "approve")}
                                   >
-                                    <CheckCircle size={12} /> {approveLabel}
+                                    <CheckCircle size={11} /> {approveLabel}
                                   </Button>
                                   <Button
                                     variant="danger"
-                                    className="px-3 py-1 text-[11px]"
+                                    className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                     onClick={() => handlePRAction(pr.id, "reject")}
                                   >
-                                    <XCircle size={12} /> Reject
+                                    <XCircle size={11} /> Reject
                                   </Button>
                                 </div>
                               </td>
@@ -4051,10 +4051,10 @@ const AuthenticatedApp = () => {
 
                           return (
                             <tr key={po.id} className="hover:bg-orange-50/40">
-                              <td className="py-2 px-3 font-medium text-slate-800">{po.poNo}</td>
-                              <td className="py-2 px-3 text-slate-500">{po.date || po.poDate}</td>
+                              <td className="py-2 px-3 font-medium text-slate-800" title={po.poNo}><span className="cell-text">{po.poNo}</span></td>
+                              <td className="py-2 px-3 text-slate-500" title={po.date || po.poDate}><span className="cell-text">{po.date || po.poDate}</span></td>
                               <td className="py-2 px-3">
-                                <span className="bg-gray-100 px-2 py-0.5 rounded text-xs border border-gray-200">
+                                <span className="bg-gray-100 px-2 py-0.5 rounded text-xs border border-gray-200 cell-text" title={po.costCode}>
                                   {po.costCode}
                                 </span>
                               </td>
@@ -4068,17 +4068,17 @@ const AuthenticatedApp = () => {
                                 <div className="flex justify-center gap-1">
                                   <Button
                                     variant="success"
-                                    className="px-3 py-1 text-[11px]"
+                                    className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                     onClick={() => handlePOAction(po.id, "approve")}
                                   >
-                                    <CheckCircle size={12} /> {approveLabel}
+                                    <CheckCircle size={11} /> {approveLabel}
                                   </Button>
                                   <Button
                                     variant="danger"
-                                    className="px-3 py-1 text-[11px]"
+                                    className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                     onClick={() => handlePOAction(po.id, "reject")}
                                   >
-                                    <XCircle size={12} /> Reject
+                                    <XCircle size={11} /> Reject
                                   </Button>
                                 </div>
                               </td>
@@ -4352,14 +4352,14 @@ const AuthenticatedApp = () => {
                                   <>
                                     <Button
                                       variant="success"
-                                      className="px-2 py-0.5 text-[10px]"
+                                      className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                       onClick={() => handleApproveBudget(b.id)}
                                     >
                                       Approve
                                     </Button>
                                     <Button
                                       variant="danger"
-                                      className="px-2 py-0.5 text-[10px]"
+                                      className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                       onClick={() => openRejectModal(b)}
                                     >
                                       Reject
@@ -4577,20 +4577,8 @@ const AuthenticatedApp = () => {
                                     )}
                                     {(userRole === "MD" || userRole === "Administrator") && sub.status === "Wait MD Approve" && (
                                       <>
-                                        <Button
-                                          variant="success"
-                                          className="px-2 py-0.5 text-[10px]"
-                                          onClick={() => handleApproveSubItem(b.id, sub.id)}
-                                        >
-                                          Approve
-                                        </Button>
-                                        <Button
-                                          variant="danger"
-                                          className="px-2 py-0.5 text-[10px]"
-                                          onClick={(e) => { e.stopPropagation(); openReasonModal("reject", b.id, sub.id); }}
-                                        >
-                                          Reject
-                                        </Button>
+                                        <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleApproveSubItem(b.id, sub.id)}>Approve</Button>
+                                        <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={(e) => { e.stopPropagation(); openReasonModal("reject", b.id, sub.id); }}>Reject</Button>
                                       </>
                                     )}
                                   </div>
@@ -5162,6 +5150,7 @@ const AuthenticatedApp = () => {
       });
       setLineItems(pr.items || []);
       setIsModalOpen(true);
+      setIsFullScreenModalOpen(true);
     };
 
     const handleSavePR = async () => {
@@ -5239,6 +5228,7 @@ const AuthenticatedApp = () => {
 
       if (success) {
         setIsModalOpen(false);
+        setIsFullScreenModalOpen(false);
         setHeaderData({
           prNo: "",
           subCode: "",
@@ -5261,15 +5251,10 @@ const AuthenticatedApp = () => {
     const handleToggleSubItem = (sub, budgetCode, budgetId) => {
       setSelectedSubItemsForPR((prev) => {
         const withBudgetId = { ...sub, parentCode: budgetCode, parentBudgetId: budgetId || (typeof sub.id === "string" && sub.id.startsWith("main-") ? sub.id.replace("main-", "") : null) };
-        // Enforce single budget source (same code or same budget id)
-        if (prev.length > 0) {
-          const first = prev[0];
-          const sameSource = (first.parentBudgetId && withBudgetId.parentBudgetId && first.parentBudgetId === withBudgetId.parentBudgetId) || first.parentCode === budgetCode;
-          if (!sameSource) return [withBudgetId];
-        }
-        const exists = prev.find((i) => i.id === sub.id);
-        if (exists) return prev.filter((i) => i.id !== sub.id);
-        return [...prev, withBudgetId];
+        // เลือกได้เพียง 1 รายการเท่านั้น: ถ้ากดซ้ำบนรายการเดิมให้ยกเลิก ถ้ากดรายการใหม่ให้แทนที่
+        const alreadySelected = prev.length === 1 && prev[0].id === sub.id;
+        if (alreadySelected) return [];
+        return [withBudgetId];
       });
     };
 
@@ -5347,6 +5332,7 @@ const AuthenticatedApp = () => {
           <Button
             onClick={() => {
               setIsModalOpen(true);
+              setIsFullScreenModalOpen(true);
               setEditingPRId(null);
               setHeaderData({
                 prNo: "",
@@ -5371,7 +5357,14 @@ const AuthenticatedApp = () => {
           <strong>Flow การอนุมัติ PR:</strong> Pending PM → Pending GM → Pending
           MD → Approved (ออก PO ได้)
         </div>
-        <Card>
+        {/* overlay: คลิกนอก expanded row เพื่อหุบรายการ */}
+        {Object.values(expandedPrRows).some(Boolean) && (
+          <div
+            className="fixed inset-0 z-[5]"
+            onClick={() => setExpandedPrRows({})}
+          />
+        )}
+        <Card className="relative z-[6]">
           <table className="w-full text-left text-xs text-slate-600">
             <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
               <tr>
@@ -5410,38 +5403,26 @@ const AuthenticatedApp = () => {
                         className="hover:bg-blue-50 border-b cursor-pointer transition-colors odd:bg-white even:bg-slate-50"
                         onClick={() => togglePrRow(pr.id)}
                       >
-                        <td className="py-1 px-3 font-medium">{pr.prNo}</td>
-                        <td className="py-1 px-3">{pr.requestDate}</td>
+                        <td className="py-1 px-3 font-medium" title={pr.prNo}><span className="cell-text">{pr.prNo}</span></td>
+                        <td className="py-1 px-3" title={pr.requestDate}><span className="cell-text">{pr.requestDate}</span></td>
                         <td className="py-1 px-3">
-                          <span className="bg-gray-100 px-2 py-0.5 rounded text-xs border border-gray-200">
+                          <span className="bg-gray-100 px-2 py-0.5 rounded text-xs border border-gray-200 cell-text" title={pr.costCode}>
                             {pr.costCode}
                           </span>
                         </td>
                         <td
-                          className="py-1 px-3 text-xs text-slate-500 max-w-[200px] truncate"
-                          title={
-                            budgets.find(
-                              (b) =>
-                                b.code === pr.costCode &&
-                                b.projectId === pr.projectId
-                            )?.description || "-"
-                          }
+                          className="py-1 px-3 text-xs text-slate-500"
+                          title={(() => {
+                            const desc = budgets.find((b) => b.code === pr.costCode && b.projectId === pr.projectId)?.description || "-";
+                            return pr.rejectReason ? `${desc} | ปฏิเสธ: ${pr.rejectReason}` : desc;
+                          })()}
                         >
-                          <div>
-                            {budgets.find(
-                              (b) =>
-                                b.code === pr.costCode &&
-                                b.projectId === pr.projectId
-                            )?.description || "-"}
-                            {pr.rejectReason && (
-                              <div className="text-xs text-red-600 bg-red-50 px-1.5 py-0.5 rounded mt-0.5 border border-red-200 inline-block whitespace-normal">
-                                เหตุผลปฏิเสธ: {pr.rejectReason}
-                              </div>
-                            )}
-                          </div>
+                          <span className="cell-text">
+                            {budgets.find((b) => b.code === pr.costCode && b.projectId === pr.projectId)?.description || "-"}
+                          </span>
                         </td>
-                        <td className="py-1 px-3">{pr.purchaseType}</td>
-                        <td className="py-1 px-3">{pr.requestor}</td>
+                        <td className="py-1 px-3" title={pr.purchaseType}><span className="cell-text">{getPurchaseTypeDisplayLabel(pr.purchaseType)}</span></td>
+                        <td className="py-1 px-3" title={pr.requestor}><span className="cell-text">{pr.requestor}</span></td>
                         <td className="py-1 px-3">
                           <div className="flex items-center gap-2">
                             <span className="font-bold text-slate-700">
@@ -5468,74 +5449,26 @@ const AuthenticatedApp = () => {
                         >
                           {(userRole === "CM" || userRole === "Administrator") && pr.status === "Pending CM" && (
                             <>
-                              <Button
-                                variant="success"
-                                className="px-2 py-0.5 text-[10px]"
-                                onClick={() => handleAction(pr.id, "approve")}
-                              >
-                                CM Approve
-                              </Button>
-                              <Button
-                                variant="danger"
-                                className="px-2 py-0.5 text-[10px]"
-                                onClick={() => handleAction(pr.id, "reject")}
-                              >
-                                Reject
-                              </Button>
+                              <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>CM Approve</Button>
+                              <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>
                             </>
                           )}
                           {(userRole === "PM" || userRole === "Administrator") && pr.status === "Pending PM" && (
                             <>
-                              <Button
-                                variant="success"
-                                className="px-2 py-0.5 text-[10px]"
-                                onClick={() => handleAction(pr.id, "approve")}
-                              >
-                                PM Approve
-                              </Button>
-                              <Button
-                                variant="danger"
-                                className="px-2 py-0.5 text-[10px]"
-                                onClick={() => handleAction(pr.id, "reject")}
-                              >
-                                Reject
-                              </Button>
+                              <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>PM Approve</Button>
+                              <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>
                             </>
                           )}
                           {(userRole === "GM" || userRole === "Administrator") && pr.status === "Pending GM" && (
                             <>
-                              <Button
-                                variant="success"
-                                className="px-2 py-0.5 text-[10px]"
-                                onClick={() => handleAction(pr.id, "approve")}
-                              >
-                                GM Approve
-                              </Button>
-                              <Button
-                                variant="danger"
-                                className="px-2 py-0.5 text-[10px]"
-                                onClick={() => handleAction(pr.id, "reject")}
-                              >
-                                Reject
-                              </Button>
+                              <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>GM Approve</Button>
+                              <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>
                             </>
                           )}
                           {(userRole === "MD" || userRole === "Administrator") && pr.status === "Pending MD" && (
                             <>
-                              <Button
-                                variant="success"
-                                className="px-2 py-0.5 text-[10px]"
-                                onClick={() => handleAction(pr.id, "approve")}
-                              >
-                                MD Approve
-                              </Button>
-                              <Button
-                                variant="danger"
-                                className="px-2 py-0.5 text-[10px]"
-                                onClick={() => handleAction(pr.id, "reject")}
-                              >
-                                Reject
-                              </Button>
+                              <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>MD Approve</Button>
+                              <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>
                             </>
                           )}
                           {pr.status === "Rejected" && (
@@ -5563,7 +5496,7 @@ const AuthenticatedApp = () => {
                         </td>
                       </tr>
                       {expandedPrRows[pr.id] && (
-                        <tr className="bg-slate-50/50">
+                        <tr className="bg-slate-50/50 relative z-[7]">
                           <td colSpan={10} className="p-4 border-b cursor-default" onClick={(e) => e.stopPropagation()}>
                             <div className="bg-white rounded-lg border border-slate-200 p-3 shadow-sm ml-8">
                               <h5 className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-2">
@@ -5659,14 +5592,14 @@ const AuthenticatedApp = () => {
         )}
         {isModalOpen && (
           <motion.div
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start md:items-center justify-center z-50 p-2 md:p-4"
             initial="hidden"
             animate="visible"
             variants={modalOverlayVariants}
             transition={overlayTransition}
           >
             <motion.div
-              className="w-full max-w-5xl h-[82vh] flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
+              className="w-full max-w-5xl h-[82vh] max-h-[calc(100vh-2rem)] flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
               initial="hidden"
               animate="visible"
               variants={modalContentVariants}
@@ -5689,7 +5622,10 @@ const AuthenticatedApp = () => {
                     </div>
                   </div>
                   <button
-                    onClick={() => setIsModalOpen(false)}
+                    onClick={() => {
+                      setIsModalOpen(false);
+                      setIsFullScreenModalOpen(false);
+                    }}
                     className="text-slate-300 hover:text-white hover:bg-slate-500 p-2 rounded-lg transition-all duration-200"
                   >
                     <XCircle size={22} />
@@ -5699,7 +5635,7 @@ const AuthenticatedApp = () => {
 
               {/* Scrollable Content */}
               <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5 bg-slate-50/50">
-                {/* Header Fields - Section 1: ข้อมูลหลัก */}
+                {/* Header Fields - Section 1: ข้อมูลใบขอซื้อ */}
                 <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
                   <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 border-b border-slate-200">
                     <div className="w-6 h-6 bg-slate-600 rounded-md flex items-center justify-center">
@@ -5709,8 +5645,8 @@ const AuthenticatedApp = () => {
                   </div>
                   <div className="p-5">
                     <div className="grid grid-cols-6 gap-x-4 gap-y-4">
-                      {/* Row 1 */}
-                      <div>
+                      {/* Row 1: PR No. / ประเภท / Sub-Code */}
+                      <div className="col-span-2">
                         <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
                           <Hash size={11} className="text-slate-500" /> PR No.
                         </label>
@@ -5722,7 +5658,7 @@ const AuthenticatedApp = () => {
                           placeholder="(auto)"
                         />
                       </div>
-                      <div>
+                      <div className="col-span-2">
                         <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
                           <Tag size={11} className="text-slate-500" /> ประเภทการขอซื้อ
                         </label>
@@ -5748,13 +5684,13 @@ const AuthenticatedApp = () => {
                           <option value="">-- เลือกประเภท --</option>
                           {PURCHASE_TYPES.map((t) => (
                             <option key={t} value={t}>
-                              {t}
+                              {getPurchaseTypeDisplayLabel(t)}
                             </option>
                           ))}
                         </select>
                       </div>
-                      {headerData.purchaseType && headerData.purchaseType !== PURCHASE_TYPE_EQUIPMENT && (PURCHASE_TYPE_CODES[headerData.purchaseType] || []).length > 1 ? (
-                        <div>
+                      {headerData.purchaseType && headerData.purchaseType !== PURCHASE_TYPE_EQUIPMENT && (PURCHASE_TYPE_CODES[headerData.purchaseType] || []).length > 1 && (
+                        <div className="col-span-2">
                           <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
                             <CircleDot size={11} className="text-slate-500" />
                             {headerData.purchaseType === PURCHASE_TYPE_RENTAL_LABEL ? "Type การเช่า" : "Sub-Code"}
@@ -5775,33 +5711,15 @@ const AuthenticatedApp = () => {
                             <option value="">-- เลือก --</option>
                             {(PURCHASE_TYPE_CODES[headerData.purchaseType] || []).map((code) => (
                               <option key={code} value={code}>
-                                {code}{headerData.purchaseType === PURCHASE_TYPE_RENTAL_LABEL ? (code === "RT" ? " (RT)" : code === "RI" ? " (RI)" : "") : ""}
+                                {code}
                               </option>
                             ))}
                           </select>
                         </div>
-                      ) : (
-                        <div>
-                          <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
-                            <Calendar size={11} className="text-slate-500" /> วันที่ขอซื้อ
-                          </label>
-                          <div className="relative">
-                            <input
-                              type="date"
-                              className="w-full border border-slate-200 rounded-lg px-3 py-2 pl-9 text-sm hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all"
-                              value={headerData.requestDate}
-                              onChange={(e) =>
-                                setHeaderData({
-                                  ...headerData,
-                                  requestDate: e.target.value,
-                                })
-                              }
-                            />
-                            <Calendar className="absolute left-3 top-2.5 text-slate-400" size={14} />
-                          </div>
-                        </div>
                       )}
-                      <div>
+
+                      {/* Row 2: ผู้ขอซื้อ / อีเมล / สถานที่จัดส่ง */}
+                      <div className="col-span-2">
                         <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
                           <UserCircle size={11} className="text-slate-500" /> ผู้ขอซื้อ
                         </label>
@@ -5820,7 +5738,7 @@ const AuthenticatedApp = () => {
                           <UserCircle className="absolute left-3 top-2.5 text-slate-400" size={14} />
                         </div>
                       </div>
-                      <div>
+                      <div className="col-span-2">
                         <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
                           <AtSign size={11} className="text-slate-500" /> อีเมลผู้ขอซื้อ
                         </label>
@@ -5840,7 +5758,7 @@ const AuthenticatedApp = () => {
                           <Mail className="absolute left-3 top-2.5 text-slate-400" size={14} />
                         </div>
                       </div>
-                      <div>
+                      <div className="col-span-2">
                         <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
                           <Building2 size={11} className="text-slate-500" /> สถานที่จัดส่ง
                         </label>
@@ -5865,78 +5783,28 @@ const AuthenticatedApp = () => {
                           <MapPinned className="absolute left-3 top-2.5 text-slate-400 pointer-events-none" size={14} />
                         </div>
                       </div>
-                    </div>
-                  </div>
-                </div>
 
-                {/* Header Fields - Section 2: ข้อมูลเพิ่มเติม */}
-                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                  <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 border-b border-slate-200">
-                    <div className="w-6 h-6 bg-slate-600 rounded-md flex items-center justify-center">
-                      <Settings size={13} className="text-white" />
-                    </div>
-                    <span className="text-xs font-bold text-slate-700 tracking-wide uppercase">ข้อมูลเพิ่มเติม</span>
-                  </div>
-                  <div className="p-5">
-                    <div className="grid grid-cols-6 gap-x-4 gap-y-4">
-                      {/* Row 2: วันที่ขอซื้อ (เมื่อมี Sub-Code/Type การเช่า ไม่แสดงสำหรับอุปกรณ์ใหม่) */}
-                      {headerData.purchaseType && headerData.purchaseType !== PURCHASE_TYPE_EQUIPMENT && (PURCHASE_TYPE_CODES[headerData.purchaseType] || []).length > 1 && (
-                        <div>
-                          <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
-                            <Calendar size={11} className="text-slate-500" /> วันที่ขอซื้อ
-                          </label>
-                          <div className="relative">
-                            <input
-                              type="date"
-                              className="w-full border border-slate-200 rounded-lg px-3 py-2 pl-9 text-sm hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all"
-                              value={headerData.requestDate}
-                              onChange={(e) =>
-                                setHeaderData({
-                                  ...headerData,
-                                  requestDate: e.target.value,
-                                })
-                              }
-                            />
-                            <Calendar className="absolute left-3 top-2.5 text-slate-400" size={14} />
-                          </div>
-                        </div>
-                      )}
-                      <div>
+                      {/* Row 3: วันที่ขอซื้อ / ความเร่งด่วน / แนบไฟล์ */}
+                      <div className="col-span-2">
                         <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
-                          <DollarSign size={11} className="text-slate-500" /> Cost Code
+                          <Calendar size={11} className="text-slate-500" /> วันที่ขอซื้อ
                         </label>
                         <div className="relative">
                           <input
-                            type="text"
-                            className="w-full border border-dashed border-slate-300 rounded-lg px-3 py-2 pr-9 text-sm bg-slate-50 cursor-pointer font-medium text-slate-700 hover:border-slate-400 transition-all duration-200"
-                            value={
-                              headerData.costCode ? `${headerData.costCode}` : ""
+                            type="date"
+                            className="w-full border border-slate-200 rounded-lg px-3 py-2 pl-9 text-sm hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all"
+                            value={headerData.requestDate}
+                            onChange={(e) =>
+                              setHeaderData({
+                                ...headerData,
+                                requestDate: e.target.value,
+                              })
                             }
-                            placeholder="คลิกเพื่อเลือก"
-                            readOnly
-                            onClick={() =>
-                              !editingPRId && setIsCostCodeModalOpen(true)
-                            }
-                            disabled={!!editingPRId}
                           />
-                          <ListFilter className="absolute right-3 top-2.5 text-slate-500" size={14} />
+                          <Calendar className="absolute left-3 top-2.5 text-slate-400" size={14} />
                         </div>
-                        {headerData.costCode && (() => {
-                          const selectedBudget = headerData.selectedBudgetId
-                            ? availableBudgets.find((b) => b.id === headerData.selectedBudgetId)
-                            : availableBudgets.find((b) => b.code === headerData.costCode);
-                          return selectedBudget ? (
-                            <div className="flex items-center gap-1 mt-1.5 px-2 py-0.5 bg-slate-100 rounded-lg w-fit ml-auto">
-                              <Wallet size={10} className="text-slate-500" />
-                              <span className="text-[10px] text-slate-600 font-semibold">
-                                คงเหลือ:{" "}
-                                {formatCurrency(selectedBudget.remainingBalance)}
-                              </span>
-                            </div>
-                          ) : null;
-                        })()}
                       </div>
-                      <div className="flex items-end pb-1">
+                      <div className="col-span-2 flex items-end pb-1">
                         <div>
                           <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-2 uppercase tracking-wider">
                             <Zap size={11} className="text-slate-500" /> ความเร่งด่วน
@@ -5989,9 +5857,75 @@ const AuthenticatedApp = () => {
                           </div>
                           <input
                             type="file"
-                            className="text-xs text-slate-500 file:mr-3 file:py-1 file:px-3 file:rounded file:border file:border-slate-300 file:text-[10px] file:font-medium file:bg-white file:text-slate-700 hover:file:bg-slate-50 file:transition-colors file:cursor-pointer"
+                            className="hidden"
+                            id="pr-attachment"
+                            onChange={(e) =>
+                              setHeaderData({
+                                ...headerData,
+                                attachment: e.target.files?.[0] || null,
+                              })
+                            }
                           />
+                          <label
+                            htmlFor="pr-attachment"
+                            className="flex-1 text-xs text-slate-600 cursor-pointer"
+                          >
+                            {headerData.attachment
+                              ? headerData.attachment.name
+                              : "คลิกเพื่อเลือกไฟล์แนบ (PDF, Image, Excel ฯลฯ)"}
+                          </label>
                         </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Header Fields - Section 2: เลือกรายการที่ Approve */}
+                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                  <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 border-b border-slate-200">
+                    <div className="w-6 h-6 bg-slate-600 rounded-md flex items-center justify-center">
+                      <Settings size={13} className="text-white" />
+                    </div>
+                    <span className="text-xs font-bold text-slate-700 tracking-wide uppercase">
+                      เลือกรายการที่ Approve
+                    </span>
+                  </div>
+                  <div className="p-5">
+                    <div className="grid grid-cols-6 gap-x-4 gap-y-4">
+                      <div className="col-span-3 md:col-span-2 lg:col-span-2">
+                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
+                          <DollarSign size={11} className="text-slate-500" /> Cost Code
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            className="w-full border border-dashed border-slate-300 rounded-lg px-3 py-2 pr-9 text-sm bg-slate-50 cursor-pointer font-medium text-slate-700 hover:border-slate-400 transition-all duration-200"
+                            value={
+                              headerData.costCode ? `${headerData.costCode}` : ""
+                            }
+                            placeholder="คลิกเพื่อเลือก"
+                            readOnly
+                            onClick={() =>
+                              !editingPRId && setIsCostCodeModalOpen(true)
+                            }
+                            disabled={!!editingPRId}
+                          />
+                          <ListFilter className="absolute right-3 top-2.5 text-slate-500" size={14} />
+                        </div>
+                        {headerData.costCode && (() => {
+                          const selectedBudget = headerData.selectedBudgetId
+                            ? availableBudgets.find((b) => b.id === headerData.selectedBudgetId)
+                            : availableBudgets.find((b) => b.code === headerData.costCode);
+                          return selectedBudget ? (
+                            <div className="flex items-center gap-1 mt-1.5 px-2 py-0.5 bg-slate-100 rounded-lg w-fit ml-auto">
+                              <Wallet size={10} className="text-slate-500" />
+                              <span className="text-[10px] text-slate-600 font-semibold">
+                                คงเหลือ:{" "}
+                                {formatCurrency(selectedBudget.remainingBalance)}
+                              </span>
+                            </div>
+                          ) : null;
+                        })()}
                       </div>
                     </div>
                   </div>
@@ -6205,7 +6139,10 @@ const AuthenticatedApp = () => {
                 <div className="flex gap-3">
                   <Button
                     variant="secondary"
-                    onClick={() => setIsModalOpen(false)}
+                    onClick={() => {
+                      setIsModalOpen(false);
+                      setIsFullScreenModalOpen(false);
+                    }}
                     className="px-5 rounded-lg"
                   >
                     <XCircle size={15} /> ยกเลิก
@@ -6312,8 +6249,8 @@ const AuthenticatedApp = () => {
                                     <td className="py-1.5 px-3 font-medium text-slate-700">
                                       <div className="flex items-center gap-2">
                                         {(!b.subItems || b.subItems.length === 0) && (
-                                          <span className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center mr-2 ${selectedSubItemsForPR.some((i) => i.id === `main-${b.id}`) ? "bg-blue-600 border-blue-600 text-white" : "border-slate-300"}`}>
-                                            {selectedSubItemsForPR.some((i) => i.id === `main-${b.id}`) && <span className="text-[10px]">✓</span>}
+                                          <span className={`w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center mr-2 transition-all ${selectedSubItemsForPR.some((i) => i.id === `main-${b.id}`) ? "border-blue-600 bg-blue-600" : "border-slate-300 bg-white"}`}>
+                                            {selectedSubItemsForPR.some((i) => i.id === `main-${b.id}`) && <span className="w-1.5 h-1.5 rounded-full bg-white block" />}
                                           </span>
                                         )}
                                         {b.subItems && b.subItems.length > 0 && (
@@ -6367,8 +6304,8 @@ const AuthenticatedApp = () => {
                                           }}
                                         >
                                           <td className="py-1.5 px-3 pl-8 border-l-2 border-blue-100">
-                                            <span className={`inline-flex w-4 h-4 rounded border flex-shrink-0 items-center justify-center ${selectedSubItemsForPR.some((i) => i.id === sub.id) ? "bg-blue-600 border-blue-600 text-white" : "border-slate-300"}`}>
-                                              {selectedSubItemsForPR.some((i) => i.id === sub.id) && <span className="text-[10px]">✓</span>}
+                                            <span className={`inline-flex w-4 h-4 rounded-full border-2 flex-shrink-0 items-center justify-center transition-all ${selectedSubItemsForPR.some((i) => i.id === sub.id) ? "border-blue-600 bg-blue-600" : "border-slate-300 bg-white"}`}>
+                                              {selectedSubItemsForPR.some((i) => i.id === sub.id) && <span className="w-1.5 h-1.5 rounded-full bg-white block" />}
                                             </span>
                                           </td>
                                           <td className="py-1.5 px-3 text-slate-700">
@@ -6402,8 +6339,8 @@ const AuthenticatedApp = () => {
               <div className="pt-4 mt-2 border-t flex justify-between items-center">
                 <span className="text-sm text-slate-500">
                   {selectedSubItemsForPR.length > 0
-                    ? `เลือกแล้ว ${selectedSubItemsForPR.length} รายการ`
-                    : ""}
+                    ? <span className="text-blue-700 font-semibold">เลือกแล้ว: {selectedSubItemsForPR[0].description}</span>
+                    : <span className="text-slate-400">กรุณาเลือก 1 รายการ</span>}
                 </span>
                 <div className="flex gap-2">
                   <Button
@@ -6414,7 +6351,7 @@ const AuthenticatedApp = () => {
                   </Button>
                   {selectedSubItemsForPR.length > 0 && (
                     <Button onClick={handleAddSelectedSubItems}>
-                      เพิ่มรายการที่เลือก ({selectedSubItemsForPR.length})
+                      ยืนยันการเลือก
                     </Button>
                   )}
                 </div>
@@ -6435,6 +6372,8 @@ const AuthenticatedApp = () => {
     // UI States
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isVendorModalOpen, setIsVendorModalOpen] = useState(false);
+    const [isPrSelectModalOpen, setIsPrSelectModalOpen] = useState(false);
+    const [tempSelectedPrIds, setTempSelectedPrIds] = useState<string[]>([]);
     const [expandedPoRows, setExpandedPoRows] = useState({});
     const [editingPoId, setEditingPoId] = useState(null);
 
@@ -6445,9 +6384,23 @@ const AuthenticatedApp = () => {
       }));
     };
 
+    // PO Type options
+    const PO_TYPES = [
+      { code: "CR", label: "CR — เครดิต" },
+      { code: "SP", label: "SP — ผู้รับเหมา" },
+      { code: "CC", label: "CC — คอนกรีต" },
+      { code: "OL", label: "OL — น้ำมัน" },
+      { code: "DC", label: "DC — ค่าแรง" },
+      { code: "SM", label: "SM — เงินเดือน" },
+      { code: "CA", label: "CA — เงินสด/เงินโอน" },
+      { code: "RE", label: "RE — เช่า" },
+      { code: "WF", label: "WF — รายจ่ายประจำ" },
+    ];
+
     // Form Data State
     const [formData, setFormData] = useState({
-      poNo: "", // Auto-generated: JobNo-PO-001, 002, ... 999, then 1000, 1001, ...
+      poNo: "",
+      poType: "",
       vendorId: "",
       requiredDate: "",
       vatType: "ex-vat", // "inc-vat" | "ex-vat"
@@ -6456,18 +6409,32 @@ const AuthenticatedApp = () => {
       note: ""
     });
 
-    // Auto-generate PO No.: Job No.-PO-XXX (001..999 แล้วเป็น 1000, 1001, ...)
-    const generatePoNo = () => {
+    // Auto-generate PO No.: PO{YY}{JXX}-{POT}{XXXX}
+    // ตัวอย่าง: PO26J01-CC0001
+    const generatePoNo = (poTypeCode?: string) => {
       if (!selectedProjectId) return "";
       const currentProject = projects.find((p) => p.id === selectedProjectId);
       if (!currentProject || !currentProject.jobNo) return "";
-      const jobNo = String(currentProject.jobNo).trim();
-      const prefix = `${jobNo}-PO-`;
+      const typeCode = poTypeCode || formData.poType;
+      if (!typeCode) return "";
+
+      // YY = 2 ตัวท้าย ค.ศ.
+      const yy = String(new Date().getFullYear()).slice(-2);
+
+      // JXX = Job No. ไม่มีขีด เช่น J-01 → J01
+      const jobRaw = String(currentProject.jobNo).trim();
+      const jxx = jobRaw.replace(/-/g, "");
+
+      // prefix คือส่วนที่ใช้นับ running number ของ type นี้
+      const prefix = `PO${yy}${jxx}-${typeCode}`;
+
+      // นับ PO ที่มี prefix เดียวกัน (ไม่รวมที่กำลัง edit)
       const existingCount = pos.filter(
-        (po) => po.projectId === selectedProjectId && po.poNo && po.poNo.startsWith(prefix)
+        (po) => po.poNo && po.poNo.startsWith(prefix)
       ).length;
       const nextNo = existingCount + 1;
-      const suffix = nextNo <= 999 ? String(nextNo).padStart(3, "0") : String(nextNo);
+      // XXXX = 4 หลัก 0001..9999
+      const suffix = String(nextNo).padStart(4, "0");
       return `${prefix}${suffix}`;
     };
 
@@ -6548,14 +6515,14 @@ const AuthenticatedApp = () => {
                 prNo: pr.prNo,
                 prDescription: budgets.find(b => b.code === pr.costCode && b.projectId === pr.projectId)?.description || "-",
                 prItemIndex: idx,
+                materialNo: item.materialNo || "",
                 description: item.description,
                 unit: item.unit,
                 originalQty: item.quantity,
                 usedQty: used,
                 remainingQty: remaining,
                 costCode: pr.costCode,
-                // Default values for PO Item
-                orderQty: remaining, // Default to remaining
+                orderQty: remaining,
                 price: item.price,
                 amount: remaining * item.price
               });
@@ -6565,6 +6532,15 @@ const AuthenticatedApp = () => {
       });
       return items;
     }, [formData.selectedPrIds, approvedPRs, pos, budgets]);
+
+    // คำนวณยอดรวม PR ที่เลือกทั้งหมด (สำหรับ validation Grand Total)
+    const selectedPrsTotalAmount = useMemo(() => {
+      return formData.selectedPrIds.reduce((sum, prId) => {
+        const pr = approvedPRs.find(p => p.id === prId);
+        if (!pr || !pr.items) return sum;
+        return sum + pr.items.reduce((s, i) => s + Number(i.quantity) * Number(i.price), 0);
+      }, 0);
+    }, [formData.selectedPrIds, approvedPRs]);
 
     // Handle Item Checkbox (Include in PO)
     const handleItemToggle = (itemData) => {
@@ -6582,12 +6558,15 @@ const AuthenticatedApp = () => {
           items: [...prev.items, {
             prId: itemData.prId,
             prItemIndex: itemData.prItemIndex,
+            materialNo: itemData.materialNo || "",
             description: itemData.description,
-            quantity: itemData.orderQty,
+            prDescription: itemData.prDescription,
+            remainingQty: itemData.remainingQty,
             unit: itemData.unit,
+            quantity: itemData.orderQty,
             price: itemData.price,
             amount: itemData.amount,
-            costCode: itemData.costCode // Include Cost Code for Budget Tracking
+            costCode: itemData.costCode
           }]
         }));
       }
@@ -6630,21 +6609,34 @@ const AuthenticatedApp = () => {
     };
 
     const handleSavePO = async () => {
+      if (!formData.poType) {
+        return showAlert("ข้อมูลไม่ครบ", "กรุณาเลือก PO Type ก่อน", "warning");
+      }
       if (!formData.poNo || !formData.vendorId || formData.items.length === 0) {
         return showAlert("ข้อมูลไม่ครบ", "กรุณาระบุ PO No., Vendor, และเลือกรายการสินค้าอย่างน้อย 1 รายการ", "warning");
       }
 
       const totals = calculateTotals();
 
+      // ตรวจสอบ Grand Total ต้องไม่เกินยอดรวมของ PR ที่เลือก
+      if (totals.total > selectedPrsTotalAmount * 1.001) {
+        return showAlert(
+          "ยอดเกิน PR",
+          `Grand Total (${formatCurrency(totals.total)}) ต้องไม่เกินยอดรวมของ PR ที่เลือก (${formatCurrency(selectedPrsTotalAmount)})`,
+          "warning"
+        );
+      }
+
       const basePayload = {
         poNo: formData.poNo,
+        poType: formData.poType,
         projectId: selectedProjectId,
         vendorId: formData.vendorId,
         requiredDate: formData.requiredDate,
         vatType: formData.vatType,
         items: formData.items,
         amount: totals.total,
-        status: "Pending PCM", // กลับเข้าสู่ Flow อนุมัติใหม่ทุกครั้งที่บันทึก
+        status: "Pending PCM",
         createdDate: new Date().toISOString(),
         rejectReason: "",
       };
@@ -6669,9 +6661,10 @@ const AuthenticatedApp = () => {
 
       if (success) {
         setIsModalOpen(false);
+        setIsFullScreenModalOpen(false);
         setEditingPoId(null);
         setFormData({
-          poNo: "", vendorId: "", requiredDate: "", vatType: "ex-vat", selectedPrIds: [], items: [], note: ""
+          poNo: "", poType: "", vendorId: "", requiredDate: "", vatType: "ex-vat", selectedPrIds: [], items: [], note: ""
         });
         showAlert("สำเร็จ", "บันทึกใบสั่งซื้อ PDF (PO) เรียบร้อย", "success");
       }
@@ -6730,10 +6723,10 @@ const AuthenticatedApp = () => {
           />
           <Button
             onClick={() => {
-              const nextPoNo = generatePoNo();
               setEditingPoId(null);
               setFormData({
-                poNo: nextPoNo,
+                poNo: "",
+                poType: "",
                 vendorId: "",
                 requiredDate: "",
                 vatType: "ex-vat",
@@ -6742,6 +6735,7 @@ const AuthenticatedApp = () => {
                 note: "",
               });
               setIsModalOpen(true);
+              setIsFullScreenModalOpen(true);
             }}
             variant="warning"
           >
@@ -6759,6 +6753,7 @@ const AuthenticatedApp = () => {
             <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
               <tr>
                 <th className="py-2 px-3">PO No.</th>
+                <th className="py-2 px-3 text-center">Type</th>
                 <th className="py-2 px-3">Ref PR No.</th>
                 <th className="py-2 px-3">Description PR</th>
                 <th className="py-2 px-3">Vendor</th>
@@ -6787,10 +6782,17 @@ const AuthenticatedApp = () => {
                         className="hover:bg-blue-50 cursor-pointer transition-colors border-b odd:bg-white even:bg-slate-50"
                         onClick={() => togglePoRow(po.id)}
                       >
-                        <td className="py-2 px-3 font-medium text-blue-700">{po.poNo}</td>
-                        <td className="py-2 px-3 text-xs">{prNos}</td>
-                        <td className="py-2 px-3 text-xs text-slate-600 max-w-[200px] truncate" title={descSummary}>{descSummary}</td>
-                        <td className="py-2 px-3">{vendor?.name || "-"}</td>
+                        <td className="py-2 px-3 font-medium text-blue-700" title={po.poNo}><span className="cell-text">{po.poNo}</span></td>
+                        <td className="py-2 px-3 text-center">
+                          {po.poType && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 whitespace-nowrap">
+                              {po.poType}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 px-3 text-xs" title={prNos}><span className="cell-text">{prNos}</span></td>
+                        <td className="py-2 px-3 text-xs text-slate-600" title={descSummary}><span className="cell-text">{descSummary}</span></td>
+                        <td className="py-2 px-3" title={vendor?.name || "-"}><span className="cell-text">{vendor?.name || "-"}</span></td>
                         <td className="py-2 px-3 text-center">{po.items ? po.items.length : 1}</td>
                         <td className="py-2 px-3 text-right font-semibold">{formatCurrency(po.amount)}</td>
                         <td className="py-2 px-3 text-center">
@@ -6810,14 +6812,14 @@ const AuthenticatedApp = () => {
                           {/* Approval Buttons */}
                           {po.status === "Pending PCM" && (userRole === "PCM" || userRole === "Administrator") && (
                             <>
-                              <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px]" onClick={() => handleAction(po.id, "approve")}>PCM Approve</Button>
-                              <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px]" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>
+                              <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(po.id, "approve")}>PCM Approve</Button>
+                              <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>
                             </>
                           )}
                           {po.status === "Pending GM" && (userRole === "GM" || userRole === "Administrator") && (
                             <>
-                              <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px]" onClick={() => handleAction(po.id, "approve")}>GM Approve</Button>
-                              <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px]" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>
+                              <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(po.id, "approve")}>GM Approve</Button>
+                              <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>
                             </>
                           )}
                           {po.status === "Rejected" && (userRole === "Procurement" || userRole === "Administrator") && (
@@ -6830,6 +6832,7 @@ const AuthenticatedApp = () => {
                                 const prIdsFromItems = po.items ? [...new Set(po.items.map(i => i.prId))] : (po.prRefId ? [po.prRefId] : []);
                                 setFormData({
                                   poNo: po.poNo || "",
+                                  poType: po.poType || "",
                                   vendorId: po.vendorId || "",
                                   requiredDate: po.requiredDate || "",
                                   vatType: po.vatType || "ex-vat",
@@ -6839,6 +6842,7 @@ const AuthenticatedApp = () => {
                                 });
                                 setEditingPoId(po.id);
                                 setIsModalOpen(true);
+                                setIsFullScreenModalOpen(true);
                               }}
                             >
                               Edit
@@ -6857,7 +6861,7 @@ const AuthenticatedApp = () => {
                       </tr>
                       {expandedPoRows[po.id] && (
                         <tr className="bg-slate-50/50">
-                          <td colSpan={8} className="p-4 border-b cursor-default" onClick={(e) => e.stopPropagation()}>
+                          <td colSpan={9} className="p-4 border-b cursor-default" onClick={(e) => e.stopPropagation()}>
                             <div className="bg-white rounded-lg border border-slate-200 p-3 shadow-sm ml-8">
                               <h5 className="text-xs font-bold text-slate-700 mb-1 flex items-center gap-2">
                                 <ShoppingCart size={14} /> รายการสั่งซื้อใน PO: {po.poNo}
@@ -6912,14 +6916,14 @@ const AuthenticatedApp = () => {
         {/* Create PO Modal */}
         {isModalOpen && (
           <motion.div
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start md:items-center justify-center z-50 p-2 md:p-4"
             initial="hidden"
             animate="visible"
             variants={modalOverlayVariants}
             transition={overlayTransition}
           >
             <motion.div
-              className="w-full max-w-5xl h-[82vh] flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
+              className="w-full max-w-5xl h-[82vh] max-h-[calc(100vh-2rem)] flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
               initial="hidden"
               animate="visible"
               variants={modalContentVariants}
@@ -6939,7 +6943,10 @@ const AuthenticatedApp = () => {
                     </div>
                   </div>
                   <button
-                    onClick={() => setIsModalOpen(false)}
+                    onClick={() => {
+                      setIsModalOpen(false);
+                      setIsFullScreenModalOpen(false);
+                    }}
                     className="text-white/70 hover:text-white hover:bg-white/20 p-2 rounded-xl transition-all duration-200 border border-transparent hover:border-white/30"
                   >
                     <XCircle size={22} />
@@ -6959,6 +6966,28 @@ const AuthenticatedApp = () => {
                   </div>
                   <div className="p-5">
                     <div className="grid grid-cols-4 gap-x-4 gap-y-4">
+                      {/* PO Type */}
+                      <div>
+                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1.5 uppercase tracking-wider">
+                          <Tag size={11} className="text-red-500" /> PO Type
+                        </label>
+                        <select
+                          className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white hover:border-red-300 focus:border-red-500 focus:ring-2 focus:ring-red-100 transition-all cursor-pointer text-slate-900"
+                          value={formData.poType}
+                          disabled={!!editingPoId}
+                          onChange={(e) => {
+                            const newType = e.target.value;
+                            const newPoNo = newType ? generatePoNo(newType) : "";
+                            setFormData({ ...formData, poType: newType, poNo: newPoNo });
+                          }}
+                        >
+                          <option value="">-- เลือก PO Type --</option>
+                          {PO_TYPES.map((t) => (
+                            <option key={t.code} value={t.code}>{t.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      {/* PO No. (Auto) */}
                       <div>
                         <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1.5 uppercase tracking-wider">
                           <Hash size={11} className="text-red-500" /> PO No. (เลขที่ใบสั่งซื้อ)
@@ -6967,10 +6996,12 @@ const AuthenticatedApp = () => {
                           type="text"
                           readOnly
                           className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-slate-100 text-slate-700 font-mono font-semibold cursor-default"
-                          placeholder="(Auto)"
+                          placeholder={formData.poType ? "(Auto)" : "เลือก PO Type ก่อน"}
                           value={formData.poNo}
                         />
-                        <p className="text-[10px] text-slate-500 mt-0.5">รูปแบบ: Job No.-PO-001 (รันอัตโนมัติ)</p>
+                        <p className="text-[10px] text-slate-500 mt-0.5">
+                          รูปแบบ: PO{String(new Date().getFullYear()).slice(-2)}JXX-{formData.poType || "TYPE"}XXXX
+                        </p>
                       </div>
                       <div className="col-span-2">
                         <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1.5 uppercase tracking-wider">
@@ -7011,45 +7042,65 @@ const AuthenticatedApp = () => {
                   </div>
                 </div>
 
-                {/* 2. เลือกใบขอซื้อ (Select PRs) - โทนแดงขาวดำ */}
+                {/* 2. เลือกใบขอซื้อ (Select PRs) */}
                 <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-                  <div className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-slate-100 to-slate-200/80 border-b border-slate-300">
-                    <div className="w-6 h-6 bg-slate-800 rounded-lg flex items-center justify-center">
-                      <ClipboardList size={13} className="text-white" />
+                  <div className="flex items-center justify-between px-5 py-2.5 bg-gradient-to-r from-slate-100 to-slate-200/80 border-b border-slate-300">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 bg-slate-800 rounded-lg flex items-center justify-center">
+                        <ClipboardList size={13} className="text-white" />
+                      </div>
+                      <span className="text-xs font-bold text-slate-800 tracking-wide uppercase">2. เลือกใบขอซื้อ (Select PRs)</span>
                     </div>
-                    <span className="text-xs font-bold text-slate-800 tracking-wide uppercase">2. เลือกใบขอซื้อ (Select PRs)</span>
+                    <button
+                      type="button"
+                      className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-slate-800 text-white text-xs font-semibold hover:bg-slate-700 transition-all shadow-sm"
+                      onClick={() => {
+                        setTempSelectedPrIds([...formData.selectedPrIds]);
+                        setIsPrSelectModalOpen(true);
+                      }}
+                    >
+                      <ListFilter size={13} /> เลือก PR
+                    </button>
                   </div>
                   <div className="p-5">
-                    <div className="max-h-44 overflow-y-auto grid grid-cols-3 gap-3">
-                      {approvedPRs.length === 0 ? (
-                        <div className="col-span-3 flex flex-col items-center justify-center py-8 text-slate-500">
-                          <ClipboardList size={32} className="mb-2 opacity-50" />
-                          <p className="text-sm font-medium text-slate-700">ไม่มี PR ที่อนุมัติแล้ว</p>
-                          <p className="text-xs mt-0.5 text-slate-500">เมื่อมีใบขอซื้อที่อนุมัติแล้ว จะแสดงในส่วนนี้</p>
-                        </div>
-                      ) : (
-                        approvedPRs.map(pr => {
-                          const prDesc = budgets.find(b => b.code === pr.costCode && b.projectId === pr.projectId)?.description || "-";
+                    {formData.selectedPrIds.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-8 text-slate-400">
+                        <ClipboardList size={32} className="mb-2 opacity-40" />
+                        <p className="text-sm text-slate-500">ยังไม่ได้เลือกใบขอซื้อ</p>
+                        <p className="text-xs mt-0.5">กดปุ่ม "เลือก PR" เพื่อเลือกใบขอซื้อที่อนุมัติแล้ว</p>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {formData.selectedPrIds.map(prId => {
+                          const pr = approvedPRs.find(p => p.id === prId);
+                          if (!pr) return null;
                           return (
-                            <label
-                              key={pr.id}
-                              className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all duration-200 ${formData.selectedPrIds.includes(pr.id) ? "bg-red-50 border-red-300 shadow-sm" : "border-slate-200 hover:bg-slate-50 hover:border-slate-300"}`}
-                            >
-                              <input type="checkbox" className="mt-1 rounded border-slate-300" checked={formData.selectedPrIds.includes(pr.id)} onChange={() => handlePrToggle(pr.id)} />
-                              <div className="text-xs min-w-0 flex-1">
-                                <div className="font-bold text-slate-800 flex items-center gap-1">
-                                  <Hash size={10} className="text-red-500 shrink-0" /> {pr.prNo}
-                                </div>
-                                <div className="text-slate-500 truncate mt-0.5">{prDesc}</div>
-                                <div className="text-slate-400 mt-0.5 flex items-center gap-1">
-                                  <UserCircle size={10} className="shrink-0" /> {pr.requestor}
-                                </div>
-                              </div>
-                            </label>
+                            <div key={prId} className="flex items-center gap-2 px-3 py-1.5 bg-red-50 border border-red-200 rounded-lg text-xs">
+                              <Hash size={10} className="text-red-500 shrink-0" />
+                              <span className="font-semibold text-slate-800">{pr.prNo}</span>
+                              <span className="text-slate-500">{pr.requestor}</span>
+                              <button
+                                type="button"
+                                className="ml-1 text-red-400 hover:text-red-600"
+                                onClick={() => handlePrToggle(prId)}
+                              >
+                                <XCircle size={13} />
+                              </button>
+                            </div>
                           );
-                        })
-                      )}
-                    </div>
+                        })}
+                        <button
+                          type="button"
+                          className="flex items-center gap-1 px-3 py-1.5 border border-dashed border-slate-300 rounded-lg text-xs text-slate-500 hover:border-slate-400 hover:text-slate-700 transition-all"
+                          onClick={() => {
+                            setTempSelectedPrIds([...formData.selectedPrIds]);
+                            setIsPrSelectModalOpen(true);
+                          }}
+                        >
+                          <Plus size={12} /> เพิ่ม/แก้ไข
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -7068,51 +7119,94 @@ const AuthenticatedApp = () => {
                           <tr>
                             <th className="p-2.5 w-10 text-center">เลือก</th>
                             <th className="p-2.5 w-24">PR No.</th>
+                            <th className="p-2.5 w-28">Material No.</th>
                             <th className="p-2.5">Description</th>
                             <th className="p-2.5">รายการ</th>
-                            <th className="p-2.5 text-right">เหลือ (QTY)</th>
-                            <th className="p-2.5 w-28">สั่งซื้อ (QTY)</th>
-                            <th className="p-2.5 w-32">ราคา/หน่วย</th>
-                            <th className="p-2.5 text-right">รวม</th>
+                            <th className="p-2.5 w-28">เหลือ (QTY)</th>
+                            <th className="p-2.5 w-24">สั่งซื้อ (QTY)</th>
+                            <th className="p-2.5 w-28">ราคา/หน่วย</th>
+                            <th className="p-2.5 text-right w-24">รวม</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-200 bg-white">
                           {availableItems.map((item) => {
                             const isSelected = formData.items.some(i => i.prId === item.prId && i.prItemIndex === item.prItemIndex);
                             const selectedData = formData.items.find(i => i.prId === item.prId && i.prItemIndex === item.prItemIndex) || item;
+                            const inputCls = "w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed focus:border-red-400 focus:ring-1 focus:ring-red-100 bg-white";
 
                             return (
-                              <tr key={`${item.prId}-${item.prItemIndex}`} className={isSelected ? "bg-white hover:bg-slate-50/50" : "bg-slate-50/50 opacity-70"}>
+                              <tr key={`${item.prId}-${item.prItemIndex}`} className={isSelected ? "bg-white hover:bg-slate-50/30" : "bg-slate-50/60 opacity-60"}>
                                 <td className="p-2.5 text-center">
-                                  <input type="checkbox" checked={isSelected} onChange={() => handleItemToggle(item)} className="rounded border-slate-300" />
+                                  <input type="checkbox" checked={isSelected} onChange={() => handleItemToggle(item)} className="rounded border-slate-300 cursor-pointer" />
                                 </td>
-                                <td className="p-2.5 font-medium text-slate-800">
+                                <td className="p-2.5 font-medium text-slate-800 whitespace-nowrap">
                                   {item.prNo}
                                 </td>
-                                <td className="p-2.5 text-xs text-slate-600">
-                                  {item.prDescription}
+                                {/* Material No. — editable */}
+                                <td className="p-2.5">
+                                  <input
+                                    type="text"
+                                    className={inputCls}
+                                    disabled={!isSelected}
+                                    value={selectedData.materialNo ?? ""}
+                                    placeholder="ระบุ Material No."
+                                    onChange={(e) => handleItemChange(item.prId, item.prItemIndex, "materialNo", e.target.value)}
+                                  />
                                 </td>
-                                <td className="p-2.5 text-slate-600">{item.description}</td>
-                                <td className="p-2.5 text-right text-slate-500">{item.remainingQty} {item.unit}</td>
+                                {/* Description (prDescription) — editable */}
+                                <td className="p-2.5">
+                                  <input
+                                    type="text"
+                                    className={inputCls}
+                                    disabled={!isSelected}
+                                    value={selectedData.prDescription ?? item.prDescription}
+                                    onChange={(e) => handleItemChange(item.prId, item.prItemIndex, "prDescription", e.target.value)}
+                                  />
+                                </td>
+                                {/* รายการ (description) — editable */}
+                                <td className="p-2.5">
+                                  <input
+                                    type="text"
+                                    className={inputCls}
+                                    disabled={!isSelected}
+                                    value={selectedData.description}
+                                    onChange={(e) => handleItemChange(item.prId, item.prItemIndex, "description", e.target.value)}
+                                  />
+                                </td>
+                                {/* เหลือ (QTY) — editable */}
+                                <td className="p-2.5">
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      type="number"
+                                      className={`${inputCls} text-right`}
+                                      disabled={!isSelected}
+                                      value={selectedData.remainingQty ?? item.remainingQty}
+                                      onChange={(e) => handleItemChange(item.prId, item.prItemIndex, "remainingQty", e.target.value)}
+                                    />
+                                    <span className="text-slate-400 text-[10px] shrink-0">{item.unit}</span>
+                                  </div>
+                                </td>
+                                {/* สั่งซื้อ (QTY) — editable */}
                                 <td className="p-2.5">
                                   <input
                                     type="number"
-                                    className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-right text-sm disabled:bg-slate-100 disabled:cursor-not-allowed focus:border-red-400 focus:ring-1 focus:ring-red-100"
+                                    className={`${inputCls} text-right`}
                                     disabled={!isSelected}
                                     value={selectedData.quantity}
                                     onChange={(e) => handleItemChange(item.prId, item.prItemIndex, "quantity", e.target.value)}
                                   />
                                 </td>
+                                {/* ราคา/หน่วย — editable */}
                                 <td className="p-2.5">
                                   <input
                                     type="number"
-                                    className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-right text-sm disabled:bg-slate-100 disabled:cursor-not-allowed focus:border-red-400 focus:ring-1 focus:ring-red-100"
+                                    className={`${inputCls} text-right`}
                                     disabled={!isSelected}
                                     value={selectedData.price}
                                     onChange={(e) => handleItemChange(item.prId, item.prItemIndex, "price", e.target.value)}
                                   />
                                 </td>
-                                <td className="p-2.5 text-right font-bold text-slate-800">
+                                <td className="p-2.5 text-right font-bold text-slate-800 whitespace-nowrap">
                                   {formatCurrency(Number(selectedData.quantity) * Number(selectedData.price))}
                                 </td>
                               </tr>
@@ -7142,14 +7236,173 @@ const AuthenticatedApp = () => {
                 </div>
                 <div className="flex items-center gap-6">
                   <div className="text-right">
+                    {selectedPrsTotalAmount > 0 && (
+                      <div className="text-xs text-slate-500 mb-1">
+                        ยอดรวม PR ที่เลือก:{" "}
+                        <span className="font-semibold text-slate-700">{formatCurrency(selectedPrsTotalAmount)}</span>
+                      </div>
+                    )}
                     <div className="text-sm text-slate-600">ยอดรวม: {formatCurrency(calculateTotals().subtotal)}</div>
                     <div className="text-sm text-slate-600">VAT (7%): {formatCurrency(calculateTotals().vat)}</div>
-                    <div className="text-xl font-bold text-slate-900 mt-0.5 flex items-center gap-1">
-                      <DollarSign size={18} className="text-red-600" /> Grand Total: {formatCurrency(calculateTotals().total)}
+                    <div className={`text-xl font-bold mt-0.5 flex items-center gap-1 ${calculateTotals().total > selectedPrsTotalAmount * 1.001 ? "text-red-600" : "text-slate-900"}`}>
+                      <DollarSign size={18} className={calculateTotals().total > selectedPrsTotalAmount * 1.001 ? "text-red-600" : "text-red-500"} />
+                      Grand Total: {formatCurrency(calculateTotals().total)}
+                      {calculateTotals().total > selectedPrsTotalAmount * 1.001 && (
+                        <span className="text-xs font-normal text-red-500 ml-1">(เกิน PR!)</span>
+                      )}
                     </div>
                   </div>
                   <Button size="lg" className="px-8 shadow-lg shadow-red-200 rounded-xl flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white" onClick={handleSavePO}>
                     <Save size={18} /> บันทึก PO
+                  </Button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {/* PR Selection Modal */}
+        {isPrSelectModalOpen && (
+          <motion.div
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[80] p-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <motion.div
+              className="w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+              initial={{ scale: 0.96, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ duration: 0.2 }}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between px-6 py-4 bg-slate-800 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center">
+                    <ClipboardList size={18} className="text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white">เลือกใบขอซื้อ (Select PRs)</h3>
+                    <p className="text-white/70 text-xs mt-0.5">สามารถเลือกได้หลายรายการ</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsPrSelectModalOpen(false)}
+                  className="text-white/60 hover:text-white hover:bg-white/20 p-2 rounded-xl transition-all"
+                >
+                  <XCircle size={20} />
+                </button>
+              </div>
+
+              {/* Content — Table View */}
+              <div className="flex-1 overflow-y-auto">
+                {approvedPRs.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-16 text-slate-400">
+                    <ClipboardList size={40} className="mb-3 opacity-40" />
+                    <p className="font-medium text-slate-500">ไม่มีใบขอซื้อที่อนุมัติแล้ว</p>
+                    <p className="text-xs mt-1">เมื่อมีใบขอซื้อที่ได้รับการอนุมัติ จะแสดงในส่วนนี้</p>
+                  </div>
+                ) : (
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-slate-100 text-slate-700 uppercase font-bold border-b border-slate-200 sticky top-0 z-10">
+                      <tr>
+                        <th className="px-4 py-3 w-12 text-center">
+                          <input
+                            type="checkbox"
+                            className="rounded border-slate-300 cursor-pointer"
+                            checked={tempSelectedPrIds.length === approvedPRs.length && approvedPRs.length > 0}
+                            onChange={(e) => {
+                              setTempSelectedPrIds(e.target.checked ? approvedPRs.map(p => p.id) : []);
+                            }}
+                            title="เลือกทั้งหมด"
+                          />
+                        </th>
+                        <th className="px-4 py-3">PR No.</th>
+                        <th className="px-4 py-3">Cost Code</th>
+                        <th className="px-4 py-3">รายการงบ</th>
+                        <th className="px-4 py-3">ผู้ขอซื้อ</th>
+                        <th className="px-4 py-3">วันที่</th>
+                        <th className="px-4 py-3 text-center">สินค้า</th>
+                        <th className="px-4 py-3 text-right">ยอดรวม</th>
+                        <th className="px-4 py-3 text-center">สถานะ</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {approvedPRs.map(pr => {
+                        const isSelected = tempSelectedPrIds.includes(pr.id);
+                        const prDesc = budgets.find(b => b.code === pr.costCode && b.projectId === pr.projectId)?.description || "-";
+                        const totalAmt = pr.items?.reduce((s, i) => s + Number(i.quantity) * Number(i.price), 0) || 0;
+                        return (
+                          <tr
+                            key={pr.id}
+                            className={`cursor-pointer select-none transition-colors ${isSelected ? "bg-slate-700/10 hover:bg-slate-700/15" : "hover:bg-slate-50"}`}
+                            onClick={() => {
+                              setTempSelectedPrIds(prev =>
+                                prev.includes(pr.id) ? prev.filter(id => id !== pr.id) : [...prev, pr.id]
+                              );
+                            }}
+                          >
+                            <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                className="rounded border-slate-300 cursor-pointer"
+                                checked={isSelected}
+                                onChange={() => {
+                                  setTempSelectedPrIds(prev =>
+                                    prev.includes(pr.id) ? prev.filter(id => id !== pr.id) : [...prev, pr.id]
+                                  );
+                                }}
+                              />
+                            </td>
+                            <td className="px-4 py-3 font-bold text-slate-800">{pr.prNo}</td>
+                            <td className="px-4 py-3">
+                              <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded font-medium">{pr.costCode}</span>
+                            </td>
+                            <td className="px-4 py-3 max-w-[220px]">
+                              <span className="block truncate text-slate-600" title={prDesc}>{prDesc}</span>
+                            </td>
+                            <td className="px-4 py-3 text-slate-500">{pr.requestor}</td>
+                            <td className="px-4 py-3 text-slate-500">{pr.requestDate}</td>
+                            <td className="px-4 py-3 text-center">
+                              <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded font-semibold">{pr.items?.length || 0}</span>
+                            </td>
+                            <td className="px-4 py-3 text-right font-semibold text-slate-800">{formatCurrency(totalAmt)}</td>
+                            <td className="px-4 py-3 text-center">
+                              <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded font-medium">{pr.status}</span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0">
+                <span className="text-sm text-slate-600">
+                  {tempSelectedPrIds.length > 0
+                    ? <span className="font-semibold text-slate-800">เลือกแล้ว {tempSelectedPrIds.length} ใบ</span>
+                    : <span className="text-slate-400">ยังไม่ได้เลือก</span>}
+                </span>
+                <div className="flex gap-3">
+                  <Button variant="secondary" onClick={() => setIsPrSelectModalOpen(false)}>
+                    ยกเลิก
+                  </Button>
+                  <Button
+                    className="bg-slate-800 hover:bg-slate-700 text-white px-6 rounded-xl"
+                    onClick={() => {
+                      // Remove items from PRs that are no longer selected
+                      const removedPrIds = formData.selectedPrIds.filter(id => !tempSelectedPrIds.includes(id));
+                      setFormData(prev => ({
+                        ...prev,
+                        selectedPrIds: tempSelectedPrIds,
+                        items: prev.items.filter(item => !removedPrIds.includes(item.prId)),
+                      }));
+                      setIsPrSelectModalOpen(false);
+                    }}
+                  >
+                    ยืนยันการเลือก ({tempSelectedPrIds.length} ใบ)
                   </Button>
                 </div>
               </div>
@@ -7241,15 +7494,13 @@ const AuthenticatedApp = () => {
             <tbody className="divide-y divide-slate-100">
               {vendors.map((v) => (
                 <tr key={v.id} className="hover:bg-slate-50">
-                  <td className="py-2 px-3 font-medium">{v.code}</td>
-                  <td className="py-2 px-3">{v.name}</td>
-                  <td className="py-2 px-3">{v.type}</td>
-                  <td className="py-2 px-3 text-xs">
-                    {v.email}
-                    <br />
-                    {v.tel}
+                  <td className="py-2 px-3 font-medium" title={v.code}><span className="cell-text">{v.code}</span></td>
+                  <td className="py-2 px-3" title={v.name}><span className="cell-text">{v.name}</span></td>
+                  <td className="py-2 px-3" title={v.type}><span className="cell-text">{v.type}</span></td>
+                  <td className="py-2 px-3 text-xs" title={`${v.email || ""} ${v.tel || ""}`.trim()}>
+                    <span className="cell-text">{v.email}{v.tel ? ` / ${v.tel}` : ""}</span>
                   </td>
-                  <td className="py-2 px-3 text-xs text-slate-500">{v.note}</td>
+                  <td className="py-2 px-3 text-xs text-slate-500" title={v.note}><span className="cell-text">{v.note}</span></td>
                   <td className="py-2 px-3 text-right">
                     <button
                       className="text-red-500"
@@ -7355,6 +7606,313 @@ const AuthenticatedApp = () => {
     );
   };
 
+  const MaterialView = () => {
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [editingId, setEditingId] = useState(null);
+    const [searchText, setSearchText] = useState("");
+    const [isImportOpen, setIsImportOpen] = useState(false);
+    const [importPreview, setImportPreview] = useState([]);
+    const fileInputRef = useRef(null);
+
+    const emptyForm = { materialNo: "", name: "", unit: "", price: "" };
+    const [formData, setFormData] = useState(emptyForm);
+
+    const filtered = useMemo(() => {
+      const q = searchText.toLowerCase();
+      return materials.filter(
+        (m) =>
+          !q ||
+          (m.materialNo || "").toLowerCase().includes(q) ||
+          (m.name || "").toLowerCase().includes(q) ||
+          (m.unit || "").toLowerCase().includes(q)
+      );
+    }, [materials, searchText]);
+
+    const handleOpenAdd = () => {
+      setFormData(emptyForm);
+      setEditingId(null);
+      setIsModalOpen(true);
+    };
+
+    const handleOpenEdit = (m) => {
+      setFormData({ materialNo: m.materialNo || "", name: m.name || "", unit: m.unit || "", price: m.price ?? "" });
+      setEditingId(m.id);
+      setIsModalOpen(true);
+    };
+
+    const handleSave = async () => {
+      if (!formData.name.trim()) return showAlert("กรุณากรอกข้อมูล", "ต้องระบุชื่อ (Name) อย่างน้อย", "warning");
+      const payload = {
+        materialNo: formData.materialNo.trim(),
+        name: formData.name.trim(),
+        unit: formData.unit.trim(),
+        price: Number(formData.price) || 0,
+        createdAt: editingId ? undefined : new Date().toISOString(),
+      };
+      if (editingId) {
+        delete payload.createdAt;
+        await updateData("materials", editingId, payload);
+        showAlert("สำเร็จ", "แก้ไขรายการ Material เรียบร้อย", "success");
+      } else {
+        await addData("materials", payload);
+        showAlert("สำเร็จ", "เพิ่มรายการ Material เรียบร้อย", "success");
+      }
+      setIsModalOpen(false);
+      setFormData(emptyForm);
+      setEditingId(null);
+    };
+
+    const handleDelete = (id) => {
+      openConfirm("ยืนยันการลบ", "คุณต้องการลบรายการ Material นี้ใช่หรือไม่?", async () => {
+        await deleteData("materials", id);
+      }, "danger");
+    };
+
+    const handleDownloadTemplate = () => {
+      const bom = "\uFEFF";
+      const headers = "Material No.,Name,Unit,Price\n";
+      const sample = "MAT-001,ปูนซีเมนต์,ถุง,250\nMAT-002,เหล็กเส้น 12mm,เส้น,180\nMAT-003,ทราย,คิว,350";
+      const uri = "data:text/csv;charset=utf-8," + encodeURIComponent(bom + headers + sample);
+      const a = document.createElement("a");
+      a.setAttribute("href", uri);
+      a.setAttribute("download", "material_template.csv");
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    };
+
+    const handleFileUpload = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const text = ev.target.result;
+        const rows = text.split(/\r?\n/).slice(1).filter((r) => r.trim());
+        const parsed = rows.map((row) => {
+          const cols = [];
+          let inQ = false, cur = "";
+          for (const ch of row) {
+            if (ch === '"') { inQ = !inQ; }
+            else if (ch === ',' && !inQ) { cols.push(cur); cur = ""; }
+            else { cur += ch; }
+          }
+          cols.push(cur);
+          const clean = (s) => (s || "").trim().replace(/^"|"$/g, "").replace(/""/g, '"').trim();
+          return {
+            materialNo: clean(cols[0]),
+            name: clean(cols[1]),
+            unit: clean(cols[2]),
+            price: Number((clean(cols[3]) || "0").replace(/,/g, "")) || 0,
+          };
+        }).filter((r) => r.name);
+        setImportPreview(parsed);
+        setIsImportOpen(true);
+      };
+      reader.readAsText(file, "UTF-8");
+    };
+
+    const handleConfirmImport = async () => {
+      if (!importPreview.length) return;
+      let count = 0;
+      for (const item of importPreview) {
+        const ok = await addData("materials", { ...item, createdAt: new Date().toISOString() });
+        if (ok !== false) count++;
+      }
+      setIsImportOpen(false);
+      setImportPreview([]);
+      showAlert("นำเข้าสำเร็จ", `นำเข้า ${count} รายการเรียบร้อย`, "success");
+    };
+
+    return (
+      <div className="space-y-4">
+        {/* Header */}
+        <div className="flex justify-between items-center flex-wrap gap-2">
+          <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+            <Package size={20} className="text-slate-600" /> Material
+          </h2>
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Search */}
+            <div className="relative">
+              <Search size={13} className="absolute left-2.5 top-2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="ค้นหา..."
+                className="pl-7 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:border-slate-400 focus:ring-1 focus:ring-slate-100 w-44"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+              />
+            </div>
+            <Button variant="outline" className="text-xs h-8" onClick={handleDownloadTemplate}>
+              <Download size={13} /> Template
+            </Button>
+            <label className="flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium text-xs shadow-sm bg-green-600 text-white hover:bg-green-700 cursor-pointer h-8 transition-colors">
+              <FileSpreadsheet size={13} /> Import CSV
+              <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
+            </label>
+            <Button onClick={handleOpenAdd} className="h-8 text-xs">
+              <Plus size={13} /> New Material
+            </Button>
+          </div>
+        </div>
+
+        {/* Table */}
+        <Card className="overflow-hidden">
+          <table className="w-full text-left text-xs text-slate-600">
+            <thead className="bg-slate-50 text-slate-800 font-semibold border-b border-slate-200">
+              <tr>
+                <th className="py-2 px-3 w-12 text-center">No.</th>
+                <th className="py-2 px-3 w-32">Material No.</th>
+                <th className="py-2 px-3">Name</th>
+                <th className="py-2 px-3 w-20 text-center">Unit</th>
+                <th className="py-2 px-3 w-28 text-right">Price</th>
+                <th className="py-2 px-3 w-20 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-slate-400">
+                    <Package size={32} className="mx-auto mb-2 opacity-30" />
+                    ยังไม่มีรายการ Material
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((m, idx) => (
+                  <tr key={m.id} className="hover:bg-slate-50 odd:bg-white even:bg-slate-50/40">
+                    <td className="py-1.5 px-3 text-center text-slate-400 font-mono text-[11px]">{idx + 1}</td>
+                    <td className="py-1.5 px-3 font-medium text-slate-700" title={m.materialNo}><span className="cell-text">{m.materialNo || "-"}</span></td>
+                    <td className="py-1.5 px-3" title={m.name}><span className="cell-text">{m.name}</span></td>
+                    <td className="py-1.5 px-3 text-center text-slate-500" title={m.unit}><span className="cell-text">{m.unit || "-"}</span></td>
+                    <td className="py-1.5 px-3 text-right font-semibold text-slate-700">{formatCurrency(m.price || 0)}</td>
+                    <td className="py-1.5 px-3 text-right">
+                      <div className="flex justify-end gap-1">
+                        <button className="text-blue-500 hover:text-blue-700 p-1 hover:bg-blue-50 rounded" onClick={() => handleOpenEdit(m)} title="แก้ไข">
+                          <Edit size={13} />
+                        </button>
+                        <button className="text-red-500 hover:text-red-700 p-1 hover:bg-red-50 rounded" onClick={() => handleDelete(m.id)} title="ลบ">
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+          {filtered.length > 0 && (
+            <div className="px-3 py-2 bg-slate-50 border-t border-slate-100 text-[11px] text-slate-400">
+              ทั้งหมด {filtered.length} รายการ{searchText ? ` (กรอง จาก ${materials.length})` : ""}
+            </div>
+          )}
+        </Card>
+
+        {/* Add/Edit Modal */}
+        {isModalOpen && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-200">
+            <Card className="w-full max-w-md p-6">
+              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                <Package size={18} /> {editingId ? "แก้ไข Material" : "เพิ่ม Material"}
+              </h3>
+              <div className="grid grid-cols-2 gap-4">
+                <InputGroup label="Material No.">
+                  <input
+                    type="text"
+                    className="w-full border rounded-lg p-2 text-sm focus:border-slate-400 focus:ring-1 focus:ring-slate-100"
+                    value={formData.materialNo}
+                    onChange={(e) => setFormData({ ...formData, materialNo: e.target.value })}
+                    placeholder="MAT-001"
+                  />
+                </InputGroup>
+                <InputGroup label="Unit">
+                  <input
+                    type="text"
+                    className="w-full border rounded-lg p-2 text-sm focus:border-slate-400 focus:ring-1 focus:ring-slate-100"
+                    value={formData.unit}
+                    onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
+                    placeholder="ชิ้น, ถุง, คิว..."
+                  />
+                </InputGroup>
+                <div className="col-span-2">
+                  <InputGroup label="Name *">
+                    <input
+                      type="text"
+                      className="w-full border rounded-lg p-2 text-sm focus:border-slate-400 focus:ring-1 focus:ring-slate-100"
+                      value={formData.name}
+                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      placeholder="ชื่อสินค้า / วัสดุ"
+                    />
+                  </InputGroup>
+                </div>
+                <div className="col-span-2">
+                  <InputGroup label="Price (ราคา/หน่วย)">
+                    <input
+                      type="number"
+                      className="w-full border rounded-lg p-2 text-sm focus:border-slate-400 focus:ring-1 focus:ring-slate-100 text-right"
+                      value={formData.price}
+                      onChange={(e) => setFormData({ ...formData, price: e.target.value })}
+                      placeholder="0.00"
+                      min="0"
+                    />
+                  </InputGroup>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 mt-4">
+                <Button variant="secondary" onClick={() => { setIsModalOpen(false); setFormData(emptyForm); setEditingId(null); }}>
+                  ยกเลิก
+                </Button>
+                <Button onClick={handleSave}>
+                  {editingId ? "บันทึกการแก้ไข" : "เพิ่มรายการ"}
+                </Button>
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* Import Preview Modal */}
+        {isImportOpen && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-200">
+            <Card className="w-full max-w-2xl p-6">
+              <h3 className="text-lg font-bold mb-3 flex items-center gap-2">
+                <FileSpreadsheet size={18} /> ตรวจสอบข้อมูลก่อน Import ({importPreview.length} รายการ)
+              </h3>
+              <div className="max-h-72 overflow-y-auto border border-slate-200 rounded-lg mb-4">
+                <table className="w-full text-xs text-left text-slate-600">
+                  <thead className="bg-slate-100 text-slate-800 font-semibold sticky top-0">
+                    <tr>
+                      <th className="py-1.5 px-3 w-8 text-center">#</th>
+                      <th className="py-1.5 px-3 w-28">Material No.</th>
+                      <th className="py-1.5 px-3">Name</th>
+                      <th className="py-1.5 px-3 w-16 text-center">Unit</th>
+                      <th className="py-1.5 px-3 w-24 text-right">Price</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {importPreview.map((row, i) => (
+                      <tr key={i} className="odd:bg-white even:bg-slate-50/40">
+                        <td className="py-1 px-3 text-center text-slate-400">{i + 1}</td>
+                        <td className="py-1 px-3 font-medium">{row.materialNo || "-"}</td>
+                        <td className="py-1 px-3">{row.name}</td>
+                        <td className="py-1 px-3 text-center">{row.unit || "-"}</td>
+                        <td className="py-1 px-3 text-right">{formatCurrency(row.price)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="secondary" onClick={() => { setIsImportOpen(false); setImportPreview([]); }}>ยกเลิก</Button>
+                <Button onClick={handleConfirmImport}>
+                  <FileSpreadsheet size={13} /> ยืนยัน Import ({importPreview.length} รายการ)
+                </Button>
+              </div>
+            </Card>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const InvoiceView = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [formData, setFormData] = useState({
@@ -7451,9 +8009,9 @@ const AuthenticatedApp = () => {
                 .filter((inv) => inv.projectId === selectedProjectId)
                 .map((inv) => (
                   <tr key={inv.id} className="hover:bg-slate-50">
-                    <td className="py-2 px-3 font-medium">{inv.invNo}</td>
-                    <td className="py-2 px-3 text-blue-600">{inv.poRef}</td>
-                    <td className="py-2 px-3">{inv.description}</td>
+                    <td className="py-2 px-3 font-medium" title={inv.invNo}><span className="cell-text">{inv.invNo}</span></td>
+                    <td className="py-2 px-3 text-blue-600" title={inv.poRef}><span className="cell-text">{inv.poRef}</span></td>
+                    <td className="py-2 px-3" title={inv.description}><span className="cell-text">{inv.description}</span></td>
                     <td className="py-2 px-3 text-right font-semibold">
                       {formatCurrency(inv.amount)}
                     </td>
@@ -7632,6 +8190,7 @@ const AuthenticatedApp = () => {
 
   return (
     <div className="flex h-screen bg-slate-100 font-sans">
+      {!isFullScreenModalOpen && (
       <aside className="w-64 bg-slate-900 text-white flex flex-col shadow-xl z-20">
         <div className="p-6 border-b border-slate-800 bg-slate-950">
           <div className="flex items-center gap-3">
@@ -7690,7 +8249,7 @@ const AuthenticatedApp = () => {
           <SidebarGroup
             icon={<ShoppingCart size={20} />}
             label="Purchase Order (PO)"
-            isActive={activeMenu === "po" || activeMenu === "po-table" || activeMenu === "vendor"}
+            isActive={activeMenu === "po" || activeMenu === "po-table" || activeMenu === "vendor" || activeMenu === "material"}
           >
             <SidebarSubItem
               label="ระบบ PO"
@@ -7706,6 +8265,11 @@ const AuthenticatedApp = () => {
               label="Vendor Management"
               active={activeMenu === "vendor"}
               onClick={() => handleMenuChange("vendor")}
+            />
+            <SidebarSubItem
+              label="Material"
+              active={activeMenu === "material"}
+              onClick={() => handleMenuChange("material")}
             />
           </SidebarGroup>
           <SidebarItem
@@ -7737,6 +8301,7 @@ const AuthenticatedApp = () => {
           CMG Budget Control V.20
         </div>
       </aside>
+      )}
 
       <main className="flex-1 overflow-y-auto bg-slate-50/50">
         <header className="bg-white/80 backdrop-blur-md shadow-sm px-8 py-4 flex justify-between items-center sticky top-0 z-20 border-b border-slate-100">
@@ -7757,7 +8322,9 @@ const AuthenticatedApp = () => {
                           ? "ตารางข้อมูล PO"
                           : activeMenu === "vendor"
                             ? "Vendor Management"
-                            : activeMenu === "invoice"
+                            : activeMenu === "material"
+                              ? "Material"
+                              : activeMenu === "invoice"
                               ? "Invoice Receive"
                               : activeMenu === "profile"
                                 ? "User Profile"
@@ -7889,6 +8456,9 @@ const AuthenticatedApp = () => {
             </div>
             <div data-menu-page="vendor" style={{ display: activeMenu === "vendor" ? undefined : "none" }}>
               {VendorView()}
+            </div>
+            <div data-menu-page="material" style={{ display: activeMenu === "material" ? undefined : "none" }}>
+              {MaterialView()}
             </div>
             <div data-menu-page="invoice" style={{ display: activeMenu === "invoice" ? undefined : "none" }}>
               {InvoiceView()}
