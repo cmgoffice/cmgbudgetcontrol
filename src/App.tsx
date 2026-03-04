@@ -72,6 +72,21 @@ import {
   UserCircle,
   AtSign,
 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+
+// --- Framer Motion: variants แบบมืออาชีพ (ไม่เวอร์) ---
+const modalOverlayVariants = {
+  hidden: { opacity: 0 },
+  visible: { opacity: 1 },
+  exit: { opacity: 0 },
+};
+const modalContentVariants = {
+  hidden: { opacity: 0, scale: 0.98 },
+  visible: { opacity: 1, scale: 1 },
+  exit: { opacity: 0, scale: 0.98 },
+};
+const modalTransition = { duration: 0.22, ease: [0.25, 0.46, 0.45, 0.94] };
+const overlayTransition = { duration: 0.18 };
 
 // --- Firebase Imports ---
 import { initializeApp } from "firebase/app";
@@ -285,9 +300,9 @@ const formatCurrency = (amount) => {
 const CustomAlert = ({ isOpen, onClose, title, message, type = "info" }) => {
   if (!isOpen) return null;
   const overlayClasses =
-    "fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[200] animate-in fade-in duration-300";
+    "fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[200]";
   const modalClasses =
-    "bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm transform transition-all scale-100 animate-in zoom-in-95 duration-200 border border-slate-100";
+    "bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm border border-slate-100";
   const typeConfig = {
     success: {
       icon: CheckCircle,
@@ -317,8 +332,20 @@ const CustomAlert = ({ isOpen, onClose, title, message, type = "info" }) => {
   const Config = typeConfig[type];
   const Icon = Config.icon;
   return (
-    <div className={overlayClasses}>
-      <div className={modalClasses}>
+    <motion.div
+      className={overlayClasses}
+      initial="hidden"
+      animate="visible"
+      variants={modalOverlayVariants}
+      transition={overlayTransition}
+    >
+      <motion.div
+        className={modalClasses}
+        initial="hidden"
+        animate="visible"
+        variants={modalContentVariants}
+        transition={modalTransition}
+      >
         <div
           className={`w-14 h-14 rounded-full ${Config.bg} flex items-center justify-center mb-5 mx-auto ring-4 ring-white shadow-sm`}
         >
@@ -342,8 +369,8 @@ const CustomAlert = ({ isOpen, onClose, title, message, type = "info" }) => {
             ตกลง
           </button>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 };
 
@@ -359,12 +386,24 @@ const CustomConfirmModal = ({
 }) => {
   if (!isOpen) return null;
   const overlayClasses =
-    "fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[210] animate-in fade-in duration-200";
+    "fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[210]";
   const modalClasses =
-    "bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm transform transition-all scale-100 border border-slate-100";
+    "bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm border border-slate-100";
   return (
-    <div className={overlayClasses}>
-      <div className={modalClasses}>
+    <motion.div
+      className={overlayClasses}
+      initial="hidden"
+      animate="visible"
+      variants={modalOverlayVariants}
+      transition={overlayTransition}
+    >
+      <motion.div
+        className={modalClasses}
+        initial="hidden"
+        animate="visible"
+        variants={modalContentVariants}
+        transition={modalTransition}
+      >
         <div className="flex flex-col items-center text-center mb-6">
           <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center mb-4 text-slate-600">
             <AlertCircle size={24} strokeWidth={2.5} />
@@ -389,8 +428,8 @@ const CustomConfirmModal = ({
             {confirmText}
           </button>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 };
 
@@ -2522,6 +2561,9 @@ const AuthenticatedApp = () => {
                   }
                 }
               }
+              // รับเฉพาะ Cost Code นำหน้า 001-009 เท่านั้น
+              const ALLOWED_PREFIXES = ["001", "002", "003", "004", "005", "006", "007", "008", "009"];
+              if (!ALLOWED_PREFIXES.includes(category)) return;
               if (COST_CATEGORIES[category]) {
                 if (!parsedData[category]) parsedData[category] = [];
                 // Normalize code ให้เป็น 9 หลักเสมอ เช่น 3001001 → 003001001
@@ -5281,8 +5323,10 @@ const AuthenticatedApp = () => {
 
     const groupedBudgets = useMemo(() => {
       const groups = {};
+      const ALLOWED_CATS = ["001", "002", "003", "004", "005", "006", "007", "008", "009"];
       availableBudgets.forEach((b) => {
         const cat = b.code.substring(0, 3);
+        if (!ALLOWED_CATS.includes(cat)) return;
         if (!groups[cat]) groups[cat] = [];
         groups[cat].push(b);
       });
@@ -5614,8 +5658,20 @@ const AuthenticatedApp = () => {
           </div>
         )}
         {isModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-200 p-4">
-            <Card className="w-full max-w-5xl h-[82vh] flex flex-col overflow-hidden">
+          <motion.div
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+            initial="hidden"
+            animate="visible"
+            variants={modalOverlayVariants}
+            transition={overlayTransition}
+          >
+            <motion.div
+              className="w-full max-w-5xl h-[82vh] flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
+              initial="hidden"
+              animate="visible"
+              variants={modalContentVariants}
+              transition={modalTransition}
+            >
               {/* Sticky Header - โทนอ่อนใช้งานภายในองค์กร */}
               <div className="px-6 py-4 border-b border-slate-200 bg-slate-600 shrink-0">
                 <div className="flex justify-between items-center">
@@ -6162,14 +6218,26 @@ const AuthenticatedApp = () => {
                   </Button>
                 </div>
               </div>
-            </Card>
-          </div>
+            </motion.div>
+          </motion.div>
         )}
 
         {/* V.19: Cost Code Selection Modal */}
         {isCostCodeModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[150] animate-in fade-in duration-200">
-            <Card className="w-full max-w-3xl p-6 max-h-[80vh] overflow-hidden flex flex-col">
+          <motion.div
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[150]"
+            initial="hidden"
+            animate="visible"
+            variants={modalOverlayVariants}
+            transition={overlayTransition}
+          >
+            <motion.div
+              className="w-full max-w-5xl p-6 max-h-[85vh] overflow-hidden flex flex-col rounded-xl border border-slate-200 bg-white shadow-2xl"
+              initial="hidden"
+              animate="visible"
+              variants={modalContentVariants}
+              transition={modalTransition}
+            >
               <div className="flex justify-between items-center mb-4 pb-2 border-b">
                 <h3 className="text-lg font-bold text-slate-800">
                   เลือกรายการงบประมาณ (Approved Budgets)
@@ -6190,9 +6258,15 @@ const AuthenticatedApp = () => {
                 ) : (
                   Object.keys(groupedBudgets)
                     .sort()
-                    .map((cat) => (
-                      <div key={cat} className="mb-6">
-                        <h4 className="text-sm font-bold text-white bg-slate-600 px-3 py-1.5 rounded-t-md sticky top-0 z-10 shadow-sm flex items-center justify-between">
+                    .map((cat, idx) => (
+                      <motion.div
+                        key={cat}
+                        className="mb-6"
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: idx * 0.04, duration: 0.24, ease: [0.25, 0.46, 0.45, 0.94] }}
+                      >
+                        <h4 className="text-xs font-bold text-white bg-slate-600 px-3 py-1 rounded-t-md sticky top-0 z-10 shadow-sm flex items-center justify-between">
                           <span>
                             หมวด {cat}: {COST_CATEGORIES[cat]}
                           </span>
@@ -6201,57 +6275,52 @@ const AuthenticatedApp = () => {
                           </span>
                         </h4>
                         <div className="border border-slate-200 border-t-0 rounded-b-md overflow-hidden">
-                          <table className="w-full text-left text-sm">
+                          <table className="w-full text-left text-xs">
                             <thead className="bg-slate-50 text-slate-600 font-semibold border-b">
                               <tr>
-                                <th className="p-3">Cost Code</th>
-                                <th className="p-3">รายการ</th>
-                                <th className="p-3 text-right">Budget</th>
-                                <th className="p-3 text-right text-orange-600">
+                                <th className="py-1.5 px-3">Cost Code</th>
+                                <th className="py-1.5 px-3">รายการ</th>
+                                <th className="py-1.5 px-3 text-right">Budget</th>
+                                <th className="py-1.5 px-3 text-right text-orange-600">
                                   Used
                                 </th>
-                                <th className="p-3 text-right text-green-600">
+                                <th className="py-1.5 px-3 text-right text-green-600">
                                   Balance
                                 </th>
-                                <th className="p-3 text-center">เลือก</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
                               {groupedBudgets[cat].map((b) => (
                                 <React.Fragment key={b.id}>
                                   <tr
-                                    className="hover:bg-blue-50 transition-colors group"
+                                    className={`transition-colors group ${(!b.subItems || b.subItems.length === 0) ? "cursor-pointer hover:bg-blue-50" : "hover:bg-blue-50"} ${selectedSubItemsForPR.some((i) => i.id === `main-${b.id}`) ? "bg-blue-50 ring-1 ring-blue-200 ring-inset" : ""}`}
+                                    onClick={(e) => {
+                                      if (b.subItems && b.subItems.length > 0) {
+                                        toggleBudgetInModal(b.id);
+                                      } else {
+                                        handleToggleSubItem({
+                                          id: `main-${b.id}`,
+                                          description: b.description,
+                                          quantity: 1,
+                                          unit: "Lot",
+                                          unitPrice: b.remainingBalance,
+                                          amount: b.remainingBalance
+                                        }, b.code, b.id);
+                                      }
+                                    }}
                                   >
-                                    <td className="p-3 font-medium text-slate-700">
-                                      <div
-                                        className={`flex items-center gap-2 ${b.subItems && b.subItems.length > 0 ? "cursor-pointer" : ""}`}
-                                        onClick={(e) => {
-                                          if (b.subItems && b.subItems.length > 0) {
-                                            toggleBudgetInModal(b.id);
-                                          }
-                                        }}
-                                      >
-                                        {/* Main Item Checkbox (If NO Sub-items) */}
+                                    <td className="py-1.5 px-3 font-medium text-slate-700">
+                                      <div className="flex items-center gap-2">
                                         {(!b.subItems || b.subItems.length === 0) && (
-                                          <input
-                                            type="checkbox"
-                                            className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer mr-2"
-                                            checked={selectedSubItemsForPR.some((i) => i.id === `main-${b.id}`)}
-                                            onClick={(e) => e.stopPropagation()}
-                                            onChange={() => handleToggleSubItem({
-                                              id: `main-${b.id}`,
-                                              description: b.description,
-                                              quantity: 1,
-                                              unit: "Lot",
-                                              unitPrice: b.remainingBalance,
-                                              amount: b.remainingBalance
-                                            }, b.code, b.id)}
-                                          />
+                                          <span className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center mr-2 ${selectedSubItemsForPR.some((i) => i.id === `main-${b.id}`) ? "bg-blue-600 border-blue-600 text-white" : "border-slate-300"}`}>
+                                            {selectedSubItemsForPR.some((i) => i.id === `main-${b.id}`) && <span className="text-[10px]">✓</span>}
+                                          </span>
                                         )}
-
                                         {b.subItems && b.subItems.length > 0 && (
                                           <button
+                                            type="button"
                                             className="text-slate-400 hover:text-blue-600"
+                                            onClick={(e) => { e.stopPropagation(); toggleBudgetInModal(b.id); }}
                                           >
                                             {expandedBudgetIdsInModal[b.id]
                                               ? <img src="/arrow_collapse.png" alt="collapse" style={{ width: 18, height: 18, objectFit: 'contain' }} />
@@ -6261,33 +6330,17 @@ const AuthenticatedApp = () => {
                                         {b.code}
                                       </div>
                                     </td>
-                                    <td
-                                      className={`p-3 text-slate-600 ${b.subItems && b.subItems.length > 0 ? "cursor-pointer hover:text-blue-600" : ""}`}
-                                      onClick={() => {
-                                        if (b.subItems && b.subItems.length > 0) {
-                                          toggleBudgetInModal(b.id);
-                                        }
-                                      }}
-                                    >
+                                    <td className="py-1.5 px-3 text-slate-600">
                                       {b.description}
                                     </td>
-                                    <td className="p-3 text-right text-slate-500">
+                                    <td className="py-1.5 px-3 text-right text-slate-500">
                                       {formatCurrency(b.budgetAmount)}
                                     </td>
-                                    <td className="p-3 text-right text-orange-600">
+                                    <td className="py-1.5 px-3 text-right text-orange-600">
                                       {formatCurrency(b.usedAmount)}
                                     </td>
-                                    <td className="p-3 text-right font-bold text-green-600">
+                                    <td className="py-1.5 px-3 text-right font-bold text-green-600">
                                       {formatCurrency(b.remainingBalance)}
-                                    </td>
-                                    <td className="p-3 text-center">
-                                      {/* Legacy Select Button removed in favor of Checkbox + Add All */}
-                                      {/* Just show status or empty if main item */}
-                                      {(!b.subItems || b.subItems.length === 0) ? (
-                                        <span className="text-xs text-slate-400">เลือกด้วย Checkbox</span>
-                                      ) : (
-                                        <span className="text-xs text-slate-400">เลือกรายการย่อย</span>
-                                      )}
                                     </td>
                                   </tr>
                                   {
@@ -6308,42 +6361,30 @@ const AuthenticatedApp = () => {
                                       return (
                                         <tr
                                           key={`${b.id}-sub-${sIdx}`}
-                                          className={`bg-slate-50/50 ${sub.status !== "Approved" ? "opacity-60" : "cursor-pointer hover:bg-blue-50"}`}
+                                          className={`bg-slate-50/50 ${sub.status !== "Approved" ? "opacity-60" : "cursor-pointer hover:bg-blue-50"} ${selectedSubItemsForPR.some((i) => i.id === sub.id) ? "bg-blue-50/80 ring-1 ring-blue-200 ring-inset" : ""}`}
                                           onClick={() => {
                                             if (sub.status === "Approved") handleToggleSubItem(sub, b.code, b.id);
                                           }}
                                         >
-                                          <td className="p-3 pl-8 text-center border-l-2 border-blue-100">
-                                            <div className="flex justify-center">
-                                              <input
-                                                type="checkbox"
-                                                className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer disabled:opacity-50"
-                                                checked={selectedSubItemsForPR.some((i) => i.id === sub.id)}
-                                                disabled={sub.status !== "Approved"}
-                                                onClick={(e) => e.stopPropagation()} // Prevent double toggle
-                                                onChange={() => {
-                                                  if (sub.status === "Approved") handleToggleSubItem(sub, b.code, b.id);
-                                                }}
-                                              />
-                                            </div>
+                                          <td className="py-1.5 px-3 pl-8 border-l-2 border-blue-100">
+                                            <span className={`inline-flex w-4 h-4 rounded border flex-shrink-0 items-center justify-center ${selectedSubItemsForPR.some((i) => i.id === sub.id) ? "bg-blue-600 border-blue-600 text-white" : "border-slate-300"}`}>
+                                              {selectedSubItemsForPR.some((i) => i.id === sub.id) && <span className="text-[10px]">✓</span>}
+                                            </span>
                                           </td>
-                                          <td className="p-3 text-xs font-medium text-slate-700">
+                                          <td className="py-1.5 px-3 text-slate-700">
                                             {sub.description}
                                             {sub.status !== "Approved" && (
                                               <span className="text-orange-500 ml-2 font-bold">(รอ MD อนุมัติ)</span>
                                             )}
                                           </td>
-                                          <td className="p-3 text-right text-xs text-red-600">
+                                          <td className="py-1.5 px-3 text-right text-red-600">
                                             -{formatCurrency(sub.amount)}
                                           </td>
-                                          <td className="p-3 text-right text-xs text-orange-400">
+                                          <td className="py-1.5 px-3 text-right text-orange-400">
                                             {formatCurrency(subUsed)}
                                           </td>
-                                          <td className="p-3 text-right text-xs font-bold text-green-600">
+                                          <td className="py-1.5 px-3 text-right font-bold text-green-600">
                                             {formatCurrency(sub.amount - subUsed)}
-                                          </td>
-                                          <td className="p-3 text-center">
-                                            {/* Empty action column for sub-items */}
                                           </td>
                                         </tr>
                                       );
@@ -6354,7 +6395,7 @@ const AuthenticatedApp = () => {
                             </tbody>
                           </table>
                         </div>
-                      </div>
+                      </motion.div>
                     ))
                 )}
               </div>
@@ -6378,8 +6419,8 @@ const AuthenticatedApp = () => {
                   )}
                 </div>
               </div>
-            </Card>
-          </div>
+            </motion.div>
+          </motion.div>
         )}
       </div>
     );
@@ -6870,8 +6911,20 @@ const AuthenticatedApp = () => {
 
         {/* Create PO Modal */}
         {isModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-200 p-4">
-            <Card className="w-full max-w-5xl h-[82vh] flex flex-col overflow-hidden">
+          <motion.div
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+            initial="hidden"
+            animate="visible"
+            variants={modalOverlayVariants}
+            transition={overlayTransition}
+          >
+            <motion.div
+              className="w-full max-w-5xl h-[82vh] flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
+              initial="hidden"
+              animate="visible"
+              variants={modalContentVariants}
+              transition={modalTransition}
+            >
               {/* Sticky Header - โทนแดง ขาว ดำ */}
               <div className="relative px-6 py-4 border-b border-black/10 bg-gradient-to-r from-red-600 via-red-700 to-red-900 shrink-0 overflow-hidden">
                 <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMjAiIGN5PSIyMCIgcj0iMSIgZmlsbD0icmdiYSgyNTUsMjU1LDI1NSwwLjA4KSIvPjwvc3ZnPg==')] opacity-50"></div>
@@ -7100,8 +7153,8 @@ const AuthenticatedApp = () => {
                   </Button>
                 </div>
               </div>
-            </Card>
-          </div>
+            </motion.div>
+          </motion.div>
         )}
 
         {/* Quick Add Vendor Modal */}
@@ -7727,8 +7780,15 @@ const AuthenticatedApp = () => {
                   </span>
                 )}
               </button>
+              <AnimatePresence>
               {isBellOpen && (
-                <div className="absolute right-0 top-12 w-80 bg-white rounded-xl shadow-2xl border border-slate-200 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                <motion.div
+                  className="absolute right-0 top-12 w-80 bg-white rounded-xl shadow-2xl border border-slate-200 z-50 overflow-hidden"
+                  initial={{ opacity: 0, y: -6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.2, ease: [0.25, 0.46, 0.45, 0.94] }}
+                >
                   <div className="p-3 bg-slate-900 text-white flex items-center justify-between">
                     <span className="text-sm font-bold flex items-center gap-2">
                       <Bell size={14} /> รายการรออนุมัติ
@@ -7779,8 +7839,9 @@ const AuthenticatedApp = () => {
                       ))}
                     </div>
                   )}
-                </div>
+                </motion.div>
               )}
+              </AnimatePresence>
             </div>
             <div className="flex items-center gap-3 px-4 py-1.5 bg-slate-100 rounded-full border border-slate-200">
               <div className="flex flex-col text-right">
@@ -7805,42 +7866,55 @@ const AuthenticatedApp = () => {
           </div>
         </header>
         <div className="p-8 max-w-[1600px] mx-auto">
-          <div data-menu-page="dashboard" style={{ display: activeMenu === "dashboard" ? undefined : "none" }}>
-            {Dashboard()}
-          </div>
-          <div data-menu-page="projects" style={{ display: activeMenu === "projects" ? undefined : "none" }}>
-            {ProjectsView()}
-          </div>
-          <div data-menu-page="budget" style={{ display: activeMenu === "budget" ? undefined : "none" }}>
-            {BudgetView()}
-          </div>
-          <div data-menu-page="pr" style={{ display: activeMenu === "pr" ? undefined : "none" }}>
-            {PRView()}
-          </div>
-          <div data-menu-page="po" style={{ display: activeMenu === "po" ? undefined : "none" }}>
-            {POView()}
-          </div>
-          <div data-menu-page="vendor" style={{ display: activeMenu === "vendor" ? undefined : "none" }}>
-            {VendorView()}
-          </div>
-          <div data-menu-page="invoice" style={{ display: activeMenu === "invoice" ? undefined : "none" }}>
-            {InvoiceView()}
-          </div>
-          {activeMenu === "profile" && <div data-menu-page="profile" className="page-animate"><UserProfile /></div>}
-          {activeMenu === "admin" && userRole === "Administrator" && (
-            <div data-menu-page="admin" className="page-animate"><AdminDashboard /></div>
-          )}
-          {(activeMenu === "pr-table" || activeMenu === "po-table") && (
-            <div data-menu-page="pr-po-table" className="page-animate">
-              <PRPOTableView
-                mode={activeMenu === "pr-table" ? "pr" : "po"}
-                prs={prs}
-                pos={pos}
-                budgets={budgets}
-                projects={projects}
-              />
+          <motion.div
+            key={activeMenu}
+            initial={{ opacity: 0, x: 28 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.28, ease: [0.25, 0.46, 0.45, 0.94] }}
+          >
+            <div data-menu-page="dashboard" style={{ display: activeMenu === "dashboard" ? undefined : "none" }}>
+              {Dashboard()}
             </div>
-          )}
+            <div data-menu-page="projects" style={{ display: activeMenu === "projects" ? undefined : "none" }}>
+              {ProjectsView()}
+            </div>
+            <div data-menu-page="budget" style={{ display: activeMenu === "budget" ? undefined : "none" }}>
+              {BudgetView()}
+            </div>
+            <div data-menu-page="pr" style={{ display: activeMenu === "pr" ? undefined : "none" }}>
+              {PRView()}
+            </div>
+            <div data-menu-page="po" style={{ display: activeMenu === "po" ? undefined : "none" }}>
+              {POView()}
+            </div>
+            <div data-menu-page="vendor" style={{ display: activeMenu === "vendor" ? undefined : "none" }}>
+              {VendorView()}
+            </div>
+            <div data-menu-page="invoice" style={{ display: activeMenu === "invoice" ? undefined : "none" }}>
+              {InvoiceView()}
+            </div>
+            {activeMenu === "profile" && (
+              <div data-menu-page="profile">
+                <UserProfile />
+              </div>
+            )}
+            {activeMenu === "admin" && userRole === "Administrator" && (
+              <div data-menu-page="admin">
+                <AdminDashboard />
+              </div>
+            )}
+            {(activeMenu === "pr-table" || activeMenu === "po-table") && (
+              <div data-menu-page="pr-po-table">
+                <PRPOTableView
+                  mode={activeMenu === "pr-table" ? "pr" : "po"}
+                  prs={prs}
+                  pos={pos}
+                  budgets={budgets}
+                  projects={projects}
+                />
+              </div>
+            )}
+          </motion.div>
         </div>
       </main>
     </div>
@@ -7850,44 +7924,70 @@ const AuthenticatedApp = () => {
 // --- Sidebar Group (expandable sub-menu) ---
 const SidebarGroup = ({ icon, label, isActive, children }) => {
   const [open, setOpen] = React.useState(isActive);
-  // auto-expand when a child is active
   React.useEffect(() => { if (isActive) setOpen(true); }, [isActive]);
   return (
     <div>
-      <button
+      <motion.button
         onClick={() => setOpen((p) => !p)}
-        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 group ${isActive
-          ? "bg-slate-700 text-white"
-          : "text-slate-400 hover:bg-slate-800 hover:text-white"
-          }`}
+        className={`relative w-full flex items-center gap-3 px-4 py-3 rounded-lg group ${isActive ? "text-white" : "text-slate-400 hover:text-white hover:bg-slate-800/80"}`}
+        whileHover={{ scale: 1.01 }}
+        whileTap={{ scale: 0.99 }}
+        transition={{ type: "spring", stiffness: 400, damping: 25 }}
       >
-        {icon}
-        <span className="font-medium text-sm flex-1 text-left">{label}</span>
-        <ChevronDown
-          size={14}
-          className={`transition-transform duration-200 ${open ? "rotate-180" : "rotate-0"}`}
-        />
-      </button>
-      {open && (
-        <div className="ml-4 mt-1 space-y-0.5 border-l border-slate-700 pl-3">
-          {children}
-        </div>
-      )}
+        {isActive && (
+          <motion.div
+            layoutId="sidebarGroupActive"
+            className="absolute inset-0 rounded-lg bg-slate-700 -z-10"
+            transition={{ type: "spring", stiffness: 350, damping: 30 }}
+          />
+        )}
+        <span className="relative z-10">{icon}</span>
+        <span className="font-medium text-sm flex-1 text-left relative z-10">{label}</span>
+        <motion.span
+          animate={{ rotate: open ? 180 : 0 }}
+          transition={{ type: "spring", stiffness: 300, damping: 24 }}
+          className="relative z-10"
+        >
+          <ChevronDown size={14} />
+        </motion.span>
+      </motion.button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25, ease: [0.25, 0.46, 0.45, 0.94] }}
+            className="overflow-hidden"
+          >
+            <div className="ml-4 mt-1 space-y-0.5 border-l border-slate-700 pl-3">
+              {children}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
 
 const SidebarSubItem = ({ label, active, onClick }) => (
-  <button
+  <motion.button
     onClick={onClick}
-    className={`w-full flex items-center gap-2 px-3 py-2 rounded-md text-xs font-medium transition-all duration-150 ${active
-      ? "bg-blue-600 text-white shadow-md"
-      : "text-slate-400 hover:bg-slate-700 hover:text-white"
-      }`}
+    className={`relative w-full flex items-center gap-2 px-3 py-2 rounded-md text-xs font-medium overflow-hidden text-left ${active ? "text-white" : "text-slate-400 hover:text-white hover:bg-slate-700/60"}`}
+    whileHover={{ x: 4 }}
+    whileTap={{ scale: 0.97 }}
+    transition={{ type: "spring", stiffness: 400, damping: 25 }}
   >
-    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${active ? "bg-white" : "bg-slate-600"}`} />
-    {label}
-  </button>
+    {active && (
+      <motion.div
+        layoutId="sidebarSubActive"
+        className="absolute inset-0 bg-blue-600/90 rounded-md shadow-md"
+        transition={{ type: "spring", stiffness: 350, damping: 30 }}
+      />
+    )}
+    <span className="relative z-10 w-1.5 h-1.5 rounded-full flex-shrink-0 bg-current opacity-80" />
+    <span className="relative z-10">{label}</span>
+  </motion.button>
 );
 
 // --- PR / PO Combined Table View ---
@@ -8107,16 +8207,26 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects }: {
 };
 
 const SidebarItem = ({ icon, label, active, onClick }) => (
-
-  <button
+  <motion.button
     onClick={onClick}
-    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 group ${active
-      ? "bg-blue-600 text-white shadow-lg shadow-blue-900/20 translate-x-1"
-      : "text-slate-400 hover:bg-slate-800 hover:text-white hover:translate-x-1"
-      }`}
+    className={`relative w-full flex items-center gap-3 px-4 py-3 rounded-lg overflow-hidden group ${active ? "text-white" : "text-slate-400 hover:text-white hover:bg-slate-800/80"}`}
+    whileHover={{ scale: 1.02 }}
+    whileTap={{ scale: 0.98 }}
+    transition={{ type: "spring", stiffness: 400, damping: 25 }}
   >
-    {icon} <span className="font-medium text-sm">{label}</span>
-  </button>
+    {active && (
+      <motion.div
+        layoutId="sidebarActive"
+        className="absolute inset-0 bg-blue-600 rounded-lg shadow-lg shadow-blue-900/30"
+        style={{ originX: 0, originY: 0.5 }}
+        transition={{ type: "spring", stiffness: 350, damping: 30 }}
+      />
+    )}
+    <span className="relative z-10 flex items-center gap-3">
+      <motion.span animate={{ rotate: active ? 0 : 0 }}>{icon}</motion.span>
+      <span className="font-medium text-sm">{label}</span>
+    </span>
+  </motion.button>
 );
 
 // --- Root App ---
