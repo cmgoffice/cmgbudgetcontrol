@@ -202,6 +202,42 @@ thead th > div {
   width: 100%;
 }
 
+/* ===== Resizable Column Handle (Admin only) ===== */
+.resizable-th {
+  position: relative;
+  overflow: visible !important;
+}
+.col-resize-handle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  background: transparent;
+  z-index: 3;
+  border-radius: 0 2px 2px 0;
+  transition: background 0.15s;
+}
+.col-resize-handle:hover,
+.col-resize-handle.is-resizing {
+  background: rgba(99, 102, 241, 0.45);
+}
+
+/* Responsive: ignore saved widths on smartphone */
+@media (max-width: 767px) {
+  table {
+    table-layout: auto !important;
+  }
+  thead th {
+    width: auto !important;
+    min-width: unset !important;
+  }
+  .col-resize-handle {
+    display: none;
+  }
+}
+
 /* ===== Custom Scrollbar ===== */
 .custom-scrollbar::-webkit-scrollbar {
   width: 5px;

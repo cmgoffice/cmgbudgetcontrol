@@ -8,6 +8,7 @@ import React, {
   createContext,
   useContext,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   LayoutDashboard,
   Briefcase,
@@ -167,9 +168,10 @@ const USER_ROLES = [
 ];
 
 const PURCHASE_TYPES = [
-  "จัดซื้อจัดจ้าง > WA, ST, ML, CS, SA",
+  "จัดซื้อ > WA, ST, ML, CS, SA",
   "อุปกรณ์ใหม่ > EQM",
-  "ขอซื้อเช่า > RE",
+  "ขอเช่า > RE",
+  "จ้างเหมา > DL",
   "เงินสดย่อย > PT",
   "คอนกรีต > CC",
   "น้ำมัน > OL",
@@ -178,22 +180,26 @@ const PURCHASE_TYPES = [
 ];
 
 const PURCHASE_TYPE_CODES = {
-  "จัดซื้อจัดจ้าง > WA, ST, ML, CS, SA": ["WA", "ST", "ML", "CS", "SA"],
+  "จัดซื้อ > WA, ST, ML, CS, SA": ["WA", "ST", "ML", "CS", "SA"],
   "อุปกรณ์ใหม่ > EQM": ["WA", "ST", "ML", "CS", "SA"],
-  "ขอซื้อเช่า > RE": ["RT", "RI"],
+  "ขอเช่า > RE": ["RT", "RI"],
+  "จ้างเหมา > DL": ["DL"],
   "เงินสดย่อย > PT": ["PT"],
   "คอนกรีต > CC": ["CC"],
   "น้ำมัน > OL": ["OL"],
   "ค่าแรง > DC": ["DC"],
   "เงินเดือน > SM": ["SM"],
-  "ค่าแรง/เงินเดือน > SM, DC": ["SM", "DC"], // backward compat for existing PRs
+  // backward compat: existing PRs saved with old keys
+  "จัดซื้อจัดจ้าง > WA, ST, ML, CS, SA": ["WA", "ST", "ML", "CS", "SA"],
+  "ขอซื้อเช่า > RE": ["RT", "RI"],
+  "ค่าแรง/เงินเดือน > SM, DC": ["SM", "DC"],
 };
 
 // แสดงเฉพาะชื่อประเภท (ไม่แสดง Sub-Code) ใน dropdown
 const getPurchaseTypeDisplayLabel = (key) =>
   key && key.includes(" > ") ? key.split(" > ")[0].trim() : key || "";
 
-const PURCHASE_TYPE_RENTAL_LABEL = "ขอซื้อเช่า > RE"; // ชื่อประเภทที่ใช้ dropdown "Type การเช่า"
+const PURCHASE_TYPE_RENTAL_LABEL = "ขอเช่า > RE"; // ชื่อประเภทที่ใช้ dropdown "Type การเช่า"
 const PURCHASE_TYPE_EQUIPMENT = "อุปกรณ์ใหม่ > EQM"; // ไม่มี Sub-Code, PR No = EQM
 
 const DELIVERY_LOCATIONS = [
@@ -296,6 +302,173 @@ const Badge = ({ status }) => {
     </span>
   );
 };
+
+// ===== MaterialAutoComplete: controlled input with debounced search (2s) =====
+const MaterialAutoComplete = React.memo(({ value, onChange, onSelectMaterial, materials, disabled, className = "", placeholder }) => {
+  const [open, setOpen] = useState(false);
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const debounceTimer = useRef(null);
+  const inputRef = useRef(null);
+  const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 });
+
+  // ค้นหาจาก debouncedQuery (อัพเดทหลังหยุดพิมพ์ 2 วิ)
+  const filtered = useMemo(() => {
+    const q = debouncedQuery.trim().toLowerCase();
+    if (!q) return [];
+    return materials
+      .filter(m =>
+        (m.materialNo || "").toLowerCase().includes(q) ||
+        (m.name || "").toLowerCase().includes(q)
+      )
+      .slice(0, 10);
+  }, [debouncedQuery, materials]);
+
+  const updatePos = useCallback(() => {
+    if (inputRef.current) {
+      const r = inputRef.current.getBoundingClientRect();
+      setDropPos({ top: r.bottom + 2, left: r.left, width: r.width });
+    }
+  }, []);
+
+  const handleChange = useCallback((e) => {
+    const val = e.target.value;
+    onChange(val);
+    updatePos();
+    // รีเซ็ต debounce timer ทุกครั้งที่พิมพ์
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    if (val.trim()) {
+      debounceTimer.current = setTimeout(() => {
+        setDebouncedQuery(val);
+        setOpen(true);
+      }, 2000);
+    } else {
+      setDebouncedQuery("");
+      setOpen(false);
+    }
+  }, [onChange, updatePos]);
+
+  const handleSelect = useCallback((mat) => {
+    setOpen(false);
+    setDebouncedQuery("");
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    onSelectMaterial(mat);
+  }, [onSelectMaterial]);
+
+  const handleFocus = useCallback(() => {
+    updatePos();
+    if (debouncedQuery.trim() && filtered.length > 0) setOpen(true);
+  }, [debouncedQuery, filtered.length, updatePos]);
+
+  const handleBlur = useCallback(() => {
+    setTimeout(() => setOpen(false), 160);
+  }, []);
+
+  // cleanup timer on unmount
+  useEffect(() => () => { if (debounceTimer.current) clearTimeout(debounceTimer.current); }, []);
+
+  return (
+    <div className="relative w-full">
+      <input
+        ref={inputRef}
+        type="text"
+        className={className}
+        value={value ?? ""}
+        placeholder={placeholder}
+        disabled={disabled}
+        onChange={handleChange}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+        autoComplete="off"
+      />
+      {open && filtered.length > 0 && !disabled && createPortal(
+        <div
+          className="fixed z-[9999] bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden"
+          style={{ top: dropPos.top, left: dropPos.left, width: Math.max(dropPos.width, 260), maxHeight: 280, overflowY: "auto" }}
+        >
+          {filtered.map((mat) => (
+            <button
+              key={mat.id}
+              type="button"
+              className="w-full text-left px-3 py-2.5 text-xs hover:bg-red-50 flex items-center justify-between gap-3 border-b border-slate-50 last:border-0 transition-colors"
+              onMouseDown={(e) => { e.preventDefault(); handleSelect(mat); }}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="font-mono font-bold text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">
+                  {mat.materialNo || "—"}
+                </span>
+                <span className="text-slate-700 truncate font-medium">{mat.name}</span>
+              </div>
+              <div className="text-right shrink-0">
+                <div className="font-semibold text-red-700 text-[11px]">
+                  {new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB" }).format(mat.price || 0)}
+                </div>
+                <div className="text-[10px] text-slate-400">{mat.unit || ""}</div>
+              </div>
+            </button>
+          ))}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+});
+
+// ===== ResizableTh: column header with drag-resize handle (admin only) =====
+const ResizableTh = React.memo(({ tableId, colKey, isAdmin, onResize, currentWidth, className = "", style, children, ...rest }: {
+  tableId: string;
+  colKey: string;
+  isAdmin?: boolean;
+  onResize?: (tableId: string, colKey: string, width: number) => void;
+  currentWidth?: number;
+  className?: string;
+  style?: React.CSSProperties;
+  children?: React.ReactNode;
+  [key: string]: any;
+}) => {
+  const thRef = useRef<HTMLTableCellElement>(null);
+  const handleRef = useRef<HTMLDivElement>(null);
+
+  const startResize = (e: React.MouseEvent) => {
+    if (!isAdmin || !onResize) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = thRef.current?.offsetWidth ?? currentWidth ?? 80;
+    if (handleRef.current) handleRef.current.classList.add("is-resizing");
+
+    const onMove = (ev: MouseEvent) => {
+      const newW = Math.max(30, startW + ev.clientX - startX);
+      if (thRef.current) thRef.current.style.width = `${newW}px`;
+    };
+    const onUp = (ev: MouseEvent) => {
+      if (handleRef.current) handleRef.current.classList.remove("is-resizing");
+      const newW = Math.max(30, startW + ev.clientX - startX);
+      onResize(tableId, colKey, newW);
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
+  const wStyle: React.CSSProperties = currentWidth
+    ? { width: currentWidth, minWidth: currentWidth }
+    : {};
+
+  return (
+    <th
+      ref={thRef}
+      className={`resizable-th ${className}`}
+      style={{ ...wStyle, ...style }}
+      {...rest}
+    >
+      {children}
+      {isAdmin && onResize && (
+        <div ref={handleRef} className="col-resize-handle" onMouseDown={startResize} />
+      )}
+    </th>
+  );
+});
 
 const formatCurrency = (amount) => {
   return new Intl.NumberFormat("th-TH", {
@@ -1340,10 +1513,10 @@ const AdminDashboard = () => {
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-700 font-semibold border-b">
               <tr>
-                <th className="p-4">Name</th>
-                <th className="p-4">Role</th>
-                <th className="p-4">Status</th>
-                <th className="p-4">Projects</th>
+                <ResizableTh tableId="users" colKey="name" className="p-4" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.users?.name}>Name</ResizableTh>
+                <ResizableTh tableId="users" colKey="role" className="p-4" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.users?.role}>Role</ResizableTh>
+                <ResizableTh tableId="users" colKey="status" className="p-4" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.users?.status}>Status</ResizableTh>
+                <ResizableTh tableId="users" colKey="projects" className="p-4" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.users?.projects}>Projects</ResizableTh>
                 <th className="p-4 text-right">Actions</th>
               </tr>
             </thead>
@@ -1595,6 +1768,25 @@ const AuthenticatedApp = () => {
 
   const [activeMenu, setActiveMenu] = useState("dashboard");
   const [isFullScreenModalOpen, setIsFullScreenModalOpen] = useState(false);
+
+  // Column Widths (admin-controlled, synced to Firebase)
+  const [columnWidths, setColumnWidths] = useState<Record<string, Record<string, number>>>({});
+  const colSaveTimer = useRef<any>(null);
+
+  const handleColumnResize = useCallback((tableId: string, colKey: string, width: number) => {
+    if (userRole !== "Administrator") return;
+    setColumnWidths((prev) => {
+      const next = { ...prev, [tableId]: { ...(prev[tableId] || {}), [colKey]: width } };
+      if (colSaveTimer.current) clearTimeout(colSaveTimer.current);
+      colSaveTimer.current = setTimeout(async () => {
+        try {
+          const ref = doc(db, "artifacts", appId, "public", "data", "settings", "columnWidths");
+          await setDoc(ref, next);
+        } catch (e) { /* silent */ }
+      }, 700);
+      return next;
+    });
+  }, [userRole]);
 
   // Data States
   const [projects, setProjects] = useState([]);
@@ -1928,6 +2120,12 @@ const AuthenticatedApp = () => {
     const unsubBudgets = syncCollection("budgets", setBudgets);
     const unsubVendors = syncCollection("vendors", setVendors);
     const unsubMaterials = syncCollection("materials", setMaterials);
+
+    // Sync column widths (shared across all users)
+    const colWidthsRef = doc(db, "artifacts", appId, "public", "data", "settings", "columnWidths");
+    const unsubColWidths = onSnapshot(colWidthsRef, (snap) => {
+      if (snap.exists()) setColumnWidths(snap.data() as any);
+    });
     const unsubPrs = syncCollection("prs", setPrs);
     const unsubPos = syncCollection("pos", setPos);
     const unsubInvoices = syncCollection("invoices", setInvoices);
@@ -1937,6 +2135,7 @@ const AuthenticatedApp = () => {
       unsubBudgets();
       unsubVendors();
       unsubMaterials();
+      unsubColWidths();
       unsubPrs();
       unsubPos();
       unsubInvoices();
@@ -2223,14 +2422,14 @@ const AuthenticatedApp = () => {
           <table className="w-full text-left text-xs text-slate-600 whitespace-nowrap">
             <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
               <tr>
-                <th className="py-2 px-3">Job No.</th>
-                <th className="py-2 px-3">Project Name</th>
-                <th className="py-2 px-3">Location</th>
-                <th className="py-2 px-3 text-right">Contract Value</th>
-                <th className="py-2 px-3">Start</th>
-                <th className="py-2 px-3">Finish</th>
-                <th className="py-2 px-3">PM</th>
-                <th className="py-2 px-3">CM</th>
+                <ResizableTh tableId="project" colKey="jobNo" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.project?.jobNo}>Job No.</ResizableTh>
+                <ResizableTh tableId="project" colKey="name" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.project?.name}>Project Name</ResizableTh>
+                <ResizableTh tableId="project" colKey="location" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.project?.location}>Location</ResizableTh>
+                <ResizableTh tableId="project" colKey="contractValue" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.project?.contractValue}>Contract Value</ResizableTh>
+                <ResizableTh tableId="project" colKey="start" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.project?.start}>Start</ResizableTh>
+                <ResizableTh tableId="project" colKey="finish" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.project?.finish}>Finish</ResizableTh>
+                <ResizableTh tableId="project" colKey="pm" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.project?.pm}>PM</ResizableTh>
+                <ResizableTh tableId="project" colKey="cm" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.project?.cm}>CM</ResizableTh>
                 <th className="py-2 px-3 text-right">Actions</th>
               </tr>
             </thead>
@@ -2555,40 +2754,34 @@ const AuthenticatedApp = () => {
             const amount = Number(amountStr) || 0;
             
             if (costCode.length >= 1) {
-              // รองรับหลายรูปแบบ:
-              // 6 หลัก: "003001" → rawCat "003" ✓
-              // 4 หลัก: "1001"   → padStart(6) → "001001" → "001" ✓
-              // 7 หลัก: "3001001" (Excel ตัด 00 นำหน้า) → padStart(9) → "003001001" → "003" ✓
-              // 9 หลัก: "003001001" → rawCat "003" ✓
-              let rawCat = costCode.length >= 3 ? costCode.substring(0, 3) : costCode.padStart(3, "0");
-              let category = rawCat;
-              if (!COST_CATEGORIES[rawCat]) {
-                const paddedCat6 = costCode.padStart(6, "0").substring(0, 3);
-                if (COST_CATEGORIES[paddedCat6]) {
-                  category = paddedCat6;
-                } else {
-                  const paddedCat9 = costCode.padStart(9, "0").substring(0, 3);
-                  if (COST_CATEGORIES[paddedCat9]) {
-                    category = paddedCat9;
-                  }
-                }
-              }
+              // ---- Normalize Cost Code ----
+              // 1. ตัด leading zeros ที่ Excel อาจลบออก แล้ว re-pad ให้ถูกต้อง:
+              //    "2007"      (4) → strip → "2007"    → padStart(6) → "002007"    → cat "002" ✓
+              //    "002007"    (6) → strip → "2007"    → padStart(6) → "002007"    → cat "002" ✓
+              //    "002007003" (9) → strip → "2007003" → padStart(9) → "002007003" → cat "002" ✓
+              //    "000002007" (9) → strip → "2007"    → padStart(6) → "002007"    → cat "002" ✓
+              //    "7003001"   (7) → strip → "7003001" → padStart(9) → "007003001" → cat "007" ✓
+              const strippedNum = costCode.replace(/^0+/, "") || "0";
+              const normalizedCode =
+                strippedNum.length <= 6
+                  ? strippedNum.padStart(6, "0")   // 6-digit format: CATSUB
+                  : strippedNum.padStart(9, "0");  // 9-digit format: CATSUBITM
+
+              const category = normalizedCode.substring(0, 3);
+
               // รับเฉพาะ Cost Code นำหน้า 001-009 เท่านั้น
-              const ALLOWED_PREFIXES = ["001", "002", "003", "004", "005", "006", "007", "008", "009"];
+              const ALLOWED_PREFIXES = ["001","002","003","004","005","006","007","008","009"];
               if (!ALLOWED_PREFIXES.includes(category)) return;
-              if (COST_CATEGORIES[category]) {
-                if (!parsedData[category]) parsedData[category] = [];
-                // Normalize code ให้เป็น 9 หลักเสมอ เช่น 3001001 → 003001001
-                const normalizedCode = costCode.padStart(9, "0");
-                parsedData[category].push({
-                  category: category,
-                  code: normalizedCode,
-                  description: description,
-                  amount: amount,
-                  status: "Draft",
-                  subItems: [],
-                });
-              }
+
+              if (!parsedData[category]) parsedData[category] = [];
+              parsedData[category].push({
+                category,
+                code: normalizedCode,
+                description,
+                amount,
+                status: "Draft",
+                subItems: [],
+              });
             }
           }
         });
@@ -3726,10 +3919,10 @@ const AuthenticatedApp = () => {
                               }}
                             />
                           </th>
-                          <th className="py-2.5 px-4">Cost Code</th>
-                          <th className="py-2.5 px-4">รายการ</th>
-                          <th className="py-2.5 px-4 text-right">จำนวนเงิน</th>
-                          <th className="py-2.5 px-4 text-center">สถานะ</th>
+                          <ResizableTh tableId="dash-budget" colKey="costCode" className="py-2.5 px-4" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-budget"]?.costCode}>Cost Code</ResizableTh>
+                          <ResizableTh tableId="dash-budget" colKey="description" className="py-2.5 px-4" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-budget"]?.description}>รายการ</ResizableTh>
+                          <ResizableTh tableId="dash-budget" colKey="amount" className="py-2.5 px-4 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-budget"]?.amount}>จำนวนเงิน</ResizableTh>
+                          <ResizableTh tableId="dash-budget" colKey="status" className="py-2.5 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-budget"]?.status}>สถานะ</ResizableTh>
                           <th className="py-2.5 px-4 text-center">Actions</th>
                         </tr>
                       </thead>
@@ -3826,10 +4019,10 @@ const AuthenticatedApp = () => {
                     <table className="w-full text-left text-xs text-slate-600 whitespace-nowrap">
                       <thead className="bg-slate-200 text-slate-800 uppercase font-bold border-b text-sm">
                         <tr>
-                          <th className="py-1.5 px-3">Cost Code</th>
-                          <th className="py-1.5 px-3">รายการ</th>
-                          <th className="py-1.5 px-3 text-right">จำนวนเงินรวม</th>
-                          <th className="py-1.5 px-3 text-center">สถานะ</th>
+                          <ResizableTh tableId="dash-subitem" colKey="costCode" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-subitem"]?.costCode}>Cost Code</ResizableTh>
+                          <ResizableTh tableId="dash-subitem" colKey="description" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-subitem"]?.description}>รายการ</ResizableTh>
+                          <ResizableTh tableId="dash-subitem" colKey="amount" className="py-1.5 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-subitem"]?.amount}>จำนวนเงินรวม</ResizableTh>
+                          <ResizableTh tableId="dash-subitem" colKey="status" className="py-1.5 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-subitem"]?.status}>สถานะ</ResizableTh>
                           <th className="py-1.5 px-3 text-center">Actions</th>
                         </tr>
                       </thead>
@@ -3937,13 +4130,13 @@ const AuthenticatedApp = () => {
                     <table className="w-full text-left text-xs text-slate-600 whitespace-nowrap">
                       <thead className="bg-slate-200 text-slate-800 uppercase font-bold border-b text-sm">
                         <tr>
-                          <th className="py-1.5 px-3">PR No.</th>
-                          <th className="py-1.5 px-3">วันที่</th>
-                          <th className="py-1.5 px-3">Cost Code</th>
-                          <th className="py-1.5 px-3">ประเภท</th>
-                          <th className="py-1.5 px-3">ผู้ขอซื้อ</th>
-                          <th className="py-1.5 px-3 text-right">จำนวนเงิน</th>
-                          <th className="py-1.5 px-3 text-center">สถานะ</th>
+                          <ResizableTh tableId="dash-pr" colKey="prNo" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-pr"]?.prNo}>PR No.</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="date" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-pr"]?.date}>วันที่</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="costCode" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-pr"]?.costCode}>Cost Code</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="type" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-pr"]?.type}>ประเภท</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="requestor" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-pr"]?.requestor}>ผู้ขอซื้อ</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="amount" className="py-1.5 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-pr"]?.amount}>จำนวนเงิน</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="status" className="py-1.5 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-pr"]?.status}>สถานะ</ResizableTh>
                           <th className="py-1.5 px-3 text-center">Actions</th>
                         </tr>
                       </thead>
@@ -4026,11 +4219,11 @@ const AuthenticatedApp = () => {
                     <table className="w-full text-left text-xs text-slate-600 whitespace-nowrap">
                       <thead className="bg-slate-200 text-slate-800 uppercase font-bold border-b text-sm">
                         <tr>
-                          <th className="py-1.5 px-3">PO No.</th>
-                          <th className="py-1.5 px-3">วันที่</th>
-                          <th className="py-1.5 px-3">Cost Code</th>
-                          <th className="py-1.5 px-3 text-right">จำนวนเงิน</th>
-                          <th className="py-1.5 px-3 text-center">สถานะ</th>
+                          <ResizableTh tableId="dash-po" colKey="poNo" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-po"]?.poNo}>PO No.</ResizableTh>
+                          <ResizableTh tableId="dash-po" colKey="date" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-po"]?.date}>วันที่</ResizableTh>
+                          <ResizableTh tableId="dash-po" colKey="costCode" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-po"]?.costCode}>Cost Code</ResizableTh>
+                          <ResizableTh tableId="dash-po" colKey="amount" className="py-1.5 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-po"]?.amount}>จำนวนเงิน</ResizableTh>
+                          <ResizableTh tableId="dash-po" colKey="status" className="py-1.5 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-po"]?.status}>สถานะ</ResizableTh>
                           <th className="py-1.5 px-3 text-center">Actions</th>
                         </tr>
                       </thead>
@@ -4199,19 +4392,13 @@ const AuthenticatedApp = () => {
                           ))}
                       </div>
                     </th>
-                    <th className="py-3 px-4 border-r w-[220px] max-w-[220px]">รายการ</th>
-                    <th className="py-3 px-4 text-right bg-blue-100">Budget</th>
-                    <th className="py-3 px-4 text-center">สถานะ</th>
-                    <th className="py-3 px-4 text-right text-green-800 font-bold border-r">
-                      Balance
-                    </th>
-                    <th className="py-3 px-4 text-right text-slate-600">
-                      PR Total
-                    </th>
-                    <th className="py-3 px-4 text-right text-slate-600">
-                      PO Total
-                    </th>
-                    <th className="py-3 px-4 text-center min-w-[220px]">Now Status</th>
+                    <ResizableTh tableId="budget" colKey="description" className="py-3 px-4 border-r" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.budget?.description ?? 220}>รายการ</ResizableTh>
+                    <ResizableTh tableId="budget" colKey="budget" className="py-3 px-4 text-right bg-blue-100" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.budget?.budget}>Budget</ResizableTh>
+                    <ResizableTh tableId="budget" colKey="status" className="py-3 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.budget?.status}>สถานะ</ResizableTh>
+                    <ResizableTh tableId="budget" colKey="balance" className="py-3 px-4 text-right text-green-800 font-bold border-r" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.budget?.balance}>Balance</ResizableTh>
+                    <ResizableTh tableId="budget" colKey="prTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.budget?.prTotal}>PR Total</ResizableTh>
+                    <ResizableTh tableId="budget" colKey="poTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.budget?.poTotal}>PO Total</ResizableTh>
+                    <ResizableTh tableId="budget" colKey="nowStatus" className="py-3 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.budget?.nowStatus ?? 220}>Now Status</ResizableTh>
                     <th className="py-3 px-4 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -5368,15 +5555,15 @@ const AuthenticatedApp = () => {
           <table className="w-full text-left text-xs text-slate-600">
             <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
               <tr>
-                <th className="py-1 px-3">PR No.</th>
-                <th className="py-1 px-3">Date</th>
-                <th className="py-1 px-3">Cost Code</th>
-                <th className="py-1 px-3">Description</th>
-                <th className="py-1 px-3">Type</th>
-                <th className="py-1 px-3">Requestor</th>
-                <th className="py-1 px-3">Items</th>
-                <th className="py-1 px-3 text-right">Amount</th>
-                <th className="py-1 px-3 text-center">Status</th>
+                <ResizableTh tableId="pr" colKey="prNo" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.pr?.prNo}>PR No.</ResizableTh>
+                <ResizableTh tableId="pr" colKey="date" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.pr?.date}>Date</ResizableTh>
+                <ResizableTh tableId="pr" colKey="costCode" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.pr?.costCode}>Cost Code</ResizableTh>
+                <ResizableTh tableId="pr" colKey="description" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.pr?.description}>Description</ResizableTh>
+                <ResizableTh tableId="pr" colKey="type" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.pr?.type}>Type</ResizableTh>
+                <ResizableTh tableId="pr" colKey="requestor" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.pr?.requestor}>Requestor</ResizableTh>
+                <ResizableTh tableId="pr" colKey="items" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.pr?.items}>Items</ResizableTh>
+                <ResizableTh tableId="pr" colKey="amount" className="py-1 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.pr?.amount}>Amount</ResizableTh>
+                <ResizableTh tableId="pr" colKey="status" className="py-1 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.pr?.status}>Status</ResizableTh>
                 <th className="py-1 px-3 text-right">Actions</th>
               </tr>
             </thead>
@@ -5413,12 +5600,16 @@ const AuthenticatedApp = () => {
                         <td
                           className="py-1 px-3 text-xs text-slate-500"
                           title={(() => {
-                            const desc = budgets.find((b) => b.code === pr.costCode && b.projectId === pr.projectId)?.description || "-";
-                            return pr.rejectReason ? `${desc} | ปฏิเสธ: ${pr.rejectReason}` : desc;
+                            const itemDescs = pr.items && pr.items.length > 0
+                              ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
+                              : "-";
+                            return pr.rejectReason ? `${itemDescs} | ปฏิเสธ: ${pr.rejectReason}` : itemDescs;
                           })()}
                         >
                           <span className="cell-text">
-                            {budgets.find((b) => b.code === pr.costCode && b.projectId === pr.projectId)?.description || "-"}
+                            {pr.items && pr.items.length > 0
+                              ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
+                              : "-"}
                           </span>
                         </td>
                         <td className="py-1 px-3" title={pr.purchaseType}><span className="cell-text">{getPurchaseTypeDisplayLabel(pr.purchaseType)}</span></td>
@@ -6590,6 +6781,27 @@ const AuthenticatedApp = () => {
       }));
     };
 
+    // Fill all material fields at once from Material master
+    const handleItemSelectMaterial = (prId, prItemIndex, mat) => {
+      setFormData(prev => ({
+        ...prev,
+        items: prev.items.map(item => {
+          if (item.prId === prId && item.prItemIndex === prItemIndex) {
+            const newPrice = mat.price ?? item.price;
+            const qty = Number(item.quantity) || 1;
+            return {
+              ...item,
+              materialNo: mat.materialNo || item.materialNo,
+              description: mat.name || item.description,
+              price: newPrice,
+              amount: qty * Number(newPrice),
+            };
+          }
+          return item;
+        })
+      }));
+    };
+
     const calculateTotals = () => {
       const subtotal = formData.items.reduce((sum, item) => sum + item.amount, 0);
       let vat = 0;
@@ -6752,14 +6964,14 @@ const AuthenticatedApp = () => {
           <table className="w-full text-left text-xs text-slate-600">
             <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
               <tr>
-                <th className="py-2 px-3">PO No.</th>
-                <th className="py-2 px-3 text-center">Type</th>
-                <th className="py-2 px-3">Ref PR No.</th>
-                <th className="py-2 px-3">Description PR</th>
-                <th className="py-2 px-3">Vendor</th>
-                <th className="py-2 px-3 text-center">Item</th>
-                <th className="py-2 px-3 text-right">Amount</th>
-                <th className="py-2 px-3 text-center">Status</th>
+                <ResizableTh tableId="po" colKey="poNo" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.po?.poNo}>PO No.</ResizableTh>
+                <ResizableTh tableId="po" colKey="poType" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.po?.poType}>Type</ResizableTh>
+                <ResizableTh tableId="po" colKey="prNos" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.po?.prNos}>Ref PR No.</ResizableTh>
+                <ResizableTh tableId="po" colKey="description" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.po?.description}>Description PR</ResizableTh>
+                <ResizableTh tableId="po" colKey="vendor" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.po?.vendor}>Vendor</ResizableTh>
+                <ResizableTh tableId="po" colKey="items" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.po?.items}>Item</ResizableTh>
+                <ResizableTh tableId="po" colKey="amount" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.po?.amount}>Amount</ResizableTh>
+                <ResizableTh tableId="po" colKey="status" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.po?.status}>Status</ResizableTh>
                 <th className="py-2 px-3 text-right">Action</th>
               </tr>
             </thead>
@@ -7118,14 +7330,13 @@ const AuthenticatedApp = () => {
                         <thead className="bg-slate-100 font-semibold text-slate-800 border-b border-slate-200">
                           <tr>
                             <th className="p-2.5 w-10 text-center">เลือก</th>
-                            <th className="p-2.5 w-24">PR No.</th>
-                            <th className="p-2.5 w-28">Material No.</th>
-                            <th className="p-2.5">Description</th>
-                            <th className="p-2.5">รายการ</th>
-                            <th className="p-2.5 w-28">เหลือ (QTY)</th>
-                            <th className="p-2.5 w-24">สั่งซื้อ (QTY)</th>
-                            <th className="p-2.5 w-28">ราคา/หน่วย</th>
-                            <th className="p-2.5 text-right w-24">รวม</th>
+                            <ResizableTh tableId="select-items" colKey="prNo" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.prNo ?? 96}>PR No.</ResizableTh>
+                            <ResizableTh tableId="select-items" colKey="materialNo" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.materialNo ?? 112}>Material No.</ResizableTh>
+                            <ResizableTh tableId="select-items" colKey="description" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.description}>รายการ</ResizableTh>
+                            <ResizableTh tableId="select-items" colKey="remainingQty" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.remainingQty ?? 112}>เหลือ (QTY)</ResizableTh>
+                            <ResizableTh tableId="select-items" colKey="orderQty" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.orderQty ?? 96}>สั่งซื้อ (QTY)</ResizableTh>
+                            <ResizableTh tableId="select-items" colKey="price" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.price ?? 112}>ราคา/หน่วย</ResizableTh>
+                            <ResizableTh tableId="select-items" colKey="total" className="p-2.5 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.total ?? 96}>รวม</ResizableTh>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-200 bg-white">
@@ -7142,35 +7353,28 @@ const AuthenticatedApp = () => {
                                 <td className="p-2.5 font-medium text-slate-800 whitespace-nowrap">
                                   {item.prNo}
                                 </td>
-                                {/* Material No. — editable */}
+                                {/* Material No. — editable + autocomplete */}
                                 <td className="p-2.5">
-                                  <input
-                                    type="text"
-                                    className={inputCls}
-                                    disabled={!isSelected}
+                                  <MaterialAutoComplete
                                     value={selectedData.materialNo ?? ""}
+                                    className={inputCls}
+                                    disabled={!isSelected}
                                     placeholder="ระบุ Material No."
-                                    onChange={(e) => handleItemChange(item.prId, item.prItemIndex, "materialNo", e.target.value)}
+                                    materials={materials}
+                                    onChange={(val) => handleItemChange(item.prId, item.prItemIndex, "materialNo", val)}
+                                    onSelectMaterial={(mat) => handleItemSelectMaterial(item.prId, item.prItemIndex, mat)}
                                   />
                                 </td>
-                                {/* Description (prDescription) — editable */}
+                                {/* รายการ (description) — editable + autocomplete */}
                                 <td className="p-2.5">
-                                  <input
-                                    type="text"
+                                  <MaterialAutoComplete
+                                    value={selectedData.description ?? ""}
                                     className={inputCls}
                                     disabled={!isSelected}
-                                    value={selectedData.prDescription ?? item.prDescription}
-                                    onChange={(e) => handleItemChange(item.prId, item.prItemIndex, "prDescription", e.target.value)}
-                                  />
-                                </td>
-                                {/* รายการ (description) — editable */}
-                                <td className="p-2.5">
-                                  <input
-                                    type="text"
-                                    className={inputCls}
-                                    disabled={!isSelected}
-                                    value={selectedData.description}
-                                    onChange={(e) => handleItemChange(item.prId, item.prItemIndex, "description", e.target.value)}
+                                    placeholder="รายการสินค้า"
+                                    materials={materials}
+                                    onChange={(val) => handleItemChange(item.prId, item.prItemIndex, "description", val)}
+                                    onSelectMaterial={(mat) => handleItemSelectMaterial(item.prId, item.prItemIndex, mat)}
                                   />
                                 </td>
                                 {/* เหลือ (QTY) — editable */}
@@ -7317,20 +7521,21 @@ const AuthenticatedApp = () => {
                             title="เลือกทั้งหมด"
                           />
                         </th>
-                        <th className="px-4 py-3">PR No.</th>
-                        <th className="px-4 py-3">Cost Code</th>
-                        <th className="px-4 py-3">รายการงบ</th>
-                        <th className="px-4 py-3">ผู้ขอซื้อ</th>
-                        <th className="px-4 py-3">วันที่</th>
-                        <th className="px-4 py-3 text-center">สินค้า</th>
-                        <th className="px-4 py-3 text-right">ยอดรวม</th>
-                        <th className="px-4 py-3 text-center">สถานะ</th>
+                        <ResizableTh tableId="select-pr" colKey="prNo" className="px-4 py-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-pr"]?.prNo}>PR No.</ResizableTh>
+                        <ResizableTh tableId="select-pr" colKey="costCode" className="px-4 py-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-pr"]?.costCode}>Cost Code</ResizableTh>
+                        <ResizableTh tableId="select-pr" colKey="description" className="px-4 py-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-pr"]?.description}>รายการงบ</ResizableTh>
+                        <ResizableTh tableId="select-pr" colKey="requestor" className="px-4 py-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-pr"]?.requestor}>ผู้ขอซื้อ</ResizableTh>
+                        <ResizableTh tableId="select-pr" colKey="date" className="px-4 py-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-pr"]?.date}>วันที่</ResizableTh>
+                        <ResizableTh tableId="select-pr" colKey="items" className="px-4 py-3 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-pr"]?.items}>สินค้า</ResizableTh>
+                        <ResizableTh tableId="select-pr" colKey="amount" className="px-4 py-3 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-pr"]?.amount}>ยอดรวม</ResizableTh>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {approvedPRs.map(pr => {
                         const isSelected = tempSelectedPrIds.includes(pr.id);
-                        const prDesc = budgets.find(b => b.code === pr.costCode && b.projectId === pr.projectId)?.description || "-";
+                        const prDesc = pr.items && pr.items.length > 0
+                          ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
+                          : "-";
                         const totalAmt = pr.items?.reduce((s, i) => s + Number(i.quantity) * Number(i.price), 0) || 0;
                         return (
                           <tr
@@ -7367,9 +7572,6 @@ const AuthenticatedApp = () => {
                               <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded font-semibold">{pr.items?.length || 0}</span>
                             </td>
                             <td className="px-4 py-3 text-right font-semibold text-slate-800">{formatCurrency(totalAmt)}</td>
-                            <td className="px-4 py-3 text-center">
-                              <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded font-medium">{pr.status}</span>
-                            </td>
                           </tr>
                         );
                       })}
@@ -7483,11 +7685,11 @@ const AuthenticatedApp = () => {
           <table className="w-full text-left text-xs text-slate-600">
             <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
               <tr>
-                <th className="py-2 px-3">Code</th>
-                <th className="py-2 px-3">Name</th>
-                <th className="py-2 px-3">Type</th>
-                <th className="py-2 px-3">Contact</th>
-                <th className="py-2 px-3">Note</th>
+                <ResizableTh tableId="vendor" colKey="code" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.vendor?.code}>Code</ResizableTh>
+                <ResizableTh tableId="vendor" colKey="name" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.vendor?.name}>Name</ResizableTh>
+                <ResizableTh tableId="vendor" colKey="type" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.vendor?.type}>Type</ResizableTh>
+                <ResizableTh tableId="vendor" colKey="contact" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.vendor?.contact}>Contact</ResizableTh>
+                <ResizableTh tableId="vendor" colKey="note" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.vendor?.note}>Note</ResizableTh>
                 <th className="py-2 px-3 text-right">Actions</th>
               </tr>
             </thead>
@@ -7670,8 +7872,8 @@ const AuthenticatedApp = () => {
 
     const handleDownloadTemplate = () => {
       const bom = "\uFEFF";
-      const headers = "Material No.,Name,Unit,Price\n";
-      const sample = "MAT-001,ปูนซีเมนต์,ถุง,250\nMAT-002,เหล็กเส้น 12mm,เส้น,180\nMAT-003,ทราย,คิว,350";
+      const headers = "รหัสสินค้า,ชื่อสินค้า,ราคาต่อหน่วย,หน่วย\n";
+      const sample = "MAT-001,ปูนซีเมนต์,250,ถุง\nMAT-002,เหล็กเส้น 12mm,180,เส้น\nMAT-003,ทราย,350,คิว";
       const uri = "data:text/csv;charset=utf-8," + encodeURIComponent(bom + headers + sample);
       const a = document.createElement("a");
       a.setAttribute("href", uri);
@@ -7702,8 +7904,8 @@ const AuthenticatedApp = () => {
           return {
             materialNo: clean(cols[0]),
             name: clean(cols[1]),
-            unit: clean(cols[2]),
-            price: Number((clean(cols[3]) || "0").replace(/,/g, "")) || 0,
+            price: Number((clean(cols[2]) || "0").replace(/,/g, "")) || 0,
+            unit: clean(cols[3]),
           };
         }).filter((r) => r.name);
         setImportPreview(parsed);
@@ -7762,10 +7964,10 @@ const AuthenticatedApp = () => {
             <thead className="bg-slate-50 text-slate-800 font-semibold border-b border-slate-200">
               <tr>
                 <th className="py-2 px-3 w-12 text-center">No.</th>
-                <th className="py-2 px-3 w-32">Material No.</th>
-                <th className="py-2 px-3">Name</th>
-                <th className="py-2 px-3 w-20 text-center">Unit</th>
-                <th className="py-2 px-3 w-28 text-right">Price</th>
+                <ResizableTh tableId="material" colKey="materialNo" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.material?.materialNo ?? 128}>รหัสสินค้า</ResizableTh>
+                <ResizableTh tableId="material" colKey="name" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.material?.name}>ชื่อสินค้า</ResizableTh>
+                <ResizableTh tableId="material" colKey="price" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.material?.price ?? 112}>ราคาต่อหน่วย</ResizableTh>
+                <ResizableTh tableId="material" colKey="unit" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.material?.unit ?? 80}>หน่วย</ResizableTh>
                 <th className="py-2 px-3 w-20 text-right">Actions</th>
               </tr>
             </thead>
@@ -7783,8 +7985,8 @@ const AuthenticatedApp = () => {
                     <td className="py-1.5 px-3 text-center text-slate-400 font-mono text-[11px]">{idx + 1}</td>
                     <td className="py-1.5 px-3 font-medium text-slate-700" title={m.materialNo}><span className="cell-text">{m.materialNo || "-"}</span></td>
                     <td className="py-1.5 px-3" title={m.name}><span className="cell-text">{m.name}</span></td>
-                    <td className="py-1.5 px-3 text-center text-slate-500" title={m.unit}><span className="cell-text">{m.unit || "-"}</span></td>
                     <td className="py-1.5 px-3 text-right font-semibold text-slate-700">{formatCurrency(m.price || 0)}</td>
+                    <td className="py-1.5 px-3 text-center text-slate-500" title={m.unit}><span className="cell-text">{m.unit || "-"}</span></td>
                     <td className="py-1.5 px-3 text-right">
                       <div className="flex justify-end gap-1">
                         <button className="text-blue-500 hover:text-blue-700 p-1 hover:bg-blue-50 rounded" onClick={() => handleOpenEdit(m)} title="แก้ไข">
@@ -7815,7 +8017,7 @@ const AuthenticatedApp = () => {
                 <Package size={18} /> {editingId ? "แก้ไข Material" : "เพิ่ม Material"}
               </h3>
               <div className="grid grid-cols-2 gap-4">
-                <InputGroup label="Material No.">
+                <InputGroup label="รหัสสินค้า">
                   <input
                     type="text"
                     className="w-full border rounded-lg p-2 text-sm focus:border-slate-400 focus:ring-1 focus:ring-slate-100"
@@ -7824,7 +8026,7 @@ const AuthenticatedApp = () => {
                     placeholder="MAT-001"
                   />
                 </InputGroup>
-                <InputGroup label="Unit">
+                <InputGroup label="หน่วย">
                   <input
                     type="text"
                     className="w-full border rounded-lg p-2 text-sm focus:border-slate-400 focus:ring-1 focus:ring-slate-100"
@@ -7834,7 +8036,7 @@ const AuthenticatedApp = () => {
                   />
                 </InputGroup>
                 <div className="col-span-2">
-                  <InputGroup label="Name *">
+                  <InputGroup label="ชื่อสินค้า *">
                     <input
                       type="text"
                       className="w-full border rounded-lg p-2 text-sm focus:border-slate-400 focus:ring-1 focus:ring-slate-100"
@@ -7845,7 +8047,7 @@ const AuthenticatedApp = () => {
                   </InputGroup>
                 </div>
                 <div className="col-span-2">
-                  <InputGroup label="Price (ราคา/หน่วย)">
+                  <InputGroup label="ราคาต่อหน่วย">
                     <input
                       type="number"
                       className="w-full border rounded-lg p-2 text-sm focus:border-slate-400 focus:ring-1 focus:ring-slate-100 text-right"
@@ -7881,10 +8083,10 @@ const AuthenticatedApp = () => {
                   <thead className="bg-slate-100 text-slate-800 font-semibold sticky top-0">
                     <tr>
                       <th className="py-1.5 px-3 w-8 text-center">#</th>
-                      <th className="py-1.5 px-3 w-28">Material No.</th>
-                      <th className="py-1.5 px-3">Name</th>
-                      <th className="py-1.5 px-3 w-16 text-center">Unit</th>
-                      <th className="py-1.5 px-3 w-24 text-right">Price</th>
+                      <th className="py-1.5 px-3 w-28">รหัสสินค้า</th>
+                      <th className="py-1.5 px-3">ชื่อสินค้า</th>
+                      <th className="py-1.5 px-3 w-28 text-right">ราคาต่อหน่วย</th>
+                      <th className="py-1.5 px-3 w-16 text-center">หน่วย</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -7893,8 +8095,8 @@ const AuthenticatedApp = () => {
                         <td className="py-1 px-3 text-center text-slate-400">{i + 1}</td>
                         <td className="py-1 px-3 font-medium">{row.materialNo || "-"}</td>
                         <td className="py-1 px-3">{row.name}</td>
-                        <td className="py-1 px-3 text-center">{row.unit || "-"}</td>
                         <td className="py-1 px-3 text-right">{formatCurrency(row.price)}</td>
+                        <td className="py-1 px-3 text-center">{row.unit || "-"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -7996,11 +8198,11 @@ const AuthenticatedApp = () => {
           <table className="w-full text-left text-xs text-slate-600">
             <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
               <tr>
-                <th className="py-2 px-3">INV No.</th>
-                <th className="py-2 px-3">Ref. PO</th>
-                <th className="py-2 px-3">รายละเอียด</th>
-                <th className="py-2 px-3 text-right">จำนวนเงิน</th>
-                <th className="py-2 px-3 text-center">สถานะ</th>
+                <ResizableTh tableId="invoice" colKey="invNo" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.invoice?.invNo}>INV No.</ResizableTh>
+                <ResizableTh tableId="invoice" colKey="poRef" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.invoice?.poRef}>Ref. PO</ResizableTh>
+                <ResizableTh tableId="invoice" colKey="description" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.invoice?.description}>รายละเอียด</ResizableTh>
+                <ResizableTh tableId="invoice" colKey="amount" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.invoice?.amount}>จำนวนเงิน</ResizableTh>
+                <ResizableTh tableId="invoice" colKey="status" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.invoice?.status}>สถานะ</ResizableTh>
                 <th className="py-2 px-3 text-right">Actions</th>
               </tr>
             </thead>
@@ -8481,6 +8683,9 @@ const AuthenticatedApp = () => {
                   pos={pos}
                   budgets={budgets}
                   projects={projects}
+                  columnWidths={columnWidths}
+                  handleColumnResize={handleColumnResize}
+                  userRole={userRole}
                 />
               </div>
             )}
@@ -8561,12 +8766,15 @@ const SidebarSubItem = ({ label, active, onClick }) => (
 );
 
 // --- PR / PO Combined Table View ---
-const PRPOTableView = ({ mode, prs, pos, budgets, projects }: {
+const PRPOTableView = ({ mode, prs, pos, budgets, projects, columnWidths, handleColumnResize, userRole }: {
   mode: "pr" | "po";
   prs: any[];
   pos: any[];
   budgets: any[];
   projects: any[];
+  columnWidths?: Record<string, Record<string, number>>;
+  handleColumnResize?: (tableId: string, colKey: string, width: number) => void;
+  userRole?: string;
 }) => {
   const [searchTerm, setSearchTerm] = React.useState("");
   const [filterStatus, setFilterStatus] = React.useState("all");
@@ -8671,18 +8879,18 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects }: {
             <thead>
               <tr className="bg-slate-800 text-white">
                 <th className="px-3 py-3 font-semibold w-6">#</th>
-                <th className="px-3 py-3 font-semibold">{isPR ? "PR No." : "PO No."}</th>
-                <th className="px-3 py-3 font-semibold">โครงการ</th>
-                {isPR && <th className="px-3 py-3 font-semibold">Cost Code</th>}
-                {isPR && <th className="px-3 py-3 font-semibold">รายการงบ</th>}
-                {!isPR && <th className="px-3 py-3 font-semibold">Vendor</th>}
-                {!isPR && <th className="px-3 py-3 font-semibold">PR อ้างอิง</th>}
-                <th className="px-3 py-3 font-semibold">วันที่</th>
-                {isPR && <th className="px-3 py-3 font-semibold">ผู้ขอ</th>}
-                {isPR && <th className="px-3 py-3 font-semibold">ประเภท</th>}
-                <th className="px-3 py-3 font-semibold text-right">จำนวนรายการ</th>
-                <th className="px-3 py-3 font-semibold text-right">ยอดรวม</th>
-                <th className="px-3 py-3 font-semibold text-center">สถานะ</th>
+                <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="no" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths?.[isPR?"pr-table":"po-table"]?.no}>{isPR ? "PR No." : "PO No."}</ResizableTh>
+                <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="project" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths?.[isPR?"pr-table":"po-table"]?.project}>โครงการ</ResizableTh>
+                {isPR && <ResizableTh tableId="pr-table" colKey="costCode" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths?.["pr-table"]?.costCode}>Cost Code</ResizableTh>}
+                {isPR && <ResizableTh tableId="pr-table" colKey="description" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths?.["pr-table"]?.description}>รายการงบ</ResizableTh>}
+                {!isPR && <ResizableTh tableId="po-table" colKey="vendor" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths?.["po-table"]?.vendor}>Vendor</ResizableTh>}
+                {!isPR && <ResizableTh tableId="po-table" colKey="prRef" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths?.["po-table"]?.prRef}>PR อ้างอิง</ResizableTh>}
+                <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="date" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths?.[isPR?"pr-table":"po-table"]?.date}>วันที่</ResizableTh>
+                {isPR && <ResizableTh tableId="pr-table" colKey="requestor" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths?.["pr-table"]?.requestor}>ผู้ขอ</ResizableTh>}
+                {isPR && <ResizableTh tableId="pr-table" colKey="type" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths?.["pr-table"]?.type}>ประเภท</ResizableTh>}
+                <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="items" className="px-3 py-3 font-semibold text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths?.[isPR?"pr-table":"po-table"]?.items}>จำนวนรายการ</ResizableTh>
+                <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="amount" className="px-3 py-3 font-semibold text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths?.[isPR?"pr-table":"po-table"]?.amount}>ยอดรวม</ResizableTh>
+                <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="status" className="px-3 py-3 font-semibold text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths?.[isPR?"pr-table":"po-table"]?.status}>สถานะ</ResizableTh>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -8722,8 +8930,13 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects }: {
                         <td className="px-3 py-2.5 font-mono text-slate-700">{r.costCode || "-"}</td>
                       )}
                       {isPR && (
-                        <td className="px-3 py-2.5 text-slate-600 max-w-[180px] truncate" title={getBudgetDesc(r.costCode, r.projectId)}>
-                          {getBudgetDesc(r.costCode, r.projectId)}
+                        <td className="px-3 py-2.5 text-slate-600 max-w-[180px] truncate"
+                          title={r.items && r.items.length > 0
+                            ? r.items.map((it: any) => it.description).filter(Boolean).join(", ")
+                            : getBudgetDesc(r.costCode, r.projectId)}>
+                          {r.items && r.items.length > 0
+                            ? r.items.map((it: any) => it.description).filter(Boolean).join(", ")
+                            : getBudgetDesc(r.costCode, r.projectId)}
                         </td>
                       )}
                       {!isPR && (
