@@ -372,7 +372,7 @@ const PRView = React.memo(() => {
           <ProjectSelect
             projects={visibleProjects}
             selectedId={selectedProjectId}
-            onChange={(e) => setSelectedProjectId(e.target.value)}
+            onChange={(e) => handleProjectChange(e.target.value, visibleProjects)}
           />
           <Button
             onClick={() => {
@@ -639,16 +639,17 @@ const PRView = React.memo(() => {
             </Card>
           </div>
         )}
+        {/* Modal สร้าง/แก้ไข PR — ทับ Header, เต็มความสูง, Footer เลื่อนตามเนื้อหา */}
         {isModalOpen && (
           <motion.div
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start md:items-center justify-center z-50 p-2 md:p-4"
+            className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[9999] p-4"
             initial="hidden"
             animate="visible"
             variants={modalOverlayVariants}
             transition={overlayTransition}
           >
             <motion.div
-              className="w-full max-w-5xl h-[82vh] max-h-[calc(100vh-2rem)] flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
+              className="w-[90vw] max-w-[90vw] max-h-[92vh] flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
               initial="hidden"
               animate="visible"
               variants={modalContentVariants}
@@ -1177,31 +1178,30 @@ const PRView = React.memo(() => {
                     )}
                   </table>
                 </div>
-              </div>
-
-              {/* Sticky Footer */}
-              <div className="flex justify-between items-center px-6 py-3.5 border-t border-slate-200 bg-slate-50 shrink-0">
-                <div className="flex items-center gap-2 text-xs text-slate-500">
-                  <Info size={13} />
-                  <span>กรุณากรอกข้อมูลให้ครบถ้วนก่อนบันทึก</span>
-                </div>
-                <div className="flex gap-3">
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      setIsModalOpen(false);
-                      setIsFullScreenModalOpen(false);
-                    }}
-                    className="px-5 rounded-lg"
-                  >
-                    <XCircle size={15} /> ยกเลิก
-                  </Button>
-                  <Button
-                    onClick={handleSavePR}
-                    className="px-8 rounded-lg bg-slate-600 hover:bg-slate-700 text-white transition-all"
-                  >
-                    <Save size={16} /> บันทึก PR
-                  </Button>
+                {/* Footer — เลื่อนตามเนื้อหา ไม่ freeze */}
+                <div className="mt-4 pb-6 flex justify-between items-center px-6 py-3.5 border border-slate-200 rounded-xl bg-slate-50">
+                  <div className="flex items-center gap-2 text-xs text-slate-500">
+                    <Info size={13} />
+                    <span>กรุณากรอกข้อมูลให้ครบถ้วนก่อนบันทึก</span>
+                  </div>
+                  <div className="flex gap-3">
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        setIsModalOpen(false);
+                        setIsFullScreenModalOpen(false);
+                      }}
+                      className="px-5 rounded-lg"
+                    >
+                      <XCircle size={15} /> ยกเลิก
+                    </Button>
+                    <Button
+                      onClick={handleSavePR}
+                      className="px-8 rounded-lg bg-slate-600 hover:bg-slate-700 text-white transition-all"
+                    >
+                      <Save size={16} /> บันทึก PR
+                    </Button>
+                  </div>
                 </div>
               </div>
             </motion.div>

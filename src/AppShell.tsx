@@ -8,14 +8,15 @@ import {
   Clock, Package, Tag, ClipboardList, CheckSquare, Square,
   Paperclip, Mail, Flame, MapPinned, CircleDot, Zap, Building2, MapPin,
   DollarSign, Calendar, PlusCircle, ChevronRight, ChevronUp, Play, BarChart3,
-  FileSpreadsheet
+  FileSpreadsheet, Download
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   collection, doc, onSnapshot, query, updateDoc, addDoc, deleteDoc,
   orderBy, limit, getDocs, where,
 } from "firebase/firestore";
-import { db, appId } from "./lib/firebase";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { db, appId, storage, FORM_TEMPLATE_PATHS } from "./lib/firebase";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "./components/ui";
 import ResizableTh from "./components/ResizableTh";
 import { USER_ROLES } from "./lib/constants";
@@ -39,6 +40,7 @@ const AppShell = () => {
     projects, budgets, vendors, materials, prs, pos, invoices,
     visibleProjects, columnWidths, handleColumnResize,
     addData, updateData, deleteData,
+    loadVendors, loadMaterials,
     totalPendingCount, pendingByProject,
     handlePRAction, handlePOAction,
     showAlert, openConfirm,
@@ -59,17 +61,22 @@ const AppShell = () => {
   // handleMenuChange + handleProjectChange → UIContext (useUI() above)
   // pendingBudgetsGlobal, totalPendingCount, pendingByProject → AppDataContext (useAppData() above)
 
-  // Auto-select first visible project when selection is invalid
+  // Auto-select first visible project when selection is invalid (ไม่ใส่ selectedProjectId ใน deps เพื่อลดการรัน effect และกัน loop)
   useEffect(() => {
-    if (visibleProjects.length > 0) {
-      if (!selectedProjectId || !visibleProjects.find((p) => p.id === selectedProjectId)) {
-        setSelectedProjectId(visibleProjects[0].id);
-      }
-    } else {
+    if (visibleProjects.length === 0) {
       setSelectedProjectId(null);
+      return;
     }
-  }, [visibleProjects, selectedProjectId]);
+    setSelectedProjectId((current) => {
+      if (!current || !visibleProjects.some((p) => p.id === current)) return visibleProjects[0].id;
+      return current;
+    });
+  }, [visibleProjects]);
 
+  // โหลด vendors เมื่อเข้าหน้า PO / ตาราง PO / Vendor (ลดโควต้า — โหลดเฉพาะเมื่อใช้)
+  useEffect(() => {
+    if (activeMenu === "po" || activeMenu === "po-table" || activeMenu === "vendor") loadVendors();
+  }, [activeMenu, loadVendors]);
 
   return (
     <div className="flex h-screen bg-slate-100 font-sans">
@@ -187,6 +194,7 @@ const AppShell = () => {
       )}
 
       <main className="flex-1 overflow-y-auto bg-slate-50/50">
+        {!isFullScreenModalOpen && (
         <header className="bg-white/80 backdrop-blur-md shadow-sm px-8 py-4 flex justify-between items-center sticky top-0 z-20 border-b border-slate-100">
           <h1 className="text-xl font-bold text-slate-800 flex items-center gap-2">
             {activeMenu === "dashboard"
@@ -315,11 +323,12 @@ const AppShell = () => {
             </button>
           </div>
         </header>
+        )}
         <div className="p-8 max-w-[1600px] mx-auto">
           <motion.div
             key={activeMenu}
-            initial={{ opacity: 0, x: 28 }}
-            animate={{ opacity: 1, x: 0 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
             transition={{ duration: 0.28, ease: [0.25, 0.46, 0.45, 0.94] }}
           >
             <div data-menu-page="dashboard" style={{ display: activeMenu === "dashboard" ? undefined : "none" }}>
@@ -364,9 +373,13 @@ const AppShell = () => {
                   pos={pos}
                   budgets={budgets}
                   projects={projects}
+                  vendors={vendors}
                   columnWidths={columnWidths}
                   handleColumnResize={handleColumnResize}
                   userRole={userRole}
+                  updateData={updateData}
+                  showAlert={showAlert}
+                  openConfirm={openConfirm}
                 />
               </div>
             )}
@@ -447,24 +460,33 @@ const SidebarSubItem = ({ label, active, onClick }) => (
 );
 
 // --- PR / PO Combined Table View ---
-const PRPOTableView = ({ mode, prs, pos, budgets, projects, columnWidths, handleColumnResize, userRole }: {
+const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidths, handleColumnResize, userRole, updateData, showAlert, openConfirm }: {
   mode: "pr" | "po";
   prs: any[];
   pos: any[];
   budgets: any[];
   projects: any[];
+  vendors?: any[];
   columnWidths?: Record<string, Record<string, number>>;
   handleColumnResize?: (tableId: string, colKey: string, width: number) => void;
   userRole?: string;
+  updateData?: (collection: string, id: string, data: any) => Promise<boolean>;
+  showAlert?: (title: string, message: string, type: string) => void;
+  openConfirm?: (title: string, message: string, onConfirm: () => void | Promise<void>, variant?: string) => void;
 }) => {
   const [searchTerm, setSearchTerm] = React.useState("");
   const [filterStatus, setFilterStatus] = React.useState("all");
   const [filterProject, setFilterProject] = React.useState("all");
+  const [emailModal, setEmailModal] = React.useState<{ pr: any } | null>(null);
+  const [emailTo, setEmailTo] = React.useState("");
 
   const isPR = mode === "pr";
 
   const statusColors: Record<string, string> = {
     "Approved": "bg-emerald-50 text-emerald-700 border-emerald-200",
+    "PO Issued": "bg-teal-50 text-teal-700 border-teal-200",
+    "Pending Close": "bg-amber-50 text-amber-700 border-amber-200",
+    "Closed PR": "bg-slate-100 text-slate-600 border-slate-300",
     "Pending MD": "bg-purple-50 text-purple-700 border-purple-200",
     "Pending GM": "bg-indigo-50 text-indigo-700 border-indigo-200",
     "Pending PM": "bg-blue-50 text-blue-700 border-blue-200",
@@ -483,8 +505,31 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, columnWidths, handle
     projects.find((p) => p.id === projectId)?.name || projectId;
 
   const allStatuses = isPR
-    ? ["Approved", "Pending MD", "Pending GM", "Pending PM", "Pending CM", "Rejected"]
+    ? ["Approved", "PO Issued", "Pending Close", "Closed PR", "Pending MD", "Pending GM", "Pending PM", "Pending CM", "Rejected"]
     : ["Approved", "Pending PCM", "Pending GM", "Rejected", "Paid", "Partial", "Draft"];
+
+  const handlePRDownloadPDF = (pr: any) => {
+    const projName = getProjectName(pr.projectId);
+    const html = `
+      <!DOCTYPE html><html><head><meta charset="utf-8"><title>PR ${pr.prNo || pr.id}</title>
+      <style>body{font-family:sans-serif;padding:24px;max-width:800px;margin:0 auto;} table{width:100%;border-collapse:collapse;} th,td{border:1px solid #ddd;padding:8px;text-align:left;} th{background:#f5f5f5;}</style>
+      </head><body>
+      <h1>ใบขอซื้อ (PR) ${pr.prNo || ""}</h1>
+      <p><strong>โครงการ:</strong> ${projName} &nbsp; <strong>Cost Code:</strong> ${pr.costCode || "-"} &nbsp; <strong>วันที่:</strong> ${pr.requestDate || "-"}</p>
+      <p><strong>ผู้ขอ:</strong> ${pr.requestor || "-"} &nbsp; <strong>ยอดรวม:</strong> ฿${Number(pr.totalAmount || 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}</p>
+      <table><thead><tr><th>#</th><th>รายการ</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>รวม</th></tr></thead><tbody>
+      ${(pr.items || []).map((it: any, i: number) => `<tr><td>${i + 1}</td><td>${it.description || "-"}</td><td>${it.quantity || "-"} ${it.unit || ""}</td><td>${Number(it.price || 0).toLocaleString("th-TH")}</td><td>฿${Number(it.amount || 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}</td></tr>`).join("")}
+      </tbody></table></body></html>`;
+    const w = window.open("", "_blank");
+    if (w) { w.document.write(html); w.document.close(); w.focus(); setTimeout(() => { w.print(); }, 300); }
+  };
+
+  const handlePRSendEmail = (pr: any, email: string) => {
+    if (!email || !email.includes("@")) { showAlert?.("ข้อมูลไม่ครบ", "กรุณากรอกอีเมลปลายทางที่ถูกต้อง", "warning"); return; }
+    showAlert?.("ส่งเมล", `ระบบจะส่งไฟล์ PDF ไปที่ ${email} (เชื่อม API ส่งเมลในภายหลัง)`, "info");
+    setEmailModal(null);
+    setEmailTo("");
+  };
 
   const rows = isPR ? prs : pos;
 
@@ -572,6 +617,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, columnWidths, handle
                 <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="items" className="px-3 py-3 font-semibold text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths?.[isPR?"pr-table":"po-table"]?.items}>จำนวนรายการ</ResizableTh>
                 <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="amount" className="px-3 py-3 font-semibold text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths?.[isPR?"pr-table":"po-table"]?.amount}>ยอดรวม</ResizableTh>
                 <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="status" className="px-3 py-3 font-semibold text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths?.[isPR?"pr-table":"po-table"]?.status}>สถานะ</ResizableTh>
+                {isPR && <th className="px-3 py-3 font-semibold text-center w-28">Action</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -587,13 +633,16 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, columnWidths, handle
               ) : (
                 filtered.map((r: any, idx: number) => {
                   const noField = isPR ? r.prNo : r.poNo;
-                  const dateField = isPR ? r.requestDate : r.poDate;
-                  const amount = isPR ? r.totalAmount : r.grandTotal;
+                  const dateField = isPR ? r.requestDate : (r.poDate || r.createdDate);
+                  const amount = isPR ? r.totalAmount : (r.grandTotal ?? r.amount ?? 0);
                   const itemCount = isPR
                     ? (r.items?.length || 0)
                     : (r.items?.length || (r.selectedPrIds?.length || 0));
                   const statusClass = statusColors[r.status] || "bg-slate-50 text-slate-500 border-slate-200";
                   const isEven = idx % 2 === 0;
+                  const vendorName = !isPR
+                    ? (r.vendor || (vendors || []).find((v: any) => v.id === r.vendorId)?.name || "-")
+                    : "";
 
                   return (
                     <tr key={r.id} className={`hover:bg-blue-50/40 transition-colors ${isEven ? "bg-white" : "bg-slate-50/40"}`}>
@@ -621,7 +670,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, columnWidths, handle
                         </td>
                       )}
                       {!isPR && (
-                        <td className="px-3 py-2.5 text-slate-700 font-medium">{r.vendor || "-"}</td>
+                        <td className="px-3 py-2.5 text-slate-700 font-medium">{vendorName}</td>
                       )}
                       {!isPR && (
                         <td className="px-3 py-2.5 text-slate-500 text-[11px]">
@@ -630,7 +679,13 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, columnWidths, handle
                             : "-"}
                         </td>
                       )}
-                      <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">{dateField || "-"}</td>
+                      <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">
+                        {dateField
+                          ? (dateField.includes("T")
+                              ? new Date(dateField).toLocaleDateString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric" })
+                              : dateField)
+                          : "-"}
+                      </td>
                       {isPR && <td className="px-3 py-2.5 text-slate-600">{r.requestor || "-"}</td>}
                       {isPR && (
                         <td className="px-3 py-2.5">
@@ -648,6 +703,28 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, columnWidths, handle
                           {r.status || "Draft"}
                         </span>
                       </td>
+                      {isPR && (
+                        <td className="px-3 py-2.5">
+                          <div className="flex items-center justify-center gap-1">
+                            <button type="button" className="p-1.5 rounded hover:bg-slate-200 text-slate-600 hover:text-slate-800" title="ส่งไฟล์ PDF ทางเมล" onClick={() => { setEmailModal({ pr: r }); setEmailTo(""); }}>
+                              <Mail size={14} />
+                            </button>
+                            <button type="button" className="p-1.5 rounded hover:bg-slate-200 text-slate-600 hover:text-slate-800" title="Download PDF" onClick={() => handlePRDownloadPDF(r)}>
+                              <Download size={14} />
+                            </button>
+                            {r.status !== "Closed PR" && r.status !== "Pending Close" && (
+                              <button type="button" className="p-1.5 rounded hover:bg-amber-100 text-amber-700" title="ขอปิด PR (รอ PCM ยืนยัน)" onClick={() => openConfirm?.("ขอปิด PR", "เมื่อ PCM ยืนยันแล้ว สถานะจะเป็น Closed PR", async () => { await updateData?.("prs", r.id, { status: "Pending Close", closeRequestedAt: new Date().toISOString() }); showAlert?.("ส่งคำขอแล้ว", "รอ PCM ยืนยันการปิด PR", "info"); })}>
+                                <XCircle size={14} />
+                              </button>
+                            )}
+                            {(r.status === "Pending Close" && (userRole === "PCM" || userRole === "Administrator")) && (
+                              <button type="button" className="p-1.5 rounded hover:bg-emerald-100 text-emerald-700 text-[10px] font-medium" title="ยืนยันปิด PR" onClick={() => openConfirm?.("ยืนยันปิด PR", "สถานะจะเปลี่ยนเป็น Closed PR", async () => { await updateData?.("prs", r.id, { status: "Closed PR" }); showAlert?.("สำเร็จ", "ปิด PR เรียบร้อย", "success"); })}>
+                                ยืนยันปิด
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   );
                 })
@@ -666,6 +743,21 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, columnWidths, handle
           </div>
         )}
       </Card>
+
+      {/* Email modal for PR PDF */}
+      {isPR && emailModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setEmailModal(null)}>
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-4" onClick={e => e.stopPropagation()}>
+            <h3 className="text-sm font-bold text-slate-800 mb-2">ส่งไฟล์ PDF ทางเมล</h3>
+            <p className="text-xs text-slate-500 mb-2">PR: {emailModal.pr?.prNo || emailModal.pr?.id}</p>
+            <input type="email" placeholder="อีเมลปลายทาง" value={emailTo} onChange={e => setEmailTo(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm mb-3" />
+            <div className="flex gap-2 justify-end">
+              <Button variant="secondary" size="sm" onClick={() => { setEmailModal(null); setEmailTo(""); }}>ยกเลิก</Button>
+              <Button variant="primary" size="sm" onClick={() => handlePRSendEmail(emailModal.pr, emailTo)}>ส่ง</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -799,7 +891,7 @@ const AdminDashboard = () => {
   const { showAlert, logAction, userData } = useContext(AuthContext);
   const { columnWidths, handleColumnResize } = useAppData();
   const userRole = userData?.role || "Staff";
-  const [activeTab, setActiveTab] = useState("users"); // 'users' or 'logs'
+  const [activeTab, setActiveTab] = useState("users"); // 'users' | 'logs' | 'forms'
   const [users, setUsers] = useState([]);
   const [logs, setLogs] = useState([]); // V.16 Logs State
   const [projects, setProjects] = useState([]);
@@ -810,6 +902,10 @@ const AdminDashboard = () => {
     assignedProjectIds: [],
   });
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  // แบบฟอร์ม PDF (Admin) — เก็บ URL สำหรับแสดงตัวอย่าง
+  const [prFormUrl, setPrFormUrl] = useState(null);
+  const [poFormUrl, setPoFormUrl] = useState(null);
+  const [uploadingForm, setUploadingForm] = useState(null); // 'pr' | 'po' | null
 
   useEffect(() => {
     const qUsers = query(
@@ -842,6 +938,46 @@ const AdminDashboard = () => {
       unsubLogs();
     };
   }, []);
+
+  // โหลด URL แบบฟอร์มจาก Storage เมื่อเปิดแท็บแบบฟอร์ม
+  useEffect(() => {
+    if (activeTab !== "forms") return;
+    const loadFormUrls = async () => {
+      try {
+        const [prUrl, poUrl] = await Promise.all([
+          getDownloadURL(ref(storage, FORM_TEMPLATE_PATHS.pr)).catch(() => null),
+          getDownloadURL(ref(storage, FORM_TEMPLATE_PATHS.po)).catch(() => null),
+        ]);
+        setPrFormUrl(prUrl);
+        setPoFormUrl(poUrl);
+      } catch (_) {
+        setPrFormUrl(null);
+        setPoFormUrl(null);
+      }
+    };
+    loadFormUrls();
+  }, [activeTab]);
+
+  const handleFormUpload = async (kind, file) => {
+    if (!file || file.type !== "application/pdf") {
+      showAlert("รูปแบบไฟล์", "กรุณาเลือกไฟล์ PDF เท่านั้น", "warning");
+      return;
+    }
+    const path = FORM_TEMPLATE_PATHS[kind];
+    setUploadingForm(kind);
+    try {
+      const storageRef = ref(storage, path);
+      await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(storageRef);
+      if (kind === "pr") setPrFormUrl(url);
+      else setPoFormUrl(url);
+      showAlert("อัปโหลดสำเร็จ", `อัปโหลดแบบฟอร์ม ${kind === "pr" ? "PR" : "PO"} เรียบร้อย (แทนที่ของเก่า)`, "success");
+    } catch (e) {
+      showAlert("อัปโหลดไม่สำเร็จ", e?.message || "เกิดข้อผิดพลาด", "error");
+    } finally {
+      setUploadingForm(null);
+    }
+  };
 
   const handleEditClick = (user) => {
     setEditUser(user);
@@ -999,6 +1135,17 @@ const AdminDashboard = () => {
             <History size={16} /> System Logs
           </div>
         </button>
+        <button
+          onClick={() => setActiveTab("forms")}
+          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${activeTab === "forms"
+            ? "border-blue-600 text-blue-600"
+            : "border-transparent text-slate-500 hover:text-slate-700"
+            }`}
+        >
+          <div className="flex items-center gap-2">
+            <FileText size={16} /> แบบฟอร์ม PDF
+          </div>
+        </button>
       </div>
 
       {activeTab === "users" && (
@@ -1135,6 +1282,88 @@ const AdminDashboard = () => {
             </table>
           </div>
         </Card>
+      )}
+
+      {activeTab === "forms" && (
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2">
+          <p className="text-sm text-slate-600">
+            อัปโหลดไฟล์ PDF แบบฟอร์ม (มี Form Fields) ระบบจะเปลี่ยนชื่อเก็บเป็น <strong>pr-form-lib.pdf</strong> / <strong>po-form-lib.pdf</strong> และใช้แบบฟอร์มนี้ทุกครั้งที่พิมพ์ PR/PO
+          </p>
+          <div className="grid md:grid-cols-2 gap-6">
+            <Card className="p-4">
+              <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
+                <FileText size={18} className="text-blue-600" /> แบบฟอร์ม PR (Purchase Request)
+              </h3>
+              <div className="mb-3">
+                <label className="block text-xs font-medium text-slate-500 mb-1">ตัวอย่างแบบฟอร์มปัจจุบัน</label>
+                <div className="border border-slate-200 rounded-lg bg-slate-50 overflow-hidden min-h-[280px]">
+                  {prFormUrl ? (
+                    <iframe src={`${prFormUrl}#toolbar=0`} title="PR Form Preview" className="w-full h-[320px]" />
+                  ) : (
+                    <div className="w-full h-[320px] flex items-center justify-center text-slate-400 text-sm">ยังไม่มีแบบฟอร์ม — อัปโหลดไฟล์ PDF</div>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  className="hidden"
+                  id="form-upload-pr"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) handleFormUpload("pr", f);
+                    e.target.value = "";
+                  }}
+                />
+                <Button
+                  variant="outline"
+                  className="flex items-center gap-2"
+                  disabled={uploadingForm === "pr"}
+                  onClick={() => document.getElementById("form-upload-pr")?.click()}
+                >
+                  {uploadingForm === "pr" ? "กำลังอัปโหลด..." : "อัปโหลดแบบฟอร์ม PR (แทนที่ของเก่า)"}
+                </Button>
+              </div>
+            </Card>
+            <Card className="p-4">
+              <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
+                <FileText size={18} className="text-red-600" /> แบบฟอร์ม PO (Purchase Order)
+              </h3>
+              <div className="mb-3">
+                <label className="block text-xs font-medium text-slate-500 mb-1">ตัวอย่างแบบฟอร์มปัจจุบัน</label>
+                <div className="border border-slate-200 rounded-lg bg-slate-50 overflow-hidden min-h-[280px]">
+                  {poFormUrl ? (
+                    <iframe src={`${poFormUrl}#toolbar=0`} title="PO Form Preview" className="w-full h-[320px]" />
+                  ) : (
+                    <div className="w-full h-[320px] flex items-center justify-center text-slate-400 text-sm">ยังไม่มีแบบฟอร์ม — อัปโหลดไฟล์ PDF</div>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  className="hidden"
+                  id="form-upload-po"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) handleFormUpload("po", f);
+                    e.target.value = "";
+                  }}
+                />
+                <Button
+                  variant="outline"
+                  className="flex items-center gap-2"
+                  disabled={uploadingForm === "po"}
+                  onClick={() => document.getElementById("form-upload-po")?.click()}
+                >
+                  {uploadingForm === "po" ? "กำลังอัปโหลด..." : "อัปโหลดแบบฟอร์ม PO (แทนที่ของเก่า)"}
+                </Button>
+              </div>
+            </Card>
+          </div>
+        </div>
       )}
 
       {/* Edit User Modal */}

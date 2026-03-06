@@ -8,6 +8,7 @@ import {
   BarChart3, Zap, Building2, Wallet, ShoppingCart, FileInput, RefreshCw, UserCheck, History,
   Bell, CircleDot, AtSign, MapPinned, UserCircle, Square, CheckSquare, Flame, Mail
 } from "lucide-react";
+import { doc, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
@@ -16,8 +17,8 @@ import ResizableTh from "../components/ResizableTh";
 import { COST_CATEGORIES, PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, getPurchaseTypeDisplayLabel } from "../lib/constants";
 const BudgetView = React.memo(() => {
   const { budgets, projects, prs, pos, invoices, addData, updateData, deleteData,
-          showAlert, openConfirm, userRole, userData, columnWidths, handleColumnResize,
-          visibleProjects, handlePRAction, handlePOAction } = useAppData();
+          showAlert, openConfirm, logAction, userRole, userData, columnWidths, handleColumnResize,
+          visibleProjects, handlePRAction, handlePOAction, db, appId } = useAppData();
   const { selectedProjectId, handleProjectChange,
           budgetCategory, setBudgetCategory,
           expandedBudgetRows, setExpandedBudgetRows,

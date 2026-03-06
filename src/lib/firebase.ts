@@ -4,6 +4,7 @@
 import { initializeApp, getApps } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
+import { getStorage } from "firebase/storage";
 
 const USER_FIREBASE_CONFIG = {
   apiKey: "AIzaSyDOqRqNW06Lu5fIQ_2Whr02tg6sn8zltw8",
@@ -26,5 +27,13 @@ const firebaseApp =
 
 export const auth = getAuth(firebaseApp);
 export const db   = getFirestore(firebaseApp);
+export const storage = getStorage(firebaseApp);
+
+/** Paths ใน Storage สำหรับแบบฟอร์ม PDF (Admin อัปโหลด, ระบบใช้เติมข้อมูล) */
+export const FORM_TEMPLATE_PATHS = {
+  pr: "forms/pr-form-lib.pdf",
+  po: "forms/po-form-lib.pdf",
+} as const;
+
 export const appId =
   typeof __app_id !== "undefined" ? __app_id : "cmg-budget-control-default";

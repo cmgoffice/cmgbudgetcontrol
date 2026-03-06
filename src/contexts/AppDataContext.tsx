@@ -9,7 +9,7 @@ import React, {
 } from "react";
 import {
   collection, query, onSnapshot, doc, setDoc,
-  addDoc, updateDoc, deleteDoc,
+  addDoc, updateDoc, deleteDoc, getDocs,
 } from "firebase/firestore";
 import { db, appId } from "../lib/firebase";
 
@@ -40,7 +40,43 @@ export const AppDataProvider = ({
   const [columnWidths, setColumnWidths] = useState({});
   const colSaveTimer = useRef(null);
 
-  // ── Firebase sync ──────────────────────────────────────────────────────────
+  // ── Lazy-loaded collections (โหลดเมื่อเข้าหน้าที่ใช้ ลดโควต้าเปิดแอป) ─────
+  const [vendorsLoading, setVendorsLoading] = useState(false);
+  const [materialsLoading, setMaterialsLoading] = useState(false);
+  const vendorsLoadedRef = useRef(false);
+  const materialsLoadedRef = useRef(false);
+
+  const loadVendors = useCallback(async () => {
+    if (vendorsLoadedRef.current) return;
+    vendorsLoadedRef.current = true;
+    setVendorsLoading(true);
+    try {
+      const snap = await getDocs(collection(db, "artifacts", appId, "public", "data", "vendors"));
+      setVendors(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    } catch (err) {
+      console.error("Error loading vendors:", err);
+      vendorsLoadedRef.current = false;
+    } finally {
+      setVendorsLoading(false);
+    }
+  }, []);
+
+  const loadMaterials = useCallback(async () => {
+    if (materialsLoadedRef.current) return;
+    materialsLoadedRef.current = true;
+    setMaterialsLoading(true);
+    try {
+      const snap = await getDocs(collection(db, "artifacts", appId, "public", "data", "materials"));
+      setMaterials(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    } catch (err) {
+      console.error("Error loading materials:", err);
+      materialsLoadedRef.current = false;
+    } finally {
+      setMaterialsLoading(false);
+    }
+  }, []);
+
+  // ── Firebase sync (เฉพาะ collection ที่ต้อง realtime) ───────────────────────
   useEffect(() => {
     const syncCollection = (collectionName, setter) => {
       const ref = collection(db, "artifacts", appId, "public", "data", collectionName);
@@ -56,17 +92,20 @@ export const AppDataProvider = ({
       if (snap.exists()) setColumnWidths(snap.data());
     });
 
+    // ไม่ sync vendors, materials ที่นี่ — ใช้ loadVendors() / loadMaterials() เมื่อเข้าหน้า Vendor / Material / PO
     const unsubs = [
       syncCollection("projects",  setProjects),
       syncCollection("budgets",   setBudgets),
-      syncCollection("vendors",   setVendors),
-      syncCollection("materials", setMaterials),
       syncCollection("prs",       setPrs),
       syncCollection("pos",       setPos),
       syncCollection("invoices",  setInvoices),
     ];
 
-    return () => { unsubs.forEach((u) => u()); unsubColWidths(); };
+    return () => {
+      unsubs.forEach((u) => u());
+      unsubColWidths();
+      if (colSaveTimer.current) clearTimeout(colSaveTimer.current);
+    };
   }, []);
 
   // ── Column resize ──────────────────────────────────────────────────────────
@@ -84,13 +123,18 @@ export const AppDataProvider = ({
     });
   }, [userRole]);
 
-  // ── CRUD helpers ───────────────────────────────────────────────────────────
+  // ── CRUD helpers (อัปเดต cache vendors/materials หลัง write เพื่อไม่ต้องโหลดใหม่) ─
   const addData = useCallback(async (collectionName, data, customId = null) => {
     try {
       if (customId) {
         await setDoc(doc(db, "artifacts", appId, "public", "data", collectionName, customId), data);
+        if (collectionName === "vendors") setVendors((prev) => [...prev, { id: customId, ...data }]);
+        if (collectionName === "materials") setMaterials((prev) => [...prev, { id: customId, ...data }]);
       } else {
-        await addDoc(collection(db, "artifacts", appId, "public", "data", collectionName), data);
+        const colRef = collection(db, "artifacts", appId, "public", "data", collectionName);
+        const docRef = await addDoc(colRef, data);
+        if (collectionName === "vendors") setVendors((prev) => [...prev, { id: docRef.id, ...data }]);
+        if (collectionName === "materials") setMaterials((prev) => [...prev, { id: docRef.id, ...data }]);
       }
       await logAction("Create", `Added new ${collectionName.slice(0, -1)}`);
       return true;
@@ -103,6 +147,8 @@ export const AppDataProvider = ({
   const updateData = useCallback(async (collectionName, id, data) => {
     try {
       await updateDoc(doc(db, "artifacts", appId, "public", "data", collectionName, id), data);
+      if (collectionName === "vendors") setVendors((prev) => prev.map((v) => (v.id === id ? { ...v, ...data } : v)));
+      if (collectionName === "materials") setMaterials((prev) => prev.map((m) => (m.id === id ? { ...m, ...data } : m)));
       await logAction("Update", `Updated ${collectionName.slice(0, -1)} ID: ${id}`);
       return true;
     } catch (e) {
@@ -114,6 +160,8 @@ export const AppDataProvider = ({
   const deleteData = useCallback(async (collectionName, id) => {
     try {
       await deleteDoc(doc(db, "artifacts", appId, "public", "data", collectionName, id));
+      if (collectionName === "vendors") setVendors((prev) => prev.filter((v) => v.id !== id));
+      if (collectionName === "materials") setMaterials((prev) => prev.filter((m) => m.id !== id));
       await logAction("Delete", `Deleted ${collectionName.slice(0, -1)} ID: ${id}`);
       return true;
     } catch (e) {
@@ -242,6 +290,9 @@ export const AppDataProvider = ({
     totalPendingCount, pendingByProject,
     // CRUD
     addData, updateData, deleteData,
+    // lazy load (ลดโควต้า — โหลดเมื่อเข้าหน้าที่ใช้)
+    loadVendors, loadMaterials,
+    vendorsLoading, materialsLoading,
     // column widths
     columnWidths, handleColumnResize,
     // approval actions
@@ -258,6 +309,8 @@ export const AppDataProvider = ({
     pendingPRsGlobal, pendingPOsGlobal,
     totalPendingCount, pendingByProject,
     addData, updateData, deleteData,
+    loadVendors, loadMaterials,
+    vendorsLoading, materialsLoading,
     columnWidths, handleColumnResize,
     handlePRAction, handlePOAction,
     showAlert, openConfirm, logAction,

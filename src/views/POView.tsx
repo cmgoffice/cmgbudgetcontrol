@@ -16,7 +16,7 @@ import { PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, PURCHA
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
 import { motion, AnimatePresence } from "framer-motion";
 const POView = React.memo(() => {
-  const { prs, pos, projects, budgets, vendors, materials, addData, updateData, deleteData,
+  const { prs, pos, projects, budgets, vendors, materials, addData, updateData, deleteData, loadVendors, loadMaterials,
           showAlert, openConfirm, userRole, columnWidths, handleColumnResize,
           visibleProjects, handlePOAction } = useAppData();
   const { selectedProjectId, handleProjectChange,
@@ -41,6 +41,7 @@ const POView = React.memo(() => {
     const PO_TYPES = [
       { code: "CR", label: "CR — เครดิต" },
       { code: "SP", label: "SP — ผู้รับเหมา" },
+      { code: "SE", label: "SE — บริการ" },
       { code: "CC", label: "CC — คอนกรีต" },
       { code: "OL", label: "OL — น้ำมัน" },
       { code: "DC", label: "DC — ค่าแรง" },
@@ -50,17 +51,49 @@ const POView = React.memo(() => {
       { code: "WF", label: "WF — รายจ่ายประจำ" },
     ];
 
+    const RECEIVE_TYPES = [
+      { value: "Material", label: "Material" },
+      { value: "Subcontractor", label: "Subcontractor" },
+      { value: "Service", label: "Service" },
+      { value: "EQM", label: "EQM" },
+      { value: "Receive Auto", label: "Receive Auto" },
+      { value: "RE", label: "RE" },
+    ];
+    const getDefaultReceiveType = (poType: string) => {
+      if (!poType) return "";
+      if (poType === "SP") return "Subcontractor";
+      if (poType === "SE") return "Service";
+      if (poType === "RE") return "RE";
+      if (["CA", "CR"].includes(poType)) return "EQM";
+      if (["CR", "CA", "OL"].includes(poType)) return "Material";
+      if (["CC", "WF", "DC", "SM"].includes(poType)) return "Receive Auto";
+      return "Material";
+    };
+
     // Form Data State
     const [formData, setFormData] = useState({
       poNo: "",
       poType: "",
+      receiveType: "",
       vendorId: "",
       requiredDate: "",
       vatType: "ex-vat", // "inc-vat" | "ex-vat"
       selectedPrIds: [], // Array of PR IDs
       items: [], // Array of selected items with order details
-      note: ""
+      note: "",
+      discount: 0,
     });
+    const [manualVatOverride, setManualVatOverride] = useState<number | null>(null);
+    const [vatEditOpen, setVatEditOpen] = useState(false);
+    const [vatEditValue, setVatEditValue] = useState("");
+    const [discountEnabled, setDiscountEnabled] = useState(false);
+    const [isAddItemModalOpen, setIsAddItemModalOpen] = useState(false);
+
+    // โหลด vendors + materials เมื่อเข้าหน้า PO (ลดโควต้าเปิดแอป)
+    useEffect(() => {
+      loadVendors();
+      loadMaterials();
+    }, [loadVendors, loadMaterials]);
 
     // Auto-generate PO No.: PO{YY}{JXX}-{POT}{XXXX}
     // ตัวอย่าง: PO26J01-CC0001
@@ -97,10 +130,9 @@ const POView = React.memo(() => {
     // Let's implement a mini vendor modal here for convenience as requested.
     const [newVendor, setNewVendor] = useState({ name: "", code: "", type: "", tel: "" });
 
-    // Helper to calculate used quantity for a specific PR Item
-    const getUsedQuantity = (prId, itemIndex) => {
-      // Filter other POs that use this PR Item, excluding current editing PO (if any - not impl yet)
-      const relevantPOs = pos.filter(po => po.status !== "Rejected");
+    // Helper: ยอดที่ถูก PO ใช้ไปแล้ว (ไม่นับ PO ที่ Rejected และไม่นับ PO ที่กำลังแก้ถ้ามี)
+    const getUsedQuantity = (prId, itemIndex, excludePoId) => {
+      const relevantPOs = pos.filter(po => po.status !== "Rejected" && po.id !== excludePoId);
       let used = 0;
       relevantPOs.forEach(po => {
         if (po.items) {
@@ -114,25 +146,50 @@ const POView = React.memo(() => {
       return used;
     };
 
-    // Filter PRs that are Approved and belong to this project
+    // ยอดเงินจาก PO ที่อ้างอิง PR นี้ (ไม่นับ PO ที่ Rejected และไม่นับ PO ที่กำลังแก้)
+    const getUsedAmountByPR = (prId, excludePoId) => {
+      const relevantPOs = pos.filter(po => po.status !== "Rejected" && po.id !== excludePoId);
+      let total = 0;
+      relevantPOs.forEach(po => {
+        if (po.items) {
+          po.items.forEach(item => {
+            if (item.prId === prId) total += Number(item.amount) || 0;
+          });
+        }
+      });
+      return total;
+    };
+
+    // รายการ PO ที่ใช้ PR item นี้ (สำหรับแสดงใน Popup "เปิด PO ไปแล้ว")
+    const getUsedByPOs = (prId, itemIndex, excludePoId) => {
+      const relevantPOs = pos.filter(po => po.status !== "Rejected" && po.id !== excludePoId);
+      const list = [];
+      relevantPOs.forEach(po => {
+        if (po.items) {
+          const has = po.items.some(item => item.prId === prId && item.prItemIndex === itemIndex);
+          if (has) list.push({ poNo: po.poNo || po.id, createdDate: po.createdDate || "" });
+        }
+      });
+      return list;
+    };
+
+    // รายการ PR ที่ให้เลือกได้ใน "เลือกใบขอซื้อ": Approve แล้ว, ยังไม่ Closed, ยอดเงินยังไม่หมด
+    // - แสดงเฉพาะ PR ที่สถานะ Approved หรือ PO Issued
+    // - ไม่แสดงถ้าสถานะ Closed PR
+    // - ไม่แสดงถ้ายอดเงินที่ PO ใช้ไปแล้ว ≥ ยอด PR (เช็คเฉพาะยอดเงิน)
     const approvedPRs = useMemo(() => {
       return prs.filter((pr) => {
-        // Basic filtering
         if (pr.projectId !== selectedProjectId) return false;
+        if (pr.status === "Closed PR") return false;
         if (pr.status !== "Approved" && pr.status !== "PO Issued") return false;
 
-        // Hiding fully ordered PRs
-        if (pr.items && pr.items.length > 0) {
-          const allItemsUsed = pr.items.every((item, idx) => {
-            const used = getUsedQuantity(pr.id, idx);
-            // Use tolerance for float comparison just in case, though usually int
-            return used >= (item.quantity - 0.01);
-          });
-          if (allItemsUsed) return false;
-        }
+        const prTotal = Number(pr.totalAmount) || 0;
+        const usedAmount = getUsedAmountByPR(pr.id, editingPoId);
+        if (prTotal > 0 && usedAmount >= prTotal - 0.01) return false;
+
         return true;
       });
-    }, [prs, selectedProjectId, pos]);
+    }, [prs, selectedProjectId, pos, editingPoId]);
 
     // Handle toggling a PR selection
     const handlePrToggle = (prId) => {
@@ -153,76 +210,159 @@ const POView = React.memo(() => {
       }
     };
 
-    // Derived list of available items from selected PRs
+    // รายการจาก PR ที่เลือก — แสดงทุกรายการ (รวมที่เปิด PO ไปแล้ว) เพื่อให้กดเพิ่มได้แบบอิสระ
     const availableItems = useMemo(() => {
       const items = [];
       formData.selectedPrIds.forEach(prId => {
         const pr = approvedPRs.find(p => p.id === prId);
         if (pr && pr.items) {
           pr.items.forEach((item, idx) => {
-            const used = getUsedQuantity(pr.id, idx);
-            const remaining = item.quantity - used;
-            if (remaining > 0) {
-              items.push({
-                prId: pr.id,
-                prNo: pr.prNo,
-                prDescription: budgets.find(b => b.code === pr.costCode && b.projectId === pr.projectId)?.description || "-",
-                prItemIndex: idx,
-                materialNo: item.materialNo || "",
-                description: item.description,
-                unit: item.unit,
-                originalQty: item.quantity,
-                usedQty: used,
-                remainingQty: remaining,
-                costCode: pr.costCode,
-                orderQty: remaining,
-                price: item.price,
-                amount: remaining * item.price
-              });
-            }
+            const used = getUsedQuantity(pr.id, idx, editingPoId);
+            const originalQty = Number(item.quantity) || 0;
+            const remaining = Math.max(0, originalQty - used);
+            const orderQtyDefault = remaining > 0 ? remaining : originalQty;
+            const price = Number(item.price) || 0;
+            items.push({
+              prId: pr.id,
+              prNo: pr.prNo,
+              prDescription: budgets.find(b => b.code === pr.costCode && b.projectId === pr.projectId)?.description || "-",
+              prItemIndex: idx,
+              materialNo: item.materialNo || "",
+              description: item.description,
+              unit: item.unit,
+              originalQty,
+              usedQty: used,
+              remainingQty: remaining,
+              alreadyOpenedInPO: used > 0,
+              costCode: pr.costCode,
+              orderQty: orderQtyDefault,
+              price,
+              amount: orderQtyDefault * price
+            });
           });
         }
       });
       return items;
-    }, [formData.selectedPrIds, approvedPRs, pos, budgets]);
+    }, [formData.selectedPrIds, approvedPRs, pos, budgets, editingPoId]);
 
-    // คำนวณยอดรวม PR ที่เลือกทั้งหมด (สำหรับ validation Grand Total)
+    // ยอดคงเหลือของแต่ละ PR (ยอด PR - ยอดที่ PO ใช้ไปแล้ว)
+    const getPrRemainingAmount = (prId) => {
+      const pr = approvedPRs.find(p => p.id === prId) || prs.find(p => p.id === prId);
+      if (!pr) return 0;
+      const total = Number(pr.totalAmount) || 0;
+      const used = getUsedAmountByPR(prId, editingPoId);
+      return Math.max(0, total - used);
+    };
+
+    // ยอดรวม PR ที่เลือก = ผลรวมยอดคงเหลือของ PR ที่เลือก (สำหรับ validation Grand Total)
     const selectedPrsTotalAmount = useMemo(() => {
-      return formData.selectedPrIds.reduce((sum, prId) => {
-        const pr = approvedPRs.find(p => p.id === prId);
-        if (!pr || !pr.items) return sum;
-        return sum + pr.items.reduce((s, i) => s + Number(i.quantity) * Number(i.price), 0);
-      }, 0);
-    }, [formData.selectedPrIds, approvedPRs]);
+      return formData.selectedPrIds.reduce((sum, prId) => sum + getPrRemainingAmount(prId), 0);
+    }, [formData.selectedPrIds, approvedPRs, prs, pos, editingPoId]);
 
-    // Handle Item Checkbox (Include in PO)
+    const addItemToForm = (itemData) => {
+      setFormData(prev => ({
+        ...prev,
+        items: [...prev.items, {
+          prId: itemData.prId,
+          prItemIndex: itemData.prItemIndex,
+          materialNo: itemData.materialNo || "",
+          description: itemData.description || "",
+          unit: itemData.unit || "",
+          quantity: itemData.orderQty ?? itemData.remainingQty ?? 1,
+          price: itemData.price ?? 0,
+          amount: (itemData.orderQty ?? itemData.remainingQty ?? 1) * (itemData.price ?? 0),
+          remainingQty: itemData.remainingQty,
+          costCode: itemData.costCode
+        }]
+      }));
+    };
+
+    // Handle Item Checkbox (Include in PO) — ถ้ารายการ "เปิด PO ไปแล้ว" จะเด้ง Popup ยืนยันก่อน
     const handleItemToggle = (itemData) => {
       const exists = formData.items.find(i => i.prId === itemData.prId && i.prItemIndex === itemData.prItemIndex);
       if (exists) {
-        // Remove
         setFormData(prev => ({
           ...prev,
           items: prev.items.filter(i => !(i.prId === itemData.prId && i.prItemIndex === itemData.prItemIndex))
         }));
       } else {
-        // Add
-        setFormData(prev => ({
+        if (itemData.alreadyOpenedInPO) {
+          const usedBy = getUsedByPOs(itemData.prId, itemData.prItemIndex, editingPoId);
+          const msg = usedBy.length > 0
+            ? `รายการนี้เปิด PO ไปแล้ว\n\nPO เลขที่: ${usedBy.map(p => p.poNo).join(", ")}\nวันที่: ${usedBy.map(p => p.createdDate ? new Date(p.createdDate).toLocaleDateString("th-TH") : "-").join(", ")}\n\nต้องการเปิดซ้ำหรือไม่?`
+            : "รายการนี้ถูกเปิด PO ไปแล้ว ต้องการเปิดซ้ำหรือไม่?";
+          openConfirm("ยืนยันเปิดรายการซ้ำ", msg, () => addItemToForm(itemData), "warning");
+        } else {
+          addItemToForm(itemData);
+        }
+      }
+    };
+
+    const handleAddItemClick = (itemData) => {
+      const exists = formData.items.some(i => i.prId === itemData.prId && i.prItemIndex === itemData.prItemIndex);
+      if (exists) return;
+      if (itemData.alreadyOpenedInPO) {
+        const usedBy = getUsedByPOs(itemData.prId, itemData.prItemIndex, editingPoId);
+        const msg = usedBy.length > 0
+          ? `รายการนี้เปิด PO ไปแล้ว\n\nPO เลขที่: ${usedBy.map(p => p.poNo).join(", ")}\nวันที่: ${usedBy.map(p => p.createdDate ? new Date(p.createdDate).toLocaleDateString("th-TH") : "-").join(", ")}\n\nต้องการเปิดซ้ำหรือไม่?`
+          : "รายการนี้ถูกเปิด PO ไปแล้ว ต้องการเปิดซ้ำหรือไม่?";
+        openConfirm("ยืนยันเปิดรายการซ้ำ", msg, () => addItemToForm(itemData), "warning");
+      } else {
+        addItemToForm(itemData);
+      }
+    };
+
+    // เพิ่มรายการว่าง (กรอกอิสระ) — ไม่จำกัดจำนวน, auto-fill PR No. จาก PR ที่เลือก
+    const addFreeItem = () => {
+      setFormData(prev => {
+        const firstPrId = prev.selectedPrIds[0];
+        const firstPr = approvedPRs.find(p => p.id === firstPrId);
+        const linkedPrNo = firstPr?.prNo || "";
+        return {
           ...prev,
           items: [...prev.items, {
-            prId: itemData.prId,
-            prItemIndex: itemData.prItemIndex,
-            materialNo: itemData.materialNo || "",
-            description: itemData.description,
-            prDescription: itemData.prDescription,
-            remainingQty: itemData.remainingQty,
-            unit: itemData.unit,
-            quantity: itemData.orderQty,
-            price: itemData.price,
-            amount: itemData.amount,
-            costCode: itemData.costCode
+            id: `free-${Date.now()}`,
+            prId: null,
+            prItemIndex: -1,
+            materialNo: "",
+            description: "",
+            unit: "",
+            quantity: 1,
+            price: 0,
+            amount: 0,
+            linkedPrNo
           }]
-        }));
-      }
+        };
+      });
+    };
+
+    const handleFreeItemChange = (freeId, field, value) => {
+      setFormData(prev => ({
+        ...prev,
+        items: prev.items.map(item => {
+          if (item.id !== freeId) return item;
+          const updates = { ...item, [field]: value };
+          if (field === "quantity" || field === "price") {
+            updates.amount = (Number(updates.quantity) || 0) * (Number(updates.price) || 0);
+          }
+          return updates;
+        })
+      }));
+    };
+    const removeFreeItem = (freeId) => {
+      setFormData(prev => ({ ...prev, items: prev.items.filter(i => i.id !== freeId) }));
+    };
+
+    const setFreeItemMaterial = (freeId, mat) => {
+      const qty = 1;
+      const price = Number(mat?.price) || 0;
+      setFormData(prev => ({
+        ...prev,
+        items: prev.items.map(item => {
+          if (item.id !== freeId) return item;
+          return { ...item, materialNo: mat?.materialNo || "", description: mat?.name || "", unit: mat?.unit || "", price, quantity: qty, amount: qty * price };
+        })
+      }));
     };
 
     // Handle Item Detail Change
@@ -266,20 +406,20 @@ const POView = React.memo(() => {
 
     const calculateTotals = () => {
       const subtotal = formData.items.reduce((sum, item) => sum + item.amount, 0);
+      const discount = Number(formData.discount) || 0;
+      const afterDiscount = Math.max(0, subtotal - discount);
       let vat = 0;
       let total = 0;
-      if (formData.vatType === "inc-vat") {
-        // Price includes VAT
-        // Base = Total / 1.07
-        // VAT = Total - Base
-        // logic: The amount in line items is "Gross"
-        total = subtotal;
+      if (manualVatOverride != null && !isNaN(manualVatOverride)) {
+        vat = manualVatOverride;
+        total = afterDiscount + vat;
+      } else if (formData.vatType === "inc-vat") {
+        total = afterDiscount;
       } else {
-        // Ex-VAT
-        vat = subtotal * 0.07;
-        total = subtotal + vat;
+        vat = afterDiscount * 0.07;
+        total = afterDiscount + vat;
       }
-      return { subtotal, vat, total };
+      return { subtotal, discount, vat, total };
     };
 
     const handleSavePO = async () => {
@@ -304,12 +444,15 @@ const POView = React.memo(() => {
       const basePayload = {
         poNo: formData.poNo,
         poType: formData.poType,
+        ...(formData.receiveType ? { receiveType: formData.receiveType } : {}),
         projectId: selectedProjectId,
         vendorId: formData.vendorId,
         requiredDate: formData.requiredDate,
         vatType: formData.vatType,
         items: formData.items,
         amount: totals.total,
+        discount: formData.discount || 0,
+        ...(manualVatOverride != null && !isNaN(manualVatOverride) ? { manualVat: manualVatOverride } : {}),
         status: "Pending PCM",
         createdDate: new Date().toISOString(),
         rejectReason: "",
@@ -326,7 +469,7 @@ const POView = React.memo(() => {
         if (success) {
           // Update PR status to "PO Issued" for all involved PRs
           // Note: Ideally, check if PR is *fully* closed, but "PO Issued" is good enough
-          const uniquePrIds = [...new Set(formData.items.map(i => i.prId))];
+          const uniquePrIds = [...new Set(formData.items.map(i => i.prId).filter(Boolean))];
           for (const prId of uniquePrIds) {
             await updateData("prs", prId, { status: "PO Issued" });
           }
@@ -338,8 +481,12 @@ const POView = React.memo(() => {
         setIsFullScreenModalOpen(false);
         setEditingPoId(null);
         setFormData({
-          poNo: "", poType: "", vendorId: "", requiredDate: "", vatType: "ex-vat", selectedPrIds: [], items: [], note: ""
+          poNo: "", poType: "", receiveType: "", vendorId: "", requiredDate: "", vatType: "ex-vat", selectedPrIds: [], items: [], note: "", discount: 0
         });
+        setManualVatOverride(null);
+        setVatEditOpen(false);
+        setVatEditValue("");
+        setDiscountEnabled(false);
         showAlert("สำเร็จ", "บันทึกใบสั่งซื้อ PDF (PO) เรียบร้อย", "success");
       }
     };
@@ -393,7 +540,7 @@ const POView = React.memo(() => {
           <ProjectSelect
             projects={visibleProjects}
             selectedId={selectedProjectId}
-            onChange={(e) => setSelectedProjectId(e.target.value)}
+            onChange={(e) => handleProjectChange(e.target.value, visibleProjects)}
           />
           <Button
             onClick={() => {
@@ -407,7 +554,11 @@ const POView = React.memo(() => {
                 selectedPrIds: [],
                 items: [],
                 note: "",
+                discount: 0,
               });
+              setManualVatOverride(null);
+              setVatEditOpen(false);
+              setDiscountEnabled(false);
               setIsModalOpen(true);
               setIsFullScreenModalOpen(true);
             }}
@@ -507,13 +658,19 @@ const POView = React.memo(() => {
                                 setFormData({
                                   poNo: po.poNo || "",
                                   poType: po.poType || "",
+                                  receiveType: po.receiveType || "",
                                   vendorId: po.vendorId || "",
                                   requiredDate: po.requiredDate || "",
                                   vatType: po.vatType || "ex-vat",
                                   selectedPrIds: prIdsFromItems,
-                                  items: po.items || [],
+                                  items: (po.items || []).map((it, idx) => ((it.prId == null || it.prId === "") && !it.id) ? { ...it, id: `free-${idx}-${Date.now()}` } : it),
                                   note: po.note || "",
+                                  discount: po.discount ?? 0,
                                 });
+                                setManualVatOverride(po.manualVat != null ? Number(po.manualVat) : null);
+                                setVatEditOpen(false);
+                                setVatEditValue("");
+                                setDiscountEnabled((po.discount ?? 0) > 0);
                                 setEditingPoId(po.id);
                                 setIsModalOpen(true);
                                 setIsFullScreenModalOpen(true);
@@ -587,17 +744,17 @@ const POView = React.memo(() => {
           </table>
         </Card>
 
-        {/* Create PO Modal */}
+        {/* Create PO Modal — ทับ Header, เต็มความสูง, Footer เลื่อนตามเนื้อหา */}
         {isModalOpen && (
           <motion.div
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start md:items-center justify-center z-50 p-2 md:p-4"
+            className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[9999] p-4"
             initial="hidden"
             animate="visible"
             variants={modalOverlayVariants}
             transition={overlayTransition}
           >
             <motion.div
-              className="w-full max-w-5xl h-[82vh] max-h-[calc(100vh-2rem)] flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
+              className="w-[90vw] max-w-[90vw] max-h-[92vh] flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
               initial="hidden"
               animate="visible"
               variants={modalContentVariants}
@@ -652,7 +809,8 @@ const POView = React.memo(() => {
                           onChange={(e) => {
                             const newType = e.target.value;
                             const newPoNo = newType ? generatePoNo(newType) : "";
-                            setFormData({ ...formData, poType: newType, poNo: newPoNo });
+                            const defaultReceive = getDefaultReceiveType(newType);
+                            setFormData({ ...formData, poType: newType, poNo: newPoNo, receiveType: defaultReceive });
                           }}
                         >
                           <option value="">-- เลือก PO Type --</option>
@@ -712,6 +870,21 @@ const POView = React.memo(() => {
                           <Calendar className="absolute left-3 top-2.5 text-emerald-400 pointer-events-none" size={14} />
                         </div>
                       </div>
+                      <div>
+                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1.5 uppercase tracking-wider">
+                          <Package size={11} className="text-red-500" /> Receive Type
+                        </label>
+                        <select
+                          className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white hover:border-red-300 focus:border-red-500 focus:ring-2 focus:ring-red-100 transition-all cursor-pointer text-slate-900"
+                          value={formData.receiveType}
+                          onChange={e => setFormData({ ...formData, receiveType: e.target.value })}
+                        >
+                          <option value="">-- เลือก Receive Type --</option>
+                          {RECEIVE_TYPES.map((t) => (
+                            <option key={t.value} value={t.value}>{t.label}</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -744,36 +917,38 @@ const POView = React.memo(() => {
                         <p className="text-xs mt-0.5">กดปุ่ม "เลือก PR" เพื่อเลือกใบขอซื้อที่อนุมัติแล้ว</p>
                       </div>
                     ) : (
-                      <div className="flex flex-wrap gap-2">
-                        {formData.selectedPrIds.map(prId => {
-                          const pr = approvedPRs.find(p => p.id === prId);
-                          if (!pr) return null;
-                          return (
-                            <div key={prId} className="flex items-center gap-2 px-3 py-1.5 bg-red-50 border border-red-200 rounded-lg text-xs">
-                              <Hash size={10} className="text-red-500 shrink-0" />
-                              <span className="font-semibold text-slate-800">{pr.prNo}</span>
-                              <span className="text-slate-500">{pr.requestor}</span>
-                              <button
-                                type="button"
-                                className="ml-1 text-red-400 hover:text-red-600"
-                                onClick={() => handlePrToggle(prId)}
-                              >
-                                <XCircle size={13} />
-                              </button>
-                            </div>
-                          );
-                        })}
+                      <>
+                        <div className="flex flex-wrap gap-2 mb-4">
+                          {formData.selectedPrIds.map(prId => {
+                            const pr = approvedPRs.find(p => p.id === prId);
+                            if (!pr) return null;
+                            return (
+                              <div key={prId} className="flex items-center gap-2 px-3 py-1.5 bg-red-50 border border-red-200 rounded-lg text-xs">
+                                <Hash size={10} className="text-red-500 shrink-0" />
+                                <span className="font-semibold text-slate-800">{pr.prNo}</span>
+                                <span className="text-slate-500">{pr.requestor}</span>
                         <button
                           type="button"
-                          className="flex items-center gap-1 px-3 py-1.5 border border-dashed border-slate-300 rounded-lg text-xs text-slate-500 hover:border-slate-400 hover:text-slate-700 transition-all"
-                          onClick={() => {
-                            setTempSelectedPrIds([...formData.selectedPrIds]);
-                            setIsPrSelectModalOpen(true);
-                          }}
+                          className="ml-1 text-red-400 hover:text-red-600"
+                          onClick={() => handlePrToggle(prId)}
                         >
-                          <Plus size={12} /> เพิ่ม/แก้ไข
+                          <XCircle size={13} />
                         </button>
-                      </div>
+                              </div>
+                            );
+                          })}
+                          <button
+                            type="button"
+                            className="flex items-center gap-1 px-3 py-1.5 border border-dashed border-slate-300 rounded-lg text-xs text-slate-500 hover:border-slate-400 hover:text-slate-700 transition-all"
+                            onClick={() => {
+                              setTempSelectedPrIds([...formData.selectedPrIds]);
+                              setIsPrSelectModalOpen(true);
+                            }}
+                          >
+                            <Plus size={12} /> เพิ่ม/แก้ไข
+                          </button>
+                        </div>
+                      </>
                     )}
                   </div>
                 </div>
@@ -781,11 +956,20 @@ const POView = React.memo(() => {
                 {/* 3. เลือกรายการสินค้า (Select Items) - โทนแดงขาวดำ */}
                 {formData.selectedPrIds.length > 0 && (
                   <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-                    <div className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-slate-100 to-slate-200/80 border-b border-slate-300">
-                      <div className="w-6 h-6 bg-slate-800 rounded-lg flex items-center justify-center">
-                        <Package size={13} className="text-white" />
+                    <div className="flex items-center justify-between px-5 py-2.5 bg-gradient-to-r from-slate-100 to-slate-200/80 border-b border-slate-300">
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 bg-slate-800 rounded-lg flex items-center justify-center">
+                          <Package size={13} className="text-white" />
+                        </div>
+                        <span className="text-xs font-bold text-slate-800 tracking-wide uppercase">3. เลือกรายการสินค้า (Select Items)</span>
                       </div>
-                      <span className="text-xs font-bold text-slate-800 tracking-wide uppercase">3. เลือกรายการสินค้า (Select Items)</span>
+                      <button
+                        type="button"
+                        className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-slate-800 text-white text-xs font-semibold hover:bg-slate-700 transition-all shadow-sm"
+                        onClick={addFreeItem}
+                      >
+                        <Plus size={13} /> เพิ่มรายการ
+                      </button>
                     </div>
                     <div className="p-4 overflow-x-auto">
                       <table className="w-full text-left text-xs rounded-xl overflow-hidden border border-slate-200">
@@ -793,9 +977,10 @@ const POView = React.memo(() => {
                           <tr>
                             <th className="p-2.5 w-10 text-center">เลือก</th>
                             <ResizableTh tableId="select-items" colKey="prNo" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.prNo ?? 96}>PR No.</ResizableTh>
+                            <th className="p-2.5 w-24">สถานะ</th>
                             <ResizableTh tableId="select-items" colKey="materialNo" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.materialNo ?? 112}>Material No.</ResizableTh>
                             <ResizableTh tableId="select-items" colKey="description" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.description}>รายการ</ResizableTh>
-                            <ResizableTh tableId="select-items" colKey="remainingQty" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.remainingQty ?? 112}>เหลือ (QTY)</ResizableTh>
+                            <ResizableTh tableId="select-items" colKey="unit" className="p-2.5 w-20" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.unit}>หน่วย</ResizableTh>
                             <ResizableTh tableId="select-items" colKey="orderQty" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.orderQty ?? 96}>สั่งซื้อ (QTY)</ResizableTh>
                             <ResizableTh tableId="select-items" colKey="price" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.price ?? 112}>ราคา/หน่วย</ResizableTh>
                             <ResizableTh tableId="select-items" colKey="total" className="p-2.5 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.total ?? 96}>รวม</ResizableTh>
@@ -814,6 +999,13 @@ const POView = React.memo(() => {
                                 </td>
                                 <td className="p-2.5 font-medium text-slate-800 whitespace-nowrap">
                                   {item.prNo}
+                                </td>
+                                <td className="p-2.5">
+                                  {item.alreadyOpenedInPO ? (
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 border border-amber-200">เปิด PO ไปแล้ว</span>
+                                  ) : (
+                                    <span className="text-slate-400 text-[10px]">—</span>
+                                  )}
                                 </td>
                                 {/* Material No. — editable + autocomplete */}
                                 <td className="p-2.5">
@@ -839,18 +1031,9 @@ const POView = React.memo(() => {
                                     onSelectMaterial={(mat) => handleItemSelectMaterial(item.prId, item.prItemIndex, mat)}
                                   />
                                 </td>
-                                {/* เหลือ (QTY) — editable */}
+                                {/* หน่วย (ของ Material) */}
                                 <td className="p-2.5">
-                                  <div className="flex items-center gap-1">
-                                    <input
-                                      type="number"
-                                      className={`${inputCls} text-right`}
-                                      disabled={!isSelected}
-                                      value={selectedData.remainingQty ?? item.remainingQty}
-                                      onChange={(e) => handleItemChange(item.prId, item.prItemIndex, "remainingQty", e.target.value)}
-                                    />
-                                    <span className="text-slate-400 text-[10px] shrink-0">{item.unit}</span>
-                                  </div>
+                                  <span className="text-slate-600 text-xs">{selectedData.unit || item.unit || "—"}</span>
                                 </td>
                                 {/* สั่งซื้อ (QTY) — editable */}
                                 <td className="p-2.5">
@@ -878,49 +1061,102 @@ const POView = React.memo(() => {
                               </tr>
                             );
                           })}
+                          {/* รายการว่าง (เพิ่มจากปุ่ม + เพิ่มรายการ) — กรอกอิสระ ไม่จำกัด */}
+                          {formData.items.filter(i => i.id && String(i.id).startsWith("free-")).map((freeItem) => {
+                            const inputCls = "w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:border-red-400 focus:ring-1 focus:ring-red-100 bg-white";
+                            return (
+                              <tr key={freeItem.id} className="bg-white hover:bg-slate-50/30 border-t border-slate-200">
+                                <td className="p-2.5 text-center">
+                                  <button type="button" className="text-red-400 hover:text-red-600 p-1" onClick={() => removeFreeItem(freeItem.id)} title="ลบรายการ">
+                                    <Trash2 size={14} />
+                                  </button>
+                                </td>
+                                <td className="p-2.5 text-xs font-medium text-slate-700">{freeItem.linkedPrNo || "—"}</td>
+                                <td className="p-2.5"><span className="text-amber-600 text-[10px]">รายการเพิ่ม</span></td>
+                                <td className="p-2.5">
+                                  <MaterialAutoComplete value={freeItem.materialNo || ""} className={inputCls} placeholder="Material No." materials={materials} onChange={(val) => handleFreeItemChange(freeItem.id, "materialNo", val)} onSelectMaterial={(mat) => setFreeItemMaterial(freeItem.id, mat)} />
+                                </td>
+                                <td className="p-2.5">
+                                  <input type="text" className={inputCls} placeholder="รายการ" value={freeItem.description || ""} onChange={e => handleFreeItemChange(freeItem.id, "description", e.target.value)} />
+                                </td>
+                                <td className="p-2.5">
+                                  <input type="text" className={`${inputCls} w-16`} placeholder="หน่วย" value={freeItem.unit || ""} onChange={e => handleFreeItemChange(freeItem.id, "unit", e.target.value)} />
+                                </td>
+                                <td className="p-2.5">
+                                  <input type="number" className={`${inputCls} text-right`} value={freeItem.quantity} onChange={e => handleFreeItemChange(freeItem.id, "quantity", e.target.value)} />
+                                </td>
+                                <td className="p-2.5">
+                                  <input type="number" className={`${inputCls} text-right`} value={freeItem.price} onChange={e => handleFreeItemChange(freeItem.id, "price", e.target.value)} />
+                                </td>
+                                <td className="p-2.5 text-right font-bold text-slate-800 whitespace-nowrap">
+                                  {formatCurrency(Number(freeItem.quantity) * Number(freeItem.price))}
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
                   </div>
                 )}
-              </div>
 
-              {/* Footer / Calculation - โทนแดงขาวดำ */}
-              <div className="bg-gradient-to-r from-slate-100 to-slate-200/80 border-t border-slate-300 px-6 py-4 flex flex-wrap items-center justify-between gap-4 shrink-0">
-                <div className="flex flex-wrap items-center gap-4">
-                  <span className="flex items-center gap-1.5 text-sm font-bold text-slate-800">
-                    <DollarSign size={16} className="text-slate-600" /> ประเภทภาษี:
-                  </span>
-                  <label className="flex items-center gap-2 cursor-pointer text-sm px-3 py-1.5 rounded-xl border-2 transition-all duration-200 border-slate-300 hover:border-red-400 hover:bg-red-50/50">
-                    <input type="radio" name="vat" value="ex-vat" checked={formData.vatType === "ex-vat"} onChange={() => setFormData({ ...formData, vatType: "ex-vat" })} className="text-red-600" />
-                    <span className={formData.vatType === "ex-vat" ? "font-semibold text-red-700" : "text-slate-700"}>Ex-Vat (แยกภาษี)</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer text-sm px-3 py-1.5 rounded-xl border-2 transition-all duration-200 border-slate-300 hover:border-red-400 hover:bg-red-50/50">
-                    <input type="radio" name="vat" value="inc-vat" checked={formData.vatType === "inc-vat"} onChange={() => setFormData({ ...formData, vatType: "inc-vat" })} className="text-red-600" />
-                    <span className={formData.vatType === "inc-vat" ? "font-semibold text-red-700" : "text-slate-700"}>Inc-Vat (รวมภาษี)</span>
-                  </label>
-                </div>
-                <div className="flex items-center gap-6">
-                  <div className="text-right">
+                {/* Footer / ยอดรวม PO */}
+                <div className="mt-4 mb-6 border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm">
+                  {/* Top row: ภาษี + ส่วนลด options */}
+                  <div className="flex flex-wrap items-center gap-3 px-4 py-2 bg-slate-50 border-b border-slate-100">
+                    <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">ภาษี</span>
+                    <label className="flex items-center gap-1 cursor-pointer text-[11px] px-2 py-0.5 rounded border border-slate-200 hover:border-red-300 hover:bg-red-50/50 transition-colors">
+                      <input type="radio" name="vat" value="ex-vat" checked={formData.vatType === "ex-vat"} onChange={() => setFormData({ ...formData, vatType: "ex-vat" })} className="text-red-600 w-3 h-3" />
+                      <span className={formData.vatType === "ex-vat" ? "font-semibold text-red-700" : "text-slate-600"}>Ex-Vat</span>
+                    </label>
+                    <label className="flex items-center gap-1 cursor-pointer text-[11px] px-2 py-0.5 rounded border border-slate-200 hover:border-red-300 hover:bg-red-50/50 transition-colors">
+                      <input type="radio" name="vat" value="inc-vat" checked={formData.vatType === "inc-vat"} onChange={() => setFormData({ ...formData, vatType: "inc-vat" })} className="text-red-600 w-3 h-3" />
+                      <span className={formData.vatType === "inc-vat" ? "font-semibold text-red-700" : "text-slate-600"}>ไม่มี Vat</span>
+                    </label>
+                    <div className="w-px h-3 bg-slate-300" />
+                    <label className="flex items-center gap-1 text-[11px] text-slate-600 cursor-pointer">
+                      <input type="checkbox" checked={discountEnabled} onChange={e => { const checked = e.target.checked; setDiscountEnabled(checked); if (!checked) setFormData({ ...formData, discount: 0 }); }} className="rounded text-red-600 w-3 h-3" />
+                      <span>ส่วนลด</span>
+                    </label>
+                    {discountEnabled && (
+                      <input type="text" className="w-20 border border-slate-200 rounded px-1.5 py-0.5 text-[11px] text-right focus:border-red-400 focus:ring-1 focus:ring-red-100 outline-none" placeholder="0.00" value={formData.discount ? String(formData.discount) : ""} onChange={e => { const v = e.target.value.replace(/,/g, ""); const n = parseFloat(v); setFormData({ ...formData, discount: isNaN(n) ? 0 : Math.max(0, n) }); }} />
+                    )}
                     {selectedPrsTotalAmount > 0 && (
-                      <div className="text-xs text-slate-500 mb-1">
-                        ยอดรวม PR ที่เลือก:{" "}
-                        <span className="font-semibold text-slate-700">{formatCurrency(selectedPrsTotalAmount)}</span>
+                      <div className="ml-auto flex flex-col items-end leading-tight">
+                        <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">คงเหลือ PR</span>
+                        <span className="text-xl font-bold text-blue-600 tabular-nums">{formatCurrency(selectedPrsTotalAmount)}</span>
                       </div>
                     )}
-                    <div className="text-sm text-slate-600">ยอดรวม: {formatCurrency(calculateTotals().subtotal)}</div>
-                    <div className="text-sm text-slate-600">VAT (7%): {formatCurrency(calculateTotals().vat)}</div>
-                    <div className={`text-xl font-bold mt-0.5 flex items-center gap-1 ${calculateTotals().total > selectedPrsTotalAmount * 1.001 ? "text-red-600" : "text-slate-900"}`}>
-                      <DollarSign size={18} className={calculateTotals().total > selectedPrsTotalAmount * 1.001 ? "text-red-600" : "text-red-500"} />
-                      Grand Total: {formatCurrency(calculateTotals().total)}
-                      {calculateTotals().total > selectedPrsTotalAmount * 1.001 && (
-                        <span className="text-xs font-normal text-red-500 ml-1">(เกิน PR!)</span>
-                      )}
+                  </div>
+                  {/* Bottom row: summary table + save button */}
+                  <div className="flex items-end justify-between gap-4 px-4 py-2.5">
+                    <div className="text-[10px] text-slate-400 italic">กรอกข้อมูลให้ครบก่อนบันทึก</div>
+                    <div className="flex items-end gap-3">
+                      {/* Compact totals */}
+                      <div className="text-[11px] w-[220px]">
+                        <div className="flex justify-between py-0.5"><span className="text-slate-500">รวมราคา / Amount</span><span className="font-medium text-slate-700 tabular-nums">{formatCurrency(calculateTotals().subtotal)}</span></div>
+                        <div className="flex justify-between py-0.5"><span className="text-slate-500">ส่วนลด / Discount</span><span className="text-slate-600 tabular-nums">-{formatCurrency(formData.discount || 0)}</span></div>
+                        <div className="flex justify-between py-0.5 border-t border-slate-100"><span className="text-slate-500">มูลค่า / Sub Total</span><span className="font-medium text-slate-700 tabular-nums">{formatCurrency(Math.max(0, calculateTotals().subtotal - (formData.discount || 0)))}</span></div>
+                        <div className="flex justify-between items-center py-0.5">
+                          <span className="text-slate-500">VAT 7%</span>
+                          <span className="flex items-center gap-0.5 tabular-nums">
+                            {!vatEditOpen
+                              ? <><span className="text-slate-700">{formatCurrency(calculateTotals().vat)}</span><button type="button" className="p-0.5 rounded hover:bg-slate-100 text-slate-400 ml-0.5" onClick={() => { setVatEditValue(String(manualVatOverride ?? calculateTotals().vat)); setVatEditOpen(true); }}><Edit size={9} /></button></>
+                              : <span className="flex items-center gap-0.5"><input type="text" className="w-14 border rounded px-1 py-0.5 text-[10px] text-right" value={vatEditValue} onChange={e => setVatEditValue(e.target.value)} /><button type="button" className="text-[10px] text-emerald-600 font-medium" onClick={() => { const n = parseFloat(vatEditValue); if (!isNaN(n)) { setManualVatOverride(n); setVatEditOpen(false); } }}>Save</button><button type="button" className="text-[10px] text-slate-400" onClick={() => { setVatEditOpen(false); setVatEditValue(""); }}>✕</button></span>
+                            }
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center py-1 mt-0.5 border-t-2 border-slate-800">
+                          <span className="font-bold text-slate-800">ยอดสุทธิ / Net Total</span>
+                          <span className={`font-bold tabular-nums ${calculateTotals().total > selectedPrsTotalAmount * 1.001 && selectedPrsTotalAmount > 0 ? "text-red-600" : "text-slate-900"}`}>
+                            {formatCurrency(calculateTotals().total)}
+                            {calculateTotals().total > selectedPrsTotalAmount * 1.001 && selectedPrsTotalAmount > 0 && <span className="text-[9px] font-normal text-red-500 ml-0.5">(เกิน PR)</span>}
+                          </span>
+                        </div>
+                      </div>
+                      <Button size="sm" className="px-5 rounded-lg flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold shrink-0 mb-0.5" onClick={handleSavePO}><Save size={13} /> บันทึก PO</Button>
                     </div>
                   </div>
-                  <Button size="lg" className="px-8 shadow-lg shadow-red-200 rounded-xl flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white" onClick={handleSavePO}>
-                    <Save size={18} /> บันทึก PO
-                  </Button>
                 </div>
               </div>
             </motion.div>
@@ -1072,6 +1308,77 @@ const POView = React.memo(() => {
               </div>
             </motion.div>
           </motion.div>
+        )}
+
+        {/* เพิ่มรายการ Modal */}
+        {isAddItemModalOpen && formData.selectedPrIds.length > 0 && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[80] p-4" onClick={() => setIsAddItemModalOpen(false)}>
+            <motion.div
+              className="w-full max-w-3xl max-h-[80vh] flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-6 py-4 bg-slate-800 shrink-0">
+                <div className="flex items-center gap-3">
+                  <Package size={20} className="text-white" />
+                  <h3 className="text-base font-bold text-white">เพิ่มรายการสินค้า</h3>
+                </div>
+                <button type="button" className="text-white/70 hover:text-white p-2 rounded-xl" onClick={() => setIsAddItemModalOpen(false)}>
+                  <XCircle size={20} />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-slate-100 text-slate-700 font-semibold border-b border-slate-200">
+                    <tr>
+                      <th className="p-2.5">PR No.</th>
+                      <th className="p-2.5">สถานะ</th>
+                      <th className="p-2.5">รายการ</th>
+                      <th className="p-2.5 text-right">เหลือ (QTY)</th>
+                      <th className="p-2.5 text-right">ราคา/หน่วย</th>
+                      <th className="p-2.5 w-24 text-center">เพิ่ม</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {availableItems.map((item) => {
+                      const alreadyInPo = formData.items.some(i => i.prId === item.prId && i.prItemIndex === item.prItemIndex);
+                      return (
+                        <tr key={`${item.prId}-${item.prItemIndex}`} className="hover:bg-slate-50">
+                          <td className="p-2.5 font-medium text-slate-800">{item.prNo}</td>
+                          <td className="p-2.5">
+                            {item.alreadyOpenedInPO ? (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800">เปิด PO ไปแล้ว</span>
+                            ) : (
+                              <span className="text-slate-400">—</span>
+                            )}
+                          </td>
+                          <td className="p-2.5 text-slate-600 max-w-[200px] truncate" title={item.description}>{item.description || "-"}</td>
+                          <td className="p-2.5 text-right">{item.remainingQty} {item.unit}</td>
+                          <td className="p-2.5 text-right">{formatCurrency(item.price)}</td>
+                          <td className="p-2.5 text-center">
+                            {alreadyInPo ? (
+                              <span className="text-slate-400 text-[10px]">เพิ่มแล้ว</span>
+                            ) : (
+                              <Button variant="secondary" size="sm" className="px-2 py-1 text-[10px]" onClick={() => handleAddItemClick(item)}>
+                                เพิ่ม
+                              </Button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {availableItems.length === 0 && (
+                  <div className="py-12 text-center text-slate-400 text-sm">ไม่มีรายการจาก PR ที่เลือก</div>
+                )}
+              </div>
+              <div className="px-6 py-3 border-t border-slate-200 bg-slate-50 flex justify-end">
+                <Button variant="secondary" onClick={() => setIsAddItemModalOpen(false)}>ปิด</Button>
+              </div>
+            </motion.div>
+          </div>
         )}
 
         {/* Quick Add Vendor Modal */}

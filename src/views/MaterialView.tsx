@@ -13,7 +13,7 @@ const PAGE_SIZE_OPTIONS = [100, 200, 500];
 const BATCH_SIZE = 500;
 
 const MaterialView = React.memo(() => {
-  const { materials, addData, updateData, deleteData, showAlert, openConfirm, userRole, columnWidths, handleColumnResize, db, appId } = useAppData();
+  const { materials, addData, updateData, deleteData, showAlert, openConfirm, userRole, columnWidths, handleColumnResize, db, appId, loadMaterials } = useAppData();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [searchText, setSearchText] = useState("");
@@ -35,6 +35,10 @@ const MaterialView = React.memo(() => {
   const [formData, setFormData] = useState(emptyForm);
 
   const materialsColRef = useMemo(() => db && appId ? collection(db, "artifacts", appId, "public", "data", "materials") : null, [db, appId]);
+
+  useEffect(() => {
+    loadMaterials();
+  }, [loadMaterials]);
 
   useEffect(() => {
     const onOutside = (e) => { if (actionDropdownRef.current && !actionDropdownRef.current.contains(e.target)) setActionDropdownOpen(false); };
