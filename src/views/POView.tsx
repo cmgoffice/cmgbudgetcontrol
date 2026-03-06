@@ -15,6 +15,7 @@ import MaterialAutoComplete from "../components/MaterialAutoComplete";
 import { PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, PURCHASE_TYPE_EQUIPMENT, DELIVERY_LOCATIONS, getPurchaseTypeDisplayLabel, COST_CATEGORIES } from "../lib/constants";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
 import { motion, AnimatePresence } from "framer-motion";
+import { generatePOPdfBytes, uploadGeneratedPdf } from "../lib/pdfForms";
 const POView = React.memo(() => {
   const { prs, pos, projects, budgets, vendors, materials, addData, updateData, deleteData, loadVendors, loadMaterials,
           showAlert, openConfirm, userRole, columnWidths, handleColumnResize,
@@ -441,6 +442,34 @@ const POView = React.memo(() => {
         );
       }
 
+      // สร้าง PDF และ upload ก่อน save (มี timeout 8s เพื่อไม่ให้ค้าง)
+      let pdfUrl: string | undefined;
+      try {
+        const vendor = vendors.find((v: any) => v.id === formData.vendorId) || null;
+        const project = projects.find((p: any) => p.id === selectedProjectId) || null;
+        const draftPayload = {
+          poNo: formData.poNo, poType: formData.poType,
+          receiveType: formData.receiveType,
+          projectId: selectedProjectId, vendorId: formData.vendorId,
+          requiredDate: formData.requiredDate, vatType: formData.vatType,
+          items: formData.items, amount: totals.total,
+          discount: formData.discount || 0,
+          ...(manualVatOverride != null && !isNaN(manualVatOverride) ? { manualVat: manualVatOverride } : {}),
+        };
+        const safePONo = formData.poNo.replace(/[^a-zA-Z0-9\-_]/g, "_");
+        const safeProjId = selectedProjectId || "unknown";
+        const generateAndUpload = async () => {
+          const bytes = await generatePOPdfBytes(draftPayload, { vendor, project });
+          return await uploadGeneratedPdf(bytes, `generated/pos/${safeProjId}/${safePONo}.pdf`);
+        };
+        const timeout = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("PDF timeout")), 8000)
+        );
+        pdfUrl = await Promise.race([generateAndUpload(), timeout]);
+      } catch (e) {
+        console.warn("[PO Save] PDF generation skipped:", e);
+      }
+
       const basePayload = {
         poNo: formData.poNo,
         poType: formData.poType,
@@ -451,25 +480,24 @@ const POView = React.memo(() => {
         vatType: formData.vatType,
         items: formData.items,
         amount: totals.total,
+        grandTotal: totals.total,
         discount: formData.discount || 0,
         ...(manualVatOverride != null && !isNaN(manualVatOverride) ? { manualVat: manualVatOverride } : {}),
+        ...(pdfUrl ? { pdfUrl } : {}),
         status: "Pending PCM",
         createdDate: new Date().toISOString(),
+        poDate: new Date().toISOString(),
         rejectReason: "",
       };
 
       let success = false;
 
       if (editingPoId) {
-        // แก้ไข PO ที่ถูก Reject แล้วส่งอนุมัติใหม่
         success = await updateData("pos", editingPoId, basePayload);
       } else {
-        // สร้าง PO ใหม่
         success = await addData("pos", basePayload);
         if (success) {
-          // Update PR status to "PO Issued" for all involved PRs
-          // Note: Ideally, check if PR is *fully* closed, but "PO Issued" is good enough
-          const uniquePrIds = [...new Set(formData.items.map(i => i.prId).filter(Boolean))];
+          const uniquePrIds = [...new Set(formData.items.map((i: any) => i.prId).filter(Boolean))];
           for (const prId of uniquePrIds) {
             await updateData("prs", prId, { status: "PO Issued" });
           }
@@ -487,7 +515,11 @@ const POView = React.memo(() => {
         setVatEditOpen(false);
         setVatEditValue("");
         setDiscountEnabled(false);
-        showAlert("สำเร็จ", "บันทึกใบสั่งซื้อ PDF (PO) เรียบร้อย", "success");
+        if (pdfUrl) {
+          showAlert("สำเร็จ", "บันทึก PO และสร้าง PDF เรียบร้อย — กดดาวน์โหลดได้จากตาราง PO", "success");
+        } else {
+          showAlert("สำเร็จ", "บันทึก PO เรียบร้อย (PDF จะสร้างเมื่อตั้งค่า Firebase Storage Rules)", "success");
+        }
       }
     };
 

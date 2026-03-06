@@ -15,8 +15,9 @@ import {
   collection, doc, onSnapshot, query, updateDoc, addDoc, deleteDoc,
   orderBy, limit, getDocs, where,
 } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { ref, uploadBytes, getDownloadURL, uploadBytesResumable } from "firebase/storage";
 import { db, appId, storage, FORM_TEMPLATE_PATHS } from "./lib/firebase";
+import { generatePRPdfBytes, generatePOPdfBytes, downloadBytes, uploadGeneratedPdf } from "./lib/pdfForms";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "./components/ui";
 import ResizableTh from "./components/ResizableTh";
 import { USER_ROLES } from "./lib/constants";
@@ -477,16 +478,28 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   const [searchTerm, setSearchTerm] = React.useState("");
   const [filterStatus, setFilterStatus] = React.useState("all");
   const [filterProject, setFilterProject] = React.useState("all");
-  const [emailModal, setEmailModal] = React.useState<{ pr: any } | null>(null);
+  const [emailModal, setEmailModal] = React.useState<{ doc: any; kind: "pr" | "po" } | null>(null);
   const [emailTo, setEmailTo] = React.useState("");
+  const [pdfLoadingId, setPdfLoadingId] = React.useState<string | null>(null);
+  const [pdfPreviewUrl, setPdfPreviewUrl] = React.useState<string | null>(null);
 
   const isPR = mode === "pr";
+
+  const errMsg = (e: any): string => {
+    if (!e) return "เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ";
+    if (typeof e === "string") return e;
+    if (e?.message) return String(e.message);
+    if (e?.code) return String(e.code);
+    try { return JSON.stringify(e); } catch { return "เกิดข้อผิดพลาด"; }
+  };
 
   const statusColors: Record<string, string> = {
     "Approved": "bg-emerald-50 text-emerald-700 border-emerald-200",
     "PO Issued": "bg-teal-50 text-teal-700 border-teal-200",
     "Pending Close": "bg-amber-50 text-amber-700 border-amber-200",
     "Closed PR": "bg-slate-100 text-slate-600 border-slate-300",
+    "Pending Close PO": "bg-amber-50 text-amber-700 border-amber-200",
+    "Closed PO": "bg-slate-100 text-slate-600 border-slate-300",
     "Pending MD": "bg-purple-50 text-purple-700 border-purple-200",
     "Pending GM": "bg-indigo-50 text-indigo-700 border-indigo-200",
     "Pending PM": "bg-blue-50 text-blue-700 border-blue-200",
@@ -506,29 +519,74 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
   const allStatuses = isPR
     ? ["Approved", "PO Issued", "Pending Close", "Closed PR", "Pending MD", "Pending GM", "Pending PM", "Pending CM", "Rejected"]
-    : ["Approved", "Pending PCM", "Pending GM", "Rejected", "Paid", "Partial", "Draft"];
+    : ["Approved", "Pending PCM", "Pending GM", "Rejected", "Paid", "Partial", "Draft", "Pending Close PO", "Closed PO"];
 
   const handlePRDownloadPDF = (pr: any) => {
-    const projName = getProjectName(pr.projectId);
-    const html = `
-      <!DOCTYPE html><html><head><meta charset="utf-8"><title>PR ${pr.prNo || pr.id}</title>
-      <style>body{font-family:sans-serif;padding:24px;max-width:800px;margin:0 auto;} table{width:100%;border-collapse:collapse;} th,td{border:1px solid #ddd;padding:8px;text-align:left;} th{background:#f5f5f5;}</style>
-      </head><body>
-      <h1>ใบขอซื้อ (PR) ${pr.prNo || ""}</h1>
-      <p><strong>โครงการ:</strong> ${projName} &nbsp; <strong>Cost Code:</strong> ${pr.costCode || "-"} &nbsp; <strong>วันที่:</strong> ${pr.requestDate || "-"}</p>
-      <p><strong>ผู้ขอ:</strong> ${pr.requestor || "-"} &nbsp; <strong>ยอดรวม:</strong> ฿${Number(pr.totalAmount || 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}</p>
-      <table><thead><tr><th>#</th><th>รายการ</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>รวม</th></tr></thead><tbody>
-      ${(pr.items || []).map((it: any, i: number) => `<tr><td>${i + 1}</td><td>${it.description || "-"}</td><td>${it.quantity || "-"} ${it.unit || ""}</td><td>${Number(it.price || 0).toLocaleString("th-TH")}</td><td>฿${Number(it.amount || 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}</td></tr>`).join("")}
-      </tbody></table></body></html>`;
-    const w = window.open("", "_blank");
-    if (w) { w.document.write(html); w.document.close(); w.focus(); setTimeout(() => { w.print(); }, 300); }
+    const docId = pr.id || pr.prNo || "pr";
+    setPdfLoadingId(docId);
+    (async () => {
+      try {
+        const projName = getProjectName(pr.projectId);
+        const budgetDesc = getBudgetDesc(pr.costCode, pr.projectId);
+        const bytes = await generatePRPdfBytes(pr, { projectName: projName, budgetDesc });
+        downloadBytes(bytes, `PR-${pr.prNo || pr.id || "unknown"}.pdf`);
+        showAlert?.("สำเร็จ", `ดาวน์โหลด PDF เรียบร้อย`, "success");
+      } catch (e: any) {
+        console.error("[PDF PR] error:", e);
+        showAlert?.("PDF ไม่สำเร็จ", errMsg(e), "error");
+      } finally {
+        setPdfLoadingId(null);
+      }
+    })();
   };
 
   const handlePRSendEmail = (pr: any, email: string) => {
     if (!email || !email.includes("@")) { showAlert?.("ข้อมูลไม่ครบ", "กรุณากรอกอีเมลปลายทางที่ถูกต้อง", "warning"); return; }
-    showAlert?.("ส่งเมล", `ระบบจะส่งไฟล์ PDF ไปที่ ${email} (เชื่อม API ส่งเมลในภายหลัง)`, "info");
+    const docId = pr.id || pr.prNo || "pr";
+    setPdfLoadingId(docId);
     setEmailModal(null);
     setEmailTo("");
+    (async () => {
+      try {
+        const projName = getProjectName(pr.projectId);
+        const budgetDesc = getBudgetDesc(pr.costCode, pr.projectId);
+        const bytes = await generatePRPdfBytes(pr, { projectName: projName, budgetDesc });
+        const path = `generated/pr/${pr.prNo || pr.id || "unknown"}.pdf`;
+        const url = await uploadGeneratedPdf(bytes, path);
+        const subject = encodeURIComponent(`PR ${pr.prNo || pr.id}`);
+        const body = encodeURIComponent(`แนบลิงก์ไฟล์ PDF (ดาวน์โหลด):\n${url}\n\n*ไฟล์นี้ถูกสร้างจากแบบฟอร์ม PR ในระบบ`);
+        window.open(`mailto:${encodeURIComponent(email)}?subject=${subject}&body=${body}`, "_blank");
+        try { await navigator.clipboard.writeText(url); } catch (_) {}
+        showAlert?.("เตรียมอีเมลแล้ว", "เปิดหน้าส่งเมลให้แล้ว และคัดลอกลิงก์ PDF เรียบร้อย", "success");
+      } catch (e: any) {
+        console.error("[Email PR] error:", e);
+        showAlert?.("ส่งเมลไม่สำเร็จ", errMsg(e), "error");
+      } finally {
+        setPdfLoadingId(null);
+      }
+    })();
+  };
+
+  const handlePODownloadPDF = (po: any) => {
+    if (po.pdfUrl) {
+      window.open(po.pdfUrl, "_blank");
+    } else {
+      showAlert?.("ไม่พบ PDF", "ยังไม่มี PDF สำหรับ PO นี้ — ลองบันทึก PO ใหม่อีกครั้ง หรือตรวจสอบ Firebase Storage Rules", "info");
+    }
+  };
+
+  const handlePOSendEmail = (po: any, email: string) => {
+    if (!email || !email.includes("@")) { showAlert?.("ข้อมูลไม่ครบ", "กรุณากรอกอีเมลปลายทางที่ถูกต้อง", "warning"); return; }
+    if (!po.pdfUrl) {
+      showAlert?.("ไม่พบ PDF", "ยังไม่มี PDF สำหรับ PO นี้ — ลองบันทึก PO ใหม่อีกครั้ง", "warning");
+      setEmailModal(null); setEmailTo(""); return;
+    }
+    const subject = encodeURIComponent(`PO ${po.poNo || po.id}`);
+    const body = encodeURIComponent(`แนบลิงก์ไฟล์ PDF (ดาวน์โหลด):\n${po.pdfUrl}\n\n*ไฟล์นี้ถูกสร้างจากแบบฟอร์ม PO ในระบบ`);
+    window.open(`mailto:${encodeURIComponent(email)}?subject=${subject}&body=${body}`, "_blank");
+    try { navigator.clipboard.writeText(po.pdfUrl); } catch (_) {}
+    setEmailModal(null); setEmailTo("");
+    showAlert?.("เตรียมอีเมลแล้ว", "เปิดหน้าส่งเมลให้แล้ว และคัดลอกลิงก์ PDF เรียบร้อย", "success");
   };
 
   const rows = isPR ? prs : pos;
@@ -617,7 +675,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                 <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="items" className="px-3 py-3 font-semibold text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths?.[isPR?"pr-table":"po-table"]?.items}>จำนวนรายการ</ResizableTh>
                 <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="amount" className="px-3 py-3 font-semibold text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths?.[isPR?"pr-table":"po-table"]?.amount}>ยอดรวม</ResizableTh>
                 <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="status" className="px-3 py-3 font-semibold text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths?.[isPR?"pr-table":"po-table"]?.status}>สถานะ</ResizableTh>
-                {isPR && <th className="px-3 py-3 font-semibold text-center w-28">Action</th>}
+                <th className="px-3 py-3 font-semibold text-center w-28">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -645,12 +703,15 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                     : "";
 
                   return (
-                    <tr key={r.id} className={`hover:bg-blue-50/40 transition-colors ${isEven ? "bg-white" : "bg-slate-50/40"}`}>
+                    <tr key={r.id} className={`hover:bg-blue-50/40 transition-colors cursor-pointer ${isEven ? "bg-white" : "bg-slate-50/40"}`} onClick={() => { if (!isPR && r.pdfUrl) setPdfPreviewUrl(r.pdfUrl); }}>
                       <td className="px-3 py-2.5 text-slate-400 font-mono">{idx + 1}</td>
                       <td className="px-3 py-2.5 font-bold text-slate-800 whitespace-nowrap">
                         <div className="flex items-center gap-1">
                           <Hash size={10} className={isPR ? "text-slate-500" : "text-red-500"} />
                           {noField || "-"}
+                          {!isPR && r.pdfUrl && (
+                            <span title="มี PDF — คลิกแถวเพื่อดู" className="ml-0.5 text-red-500"><FileText size={10} /></span>
+                          )}
                         </div>
                       </td>
                       <td className="px-3 py-2.5 text-slate-600 max-w-[140px] truncate" title={getProjectName(r.projectId)}>
@@ -703,28 +764,40 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                           {r.status || "Draft"}
                         </span>
                       </td>
-                      {isPR && (
-                        <td className="px-3 py-2.5">
-                          <div className="flex items-center justify-center gap-1">
-                            <button type="button" className="p-1.5 rounded hover:bg-slate-200 text-slate-600 hover:text-slate-800" title="ส่งไฟล์ PDF ทางเมล" onClick={() => { setEmailModal({ pr: r }); setEmailTo(""); }}>
-                              <Mail size={14} />
-                            </button>
-                            <button type="button" className="p-1.5 rounded hover:bg-slate-200 text-slate-600 hover:text-slate-800" title="Download PDF" onClick={() => handlePRDownloadPDF(r)}>
+                      <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-center gap-1">
+                          <button type="button" disabled={pdfLoadingId === r.id} className="p-1.5 rounded hover:bg-slate-200 text-slate-600 hover:text-slate-800 disabled:opacity-40" title="ส่งไฟล์ PDF ทางเมล" onClick={() => { setEmailModal({ doc: r, kind: isPR ? "pr" : "po" }); setEmailTo(""); }}>
+                            <Mail size={14} />
+                          </button>
+                          <button type="button" disabled={pdfLoadingId === r.id} className="p-1.5 rounded hover:bg-slate-200 text-slate-600 hover:text-slate-800 disabled:opacity-40" title="Download PDF" onClick={() => isPR ? handlePRDownloadPDF(r) : handlePODownloadPDF(r)}>
+                            {pdfLoadingId === r.id ? (
+                              <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" strokeOpacity=".25"/><path d="M12 2a10 10 0 0 1 10 10" /></svg>
+                            ) : (
                               <Download size={14} />
+                            )}
+                          </button>
+                          {isPR && r.status !== "Closed PR" && r.status !== "Pending Close" && (
+                            <button type="button" className="p-1.5 rounded hover:bg-amber-100 text-amber-700" title="ขอปิด PR (รอ PCM ยืนยัน)" onClick={() => openConfirm?.("ขอปิด PR", "เมื่อ PCM ยืนยันแล้ว สถานะจะเป็น Closed PR", async () => { await updateData?.("prs", r.id, { status: "Pending Close", closeRequestedAt: new Date().toISOString() }); showAlert?.("ส่งคำขอแล้ว", "รอ PCM ยืนยันการปิด PR", "info"); })}>
+                              <XCircle size={14} />
                             </button>
-                            {r.status !== "Closed PR" && r.status !== "Pending Close" && (
-                              <button type="button" className="p-1.5 rounded hover:bg-amber-100 text-amber-700" title="ขอปิด PR (รอ PCM ยืนยัน)" onClick={() => openConfirm?.("ขอปิด PR", "เมื่อ PCM ยืนยันแล้ว สถานะจะเป็น Closed PR", async () => { await updateData?.("prs", r.id, { status: "Pending Close", closeRequestedAt: new Date().toISOString() }); showAlert?.("ส่งคำขอแล้ว", "รอ PCM ยืนยันการปิด PR", "info"); })}>
-                                <XCircle size={14} />
-                              </button>
-                            )}
-                            {(r.status === "Pending Close" && (userRole === "PCM" || userRole === "Administrator")) && (
-                              <button type="button" className="p-1.5 rounded hover:bg-emerald-100 text-emerald-700 text-[10px] font-medium" title="ยืนยันปิด PR" onClick={() => openConfirm?.("ยืนยันปิด PR", "สถานะจะเปลี่ยนเป็น Closed PR", async () => { await updateData?.("prs", r.id, { status: "Closed PR" }); showAlert?.("สำเร็จ", "ปิด PR เรียบร้อย", "success"); })}>
-                                ยืนยันปิด
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      )}
+                          )}
+                          {isPR && r.status === "Pending Close" && (userRole === "PCM" || userRole === "Administrator") && (
+                            <button type="button" className="p-1.5 rounded hover:bg-emerald-100 text-emerald-700 text-[10px] font-medium" title="ยืนยันปิด PR" onClick={() => openConfirm?.("ยืนยันปิด PR", "สถานะจะเปลี่ยนเป็น Closed PR", async () => { await updateData?.("prs", r.id, { status: "Closed PR" }); showAlert?.("สำเร็จ", "ปิด PR เรียบร้อย", "success"); })}>
+                              ยืนยันปิด
+                            </button>
+                          )}
+                          {!isPR && r.status !== "Closed PO" && r.status !== "Pending Close PO" && (
+                            <button type="button" className="p-1.5 rounded hover:bg-amber-100 text-amber-700" title="ขอปิด PO (รอ PCM ยืนยัน)" onClick={() => openConfirm?.("ขอปิด PO", "เมื่อ PCM ยืนยันแล้ว สถานะจะเป็น Closed PO", async () => { await updateData?.("pos", r.id, { status: "Pending Close PO", closeRequestedAt: new Date().toISOString() }); showAlert?.("ส่งคำขอแล้ว", "รอ PCM ยืนยันการปิด PO", "info"); })}>
+                              <XCircle size={14} />
+                            </button>
+                          )}
+                          {!isPR && r.status === "Pending Close PO" && (userRole === "PCM" || userRole === "Administrator") && (
+                            <button type="button" className="p-1.5 rounded hover:bg-emerald-100 text-emerald-700 text-[10px] font-medium" title="ยืนยันปิด PO" onClick={() => openConfirm?.("ยืนยันปิด PO", "สถานะจะเปลี่ยนเป็น Closed PO", async () => { await updateData?.("pos", r.id, { status: "Closed PO" }); showAlert?.("สำเร็จ", "ปิด PO เรียบร้อย", "success"); })}>
+                              ยืนยันปิด
+                            </button>
+                          )}
+                        </div>
+                      </td>
                     </tr>
                   );
                 })
@@ -744,17 +817,37 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
         )}
       </Card>
 
-      {/* Email modal for PR PDF */}
-      {isPR && emailModal && (
+      {/* Email modal for PR/PO PDF */}
+      {emailModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setEmailModal(null)}>
           <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-4" onClick={e => e.stopPropagation()}>
             <h3 className="text-sm font-bold text-slate-800 mb-2">ส่งไฟล์ PDF ทางเมล</h3>
-            <p className="text-xs text-slate-500 mb-2">PR: {emailModal.pr?.prNo || emailModal.pr?.id}</p>
+            <p className="text-xs text-slate-500 mb-2">
+              {emailModal.kind === "pr"
+                ? `PR: ${emailModal.doc?.prNo || emailModal.doc?.id}`
+                : `PO: ${emailModal.doc?.poNo || emailModal.doc?.id}`}
+            </p>
             <input type="email" placeholder="อีเมลปลายทาง" value={emailTo} onChange={e => setEmailTo(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm mb-3" />
             <div className="flex gap-2 justify-end">
               <Button variant="secondary" size="sm" onClick={() => { setEmailModal(null); setEmailTo(""); }}>ยกเลิก</Button>
-              <Button variant="primary" size="sm" onClick={() => handlePRSendEmail(emailModal.pr, emailTo)}>ส่ง</Button>
+              <Button variant="primary" size="sm" onClick={() => emailModal.kind === "pr" ? handlePRSendEmail(emailModal.doc, emailTo) : handlePOSendEmail(emailModal.doc, emailTo)}>ส่ง</Button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* PDF Preview Modal (PO) */}
+      {pdfPreviewUrl && (
+        <div className="fixed inset-0 bg-black/70 flex flex-col items-center justify-center z-[9999] p-4" onClick={() => setPdfPreviewUrl(null)}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl flex flex-col" style={{ height: "88vh" }} onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-100">
+              <span className="text-sm font-semibold text-slate-700">ดูตัวอย่าง PDF</span>
+              <div className="flex gap-2">
+                <a href={pdfPreviewUrl} target="_blank" rel="noopener noreferrer" className="px-3 py-1 text-xs bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium">เปิดในแท็บใหม่ / ดาวน์โหลด</a>
+                <button onClick={() => setPdfPreviewUrl(null)} className="px-3 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium">ปิด</button>
+              </div>
+            </div>
+            <iframe src={pdfPreviewUrl} className="flex-1 w-full rounded-b-xl" title="PDF Preview" />
           </div>
         </div>
       )}
@@ -906,6 +999,7 @@ const AdminDashboard = () => {
   const [prFormUrl, setPrFormUrl] = useState(null);
   const [poFormUrl, setPoFormUrl] = useState(null);
   const [uploadingForm, setUploadingForm] = useState(null); // 'pr' | 'po' | null
+  const [uploadPercent, setUploadPercent] = useState({ pr: 0, po: 0 });
 
   useEffect(() => {
     const qUsers = query(
@@ -965,10 +1059,28 @@ const AdminDashboard = () => {
     }
     const path = FORM_TEMPLATE_PATHS[kind];
     setUploadingForm(kind);
+    setUploadPercent((p) => ({ ...p, [kind]: 0 }));
     try {
       const storageRef = ref(storage, path);
-      await uploadBytes(storageRef, file);
-      const url = await getDownloadURL(storageRef);
+      const task = uploadBytesResumable(storageRef, file, { contentType: "application/pdf" });
+      const url = await new Promise<string>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("อัปโหลดใช้เวลานานเกินไป กรุณาลองใหม่ (ตรวจสอบ Storage Rules/อินเทอร์เน็ต)")), 90000);
+        task.on(
+          "state_changed",
+          (snap) => {
+            const pct = snap.totalBytes ? Math.round((snap.bytesTransferred / snap.totalBytes) * 100) : 0;
+            setUploadPercent((p) => ({ ...p, [kind]: pct }));
+          },
+          (err) => {
+            clearTimeout(timeout);
+            reject(err);
+          },
+          async () => {
+            clearTimeout(timeout);
+            resolve(await getDownloadURL(storageRef));
+          }
+        );
+      });
       if (kind === "pr") setPrFormUrl(url);
       else setPoFormUrl(url);
       showAlert("อัปโหลดสำเร็จ", `อัปโหลดแบบฟอร์ม ${kind === "pr" ? "PR" : "PO"} เรียบร้อย (แทนที่ของเก่า)`, "success");
@@ -976,6 +1088,7 @@ const AdminDashboard = () => {
       showAlert("อัปโหลดไม่สำเร็จ", e?.message || "เกิดข้อผิดพลาด", "error");
     } finally {
       setUploadingForm(null);
+      setUploadPercent((p) => ({ ...p, [kind]: 0 }));
     }
   };
 
@@ -1322,7 +1435,7 @@ const AdminDashboard = () => {
                   disabled={uploadingForm === "pr"}
                   onClick={() => document.getElementById("form-upload-pr")?.click()}
                 >
-                  {uploadingForm === "pr" ? "กำลังอัปโหลด..." : "อัปโหลดแบบฟอร์ม PR (แทนที่ของเก่า)"}
+                  {uploadingForm === "pr" ? `กำลังอัปโหลด... ${uploadPercent.pr || 0}%` : "อัปโหลดแบบฟอร์ม PR (แทนที่ของเก่า)"}
                 </Button>
               </div>
             </Card>
@@ -1358,7 +1471,7 @@ const AdminDashboard = () => {
                   disabled={uploadingForm === "po"}
                   onClick={() => document.getElementById("form-upload-po")?.click()}
                 >
-                  {uploadingForm === "po" ? "กำลังอัปโหลด..." : "อัปโหลดแบบฟอร์ม PO (แทนที่ของเก่า)"}
+                  {uploadingForm === "po" ? `กำลังอัปโหลด... ${uploadPercent.po || 0}%` : "อัปโหลดแบบฟอร์ม PO (แทนที่ของเก่า)"}
                 </Button>
               </div>
             </Card>
