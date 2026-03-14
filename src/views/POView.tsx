@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef, useContext } 
 import {
   Plus, Trash2, Edit, CheckCircle, XCircle, FileText, ChevronDown, ChevronRight, ChevronUp,
   CircleArrowRight, CircleArrowDown, CornerDownRight, AlertCircle, Save, Play,
-  PlusCircle, Briefcase, Calendar, MapPin, DollarSign, Info, FileOutput, Search, ListFilter,
+  PlusCircle, Briefcase, Calendar, MapPin, DollarSign, FileOutput, Search, ListFilter,
   Truck, Package, Paperclip, Clock, Hash, Tag, ClipboardList, FileSpreadsheet, Upload, Download,
   BarChart3, Zap, Building2, ShoppingCart
 } from "lucide-react";
@@ -15,11 +15,11 @@ import MaterialAutoComplete from "../components/MaterialAutoComplete";
 import { PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, PURCHASE_TYPE_EQUIPMENT, DELIVERY_LOCATIONS, getPurchaseTypeDisplayLabel, COST_CATEGORIES } from "../lib/constants";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
 import { motion, AnimatePresence } from "framer-motion";
-import { generatePOPdfBytes, uploadGeneratedPdf } from "../lib/pdfForms";
+import { generatePOPdfBytes, uploadGeneratedPdf, stampSignatureToPdf } from "../lib/pdfForms";
 const POView = React.memo(() => {
   const { prs, pos, projects, budgets, vendors, materials, addData, updateData, deleteData, loadVendors, loadMaterials,
           showAlert, openConfirm, userRole, columnWidths, handleColumnResize,
-          visibleProjects, handlePOAction } = useAppData();
+          visibleProjects, handlePOAction, userData, user } = useAppData();
   const { selectedProjectId,
           isFullScreenModalOpen, setIsFullScreenModalOpen,
           expandedPrRows } = useUI();
@@ -28,8 +28,10 @@ const POView = React.memo(() => {
     const [isVendorModalOpen, setIsVendorModalOpen] = useState(false);
     const [isPrSelectModalOpen, setIsPrSelectModalOpen] = useState(false);
     const [tempSelectedPrIds, setTempSelectedPrIds] = useState<string[]>([]);
+    const [prSelectFilterText, setPrSelectFilterText] = useState("");
     const [expandedPoRows, setExpandedPoRows] = useState({});
     const [editingPoId, setEditingPoId] = useState(null);
+    const [viewingPO, setViewingPO] = useState<any>(null);
 
     const togglePoRow = (id) => {
       setExpandedPoRows((prev) => ({
@@ -78,6 +80,7 @@ const POView = React.memo(() => {
       receiveType: "",
       vendorId: "",
       requiredDate: "",
+      poOpenDate: new Date().toISOString().split("T")[0], // วันที่เปิด PO (default วันนี้)
       vatType: "ex-vat", // "inc-vat" | "ex-vat"
       selectedPrIds: [], // Array of PR IDs
       items: [], // Array of selected items with order details
@@ -89,12 +92,41 @@ const POView = React.memo(() => {
     const [vatEditValue, setVatEditValue] = useState("");
     const [discountEnabled, setDiscountEnabled] = useState(false);
     const [isAddItemModalOpen, setIsAddItemModalOpen] = useState(false);
+    const [freeItemPrNoDropdownId, setFreeItemPrNoDropdownId] = useState<string | null>(null);
+    const [vendorSearchText, setVendorSearchText] = useState("");
+    const [vendorSearchQuery, setVendorSearchQuery] = useState("");
+    const [vendorDropdownOpen, setVendorDropdownOpen] = useState(false);
+    const vendorSearchDebounceRef = useRef(null);
+    useEffect(() => {
+      if (vendorSearchDebounceRef.current) clearTimeout(vendorSearchDebounceRef.current);
+      vendorSearchDebounceRef.current = setTimeout(() => {
+        setVendorSearchQuery(vendorSearchText.trim());
+        vendorSearchDebounceRef.current = null;
+      }, 2000);
+      return () => { if (vendorSearchDebounceRef.current) clearTimeout(vendorSearchDebounceRef.current); };
+    }, [vendorSearchText]);
+    const vendorFilteredList = useMemo(() => {
+      const q = (vendorSearchQuery || "").toLowerCase();
+      if (!q) return vendors;
+      return vendors.filter((v: any) =>
+        [v.name, v.code, v.type, v.tel].some(f => String(f || "").toLowerCase().includes(q))
+      );
+    }, [vendors, vendorSearchQuery]);
 
     // โหลด vendors + materials เมื่อเข้าหน้า PO (ลดโควต้าเปิดแอป)
     useEffect(() => {
       loadVendors();
       loadMaterials();
     }, [loadVendors, loadMaterials]);
+
+    // Sync vendor search text when editing PO (มี vendorId แล้ว)
+    useEffect(() => {
+      if (editingPoId && formData.vendorId && vendors.length > 0) {
+        const v = vendors.find((x: any) => x.id === formData.vendorId);
+        if (v?.name) setVendorSearchText(v.name);
+      }
+      if (!isModalOpen) { setVendorSearchText(""); setVendorDropdownOpen(false); }
+    }, [editingPoId, formData.vendorId, isModalOpen]);
 
     // Auto-generate PO No.: PO{YY}{JXX}-{POT}{XXXX}
     // ตัวอย่าง: PO26J01-CC0001
@@ -259,6 +291,26 @@ const POView = React.memo(() => {
     const selectedPrsTotalAmount = useMemo(() => {
       return formData.selectedPrIds.reduce((sum, prId) => sum + getPrRemainingAmount(prId), 0);
     }, [formData.selectedPrIds, approvedPRs, prs, pos, editingPoId]);
+
+    // PR No. options สำหรับ dropdown รายการเพิ่ม (manual) — จาก PR ที่เลือกในตารางนี้
+    const prNoOptionsForFreeItems = useMemo(() => {
+      const list = formData.selectedPrIds
+        .map((id: string) => prs.find((p: any) => p.id === id)?.prNo)
+        .filter(Boolean);
+      return [...new Set(list)] as string[];
+    }, [formData.selectedPrIds, prs]);
+
+    // PR list filtered by content (PR No., Cost Code, รายการงบ) สำหรับ Modal เลือกใบขอซื้อ
+    const approvedPRsFiltered = useMemo(() => {
+      const q = (prSelectFilterText || "").trim().toLowerCase();
+      if (!q) return approvedPRs;
+      return approvedPRs.filter((pr) => {
+        const budgetDesc = budgets.find(b => b.code === pr.costCode && b.projectId === pr.projectId)?.description || "";
+        const prItemsDesc = (pr.items || []).map((i: any) => i.description).filter(Boolean).join(" ");
+        const haystack = [pr.prNo, pr.costCode, budgetDesc, prItemsDesc].join(" ").toLowerCase();
+        return haystack.includes(q);
+      });
+    }, [approvedPRs, prSelectFilterText, budgets]);
 
     const addItemToForm = (itemData) => {
       setFormData(prev => ({
@@ -433,11 +485,12 @@ const POView = React.memo(() => {
 
       const totals = calculateTotals();
 
-      // ตรวจสอบ Grand Total ต้องไม่เกินยอดรวมของ PR ที่เลือก
-      if (totals.total > selectedPrsTotalAmount * 1.001) {
+      // ใช้ยอด Sub Total (หลังหักส่วนลด) เทียบกับ PR (ไม่นำ VAT มาคิด) — ตรวจสอบ Sub Total ต้องไม่เกินยอดรวมของ PR ที่เลือก
+      const subtotalAfterDiscount = Math.max(0, totals.subtotal - (Number(formData.discount) || 0));
+      if (subtotalAfterDiscount > selectedPrsTotalAmount) {
         return showAlert(
           "ยอดเกิน PR",
-          `Grand Total (${formatCurrency(totals.total)}) ต้องไม่เกินยอดรวมของ PR ที่เลือก (${formatCurrency(selectedPrsTotalAmount)})`,
+          `มูลค่า / Sub Total (${formatCurrency(subtotalAfterDiscount)}) ต้องไม่เกินยอดคงเหลือของ PR ที่เลือก (${formatCurrency(selectedPrsTotalAmount)})`,
           "warning"
         );
       }
@@ -458,12 +511,23 @@ const POView = React.memo(() => {
         };
         const safePONo = formData.poNo.replace(/[^a-zA-Z0-9\-_]/g, "_");
         const safeProjId = selectedProjectId || "unknown";
+        const creatorSignatureUrl = userData?.signatureUrl || null;
         const generateAndUpload = async () => {
-          const bytes = await generatePOPdfBytes(draftPayload, { vendor, project });
+          let bytes = await generatePOPdfBytes(draftPayload, { vendor, project });
+          // Step 1: Stamp creator signature on the generated PDF
+          if (creatorSignatureUrl) {
+            try {
+              bytes = await stampSignatureToPdf(bytes, creatorSignatureUrl, {
+                x: 60, y: 60, width: 130, height: 55, pageIndex: 0,
+              });
+            } catch (sigErr) {
+              console.warn("[PO Save] Stamp creator signature failed:", sigErr);
+            }
+          }
           return await uploadGeneratedPdf(bytes, `generated/pos/${safeProjId}/${safePONo}.pdf`);
         };
         const timeout = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("PDF timeout")), 8000)
+          setTimeout(() => reject(new Error("PDF timeout")), 15000)
         );
         pdfUrl = await Promise.race([generateAndUpload(), timeout]);
       } catch (e) {
@@ -484,9 +548,10 @@ const POView = React.memo(() => {
         discount: formData.discount || 0,
         ...(manualVatOverride != null && !isNaN(manualVatOverride) ? { manualVat: manualVatOverride } : {}),
         ...(pdfUrl ? { pdfUrl } : {}),
+        createdByUid: user?.uid || null,
         status: "Pending PCM",
         createdDate: new Date().toISOString(),
-        poDate: new Date().toISOString(),
+        poDate: formData.poOpenDate ? new Date(formData.poOpenDate + "T00:00:00").toISOString() : new Date().toISOString(),
         rejectReason: "",
       };
 
@@ -509,7 +574,7 @@ const POView = React.memo(() => {
         setIsFullScreenModalOpen(false);
         setEditingPoId(null);
         setFormData({
-          poNo: "", poType: "", receiveType: "", vendorId: "", requiredDate: "", vatType: "ex-vat", selectedPrIds: [], items: [], note: "", discount: 0
+          poNo: "", poType: "", receiveType: "", vendorId: "", requiredDate: "", poOpenDate: new Date().toISOString().split("T")[0], vatType: "ex-vat", selectedPrIds: [], items: [], note: "", discount: 0
         });
         setManualVatOverride(null);
         setVatEditOpen(false);
@@ -518,7 +583,7 @@ const POView = React.memo(() => {
         if (pdfUrl) {
           showAlert("สำเร็จ", "บันทึก PO และสร้าง PDF เรียบร้อย — กดดาวน์โหลดได้จากตาราง PO", "success");
         } else {
-          showAlert("สำเร็จ", "บันทึก PO เรียบร้อย (PDF จะสร้างเมื่อตั้งค่า Firebase Storage Rules)", "success");
+          showAlert("สำเร็จ", "บันทึก PO เรียบร้อย", "success");
         }
       }
     };
@@ -549,14 +614,39 @@ const POView = React.memo(() => {
       }
 
       // Approve Flow
-      if (po.status === "Pending PCM" && (userRole === "PCM" || userRole === "Administrator" /*Testing*/)) {
+      const isPCMApprove = po.status === "Pending PCM" && (userRole === "PCM" || userRole === "Administrator");
+      if (isPCMApprove) {
         newStatus = "Pending GM";
       } else if (po.status === "Pending GM" && (userRole === "GM" || userRole === "Administrator")) {
         newStatus = "Approved";
       }
 
       if (newStatus !== po.status) {
-        await updateData("pos", poId, { status: newStatus, rejectReason: "" });
+        // Step 2: Stamp PCM approver's signature onto the existing PDF, overwrite in Storage
+        let updatedPdfUrl: string | undefined;
+        if (isPCMApprove && po.pdfUrl && userData?.signatureUrl) {
+          try {
+            const safePONo = (po.poNo || po.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
+            const safeProjId = po.projectId || "unknown";
+            const existingPdfRes = await fetch(po.pdfUrl);
+            if (existingPdfRes.ok) {
+              const existingBytes = new Uint8Array(await existingPdfRes.arrayBuffer());
+              const stampedBytes = await stampSignatureToPdf(existingBytes, userData.signatureUrl, {
+                x: 230, y: 60, width: 130, height: 55, pageIndex: 0,
+              });
+              // Upload to same path — Firebase Storage returns a fresh download URL
+              updatedPdfUrl = await uploadGeneratedPdf(stampedBytes, `generated/pos/${safeProjId}/${safePONo}.pdf`);
+            }
+          } catch (stampErr) {
+            console.warn("[PO Approve] Stamp PCM signature failed:", stampErr);
+          }
+        }
+
+        await updateData("pos", poId, {
+          status: newStatus,
+          rejectReason: "",
+          ...(updatedPdfUrl ? { pdfUrl: updatedPdfUrl } : {}),
+        });
         showAlert("อนุมัติ", `เลื่อนสถานะเป็น ${newStatus}`, "success");
       }
     };
@@ -595,11 +685,6 @@ const POView = React.memo(() => {
           </Button>
         </div>
 
-        <div className="bg-orange-50 p-3 rounded-md border border-orange-100 text-xs text-orange-800 mb-4 flex items-center gap-2">
-          <Info size={16} />
-          <strong>Flow การอนุมัติ PO:</strong> Procurement (สร้าง) → Pending PCM → Pending GM → Approved
-        </div>
-
         <Card>
           <table className="w-full text-left text-xs text-slate-600">
             <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
@@ -632,7 +717,7 @@ const POView = React.memo(() => {
                     <React.Fragment key={po.id}>
                       <tr
                         className="hover:bg-blue-50 cursor-pointer transition-colors border-b odd:bg-white even:bg-slate-50"
-                        onClick={() => togglePoRow(po.id)}
+                        onClick={() => setViewingPO(po)}
                       >
                         <td className="py-2 px-3 font-medium text-blue-700" title={po.poNo}><span className="cell-text">{po.poNo}</span></td>
                         <td className="py-2 px-3 text-center">
@@ -682,12 +767,14 @@ const POView = React.memo(() => {
                               onClick={() => {
                                 // เตรียมฟอร์มสำหรับแก้ไข PO ที่ถูก Reject
                                 const prIdsFromItems = po.items ? [...new Set(po.items.map(i => i.prId))] : (po.prRefId ? [po.prRefId] : []);
+                                const poOpenDateVal = po.poDate ? (po.poDate.split("T")[0] || new Date().toISOString().split("T")[0]) : new Date().toISOString().split("T")[0];
                                 setFormData({
                                   poNo: po.poNo || "",
                                   poType: po.poType || "",
                                   receiveType: po.receiveType || "",
                                   vendorId: po.vendorId || "",
                                   requiredDate: po.requiredDate || "",
+                                  poOpenDate: poOpenDateVal,
                                   vatType: po.vatType || "ex-vat",
                                   selectedPrIds: prIdsFromItems,
                                   items: (po.items || []).map((it, idx) => ((it.prId == null || it.prId === "") && !it.id) ? { ...it, id: `free-${idx}-${Date.now()}` } : it),
@@ -707,69 +794,176 @@ const POView = React.memo(() => {
                             </Button>
                           )}
 
+                          {/* Step 3: PDF view button — always shows latest stamped PDF */}
+                          {po.pdfUrl && (
+                            <a
+                              href={po.pdfUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center justify-center p-1 rounded text-red-600 hover:text-red-800 hover:bg-red-50 transition-colors"
+                              title="ดู PDF"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <FileOutput size={15} />
+                            </a>
+                          )}
+
                           <button
                             className="text-red-500 hover:text-red-700 p-1"
                             onClick={() => {
-                              openConfirm("ยืนยันการลบ", "คุณต้องการลบ PO นี้ใช่หรือไม่?", async () => await deleteData("pos", po.id), "danger");
+                              openConfirm("ยืนยันการลบ", "คุณต้องการลบ PO นี้ใช่หรือไม่?", async () => {
+                                const prIds = po.items ? [...new Set(po.items.map((i: any) => i.prId).filter(Boolean))] : (po.prRefId ? [po.prRefId] : []);
+                                const deleted = await deleteData("pos", po.id);
+                                if (deleted && prIds.length > 0) {
+                                  for (const prId of prIds) {
+                                    const stillUsedByOtherPO = pos.some((p: any) => p.id !== po.id && p.items?.some((i: any) => i.prId === prId));
+                                    if (!stillUsedByOtherPO) {
+                                      await updateData("prs", prId, { status: "Approved" });
+                                    }
+                                  }
+                                }
+                              }, "danger");
                             }}
                           >
                             <Trash2 size={14} />
                           </button>
                         </td>
                       </tr>
-                      {expandedPoRows[po.id] && (
-                        <tr className="bg-slate-50/50">
-                          <td colSpan={9} className="p-4 border-b cursor-default" onClick={(e) => e.stopPropagation()}>
-                            <div className="bg-white rounded-lg border border-slate-200 p-3 shadow-sm ml-8">
-                              <h5 className="text-xs font-bold text-slate-700 mb-1 flex items-center gap-2">
-                                <ShoppingCart size={14} /> รายการสั่งซื้อใน PO: {po.poNo}
-                              </h5>
-                              <div className="flex justify-between items-center text-[11px] text-slate-500 mb-2">
-                                <div>
-                                  Vendor:{" "}
-                                  <span className="font-semibold text-slate-700">
-                                    {vendor?.name || "-"}
-                                  </span>
-                                </div>
-                                <div>
-                                  วันรับของ:{" "}
-                                  <span className="font-semibold text-slate-700">
-                                    {po.requiredDate || "-"}
-                                  </span>
-                                </div>
-                              </div>
-                              <table className="w-full text-xs text-left">
-                                <thead className="bg-orange-50 text-orange-800 border-b border-orange-100">
-                                  <tr>
-                                    <th className="p-2 w-10 text-center">#</th>
-                                    <th className="p-2">รายการสินค้า (Description)</th>
-                                    <th className="p-2 text-right">จำนวน</th>
-                                    <th className="p-2 text-right">ราคา/หน่วย</th>
-                                    <th className="p-2 text-right">รวม</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-100">
-                                  {po.items && po.items.map((it, idx) => (
-                                    <tr key={idx} className="hover:bg-gray-50">
-                                      <td className="p-2 text-center text-slate-400">{idx + 1}</td>
-                                      <td className="p-2 font-medium text-slate-700">{it.description}</td>
-                                      <td className="p-2 text-right">{it.quantity} {it.unit}</td>
-                                      <td className="p-2 text-right">{formatCurrency(it.price)}</td>
-                                      <td className="p-2 text-right font-semibold">{formatCurrency(it.quantity * it.price)}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
                     </React.Fragment>
                   );
                 })}
             </tbody>
           </table>
         </Card>
+
+        {/* PO View Modal — ดูข้อมูล + Approve/Reject */}
+        {viewingPO && (() => {
+          const poVendor = vendors.find((v: any) => v.id === viewingPO.vendorId);
+          const poPrIds = viewingPO.items ? [...new Set(viewingPO.items.map((i: any) => i.prId).filter(Boolean))] : (viewingPO.prRefId ? [viewingPO.prRefId] : []);
+          const poPrNos = poPrIds.map((id: string) => prs.find((p: any) => p.id === id)?.prNo || "-").join(", ");
+          const subtotal = (viewingPO.items || []).reduce((s: number, i: any) => s + Number(i.quantity) * Number(i.price), 0);
+          return (
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9000] p-4">
+              <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-[90vh] flex flex-col">
+                {/* Header */}
+                <div className="px-6 py-4 bg-gradient-to-r from-red-700 to-red-900 rounded-t-2xl flex items-center justify-between shrink-0">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center">
+                      <ShoppingCart size={18} className="text-white" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-white">ใบสั่งซื้อ (PO)</h3>
+                      <p className="text-red-200 text-xs mt-0.5">{viewingPO.poNo}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge status={viewingPO.status} />
+                    <button onClick={() => setViewingPO(null)} className="text-white/60 hover:text-white hover:bg-white/20 p-2 rounded-xl transition-all ml-2">
+                      <XCircle size={20} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Reject reason banner */}
+                {viewingPO.rejectReason && (
+                  <div className="px-6 py-2.5 bg-red-50 border-b border-red-200 shrink-0 flex items-center gap-2">
+                    <AlertCircle size={14} className="text-red-500 shrink-0" />
+                    <p className="text-red-700 text-xs"><span className="font-semibold">เหตุผลปฏิเสธ:</span> {viewingPO.rejectReason}</p>
+                  </div>
+                )}
+
+                {/* Body */}
+                <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+                  {/* Info grid */}
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                    {[
+                      { label: "PO No.", value: viewingPO.poNo },
+                      { label: "PO Type", value: viewingPO.poType || "-" },
+                      { label: "Ref PR No.", value: poPrNos || "-" },
+                      { label: "Vendor", value: poVendor?.name || "-" },
+                      { label: "วันที่เปิด PO", value: viewingPO.poDate ? viewingPO.poDate.split("T")[0] : "-" },
+                      { label: "กำหนดส่งของ", value: viewingPO.requiredDate || "-" },
+                      { label: "ประเภทรับของ", value: viewingPO.receiveType || "-" },
+                      { label: "VAT", value: viewingPO.vatType || "-" },
+                    ].map(({ label, value }) => (
+                      <div key={label} className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
+                        <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">{label}</p>
+                        <p className="font-semibold text-slate-700 truncate" title={value}>{value}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Line Items */}
+                  <div className="rounded-xl border border-slate-200 overflow-hidden">
+                    <div className="bg-red-700 px-4 py-2 flex items-center justify-between">
+                      <span className="text-xs font-bold text-white uppercase tracking-wide">รายการสั่งซื้อ</span>
+                      <span className="bg-white/20 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">{viewingPO.items?.length || 0} รายการ</span>
+                    </div>
+                    <table className="w-full text-xs text-left">
+                      <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
+                        <tr>
+                          <th className="px-3 py-2 w-8 text-center">#</th>
+                          <th className="px-3 py-2">รายการสินค้า</th>
+                          <th className="px-3 py-2 text-right">จำนวน</th>
+                          <th className="px-3 py-2 text-right">ราคา/หน่วย</th>
+                          <th className="px-3 py-2 text-right">รวม</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {(viewingPO.items || []).map((it: any, idx: number) => (
+                          <tr key={idx} className="hover:bg-slate-50">
+                            <td className="px-3 py-1.5 text-center text-slate-400">{idx + 1}</td>
+                            <td className="px-3 py-1.5 font-medium text-slate-700">{it.description}</td>
+                            <td className="px-3 py-1.5 text-right text-slate-500">{it.quantity} {it.unit}</td>
+                            <td className="px-3 py-1.5 text-right text-slate-500">{formatCurrency(it.price)}</td>
+                            <td className="px-3 py-1.5 text-right font-semibold text-slate-700">{formatCurrency(Number(it.quantity) * Number(it.price))}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-slate-800">
+                        <tr>
+                          <td colSpan={4} className="px-3 py-2 text-right text-xs font-bold text-white">Sub Total:</td>
+                          <td className="px-3 py-2 text-right text-sm font-bold text-white">{formatCurrency(subtotal)}</td>
+                        </tr>
+                        <tr>
+                          <td colSpan={4} className="px-3 py-1.5 text-right text-xs text-slate-300">Grand Total (inc. VAT):</td>
+                          <td className="px-3 py-1.5 text-right text-xs font-semibold text-slate-200">{formatCurrency(viewingPO.amount)}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+
+                  {viewingPO.note && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-800">
+                      <span className="font-bold">หมายเหตุ:</span> {viewingPO.note}
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer — ปุ่ม Approve/Reject ตาม Role */}
+                <div className="px-6 py-3.5 border-t border-slate-200 bg-slate-50 rounded-b-2xl flex items-center justify-between gap-2 shrink-0">
+                  <button onClick={() => setViewingPO(null)} className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-600 text-sm font-medium hover:bg-slate-50 transition-all flex items-center gap-2">
+                    <XCircle size={15} /> ปิด
+                  </button>
+                  <div className="flex items-center gap-2">
+                    {viewingPO.status === "Pending PCM" && (userRole === "PCM" || userRole === "Administrator") && (
+                      <>
+                        <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setRejectPoId(viewingPO.id); setRejectReason(""); setViewingPO(null); }}>Reject</Button>
+                        <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(viewingPO.id, "approve"); setViewingPO(null); }}>PCM Approve</Button>
+                      </>
+                    )}
+                    {viewingPO.status === "Pending GM" && (userRole === "GM" || userRole === "Administrator") && (
+                      <>
+                        <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setRejectPoId(viewingPO.id); setRejectReason(""); setViewingPO(null); }}>Reject</Button>
+                        <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(viewingPO.id, "approve"); setViewingPO(null); }}>GM Approve</Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Create PO Modal — ทับ Header, เต็มความสูง, Footer เลื่อนตามเนื้อหา */}
         {isModalOpen && (
@@ -868,19 +1062,66 @@ const POView = React.memo(() => {
                         </label>
                         <div className="flex gap-2">
                           <div className="flex-1 relative">
-                            <select
-                              className="w-full border border-slate-200 rounded-xl px-3 py-2 pl-9 text-sm bg-white hover:border-red-300 focus:border-red-500 focus:ring-2 focus:ring-red-100 transition-all cursor-pointer text-slate-900"
-                              value={formData.vendorId}
-                              onChange={e => setFormData({ ...formData, vendorId: e.target.value })}
-                            >
-                              <option value="">-- เลือก Vendor --</option>
-                              {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                            </select>
+                            <input
+                              type="text"
+                              className="w-full border border-slate-200 rounded-xl px-3 py-2 pl-9 pr-8 text-sm bg-white hover:border-red-300 focus:border-red-500 focus:ring-2 focus:ring-red-100 transition-all text-slate-900 placeholder:text-slate-400"
+                              placeholder="พิมพ์ค้นหา Vendor (ชื่อ, รหัส, ประเภท)... รอ 2 วินาที"
+                              value={vendorSearchText}
+                              onChange={e => { setVendorSearchText(e.target.value); setVendorDropdownOpen(true); }}
+                              onFocus={() => setVendorDropdownOpen(true)}
+                              onBlur={() => setTimeout(() => setVendorDropdownOpen(false), 180)}
+                            />
                             <Building2 className="absolute left-3 top-2.5 text-red-400 pointer-events-none" size={14} />
+                            {formData.vendorId && (
+                              <button
+                                type="button"
+                                className="absolute right-2 top-2 p-1 text-slate-400 hover:text-red-500"
+                                onClick={() => { setFormData(prev => ({ ...prev, vendorId: "" })); setVendorSearchText(""); }}
+                                title="ล้างการเลือก"
+                              >
+                                <XCircle size={14} />
+                              </button>
+                            )}
+                            {vendorDropdownOpen && (
+                              <div className="absolute left-0 right-0 top-full mt-1 max-h-48 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg z-50 py-1">
+                                {vendorFilteredList.length === 0 ? (
+                                  <div className="px-3 py-4 text-xs text-slate-500 text-center">ไม่พบ Vendor ตามที่ค้นหา</div>
+                                ) : (
+                                  vendorFilteredList.slice(0, 50).map((v: any) => (
+                                    <button
+                                      key={v.id}
+                                      type="button"
+                                      className={`w-full text-left px-3 py-2 text-sm hover:bg-red-50 flex items-center justify-between ${formData.vendorId === v.id ? "bg-red-50 text-red-800" : "text-slate-700"}`}
+                                      onMouseDown={(e) => { e.preventDefault(); setFormData(prev => ({ ...prev, vendorId: v.id })); setVendorSearchText(v.name || ""); setVendorDropdownOpen(false); }}
+                                    >
+                                      <span className="font-medium">{v.name}</span>
+                                      {v.code && <span className="text-xs text-slate-500">{v.code}</span>}
+                                    </button>
+                                  ))
+                                )}
+                              </div>
+                            )}
                           </div>
                           <Button variant="secondary" onClick={() => setIsVendorModalOpen(true)} className="px-3 rounded-xl shrink-0" title="เพิ่ม Vendor">
                             <Plus size={16} />
                           </Button>
+                        </div>
+                        {formData.vendorId && vendors.find((v: any) => v.id === formData.vendorId) && (
+                          <p className="text-[10px] text-slate-500 mt-0.5">เลือก: {vendors.find((v: any) => v.id === formData.vendorId)?.name}</p>
+                        )}
+                      </div>
+                      <div>
+                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
+                          <Calendar size={11} className="text-amber-500" /> วันที่เปิด PO
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="date"
+                            className="w-full border border-slate-200 rounded-xl px-3 py-2 pl-9 text-sm hover:border-amber-300 focus:border-amber-400 focus:ring-2 focus:ring-amber-100 transition-all"
+                            value={formData.poOpenDate}
+                            onChange={e => setFormData({ ...formData, poOpenDate: e.target.value })}
+                          />
+                          <Calendar className="absolute left-3 top-2.5 text-amber-400 pointer-events-none" size={14} />
                         </div>
                       </div>
                       <div>
@@ -930,6 +1171,7 @@ const POView = React.memo(() => {
                       className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-slate-800 text-white text-xs font-semibold hover:bg-slate-700 transition-all shadow-sm"
                       onClick={() => {
                         setTempSelectedPrIds([...formData.selectedPrIds]);
+                        setPrSelectFilterText("");
                         setIsPrSelectModalOpen(true);
                       }}
                     >
@@ -953,7 +1195,6 @@ const POView = React.memo(() => {
                               <div key={prId} className="flex items-center gap-2 px-3 py-1.5 bg-red-50 border border-red-200 rounded-lg text-xs">
                                 <Hash size={10} className="text-red-500 shrink-0" />
                                 <span className="font-semibold text-slate-800">{pr.prNo}</span>
-                                <span className="text-slate-500">{pr.requestor}</span>
                         <button
                           type="button"
                           className="ml-1 text-red-400 hover:text-red-600"
@@ -1091,6 +1332,11 @@ const POView = React.memo(() => {
                           {/* รายการว่าง (เพิ่มจากปุ่ม + เพิ่มรายการ) — กรอกอิสระ ไม่จำกัด */}
                           {formData.items.filter(i => i.id && String(i.id).startsWith("free-")).map((freeItem) => {
                             const inputCls = "w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:border-red-400 focus:ring-1 focus:ring-red-100 bg-white";
+                            const prNoValue = freeItem.linkedPrNo ?? "";
+                            const isPrNoOpen = freeItemPrNoDropdownId === freeItem.id;
+                            const prNoFiltered = prNoValue
+                              ? prNoOptionsForFreeItems.filter((no: string) => no.toLowerCase().includes(prNoValue.toLowerCase()))
+                              : prNoOptionsForFreeItems;
                             return (
                               <tr key={freeItem.id} className="bg-white hover:bg-slate-50/30 border-t border-slate-200">
                                 <td className="p-2.5 text-center">
@@ -1098,7 +1344,36 @@ const POView = React.memo(() => {
                                     <Trash2 size={14} />
                                   </button>
                                 </td>
-                                <td className="p-2.5 text-xs font-medium text-slate-700">{freeItem.linkedPrNo || "—"}</td>
+                                <td className="p-2.5 relative">
+                                  <input
+                                    type="text"
+                                    className={`${inputCls} min-w-[100px]`}
+                                    placeholder="เลือกหรือพิมพ์ PR No."
+                                    value={prNoValue}
+                                    onChange={(e) => handleFreeItemChange(freeItem.id, "linkedPrNo", e.target.value)}
+                                    onFocus={() => setFreeItemPrNoDropdownId(freeItem.id)}
+                                    onBlur={() => setTimeout(() => setFreeItemPrNoDropdownId(null), 180)}
+                                  />
+                                  {isPrNoOpen && (prNoFiltered.length > 0 || prNoValue) && (
+                                    <div className="absolute left-0 right-0 top-full mt-0.5 z-50 bg-white border border-slate-200 rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                                      {prNoFiltered.length > 0 && prNoFiltered.map((prNo: string) => (
+                                        <button
+                                          key={prNo}
+                                          type="button"
+                                          className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 border-b border-slate-100 last:border-0"
+                                          onMouseDown={(e) => { e.preventDefault(); handleFreeItemChange(freeItem.id, "linkedPrNo", prNo); setFreeItemPrNoDropdownId(null); }}
+                                        >
+                                          {prNo}
+                                        </button>
+                                      ))}
+                                      {prNoValue.trim() && !prNoOptionsForFreeItems.includes(prNoValue.trim()) && (
+                                        <div className="px-3 py-2 text-[10px] text-slate-500 border-t border-slate-100">
+                                          ใช้ค่าที่พิมพ์: &quot;{prNoValue}&quot;
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </td>
                                 <td className="p-2.5"><span className="text-amber-600 text-[10px]">รายการเพิ่ม</span></td>
                                 <td className="p-2.5">
                                   <MaterialAutoComplete value={freeItem.materialNo || ""} className={inputCls} placeholder="Material No." materials={materials} onChange={(val) => handleFreeItemChange(freeItem.id, "materialNo", val)} onSelectMaterial={(mat) => setFreeItemMaterial(freeItem.id, mat)} />
@@ -1175,9 +1450,8 @@ const POView = React.memo(() => {
                         </div>
                         <div className="flex justify-between items-center py-1 mt-0.5 border-t-2 border-slate-800">
                           <span className="font-bold text-slate-800">ยอดสุทธิ / Net Total</span>
-                          <span className={`font-bold tabular-nums ${calculateTotals().total > selectedPrsTotalAmount * 1.001 && selectedPrsTotalAmount > 0 ? "text-red-600" : "text-slate-900"}`}>
+                          <span className="font-bold tabular-nums text-slate-900">
                             {formatCurrency(calculateTotals().total)}
-                            {calculateTotals().total > selectedPrsTotalAmount * 1.001 && selectedPrsTotalAmount > 0 && <span className="text-[9px] font-normal text-red-500 ml-0.5">(เกิน PR)</span>}
                           </span>
                         </div>
                       </div>
@@ -1206,18 +1480,25 @@ const POView = React.memo(() => {
             >
               {/* Header */}
               <div className="flex items-center justify-between px-6 py-4 bg-slate-800 shrink-0">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center">
+                <div className="flex items-center gap-3 flex-1 min-w-0">
+                  <div className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center shrink-0">
                     <ClipboardList size={18} className="text-white" />
                   </div>
-                  <div>
+                  <div className="min-w-0 flex-1">
                     <h3 className="text-base font-bold text-white">เลือกใบขอซื้อ (Select PRs)</h3>
                     <p className="text-white/70 text-xs mt-0.5">สามารถเลือกได้หลายรายการ</p>
                   </div>
+                  <input
+                    type="text"
+                    placeholder="ค้นหา PR No., Cost Code, รายการงบ..."
+                    value={prSelectFilterText}
+                    onChange={(e) => setPrSelectFilterText(e.target.value)}
+                    className="ml-2 px-3 py-1.5 rounded-lg border border-white/20 bg-white/10 text-white placeholder-white/50 text-sm w-56 max-w-[200px] focus:ring-2 focus:ring-amber-400/50 focus:border-amber-400"
+                  />
                 </div>
                 <button
                   onClick={() => setIsPrSelectModalOpen(false)}
-                  className="text-white/60 hover:text-white hover:bg-white/20 p-2 rounded-xl transition-all"
+                  className="text-white/60 hover:text-white hover:bg-white/20 p-2 rounded-xl transition-all shrink-0"
                 >
                   <XCircle size={20} />
                 </button>
@@ -1231,6 +1512,11 @@ const POView = React.memo(() => {
                     <p className="font-medium text-slate-500">ไม่มีใบขอซื้อที่อนุมัติแล้ว</p>
                     <p className="text-xs mt-1">เมื่อมีใบขอซื้อที่ได้รับการอนุมัติ จะแสดงในส่วนนี้</p>
                   </div>
+                ) : approvedPRsFiltered.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-slate-500">
+                    <p className="font-medium">ไม่พบรายการที่ตรงกับคำค้น</p>
+                    <p className="text-xs mt-1">ลองเปลี่ยนคำค้นหรือล้างฟิลเตอร์</p>
+                  </div>
                 ) : (
                   <table className="w-full text-xs text-left">
                     <thead className="bg-slate-100 text-slate-700 uppercase font-bold border-b border-slate-200 sticky top-0 z-10">
@@ -1239,9 +1525,9 @@ const POView = React.memo(() => {
                           <input
                             type="checkbox"
                             className="rounded border-slate-300 cursor-pointer"
-                            checked={tempSelectedPrIds.length === approvedPRs.length && approvedPRs.length > 0}
+                            checked={tempSelectedPrIds.length === approvedPRsFiltered.length && approvedPRsFiltered.length > 0}
                             onChange={(e) => {
-                              setTempSelectedPrIds(e.target.checked ? approvedPRs.map(p => p.id) : []);
+                              setTempSelectedPrIds(e.target.checked ? approvedPRsFiltered.map(p => p.id) : []);
                             }}
                             title="เลือกทั้งหมด"
                           />
@@ -1256,7 +1542,7 @@ const POView = React.memo(() => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {approvedPRs.map(pr => {
+                      {approvedPRsFiltered.map(pr => {
                         const isSelected = tempSelectedPrIds.includes(pr.id);
                         const prDesc = pr.items && pr.items.length > 0
                           ? pr.items.map((it) => it.description).filter(Boolean).join(", ")

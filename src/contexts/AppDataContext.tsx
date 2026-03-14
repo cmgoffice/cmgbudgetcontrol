@@ -226,6 +226,12 @@ export const AppDataProvider = ({
     if (roles.includes("PM")  && pr.status === "Pending PM")  return true;
     if (roles.includes("GM")  && pr.status === "Pending GM")  return true;
     if (roles.includes("MD")  && pr.status === "Pending MD")  return true;
+    // แจ้งเตือนผู้เปิด PR, CM, PM, Procurement, PCM เมื่อมีสถานะ Edit Budget
+    if (pr.status === "Edit Budget" && (
+      roles.includes("CM") || roles.includes("PM") ||
+      roles.includes("Procurement") || roles.includes("PCM") ||
+      roles.includes("Administrator")
+    )) return true;
     return false;
   }), [prs, roles]);
 

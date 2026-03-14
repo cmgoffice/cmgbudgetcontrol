@@ -64,6 +64,7 @@ export const Badge = ({ status }: any) => {
     "Pending GM": "bg-blue-50 text-blue-700 border border-blue-200",
     "Pending MD": "bg-purple-50 text-purple-700 border border-purple-200",
     "PO Issued": "bg-indigo-50 text-indigo-700 border border-indigo-200",
+    "Edit Budget": "bg-red-100 text-red-800 border border-red-300",
     Rejected: "bg-red-50 text-red-700 border border-red-200",
     Paid: "bg-green-100 text-green-800",
     Pending: "bg-yellow-100 text-yellow-800",
@@ -108,10 +109,11 @@ export const ProjectSelect = ({ projects, selectedId, onChange }: any) => (
   </div>
 );
 
-export const SidebarItem = ({ icon, label, active, onClick }: any) => (
+export const SidebarItem = ({ icon, label, active, onClick, collapsed }: any) => (
   <motion.button
     onClick={onClick}
-    className={`relative w-full flex items-center gap-3 px-4 py-3 rounded-lg overflow-hidden group ${active ? "text-white" : "text-slate-400 hover:text-white hover:bg-slate-800/80"}`}
+    title={collapsed ? label : undefined}
+    className={`relative w-full flex items-center rounded-lg overflow-hidden group ${collapsed ? "justify-center p-3" : "gap-3 px-4 py-3"} ${active ? "text-white" : "text-slate-400 hover:text-white hover:bg-slate-800/80"}`}
     whileHover={{ scale: 1.02 }}
     whileTap={{ scale: 0.98 }}
     transition={{ type: "spring", stiffness: 400, damping: 25 }}
@@ -124,9 +126,9 @@ export const SidebarItem = ({ icon, label, active, onClick }: any) => (
         transition={{ type: "spring", stiffness: 350, damping: 30 }}
       />
     )}
-    <span className="relative z-10 flex items-center gap-3">
-      <motion.span animate={{ rotate: active ? 0 : 0 }}>{icon}</motion.span>
-      <span className="font-medium text-sm">{label}</span>
+    <span className={`relative z-10 flex items-center ${collapsed ? "justify-center" : "gap-3"}`}>
+      <span className="flex-shrink-0">{icon}</span>
+      {!collapsed && <span className="font-medium text-sm">{label}</span>}
     </span>
   </motion.button>
 );

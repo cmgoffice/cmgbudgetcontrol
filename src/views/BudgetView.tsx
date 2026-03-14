@@ -15,6 +15,7 @@ import { useUI } from "../contexts/UIContext";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "../components/ui";
 import ResizableTh from "../components/ResizableTh";
 import { COST_CATEGORIES, PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, getPurchaseTypeDisplayLabel } from "../lib/constants";
+import { uploadAttachment } from "../lib/uploadAttachment";
 const BudgetView = React.memo(() => {
   const { budgets, projects, prs, pos, invoices, addData, updateData, deleteData,
           showAlert, openConfirm, logAction, userRole, userData, columnWidths, handleColumnResize,
@@ -30,6 +31,7 @@ const BudgetView = React.memo(() => {
     const [isSubItemModalOpen, setIsSubItemModalOpen] = useState(false);
     const [isImportModalOpen, setIsImportModalOpen] = useState(false);
     const [importData, setImportData] = useState({});
+    const [importFile, setImportFile] = useState(null);
     const [selectedImportCategories, setSelectedImportCategories] = useState(
       []
     );
@@ -61,9 +63,25 @@ const BudgetView = React.memo(() => {
     const [subItemData, setSubItemData] = useState({
       description: "",
       quantity: 1,
+      unit: "งาน",
       unitPrice: 0,
       amount: 0,
     });
+    // รายการหน่วยสำหรับ Sub-Item dropdown (เก็บใน localStorage เพื่อให้ persistent)
+    const [unitOptions, setUnitOptions] = useState<string[]>(() => {
+      try {
+        const saved = localStorage.getItem("subItemUnitOptions");
+        return saved ? JSON.parse(saved) : ["งาน", "ชิ้น", "ชุด", "เดือน", "วัน", "ครั้ง", "ตร.ม.", "ม.", "ก.ก.", "ลิตร", "Job"];
+      } catch { return ["งาน", "ชิ้น", "ชุด", "เดือน", "วัน", "ครั้ง", "ตร.ม.", "ม.", "ก.ก.", "ลิตร", "Job"]; }
+    });
+    const [unitInputText, setUnitInputText] = useState("");
+    const [unitDropdownOpen, setUnitDropdownOpen] = useState(false);
+    const unitInputRef = useRef<HTMLInputElement>(null);
+
+    const saveUnitOptions = (opts: string[]) => {
+      setUnitOptions(opts);
+      try { localStorage.setItem("subItemUnitOptions", JSON.stringify(opts)); } catch {}
+    };
 
     // เมื่อกดกระดิ่งแล้วเลือกโปรเจกต์ — เลื่อนลงไปที่รายการรออนุมัติ
     useEffect(() => {
@@ -175,6 +193,7 @@ const BudgetView = React.memo(() => {
     const handleFileUpload = (event) => {
       const file = event.target.files[0];
       if (!file) return;
+      setImportFile(file);
       const reader = new FileReader();
       reader.onload = (e) => {
         const text = e.target.result;
@@ -255,6 +274,15 @@ const BudgetView = React.memo(() => {
         return showAlert("Error", "กรุณาเลือกโครงการก่อน Import", "error");
       let importCount = 0;
       const batchPromises = [];
+      try {
+        if (importFile) {
+          await uploadAttachment(importFile, { type: "imports", subPath: "budget", projectId: selectedProjectId });
+          setImportFile(null);
+        }
+      } catch (e) {
+        showAlert("Error", "อัปโหลดไฟล์ไม่สำเร็จ: " + (e?.message || e), "error");
+        return;
+      }
       for (const cat of selectedImportCategories) {
         const items = importData[cat] || [];
         for (const item of items) {
@@ -272,6 +300,7 @@ const BudgetView = React.memo(() => {
       await logAction("Import", `Imported ${importCount} budget items`);
       setIsImportModalOpen(false);
       setImportData({});
+      setImportFile(null);
       setSelectedImportCategories([]);
       if (fileInputRef.current) fileInputRef.current.value = "";
       showAlert(
@@ -373,29 +402,17 @@ const BudgetView = React.memo(() => {
       const hasSubItems = budget.subItems && budget.subItems.length > 0;
 
       // Shared helper: Does this PR/PO item pass the current filter?
-      const matchesFilter = (item, itemCostCode) => {
+      const matchesFilter = (item, itemCostCode, parentDoc = null) => {
         if (itemCostCode !== budgetCode) return false;
         const iDesc = (item.description || "").trim();
 
         if (filterMode === "SUB_ITEM" && targetSubDesc) {
-          // DEBUG: trace matching
-          console.log("[SUB_ITEM MATCH]", {
-            itemCostCode: itemCostCode,
-            budgetCode: budgetCode,
-            itemDesc: iDesc,
-            targetSubDesc: targetSubDesc.trim(),
-            descMatch: iDesc === targetSubDesc.trim(),
-            itemSubItemId: item.subItemId,
-            hasSubItems,
-            subItemIds: hasSubItems ? budget.subItems.map(s => ({ id: s.id, desc: s.description })) : [],
-          });
-          // Try ID match first (if available)
-          if (item.subItemId && hasSubItems) {
-            const targetSub = budget.subItems.find(s => s.description === targetSubDesc);
-            if (targetSub && item.subItemId === targetSub.id) return true;
-            // ID didn't match → fall through to description match
-          }
-          // Fallback: description match
+          const targetSub = hasSubItems ? budget.subItems.find(s => s.description === targetSubDesc) : null;
+          // 1. Try item-level subItemId match (most reliable)
+          if (item.subItemId && targetSub && item.subItemId === targetSub.id) return true;
+          // 2. Try parent PR/PO selectedSubItemId (for manually added items without subItemId)
+          if (!item.subItemId && parentDoc?.selectedSubItemId && targetSub && parentDoc.selectedSubItemId === targetSub.id) return true;
+          // 3. Fallback: description match
           return iDesc === targetSubDesc.trim();
         }
 
@@ -431,7 +448,7 @@ const BudgetView = React.memo(() => {
           let amount = 0;
           if (po.items && Array.isArray(po.items)) {
             amount = po.items
-              .filter(i => matchesFilter(i, i.costCode || prs.find(p => p.id === i.prId)?.costCode))
+              .filter(i => matchesFilter(i, i.costCode || prs.find(p => p.id === i.prId)?.costCode, po))
               .reduce((sum, i) => sum + Number(i.amount), 0);
           } else if (po.costCode === budgetCode) {
             if (filterMode === "SUB_ITEM") amount = 0;
@@ -454,7 +471,7 @@ const BudgetView = React.memo(() => {
           let amount = 0;
           if (pr.items && Array.isArray(pr.items)) {
             amount = pr.items
-              .filter(i => matchesFilter(i, i.costCode || pr.costCode))
+              .filter(i => matchesFilter(i, i.costCode || pr.costCode, pr))
               .reduce((sum, i) => sum + (Number(i.amount) || (Number(i.quantity) * Number(i.price))), 0);
           } else {
             if (pr.costCode === budgetCode) {
@@ -475,6 +492,7 @@ const BudgetView = React.memo(() => {
         if (prGroups["Pending GM"] > 0) statusesToReturn.push({ label: "PR Pending GM", amount: prGroups["Pending GM"], color: "indigo" });
         if (prGroups["Pending MD"] > 0) statusesToReturn.push({ label: "PR Pending MD", amount: prGroups["Pending MD"], color: "purple" });
         if (prGroups["Approved"] > 0) statusesToReturn.push({ label: "PR Approved", amount: prGroups["Approved"], color: "green" });
+        if (prGroups["Edit Budget"] > 0) statusesToReturn.push({ label: "PR Edit Budget", amount: prGroups["Edit Budget"], color: "red" });
       }
 
       return statusesToReturn;
@@ -691,6 +709,7 @@ const BudgetView = React.memo(() => {
         amount: item.amount,
       });
       setEditingBudgetId(item.id);
+      setSelectedBudget(item);
       setIsModalOpen(true);
     };
 
@@ -1055,7 +1074,9 @@ const BudgetView = React.memo(() => {
     const openSubItemModal = (item) => {
       setSelectedBudget(item);
       setEditingSubItem(null);
-      setSubItemData({ description: "", quantity: 1, unitPrice: 0, amount: 0 });
+      setSubItemData({ description: "", quantity: 1, unit: "งาน", unitPrice: 0, amount: 0 });
+      setUnitInputText("งาน");
+      setUnitDropdownOpen(false);
       setIsSubItemModalOpen(true);
     };
 
@@ -1065,9 +1086,12 @@ const BudgetView = React.memo(() => {
       setSubItemData({
         description: subItem.description,
         quantity: subItem.quantity,
+        unit: subItem.unit || "งาน",
         unitPrice: subItem.unitPrice || 0,
         amount: subItem.amount,
       });
+      setUnitInputText(subItem.unit || "งาน");
+      setUnitDropdownOpen(false);
       setIsSubItemModalOpen(true);
     };
 
@@ -1078,6 +1102,7 @@ const BudgetView = React.memo(() => {
         ...editingSubItem,
         description: subItemData.description,
         quantity: Number(subItemData.quantity),
+        unit: subItemData.unit || "งาน",
         unitPrice: Number(subItemData.unitPrice),
         amount: amountToAdd,
         status: "Wait MD Approve",
@@ -1098,11 +1123,13 @@ const BudgetView = React.memo(() => {
 
     const handleSaveSubItem = async () => {
       if (!selectedBudget) return;
+      if (!subItemData.description.trim()) return showAlert("ข้อมูลไม่ครบ", "กรุณากรอกชื่อรายการ", "warning");
       const amountToAdd = Number(subItemData.quantity) * Number(subItemData.unitPrice);
       const newSubItem = {
         id: editingSubItem ? editingSubItem.id : crypto.randomUUID(),
         description: subItemData.description,
         quantity: Number(subItemData.quantity),
+        unit: subItemData.unit || "งาน",
         unitPrice: Number(subItemData.unitPrice),
         amount: amountToAdd,
         status: editingSubItem?.status === "Rejected" ? "Rejected" : "Draft",
@@ -1497,11 +1524,9 @@ const BudgetView = React.memo(() => {
                                 <tr className="hover:bg-purple-50/40 cursor-pointer" onClick={() => toggleRow(b.id)}>
                                   <td className="py-2 px-3 font-mono font-bold text-slate-800">
                                     <div className="flex items-center gap-2">
-                                      <button className="text-slate-400 hover:text-purple-600 transition-colors">
-                                        {isExpanded
-                                          ? <img src="/arrow_collapse.png" alt="collapse" style={{ width: 18, height: 18, objectFit: 'contain' }} />
-                                          : <img src="/arrow_expand.png" alt="expand" style={{ width: 18, height: 18, objectFit: 'contain' }} />}
-                                      </button>
+                                      <span className="flex items-center justify-center w-7 h-7 rounded-md bg-purple-100 text-purple-600 shrink-0">
+                                        {isExpanded ? <ChevronDown size={16} strokeWidth={2.5} /> : <ChevronRight size={16} strokeWidth={2.5} />}
+                                      </span>
                                       {b.code}
                                     </div>
                                   </td>
@@ -1805,6 +1830,7 @@ const BudgetView = React.memo(() => {
               <Button
                 onClick={() => {
                   setEditingBudgetId(null);
+                  setSelectedBudget(null);
                   setFormData({ code: "", description: "", amount: 0 });
                   setIsModalOpen(true);
                 }}
@@ -1891,19 +1917,19 @@ const BudgetView = React.memo(() => {
                           )}
                           <td className="py-1 px-3 border-r font-medium text-slate-900">
                             <div className="flex items-center gap-2">
-                              {hasSubItems && (
+                              {hasSubItems ? (
                                 <button
                                   onClick={(e) => { e.stopPropagation(); toggleRow(b.id); }}
-                                  className="text-slate-400 hover:text-blue-600 transition-colors"
+                                  className="flex items-center justify-center w-7 h-7 rounded-md bg-blue-100 text-blue-600 hover:bg-blue-200 hover:text-blue-700 transition-all duration-200 shrink-0"
+                                  title={isExpanded ? "ย่อรายการ" : "ขยายดู sublist"}
                                 >
-                                  {isExpanded ? (
-                                    <img src="/arrow_collapse.png" alt="collapse" style={{ width: 18, height: 18, objectFit: 'contain' }} />
-                                  ) : (
-                                    <img src="/arrow_expand.png" alt="expand" style={{ width: 18, height: 18, objectFit: 'contain' }} />
-                                  )}
+                                  {isExpanded ? <ChevronDown size={16} strokeWidth={2.5} /> : <ChevronRight size={16} strokeWidth={2.5} />}
                                 </button>
+                              ) : (
+                                <span className="w-7 h-7 flex items-center justify-center shrink-0 text-slate-300">
+                                  <span className="w-2 h-2 rounded-full bg-slate-200" aria-hidden />
+                                </span>
                               )}
-                              {!hasSubItems && <span className="w-3.5"></span>}
                               {b.code}
                             </div>
                           </td>
@@ -1953,38 +1979,7 @@ const BudgetView = React.memo(() => {
                           <td className="py-1 px-3 text-right text-slate-400">
                             {formatCurrency(stats.poTotal)}
                           </td>
-                          <td className="py-1 px-3 text-center align-top min-w-[220px]">
-                            {(() => {
-                              const statuses = getNowStatus(b, stats, "ALL");
-                              const colorMap = {
-                                green: "bg-green-50 text-green-700 border-green-200",
-                                blue: "bg-blue-50 text-blue-700 border-blue-200",
-                                orange: "bg-orange-50 text-orange-700 border-orange-200",
-                                yellow: "bg-yellow-50 text-yellow-700 border-yellow-200",
-                                red: "bg-red-50 text-red-700 border-red-200",
-                                indigo: "bg-indigo-50 text-indigo-700 border-indigo-200",
-                                purple: "bg-purple-50 text-purple-700 border-purple-200",
-                                emerald: "bg-emerald-50 text-emerald-700 border-emerald-200",
-                                slate: "bg-slate-50 text-slate-600 border-slate-200",
-                              };
-                              return (
-                                <div className="flex flex-wrap items-start justify-center gap-2">
-                                  {statuses.map((s, idx) => (
-                                    <div key={idx} className="flex flex-col items-center">
-                                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${colorMap[s.color] || colorMap.slate} whitespace-nowrap`}>
-                                        {s.label}
-                                      </span>
-                                      {s.amount !== null && (
-                                        <span className="text-[9px] text-slate-500">
-                                          {formatCurrency(s.amount)}
-                                        </span>
-                                      )}
-                                    </div>
-                                  ))}
-                                </div>
-                              );
-                            })()}
-                          </td>
+                          <td className="py-1 px-3 min-w-[220px]"></td>
                           <td className="py-1 px-3 text-right">
                             <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                               {(userRole === "MD" || userRole === "Administrator") &&
@@ -2077,49 +2072,40 @@ const BudgetView = React.memo(() => {
                                 className="bg-slate-50/50 text-xs group"
                               >
                                 {budgetCategory !== "OVERVIEW" && (
-                                  <td className="py-1 px-2 border-r bg-slate-50/50 w-12" />
+                                  <td className="py-0.5 px-2 border-r bg-slate-50/50 w-12" />
                                 )}
-                                <td className="py-1 px-3 border-r text-right text-slate-500 pr-4 font-mono relative">
-                                  <span className="text-[9px] font-bold text-slate-400 absolute left-2 top-2.5">
+                                <td className="py-0.5 px-3 border-r text-right text-slate-500 pr-4 font-mono relative">
+                                  <span className="text-[9px] font-bold text-slate-400 absolute left-2 top-1.5">
                                     QTY
                                   </span>
                                   {sub.quantity}
                                 </td>
-                                <td className="py-1 px-3 border-r pl-8 w-[220px] max-w-[220px] overflow-hidden text-slate-600" title={sub.description}>
+                                <td className="py-0.5 px-3 border-r pl-8 w-[220px] max-w-[220px] overflow-hidden text-slate-600" title={sub.description}>
                                   <div className="flex items-center justify-between min-w-0 gap-1">
-                                    <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-                                      <div className="flex items-center gap-2 min-w-0">
-                                        <span className="text-slate-400 w-4 text-center shrink-0">
-                                          {index + 1}
+                                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                                      <span className="text-slate-400 w-4 text-center shrink-0">{index + 1}</span>
+                                      <CornerDownRight size={11} className="text-slate-300 shrink-0" />
+                                      <span className="truncate" title={sub.description}>{sub.description}</span>
+                                      {sub.status === "Rejected" && sub.rejectReason && (
+                                        <span className="text-[9px] text-red-500 truncate shrink-0" title={sub.rejectReason}>
+                                          ({sub.rejectReason})
                                         </span>
-                                        <CornerDownRight
-                                          size={12}
-                                          className="text-slate-300 shrink-0"
-                                        />
-                                        <span className="truncate" title={sub.description}>{sub.description}</span>
-                                      </div>
-                                    {sub.status === "Rejected" && sub.rejectReason && (
-                                      <span className="text-[10px] text-red-600 bg-red-50 px-1.5 py-0.5 rounded border border-red-200 w-fit mt-1 inline-block pl-6 truncate max-w-full" title={sub.rejectReason}>
-                                        เหตุผลปฏิเสธ: {sub.rejectReason}
-                                      </span>
-                                    )}
+                                      )}
                                     </div>
-                                    <div className="text-slate-400 text-[10px] shrink-0">
-                                      @ {formatCurrency(sub.unitPrice)}
-                                    </div>
+                                    <div className="text-slate-400 text-[10px] shrink-0">@ {formatCurrency(sub.unitPrice)}</div>
                                   </div>
                                 </td>
-                                <td className="py-1 px-3 text-right text-red-600 pr-4 font-medium border-b border-slate-100">
-                                  -{formatCurrency(sub.amount)}
+                                <td className="py-0.5 px-3 text-right pr-4 font-medium border-b border-slate-100">
+                                  <span className="text-red-600">-{formatCurrency(sub.amount)}</span>
                                 </td>
-                                <td className="py-1 px-3 text-center border-b border-slate-100">
+                                <td className="py-0.5 px-3 text-center border-b border-slate-100">
                                   {sub.status ? <Badge status={sub.status} /> : <Badge status="Approved" />}
                                 </td>
                                 <td
                                   colSpan="3"
                                   className="border-b border-slate-100"
                                 ></td>
-                                <td className="py-1 px-3 text-center align-top min-w-[220px] border-b border-slate-100">
+                                <td className="py-0.5 px-3 text-center min-w-[220px] border-b border-slate-100">
                                   {(() => {
                                     const subStatuses = getNowStatus(b, stats, "SUB_ITEM", sub.description);
                                     const colorMap = {
@@ -2135,24 +2121,17 @@ const BudgetView = React.memo(() => {
                                     };
                                     if (subStatuses.length === 0) return null;
                                     return (
-                                      <div className="flex flex-wrap items-start justify-center gap-1">
+                                      <div className="flex flex-wrap items-center justify-center gap-0.5">
                                         {subStatuses.map((s, idx) => (
-                                          <div key={idx} className="flex flex-col items-center">
-                                            <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${colorMap[s.color] || colorMap.slate} whitespace-nowrap`}>
-                                              {s.label}
-                                            </span>
-                                            {s.amount !== null && (
-                                              <span className="text-[8px] text-slate-400">
-                                                {formatCurrency(s.amount)}
-                                              </span>
-                                            )}
-                                          </div>
+                                          <span key={idx} className={`text-[9px] font-semibold px-1.5 py-0 rounded border ${colorMap[s.color] || colorMap.slate} whitespace-nowrap`}>
+                                            {s.label}{s.amount !== null ? ` ${formatCurrency(s.amount)}` : ""}
+                                          </span>
                                         ))}
                                       </div>
                                     );
                                   })()}
                                 </td>
-                                <td className="py-1 px-3 text-right border-b border-slate-100">
+                                <td className="py-0.5 px-3 text-right border-b border-slate-100">
                                   <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                     {(sub.status === "Rejected" && (userRole === "PM" || userRole === "CM" || userRole === "MD" || userRole === "Administrator")) && (
                                       <button
@@ -2287,6 +2266,7 @@ const BudgetView = React.memo(() => {
                   onClick={() => {
                     setIsImportModalOpen(false);
                     setImportData({});
+                    setImportFile(null);
                     setSelectedImportCategories([]);
                     if (fileInputRef.current) fileInputRef.current.value = "";
                   }}
@@ -2346,168 +2326,273 @@ const BudgetView = React.memo(() => {
           </div>
         )}
         {isModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-200">
-            <Card className="w-full max-w-md p-6">
-              <h3 className="text-lg font-bold mb-4">
-                {editingBudgetId ? "แก้ไขรายการ Budget" : "เพิ่มรายการ Budget"}{" "}
-                ({budgetCategory})
-              </h3>
-              <InputGroup label={`Cost Code`}>
-                {budgetCategory}
-                <input
-                  type="text"
-                  className="w-full border rounded p-2"
-                  value={formData.code}
-                  onChange={(e) =>
-                    setFormData({ ...formData, code: e.target.value })
-                  }
-                />
-              </InputGroup>
-              <InputGroup label="Description">
-                <input
-                  type="text"
-                  className="w-full border rounded p-2"
-                  value={formData.description}
-                  onChange={(e) =>
-                    setFormData({ ...formData, description: e.target.value })
-                  }
-                />
-              </InputGroup>
-              <InputGroup label="Amount">
-                <input
-                  type="number"
-                  className="w-full border rounded p-2"
-                  value={formData.amount}
-                  onChange={(e) =>
-                    setFormData({ ...formData, amount: Number(e.target.value) })
-                  }
-                  disabled={selectedBudget?.subItems?.length > 0}
-                />
-              </InputGroup>
-              <div className="flex justify-end gap-2 mt-6">
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[300] animate-in fade-in duration-200" onClick={() => setIsModalOpen(false)}>
+            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md mx-4" onClick={(e) => e.stopPropagation()}>
+              {/* Header */}
+              <div className="px-6 py-4 bg-slate-700 rounded-t-2xl flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
+                    <Tag size={16} className="text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">
+                      {editingBudgetId ? (budgets.find(b => b.id === editingBudgetId)?.status === "Rejected" ? "แก้ไขรายการ (ถูกปฏิเสธ)" : "แก้ไขรายการ Budget") : "เพิ่มรายการ Budget"}
+                    </h3>
+                    <p className="text-slate-300 text-xs mt-0.5">
+                      {COST_CATEGORIES[budgetCategory] || budgetCategory} ({budgetCategory})
+                    </p>
+                  </div>
+                </div>
+                <button onClick={() => setIsModalOpen(false)} className="text-white/60 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-all">
+                  <XCircle size={18} />
+                </button>
+              </div>
+
+              {/* Reject banner */}
+              {editingBudgetId && budgets.find(b => b.id === editingBudgetId)?.status === "Rejected" && budgets.find(b => b.id === editingBudgetId)?.rejectReason && (
+                <div className="mx-6 mt-4 text-xs text-red-700 bg-red-50 px-3 py-2 rounded-lg border border-red-200 flex items-start gap-2">
+                  <AlertCircle size={13} className="text-red-500 mt-0.5 shrink-0" />
+                  <span><span className="font-semibold">เหตุผลปฏิเสธ:</span> {budgets.find(b => b.id === editingBudgetId)?.rejectReason}</span>
+                </div>
+              )}
+
+              {/* Form */}
+              <div className="px-6 py-5 space-y-4">
+                {/* Cost Code Preview */}
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-center">
+                  <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">Cost Code</p>
+                  <div className="text-2xl font-black text-slate-800 tracking-tight flex items-center justify-center gap-1">
+                    <span className="text-slate-400">{budgetCategory}</span>
+                    {formData.code ? (
+                      <span className="text-blue-600">{formData.code}</span>
+                    ) : (
+                      <span className="text-slate-300">____</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* รหัสต่อท้าย */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">รหัสต่อท้าย <span className="text-red-500">*</span></label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <span className="text-slate-400 font-semibold">{budgetCategory}</span>
+                    </div>
+                    <input
+                      type="text"
+                      className="w-full border border-slate-200 rounded-lg pl-12 pr-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all font-semibold"
+                      placeholder="เช่น 001, 123"
+                      value={formData.code}
+                      onChange={(e) => setFormData({ ...formData, code: e.target.value })}
+                      autoFocus
+                    />
+                  </div>
+                </div>
+
+                {/* Description */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">รายละเอียด (Description) <span className="text-red-500">*</span></label>
+                  <input
+                    type="text"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all"
+                    placeholder="ระบุรายละเอียด..."
+                    value={formData.description}
+                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  />
+                </div>
+
+                {/* Amount */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">งบประมาณ (Amount) <span className="text-red-500">*</span></label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      className={`w-full border border-slate-200 rounded-lg pl-3 pr-10 py-2 text-sm focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all ${selectedBudget?.subItems?.length > 0 ? "bg-slate-50 text-slate-500 cursor-not-allowed" : ""}`}
+                      placeholder="0.00"
+                      value={formData.amount}
+                      onChange={(e) => setFormData({ ...formData, amount: Number(e.target.value) })}
+                      disabled={selectedBudget?.subItems?.length > 0}
+                    />
+                    <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                      <span className="text-slate-400 text-xs font-semibold">THB</span>
+                    </div>
+                  </div>
+                  {selectedBudget?.subItems?.length > 0 && (
+                    <p className="text-[10px] text-orange-500 mt-1.5 flex items-center gap-1">
+                      <AlertCircle size={10} /> ไม่สามารถแก้ไขยอดเงินได้ เนื่องจากมีรายการย่อย (Sub-Items)
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-4 bg-slate-50 rounded-b-2xl border-t border-slate-100 flex justify-end gap-2">
                 {editingBudgetId && budgets.find(b => b.id === editingBudgetId)?.status === "Rejected" ? (
                   <>
-                    <Button
-                      variant="secondary"
-                      onClick={() => setIsModalOpen(false)}
-                    >
-                      ยกเลิก (Cancel)
-                    </Button>
-                    <Button
-                      variant="warning" // Or secondary/info
-                      onClick={() => handleSaveBudget("Draft")}
-                    >
-                      บันทึก (Draft)
-                    </Button>
-                    <Button
-                      variant="primary"
-                      onClick={() => handleSaveBudget("Wait MD Approve")}
-                    >
-                      ส่งขออนุมัติ (Resubmit)
-                    </Button>
+                    <Button variant="secondary" onClick={() => setIsModalOpen(false)}>ยกเลิก (Cancel)</Button>
+                    <Button variant="warning" onClick={() => handleSaveBudget("Draft")}>บันทึก (Draft)</Button>
+                    <Button variant="primary" onClick={() => handleSaveBudget("Wait MD Approve")}>ส่งขออนุมัติ (Resubmit)</Button>
                   </>
                 ) : (
                   <>
-                    <Button
-                      variant="secondary"
-                      onClick={() => setIsModalOpen(false)}
-                    >
-                      Cancel
-                    </Button>
+                    <Button variant="secondary" onClick={() => setIsModalOpen(false)}>Cancel</Button>
                     <Button onClick={() => handleSaveBudget()}>Save</Button>
                   </>
                 )}
               </div>
-            </Card>
+            </div>
           </div>
         )}
         {isSubItemModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[300] animate-in fade-in duration-200">
-            <Card className="w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto">
-              <h3 className="text-lg font-bold mb-2">
-                {editingSubItem?.status === "Rejected" ? "แก้ไขรายการ (ถูกปฏิเสธ)" : "Sub-Item"}
-              </h3>
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[300] animate-in fade-in duration-200" onClick={() => setUnitDropdownOpen(false)}>
+            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md mx-4" onClick={(e) => e.stopPropagation()}>
+              {/* Header */}
+              <div className="px-6 py-4 bg-slate-700 rounded-t-2xl flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
+                    <Tag size={16} className="text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">
+                      {editingSubItem ? (editingSubItem.status === "Rejected" ? "แก้ไขรายการ (ถูกปฏิเสธ)" : "แก้ไข Sub-Item") : "เพิ่ม Sub-Item"}
+                    </h3>
+                    {selectedBudget && <p className="text-slate-300 text-xs mt-0.5">{selectedBudget.code} — {selectedBudget.description}</p>}
+                  </div>
+                </div>
+                <button onClick={() => setIsSubItemModalOpen(false)} className="text-white/60 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-all">
+                  <XCircle size={18} />
+                </button>
+              </div>
+
+              {/* Reject banner */}
               {editingSubItem?.status === "Rejected" && editingSubItem?.rejectReason && (
-                <div className="mb-3 text-xs text-red-600 bg-red-50 px-2 py-1.5 rounded border border-red-200">
-                  เหตุผลปฏิเสธ: {editingSubItem.rejectReason}
+                <div className="mx-6 mt-4 text-xs text-red-700 bg-red-50 px-3 py-2 rounded-lg border border-red-200 flex items-start gap-2">
+                  <AlertCircle size={13} className="text-red-500 mt-0.5 shrink-0" />
+                  <span><span className="font-semibold">เหตุผลปฏิเสธ:</span> {editingSubItem.rejectReason}</span>
                 </div>
               )}
-              <InputGroup label="Name">
-                <input
-                  type="text"
-                  className="w-full border rounded p-2"
-                  value={subItemData.description}
-                  onChange={(e) =>
-                    setSubItemData({
-                      ...subItemData,
-                      description: e.target.value,
-                    })
-                  }
-                />
-              </InputGroup>
-              <InputGroup label="Qty">
-                <input
-                  type="number"
-                  className="w-full border rounded p-2"
-                  value={subItemData.quantity}
-                  onChange={(e) =>
-                    setSubItemData({
-                      ...subItemData,
-                      quantity: Number(e.target.value),
-                    })
-                  }
-                />
-              </InputGroup>
-              <InputGroup label="Unit Price">
-                <input
-                  type="number"
-                  className="w-full border rounded p-2"
-                  value={subItemData.unitPrice}
-                  onChange={(e) =>
-                    setSubItemData({
-                      ...subItemData,
-                      unitPrice: Number(e.target.value),
-                    })
-                  }
-                />
-              </InputGroup>
-              <div className="flex justify-end gap-2 mt-4">
+
+              {/* Form */}
+              <div className="px-6 py-5 space-y-4">
+                {/* ชื่อรายการ */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">ชื่อรายการ <span className="text-red-500">*</span></label>
+                  <input
+                    type="text"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all"
+                    placeholder="ระบุชื่อรายการ..."
+                    value={subItemData.description}
+                    onChange={(e) => setSubItemData({ ...subItemData, description: e.target.value })}
+                    autoFocus
+                  />
+                </div>
+
+                {/* จำนวน + หน่วย */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">จำนวน</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all"
+                      value={subItemData.quantity}
+                      onChange={(e) => setSubItemData({ ...subItemData, quantity: Number(e.target.value) })}
+                    />
+                  </div>
+
+                  {/* หน่วย — combobox */}
+                  <div className="relative">
+                    <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">หน่วย</label>
+                    <input
+                      ref={unitInputRef}
+                      type="text"
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all pr-8"
+                      placeholder="พิมพ์หรือเลือกหน่วย..."
+                      value={unitInputText}
+                      onChange={(e) => {
+                        setUnitInputText(e.target.value);
+                        setSubItemData({ ...subItemData, unit: e.target.value });
+                        setUnitDropdownOpen(true);
+                      }}
+                      onFocus={() => setUnitDropdownOpen(true)}
+                    />
+                    <ChevronDown size={13} className="absolute right-2.5 top-[2.1rem] text-slate-400 pointer-events-none" />
+                    {unitDropdownOpen && (
+                      <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-52 overflow-y-auto">
+                        {/* ตัวกรอง */}
+                        {unitOptions.filter(u => u.toLowerCase().includes(unitInputText.toLowerCase())).map(u => (
+                          <button
+                            key={u}
+                            type="button"
+                            className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center justify-between group"
+                            onMouseDown={(e) => { e.preventDefault(); setUnitInputText(u); setSubItemData({ ...subItemData, unit: u }); setUnitDropdownOpen(false); }}
+                          >
+                            <span>{u}</span>
+                            <button
+                              type="button"
+                              className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 text-xs px-1"
+                              title="ลบหน่วยนี้"
+                              onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); saveUnitOptions(unitOptions.filter(x => x !== u)); }}
+                            >
+                              <Trash2 size={11} />
+                            </button>
+                          </button>
+                        ))}
+                        {/* เพิ่มใหม่ */}
+                        {unitInputText.trim() && !unitOptions.some(u => u.toLowerCase() === unitInputText.trim().toLowerCase()) && (
+                          <button
+                            type="button"
+                            className="w-full text-left px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 flex items-center gap-1.5 border-t border-slate-100"
+                            onMouseDown={(e) => { e.preventDefault(); const newUnit = unitInputText.trim(); saveUnitOptions([...unitOptions, newUnit]); setSubItemData({ ...subItemData, unit: newUnit }); setUnitDropdownOpen(false); }}
+                          >
+                            <Plus size={12} /> เพิ่ม "{unitInputText.trim()}"
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* ราคา */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">ราคา / หน่วย</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all"
+                    placeholder="0.00"
+                    value={subItemData.unitPrice}
+                    onChange={(e) => setSubItemData({ ...subItemData, unitPrice: Number(e.target.value) })}
+                  />
+                </div>
+
+                {/* ยอดรวม (auto) */}
+                <div className="bg-slate-50 rounded-xl border border-slate-200 px-4 py-3 flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">ยอดรวม</span>
+                  <span className="text-base font-bold text-slate-800">{formatCurrency(Number(subItemData.quantity) * Number(subItemData.unitPrice))}</span>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 pb-5 flex justify-end gap-2">
                 {editingSubItem?.status === "Rejected" ? (
                   <>
-                    <Button
-                      variant="secondary"
-                      onClick={() => {
-                        setIsSubItemModalOpen(false);
-                        setEditingSubItem(null);
-                      }}
-                    >
-                      ยกเลิก
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      onClick={handleSaveSubItem}
-                    >
-                      บันทึก
-                    </Button>
-                    <Button
-                      onClick={handleResubmitSubItemFromModal}
-                    >
-                      ขออนุมัติ
-                    </Button>
+                    <Button variant="secondary" onClick={() => { setIsSubItemModalOpen(false); setEditingSubItem(null); }}>ยกเลิก</Button>
+                    <Button variant="secondary" onClick={handleSaveSubItem}>บันทึก</Button>
+                    <Button onClick={handleResubmitSubItemFromModal}>ขออนุมัติ</Button>
                   </>
                 ) : (
                   <>
-                    <Button
-                      variant="secondary"
-                      onClick={() => setIsSubItemModalOpen(false)}
-                    >
-                      Cancel
-                    </Button>
-                    <Button onClick={handleSaveSubItem}>Save</Button>
+                    <Button variant="secondary" onClick={() => setIsSubItemModalOpen(false)}>ยกเลิก</Button>
+                    <Button onClick={handleSaveSubItem}><Save size={14} /> บันทึก</Button>
                   </>
                 )}
               </div>
-            </Card>
+            </div>
           </div>
         )}
         {isRevisionModalOpen && (

@@ -7,8 +7,8 @@ import {
   XCircle, Key, Save, RefreshCw, Hash, FileOutput, Search, ListFilter,
   Clock, Package, Tag, ClipboardList, CheckSquare, Square,
   Paperclip, Mail, Flame, MapPinned, CircleDot, Zap, Building2, MapPin,
-  DollarSign, Calendar, PlusCircle, ChevronRight, ChevronUp, Play, BarChart3,
-  FileSpreadsheet, Download
+  DollarSign, Calendar, PlusCircle, ChevronRight, ChevronLeft, ChevronUp, Play, BarChart3,
+  FileSpreadsheet, Download, Upload
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -59,6 +59,20 @@ const AppShell = () => {
     return () => document.removeEventListener("click", onOutside);
   }, []);
 
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      const v = localStorage.getItem("cmgbudget_sidebarCollapsed");
+      return v !== null ? v === "true" : true;
+    } catch { return true; }
+  });
+  const toggleSidebar = () => {
+    setSidebarCollapsed((c) => {
+      const next = !c;
+      try { localStorage.setItem("cmgbudget_sidebarCollapsed", String(next)); } catch (_) {}
+      return next;
+    });
+  };
+
   const {
     activeMenu, setActiveMenu, handleMenuChange,
     selectedProjectId, setSelectedProjectId, handleProjectChange,
@@ -94,50 +108,56 @@ const AppShell = () => {
   return (
     <div className="flex h-screen bg-slate-100 font-sans">
       {!isFullScreenModalOpen && (
-      <aside className="w-64 bg-slate-900 text-white flex flex-col shadow-xl z-20">
-        <div className="p-4 border-b border-slate-800 bg-slate-950">
-          <div className="rounded-xl bg-slate-800/80 p-3 border border-slate-700">
-            <div className="flex items-center gap-3">
+      <aside className={`${sidebarCollapsed ? "w-[4.5rem]" : "w-64"} bg-slate-900 text-white flex flex-col shadow-xl z-20 transition-[width] duration-200 ease-out overflow-hidden`}>
+        <div className={`border-b border-slate-800 bg-slate-950 shrink-0 ${sidebarCollapsed ? "p-2" : "p-4"}`}>
+          <div className={`rounded-xl bg-slate-800/80 border border-slate-700 ${sidebarCollapsed ? "p-2" : "p-3"}`}>
+            <div className={`flex items-center ${sidebarCollapsed ? "justify-center" : "gap-3"}`}>
               {user?.photoURL ? (
                 <img
                   src={user.photoURL}
                   alt=""
-                  className="w-11 h-11 rounded-full object-cover border-2 border-slate-600 shadow-md"
+                  className="w-11 h-11 rounded-full object-cover border-2 border-slate-600 shadow-md flex-shrink-0"
                 />
               ) : (
-                <div className="w-11 h-11 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-md">
+                <div className="w-11 h-11 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-md flex-shrink-0">
                   {userData?.firstName?.charAt(0) || user?.email?.charAt(0) || "?"}
                 </div>
               )}
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-bold text-white truncate">
-                  {userData?.firstName} {userData?.lastName}
-                </p>
-                <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wide flex flex-wrap gap-0.5">
-                  {userRoles.join(", ")}
-                </p>
-              </div>
+              {!sidebarCollapsed && (
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold text-white truncate">
+                    {userData?.firstName} {userData?.lastName}
+                  </p>
+                  <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wide flex flex-wrap gap-0.5">
+                    {userRoles.join(", ")}
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </div>
-        <nav className="flex-1 p-4 space-y-1 overflow-y-auto custom-scrollbar">
+        <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto custom-scrollbar">
           {canAccessModule("dashboard") && (
             <SidebarItem
               icon={<LayoutDashboard size={20} />}
               label="ภาพรวม"
               active={activeMenu === "dashboard"}
               onClick={() => handleMenuChange("dashboard")}
+              collapsed={sidebarCollapsed}
             />
           )}
-          <div className="pt-4 pb-2 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">
-            Modules
-          </div>
+          {!sidebarCollapsed && (
+            <div className="pt-4 pb-2 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">
+              Modules
+            </div>
+          )}
           {canAccessModule("projects") && (
             <SidebarItem
               icon={<Briefcase size={20} />}
               label="จัดการโครงการ"
               active={activeMenu === "projects"}
               onClick={() => handleMenuChange("projects")}
+              collapsed={sidebarCollapsed}
             />
           )}
           {canAccessModule("budget") && (
@@ -146,6 +166,7 @@ const AppShell = () => {
               label="Project Budget"
               active={activeMenu === "budget"}
               onClick={() => handleMenuChange("budget")}
+              collapsed={sidebarCollapsed}
             />
           )}
           {(canAccessModule("pr") || canAccessModule("pr-table")) && (
@@ -153,6 +174,7 @@ const AppShell = () => {
               icon={<FileText size={20} />}
               label="Purchase Request (PR)"
               isActive={activeMenu === "pr" || activeMenu === "pr-table"}
+              collapsed={sidebarCollapsed}
             >
               <SidebarSubItem
                 label="ระบบ PR"
@@ -171,6 +193,7 @@ const AppShell = () => {
               icon={<ShoppingCart size={20} />}
               label="Purchase Order (PO)"
               isActive={activeMenu === "po" || activeMenu === "po-table" || activeMenu === "vendor" || activeMenu === "material"}
+              collapsed={sidebarCollapsed}
             >
               <SidebarSubItem
                 label="ระบบ PO"
@@ -200,18 +223,22 @@ const AppShell = () => {
               label="Invoice Receive"
               active={activeMenu === "invoice"}
               onClick={() => handleMenuChange("invoice")}
+              collapsed={sidebarCollapsed}
             />
           )}
 
-          <div className="pt-4 pb-2 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">
-            System
-          </div>
+          {!sidebarCollapsed && (
+            <div className="pt-4 pb-2 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">
+              System
+            </div>
+          )}
           {canAccessModule("profile") && (
             <SidebarItem
               icon={<User size={20} />}
               label="ข้อมูลส่วนตัว (Profile)"
               active={activeMenu === "profile"}
               onClick={() => handleMenuChange("profile")}
+              collapsed={sidebarCollapsed}
             />
           )}
           {canAccessModule("admin") && (
@@ -220,11 +247,22 @@ const AppShell = () => {
               label="ผู้ดูแลระบบ (Admin)"
               active={activeMenu === "admin"}
               onClick={() => handleMenuChange("admin")}
+              collapsed={sidebarCollapsed}
             />
           )}
         </nav>
-        <div className="p-4 border-t border-slate-800 text-[10px] text-slate-500 text-center">
-          CMG Budget Control V.20
+        <div className={`border-t border-slate-800 shrink-0 flex items-center justify-center gap-1 ${sidebarCollapsed ? "py-2 px-1" : "p-4"}`}>
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            title={sidebarCollapsed ? "ขยายแถบเมนู" : "ย่อแถบเมนู"}
+          >
+            {sidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+          </button>
+          {!sidebarCollapsed && (
+            <span className="text-[10px] text-slate-500 text-center flex-1">CMG Budget Control V.20</span>
+          )}
         </div>
       </aside>
       )}
@@ -484,9 +522,64 @@ const AppShell = () => {
 };
 
 // --- Sidebar Group (expandable sub-menu) ---
-const SidebarGroup = ({ icon, label, isActive, children }) => {
+const SidebarGroup = ({ icon, label, isActive, children, collapsed }) => {
   const [open, setOpen] = React.useState(isActive);
+  const [popoverOpen, setPopoverOpen] = React.useState(false);
+  const groupRef = React.useRef(null);
   React.useEffect(() => { if (isActive) setOpen(true); }, [isActive]);
+
+  if (collapsed) {
+    return (
+      <div className="relative" ref={groupRef}>
+        <motion.button
+          onClick={() => setPopoverOpen((p) => !p)}
+          title={label}
+          className={`relative w-full flex items-center justify-center p-3 rounded-lg group ${isActive ? "text-white" : "text-slate-400 hover:text-white hover:bg-slate-800/80"}`}
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          transition={{ type: "spring", stiffness: 400, damping: 25 }}
+        >
+          {isActive && (
+            <motion.div
+              layoutId="sidebarGroupActive"
+              className="absolute inset-0 rounded-lg bg-slate-700 -z-10"
+              transition={{ type: "spring", stiffness: 350, damping: 30 }}
+            />
+          )}
+          <span className="relative z-10">{icon}</span>
+        </motion.button>
+        <AnimatePresence>
+          {popoverOpen && (
+            <>
+              <div className="fixed inset-0 z-30" onClick={() => setPopoverOpen(false)} aria-hidden />
+              <motion.div
+                initial={{ opacity: 0, x: -8 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -8 }}
+                transition={{ duration: 0.15 }}
+                className="absolute left-full top-0 ml-1 z-40 min-w-[180px] py-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl overflow-hidden"
+              >
+                <div className="px-3 py-2 border-b border-slate-700 text-xs font-bold text-slate-400 uppercase tracking-wider">{label}</div>
+                <div className="p-1 space-y-0.5" onClick={() => setPopoverOpen(false)}>
+                  {React.Children.map(children, (child) =>
+                    React.isValidElement(child) && child.props?.onClick
+                      ? React.cloneElement(child, {
+                          onClick: () => {
+                            child.props.onClick?.();
+                            setPopoverOpen(false);
+                          },
+                        })
+                      : child
+                  )}
+                </div>
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
+      </div>
+    );
+  }
+
   return (
     <div>
       <motion.button
@@ -592,6 +685,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     "Closed PR": "bg-slate-100 text-slate-600 border-slate-300",
     "Pending Close PO": "bg-amber-50 text-amber-700 border-amber-200",
     "Closed PO": "bg-slate-100 text-slate-600 border-slate-300",
+    "Edit Budget": "bg-red-100 text-red-800 border-red-300",
     "Pending MD": "bg-purple-50 text-purple-700 border-purple-200",
     "Pending GM": "bg-indigo-50 text-indigo-700 border-indigo-200",
     "Pending PM": "bg-blue-50 text-blue-700 border-blue-200",
@@ -610,7 +704,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     projects.find((p) => p.id === projectId)?.name || projectId;
 
   const allStatuses = isPR
-    ? ["Approved", "PO Issued", "Pending Close", "Closed PR", "Pending MD", "Pending GM", "Pending PM", "Pending CM", "Rejected"]
+    ? ["Approved", "PO Issued", "Edit Budget", "Pending Close", "Closed PR", "Pending MD", "Pending GM", "Pending PM", "Pending CM", "Rejected"]
     : ["Approved", "Pending PCM", "Pending GM", "Rejected", "Paid", "Partial", "Draft", "Pending Close PO", "Closed PO"];
 
   const handlePRDownloadPDF = (pr: any) => {
@@ -959,6 +1053,14 @@ const UserProfile = () => {
     lastName: userData?.lastName || "",
     position: userData?.position || "",
   });
+  const [signatureUrl, setSignatureUrl] = useState(userData?.signatureUrl || null);
+  const [uploadingSignature, setUploadingSignature] = useState(false);
+  const signatureInputRef = useRef(null);
+
+  // Sync signatureUrl when userData changes (after real-time update)
+  useEffect(() => {
+    setSignatureUrl(userData?.signatureUrl || null);
+  }, [userData?.signatureUrl]);
 
   const handleUpdate = async () => {
     try {
@@ -989,8 +1091,53 @@ const UserProfile = () => {
     }
   };
 
+  const handleSignatureUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      showAlert("ไฟล์ไม่ถูกต้อง", "กรุณาเลือกไฟล์รูปภาพ (PNG, JPG)", "warning");
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      showAlert("ไฟล์ใหญ่เกินไป", "ขนาดไฟล์ต้องไม่เกิน 2MB", "warning");
+      return;
+    }
+    setUploadingSignature(true);
+    try {
+      const storageRef = ref(storage, `signatures/${user.uid}/signature.png`);
+      await uploadBytes(storageRef, file, { contentType: file.type });
+      const url = await getDownloadURL(storageRef);
+      await updateDoc(
+        doc(db, "artifacts", appId, "public", "data", "users", user.uid),
+        { signatureUrl: url }
+      );
+      setSignatureUrl(url);
+      await logAction("Update", "Uploaded signature image");
+      showAlert("สำเร็จ", "อัปโหลดลายเซ็นเรียบร้อย", "success");
+    } catch (err) {
+      showAlert("Error", err.message, "error");
+    } finally {
+      setUploadingSignature(false);
+    }
+  };
+
+  const handleRemoveSignature = async () => {
+    if (!confirm("ต้องการลบลายเซ็นหรือไม่?")) return;
+    try {
+      await updateDoc(
+        doc(db, "artifacts", appId, "public", "data", "users", user.uid),
+        { signatureUrl: null }
+      );
+      setSignatureUrl(null);
+      await logAction("Update", "Removed signature image");
+      showAlert("สำเร็จ", "ลบลายเซ็นเรียบร้อย", "success");
+    } catch (err) {
+      showAlert("Error", err.message, "error");
+    }
+  };
+
   return (
-    <div className="max-w-2xl mx-auto mt-8">
+    <div className="max-w-2xl mx-auto mt-8 space-y-4">
       <Card className="p-8">
         <div className="flex items-center gap-4 mb-6 pb-6 border-b">
           {user?.photoURL ? (
@@ -1075,6 +1222,69 @@ const UserProfile = () => {
             </div>
           </div>
         </div>
+      </Card>
+
+      {/* Signature Card */}
+      <Card className="p-6">
+        <div className="flex items-center gap-2 mb-4 pb-3 border-b">
+          <FileOutput size={18} className="text-slate-600" />
+          <h3 className="text-base font-semibold text-slate-800">ลายเซ็น (Signature)</h3>
+        </div>
+        <p className="text-sm text-slate-500 mb-4">
+          ลายเซ็นนี้จะถูก Stamp ลงใน PDF อัตโนมัติเมื่อมีการสร้าง PO หรืออนุมัติ
+        </p>
+        {signatureUrl ? (
+          <div className="flex flex-col items-start gap-3">
+            <div className="border border-slate-200 rounded-lg bg-slate-50 p-3 w-full max-w-xs">
+              <img
+                src={signatureUrl}
+                alt="ลายเซ็น"
+                className="h-16 object-contain"
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => signatureInputRef.current?.click()}
+                disabled={uploadingSignature}
+              >
+                <Upload size={14} /> เปลี่ยนลายเซ็น
+              </Button>
+              <button
+                className="text-sm text-red-500 hover:text-red-700 flex items-center gap-1"
+                onClick={handleRemoveSignature}
+              >
+                <Trash2 size={13} /> ลบ
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div
+            className="border-2 border-dashed border-slate-300 rounded-xl p-6 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/40 transition-colors"
+            onClick={() => signatureInputRef.current?.click()}
+          >
+            {uploadingSignature ? (
+              <div className="flex flex-col items-center gap-2 text-slate-500">
+                <RefreshCw size={24} className="animate-spin" />
+                <span className="text-sm">กำลังอัปโหลด...</span>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-2 text-slate-400">
+                <Upload size={28} />
+                <span className="text-sm font-medium">คลิกเพื่ออัปโหลดลายเซ็น</span>
+                <span className="text-xs">PNG, JPG — ไม่เกิน 2MB — แนะนำพื้นหลังโปร่งใส (PNG)</span>
+              </div>
+            )}
+          </div>
+        )}
+        <input
+          ref={signatureInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          className="hidden"
+          onChange={handleSignatureUpload}
+        />
       </Card>
     </div>
   );

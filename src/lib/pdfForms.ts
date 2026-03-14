@@ -151,7 +151,7 @@ function fillItemsTable(form: any, items: any[], maxRows = 20) {
 }
 
 export async function generatePRPdfBytes(pr: any, { projectName = "", budgetDesc = "" } = {}) {
-  const { pdfDoc, hasForm } = await loadTemplate("pr");
+  const { pdfDoc, hasForm, customFont } = await loadTemplate("pr");
 
   const items = (pr.items || []).map((it: any) => ({
     materialNo: it.materialNo || it.material || "",
@@ -165,17 +165,17 @@ export async function generatePRPdfBytes(pr: any, { projectName = "", budgetDesc
 
   if (hasForm) {
     const form = pdfDoc.getForm();
-    setTextIfExists(form, ["pr_no", "prNo", "prno"], pr.prNo || pr.id || "");
-    setTextIfExists(form, ["request_date", "pr_date", "date"], safeDate(pr.requestDate));
-    setTextIfExists(form, ["project_name", "project", "proj"], projectName);
-    setTextIfExists(form, ["cost_code", "costCode"], pr.costCode || "");
-    setTextIfExists(form, ["budget_desc", "budgetDesc"], budgetDesc);
-    setTextIfExists(form, ["requestor", "requester"], pr.requestor || "");
-    setTextIfExists(form, ["requestor_email", "requester_email"], pr.requestorEmail || "");
-    setTextIfExists(form, ["purchase_type", "type"], pr.purchaseType || "");
-    setTextIfExists(form, ["delivery_location", "location"], pr.deliveryLocation || "");
-    fillItemsTable(form, items, 20);
-    setTextIfExists(form, ["total_amount", "total", "net_total", "fill_7"], fmtMoney(totalAmount));
+    setTextIfExists(form, ["pr_no", "prNo", "prno"], pr.prNo || pr.id || "", customFont);
+    setTextIfExists(form, ["request_date", "pr_date", "date"], safeDate(pr.requestDate), customFont);
+    setTextIfExists(form, ["project_name", "project", "proj"], projectName, customFont);
+    setTextIfExists(form, ["cost_code", "costCode"], pr.costCode || "", customFont);
+    setTextIfExists(form, ["budget_desc", "budgetDesc"], budgetDesc, customFont);
+    setTextIfExists(form, ["requestor", "requester"], pr.requestor || "", customFont);
+    setTextIfExists(form, ["requestor_email", "requester_email"], pr.requestorEmail || "", customFont);
+    setTextIfExists(form, ["purchase_type", "type"], pr.purchaseType || "", customFont);
+    setTextIfExists(form, ["delivery_location", "location"], pr.deliveryLocation || "", customFont);
+    fillItemsTable(form, items, 20, customFont);
+    setTextIfExists(form, ["total_amount", "total", "net_total", "fill_7"], fmtMoney(totalAmount), customFont);
     try { form.flatten(); } catch (_) {}
   } else {
     // Fallback: สร้าง PDF พื้นฐาน
@@ -201,14 +201,14 @@ export async function generatePRPdfBytes(pr: any, { projectName = "", budgetDesc
       ``,
       `* หมายเหตุ: ไม่พบ Template PDF กรุณาอัปโหลด PR Form ในหน้า Admin → แบบฟอร์ม PDF`,
     ];
-    await buildBasicPage(pdfDoc, lines);
+    await buildBasicPage(pdfDoc, lines, customFont);
   }
 
   return await pdfDoc.save();
 }
 
 export async function generatePOPdfBytes(po: any, { vendor = null, project = null }: { vendor?: any; project?: any } = {}) {
-  const { pdfDoc, hasForm } = await loadTemplate("po");
+  const { pdfDoc, hasForm, customFont } = await loadTemplate("po");
 
   const vendorName = vendor?.name || po.vendorName || "";
   const vendorAddress = vendor?.address || po.vendorAddress || "";
@@ -234,21 +234,21 @@ export async function generatePOPdfBytes(po: any, { vendor = null, project = nul
 
   if (hasForm) {
     const form = pdfDoc.getForm();
-    setTextIfExists(form, ["po_no", "poNo", "pono"], po.poNo || po.id || "");
-    setTextIfExists(form, ["po_date", "date"], safeDate(po.poDate || po.createdDate));
-    setTextIfExists(form, ["receive_date", "receivedate", "due_date"], safeDate(po.requiredDate));
-    setTextIfExists(form, ["location", "remark"], project?.location || project?.name || "");
-    setTextIfExists(form, ["vendor_name", "vendorname"], vendorName);
-    setTextIfExists(form, ["vendor_tel", "vendortel"], vendorTel);
-    setTextIfExists(form, ["vendor_credit_term", "vendorcredit", "vendorco"], vendorCredit);
-    setMultilineIfExists(form, ["vendor_address", "vendoraddress"], vendorAddress);
-    setTextIfExists(form, ["vendor_contact", "vendorcontract", "contact"], vendor?.contact || "");
-    fillItemsTable(form, items, 20);
-    setTextIfExists(form, ["total_amount", "amount", "fill_10"], fmtMoney(subtotal));
-    setTextIfExists(form, ["discount", "fill_11"], fmtMoney(discount));
-    setTextIfExists(form, ["sub_total", "subtotal", "fill_12"], fmtMoney(subTotalAfterDiscount));
-    setTextIfExists(form, ["vat_7", "vat7", "fill_13"], fmtMoney(vat));
-    setTextIfExists(form, ["net_total", "total", "fill_7"], fmtMoney(netTotal));
+    setTextIfExists(form, ["po_no", "poNo", "pono"], po.poNo || po.id || "", customFont);
+    setTextIfExists(form, ["po_date", "date"], safeDate(po.poDate || po.createdDate), customFont);
+    setTextIfExists(form, ["receive_date", "receivedate", "due_date"], safeDate(po.requiredDate), customFont);
+    setTextIfExists(form, ["location", "remark"], project?.location || project?.name || "", customFont);
+    setTextIfExists(form, ["vendor_name", "vendorname"], vendorName, customFont);
+    setTextIfExists(form, ["vendor_tel", "vendortel"], vendorTel, customFont);
+    setTextIfExists(form, ["vendor_credit_term", "vendorcredit", "vendorco"], vendorCredit, customFont);
+    setMultilineIfExists(form, ["vendor_address", "vendoraddress"], vendorAddress, customFont);
+    setTextIfExists(form, ["vendor_contact", "vendorcontract", "contact"], vendor?.contact || "", customFont);
+    fillItemsTable(form, items, 20, customFont);
+    setTextIfExists(form, ["total_amount", "amount", "fill_10"], fmtMoney(subtotal), customFont);
+    setTextIfExists(form, ["discount", "fill_11"], fmtMoney(discount), customFont);
+    setTextIfExists(form, ["sub_total", "subtotal", "fill_12"], fmtMoney(subTotalAfterDiscount), customFont);
+    setTextIfExists(form, ["vat_7", "vat7", "fill_13"], fmtMoney(vat), customFont);
+    setTextIfExists(form, ["net_total", "total", "fill_7"], fmtMoney(netTotal), customFont);
     try { form.flatten(); } catch (_) {}
   } else {
     // Fallback: สร้าง PDF พื้นฐาน
@@ -283,6 +283,61 @@ export async function generatePOPdfBytes(po: any, { vendor = null, project = nul
     ].filter(l => l !== undefined);
     await buildBasicPage(pdfDoc, lines as string[]);
   }
+
+  return await pdfDoc.save();
+}
+
+/**
+ * Stamp a signature image onto an existing PDF bytes.
+ * @param pdfBytes - The existing PDF as Uint8Array
+ * @param signatureImageUrl - URL or data-URL of the signature image (PNG/JPG)
+ * @param options - Position & size for stamp placement
+ */
+export async function stampSignatureToPdf(
+  pdfBytes: Uint8Array,
+  signatureImageUrl: string,
+  options: { x: number; y: number; width?: number; height?: number; pageIndex?: number } = { x: 0, y: 0 }
+): Promise<Uint8Array> {
+  const pdfDoc = await PDFDocument.load(pdfBytes);
+
+  // Fetch the signature image
+  let imgBytes: ArrayBuffer;
+  if (signatureImageUrl.startsWith("data:")) {
+    // data-URL: decode base64
+    const base64 = signatureImageUrl.split(",")[1];
+    const binary = atob(base64);
+    const arr = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
+    imgBytes = arr.buffer;
+  } else {
+    const res = await fetch(signatureImageUrl);
+    if (!res.ok) throw new Error(`Cannot fetch signature: ${res.status}`);
+    imgBytes = await res.arrayBuffer();
+  }
+
+  // Embed image (try PNG first, fallback JPG)
+  let embeddedImg: any;
+  try {
+    embeddedImg = await pdfDoc.embedPng(imgBytes);
+  } catch (_) {
+    embeddedImg = await pdfDoc.embedJpg(imgBytes);
+  }
+
+  const pageIdx = options.pageIndex ?? 0;
+  const pages = pdfDoc.getPages();
+  if (pageIdx >= pages.length) throw new Error("Page index out of range");
+  const page = pages[pageIdx];
+
+  const w = options.width ?? 120;
+  const h = options.height ?? 50;
+
+  page.drawImage(embeddedImg, {
+    x: options.x,
+    y: options.y,
+    width: w,
+    height: h,
+    opacity: 0.85,
+  });
 
   return await pdfDoc.save();
 }

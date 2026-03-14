@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { collection, doc, writeBatch, setDoc, deleteDoc } from "firebase/firestore";
 import { useAppData } from "../contexts/AppDataContext";
+import { uploadAttachment } from "../lib/uploadAttachment";
 import { Card, Button, InputGroup, formatCurrency } from "../components/ui";
 import ResizableTh from "../components/ResizableTh";
 
@@ -19,6 +20,7 @@ const MaterialView = React.memo(() => {
   const [searchText, setSearchText] = useState("");
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [importPreview, setImportPreview] = useState([]);
+  const [importFile, setImportFile] = useState(null);
   const fileInputRef = useRef(null);
 
   const [selectedIds, setSelectedIds] = useState(() => new Set());
@@ -175,6 +177,7 @@ const MaterialView = React.memo(() => {
     const file = e.target.files[0];
     if (!file) return;
     if (fileInputRef.current) fileInputRef.current.value = "";
+    setImportFile(file);
     const reader = new FileReader();
     reader.onload = (ev) => {
       const text = ev.target.result;
@@ -208,6 +211,10 @@ const MaterialView = React.memo(() => {
     setUploadProgress({ done: 0, total });
     let count = 0;
     try {
+      if (importFile) {
+        await uploadAttachment(importFile, { type: "imports", subPath: "materials" });
+        setImportFile(null);
+      }
       for (let i = 0; i < total; i += BATCH_SIZE) {
         const batch = writeBatch(db);
         const chunk = importPreview.slice(i, i + BATCH_SIZE);
@@ -227,13 +234,15 @@ const MaterialView = React.memo(() => {
       }
       setIsImportOpen(false);
       setImportPreview([]);
+      setImportFile(null);
       setUploadProgress({ done: 0, total: 0 });
       showAlert("นำเข้าสำเร็จ", `นำเข้า ${count} รายการเรียบร้อย`, "success");
     } catch (e) {
       setUploadProgress({ done: 0, total: 0 });
+      setImportFile(null);
       showAlert("Error", "เกิดข้อผิดพลาด: " + (e.message || e), "error");
     }
-  }, [importPreview, materialsColRef, db, showAlert]);
+  }, [importPreview, importFile, materialsColRef, db, showAlert]);
 
   return (
     <div className="space-y-4">
@@ -553,7 +562,7 @@ const MaterialView = React.memo(() => {
               <Button
                 variant="secondary"
                 disabled={uploadProgress.total > 0}
-                onClick={() => { setIsImportOpen(false); setImportPreview([]); setUploadProgress({ done: 0, total: 0 }); }}
+                onClick={() => { setIsImportOpen(false); setImportPreview([]); setImportFile(null); setUploadProgress({ done: 0, total: 0 }); }}
               >
                 ยกเลิก
               </Button>

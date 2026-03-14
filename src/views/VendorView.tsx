@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { collection, doc, writeBatch } from "firebase/firestore";
 import { useAppData } from "../contexts/AppDataContext";
+import { uploadAttachment } from "../lib/uploadAttachment";
 import { Card, Button, InputGroup } from "../components/ui";
 import ResizableTh from "../components/ResizableTh";
 
@@ -19,6 +20,7 @@ const VendorView = React.memo(() => {
   const [searchText, setSearchText] = useState("");
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [importPreview, setImportPreview] = useState([]);
+  const [importFile, setImportFile] = useState(null);
   const fileInputRef = useRef(null);
 
   const [selectedIds, setSelectedIds] = useState(() => new Set());
@@ -187,6 +189,7 @@ const VendorView = React.memo(() => {
     const file = e.target.files[0];
     if (!file) return;
     if (fileInputRef.current) fileInputRef.current.value = "";
+    setImportFile(file);
     const reader = new FileReader();
     reader.onload = (ev) => {
       const text = ev.target.result;
@@ -204,6 +207,10 @@ const VendorView = React.memo(() => {
     setUploadProgress({ done: 0, total });
     let count = 0;
     try {
+      if (importFile) {
+        await uploadAttachment(importFile, { type: "imports", subPath: "vendors" });
+        setImportFile(null);
+      }
       for (let i = 0; i < total; i += BATCH_SIZE) {
         const batch = writeBatch(db);
         const chunk = importPreview.slice(i, i + BATCH_SIZE);
@@ -223,13 +230,15 @@ const VendorView = React.memo(() => {
       }
       setIsImportOpen(false);
       setImportPreview([]);
+      setImportFile(null);
       setUploadProgress({ done: 0, total: 0 });
       showAlert("นำเข้าสำเร็จ", `นำเข้า ${count} รายการเรียบร้อย`, "success");
     } catch (e) {
       setUploadProgress({ done: 0, total: 0 });
+      setImportFile(null);
       showAlert("Error", "เกิดข้อผิดพลาด: " + (e.message || e), "error");
     }
-  }, [importPreview, vendorsColRef, db, showAlert]);
+  }, [importPreview, importFile, vendorsColRef, db, showAlert]);
 
   return (
     <div className="space-y-4">
@@ -458,7 +467,7 @@ const VendorView = React.memo(() => {
               </table>
             </div>
             <div className="flex justify-end gap-2">
-              <Button variant="secondary" disabled={uploadProgress.total > 0} onClick={() => { setIsImportOpen(false); setImportPreview([]); setUploadProgress({ done: 0, total: 0 }); }}>ยกเลิก</Button>
+              <Button variant="secondary" disabled={uploadProgress.total > 0} onClick={() => { setIsImportOpen(false); setImportPreview([]); setImportFile(null); setUploadProgress({ done: 0, total: 0 }); }}>ยกเลิก</Button>
               <Button onClick={handleConfirmImport} disabled={uploadProgress.total > 0}>
                 <FileSpreadsheet size={13} /> ยืนยัน Import ({importPreview.length} รายการ)
               </Button>

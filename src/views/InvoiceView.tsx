@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useState, useEffect, useMemo, useCallback, useRef, useContext } from "react";
 import {
-  Plus, Trash2, Edit, CheckCircle, XCircle, FileInput, DollarSign, Info,
+  Plus, Trash2, Edit, CheckCircle, XCircle, FileInput, DollarSign,
   ChevronDown, ChevronRight, AlertCircle, Save, Calendar, Briefcase,
   FileText, Search, ListFilter, Clock, Package
 } from "lucide-react";
@@ -79,11 +79,6 @@ const InvoiceView = React.memo(() => {
         <Button onClick={() => setIsModalOpen(true)}>
           <Plus size={14} /> รับ Invoice
         </Button>
-      </div>
-      <div className="bg-purple-50 p-3 rounded-md border border-purple-100 text-xs text-purple-800 mb-4 flex items-center gap-2">
-        <Info size={16} />
-        <strong>Flow การวางบิล:</strong> Pending PM (ตรวจหน้างาน) → Pending GM
-        (อนุมัติจ่าย) → Paid
       </div>
       <Card>
         <table className="w-full text-left text-xs text-slate-600">
