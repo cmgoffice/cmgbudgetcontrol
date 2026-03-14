@@ -12,14 +12,14 @@ import { doc, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
-import { Card, Button, InputGroup, Badge, ProjectSelect, formatCurrency } from "../components/ui";
+import { Card, Button, InputGroup, Badge, formatCurrency } from "../components/ui";
 import ResizableTh from "../components/ResizableTh";
 import { COST_CATEGORIES, PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, getPurchaseTypeDisplayLabel } from "../lib/constants";
 const BudgetView = React.memo(() => {
   const { budgets, projects, prs, pos, invoices, addData, updateData, deleteData,
           showAlert, openConfirm, logAction, userRole, userData, columnWidths, handleColumnResize,
           visibleProjects, handlePRAction, handlePOAction, db, appId } = useAppData();
-  const { selectedProjectId, handleProjectChange,
+  const { selectedProjectId,
           budgetCategory, setBudgetCategory,
           expandedBudgetRows, setExpandedBudgetRows,
           scrollToPendingAfterRender, setScrollToPendingAfterRender,
@@ -1179,11 +1179,6 @@ const BudgetView = React.memo(() => {
           <h2 className="text-xl font-bold text-slate-800">
             B. Project Budget
           </h2>
-          <ProjectSelect
-            projects={visibleProjects}
-            selectedId={selectedProjectId}
-            onChange={(e) => handleProjectChange(e.target.value)}
-          />
         </div>
         <div className="flex overflow-x-auto gap-1 pb-2 border-b border-slate-200 no-scrollbar">
           <button

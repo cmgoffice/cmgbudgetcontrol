@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useContext, useEffect, useState } from "react";
+import React, { useContext, useEffect, useState, useRef } from "react";
 import {
   LayoutDashboard, Briefcase, Wallet, FileText, ShoppingCart, FileInput,
   Users, Settings, Bell, ChevronDown, LogOut, Shield, UserCircle, AtSign,
@@ -36,6 +36,8 @@ import BudgetView from "./views/BudgetView";
 const AppShell = () => {
   const { user, userData, logout } = useContext(AuthContext);
   const userRole = userData?.role || "Staff";
+  const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
+  const profileDropdownRef = useRef(null);
 
   const {
     projects, budgets, vendors, materials, prs, pos, invoices,
@@ -45,7 +47,17 @@ const AppShell = () => {
     totalPendingCount, pendingByProject,
     handlePRAction, handlePOAction,
     showAlert, openConfirm,
+    canAccessModule,
+    userRoles = [userRole],
   } = useAppData();
+
+  useEffect(() => {
+    const onOutside = (e) => {
+      if (profileDropdownRef.current && !profileDropdownRef.current.contains(e.target)) setProfileDropdownOpen(false);
+    };
+    document.addEventListener("click", onOutside);
+    return () => document.removeEventListener("click", onOutside);
+  }, []);
 
   const {
     activeMenu, setActiveMenu, handleMenuChange,
@@ -83,103 +95,126 @@ const AppShell = () => {
     <div className="flex h-screen bg-slate-100 font-sans">
       {!isFullScreenModalOpen && (
       <aside className="w-64 bg-slate-900 text-white flex flex-col shadow-xl z-20">
-        <div className="p-6 border-b border-slate-800 bg-slate-950">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-700 rounded-lg flex items-center justify-center font-bold shadow-lg shadow-blue-900/50 text-lg">
-              C
-            </div>
-            <div>
-              <span className="text-lg font-bold tracking-wide">
-                CMG Budget
-              </span>
-              <p className="text-[10px] text-slate-400 uppercase tracking-widest">
-                Control
-              </p>
+        <div className="p-4 border-b border-slate-800 bg-slate-950">
+          <div className="rounded-xl bg-slate-800/80 p-3 border border-slate-700">
+            <div className="flex items-center gap-3">
+              {user?.photoURL ? (
+                <img
+                  src={user.photoURL}
+                  alt=""
+                  className="w-11 h-11 rounded-full object-cover border-2 border-slate-600 shadow-md"
+                />
+              ) : (
+                <div className="w-11 h-11 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-md">
+                  {userData?.firstName?.charAt(0) || user?.email?.charAt(0) || "?"}
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-white truncate">
+                  {userData?.firstName} {userData?.lastName}
+                </p>
+                <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wide flex flex-wrap gap-0.5">
+                  {userRoles.join(", ")}
+                </p>
+              </div>
             </div>
           </div>
         </div>
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto custom-scrollbar">
-          <SidebarItem
-            icon={<LayoutDashboard size={20} />}
-            label="ภาพรวม"
-            active={activeMenu === "dashboard"}
-            onClick={() => handleMenuChange("dashboard")}
-          />
+          {canAccessModule("dashboard") && (
+            <SidebarItem
+              icon={<LayoutDashboard size={20} />}
+              label="ภาพรวม"
+              active={activeMenu === "dashboard"}
+              onClick={() => handleMenuChange("dashboard")}
+            />
+          )}
           <div className="pt-4 pb-2 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">
             Modules
           </div>
-          <SidebarItem
-            icon={<Briefcase size={20} />}
-            label="จัดการโครงการ"
-            active={activeMenu === "projects"}
-            onClick={() => handleMenuChange("projects")}
-          />
-          <SidebarItem
-            icon={<Wallet size={20} />}
-            label="Project Budget"
-            active={activeMenu === "budget"}
-            onClick={() => handleMenuChange("budget")}
-          />
-          {/* PR/PO Sub-menu group */}
-          <SidebarGroup
-            icon={<FileText size={20} />}
-            label="Purchase Request (PR)"
-            isActive={activeMenu === "pr" || activeMenu === "pr-table"}
-          >
-            <SidebarSubItem
-              label="ระบบ PR"
-              active={activeMenu === "pr"}
-              onClick={() => handleMenuChange("pr")}
+          {canAccessModule("projects") && (
+            <SidebarItem
+              icon={<Briefcase size={20} />}
+              label="จัดการโครงการ"
+              active={activeMenu === "projects"}
+              onClick={() => handleMenuChange("projects")}
             />
-            <SidebarSubItem
-              label="ตารางข้อมูล PR"
-              active={activeMenu === "pr-table"}
-              onClick={() => handleMenuChange("pr-table")}
+          )}
+          {canAccessModule("budget") && (
+            <SidebarItem
+              icon={<Wallet size={20} />}
+              label="Project Budget"
+              active={activeMenu === "budget"}
+              onClick={() => handleMenuChange("budget")}
             />
-          </SidebarGroup>
-          <SidebarGroup
-            icon={<ShoppingCart size={20} />}
-            label="Purchase Order (PO)"
-            isActive={activeMenu === "po" || activeMenu === "po-table" || activeMenu === "vendor" || activeMenu === "material"}
-          >
-            <SidebarSubItem
-              label="ระบบ PO"
-              active={activeMenu === "po"}
-              onClick={() => handleMenuChange("po")}
+          )}
+          {(canAccessModule("pr") || canAccessModule("pr-table")) && (
+            <SidebarGroup
+              icon={<FileText size={20} />}
+              label="Purchase Request (PR)"
+              isActive={activeMenu === "pr" || activeMenu === "pr-table"}
+            >
+              <SidebarSubItem
+                label="ระบบ PR"
+                active={activeMenu === "pr"}
+                onClick={() => handleMenuChange("pr")}
+              />
+              <SidebarSubItem
+                label="ตารางข้อมูล PR"
+                active={activeMenu === "pr-table"}
+                onClick={() => handleMenuChange("pr-table")}
+              />
+            </SidebarGroup>
+          )}
+          {(canAccessModule("po") || canAccessModule("po-table") || canAccessModule("vendor") || canAccessModule("material")) && (
+            <SidebarGroup
+              icon={<ShoppingCart size={20} />}
+              label="Purchase Order (PO)"
+              isActive={activeMenu === "po" || activeMenu === "po-table" || activeMenu === "vendor" || activeMenu === "material"}
+            >
+              <SidebarSubItem
+                label="ระบบ PO"
+                active={activeMenu === "po"}
+                onClick={() => handleMenuChange("po")}
+              />
+              <SidebarSubItem
+                label="ตารางข้อมูล PO"
+                active={activeMenu === "po-table"}
+                onClick={() => handleMenuChange("po-table")}
+              />
+              <SidebarSubItem
+                label="Vendor Management"
+                active={activeMenu === "vendor"}
+                onClick={() => handleMenuChange("vendor")}
+              />
+              <SidebarSubItem
+                label="Material"
+                active={activeMenu === "material"}
+                onClick={() => handleMenuChange("material")}
+              />
+            </SidebarGroup>
+          )}
+          {canAccessModule("invoice") && (
+            <SidebarItem
+              icon={<FileInput size={20} />}
+              label="Invoice Receive"
+              active={activeMenu === "invoice"}
+              onClick={() => handleMenuChange("invoice")}
             />
-            <SidebarSubItem
-              label="ตารางข้อมูล PO"
-              active={activeMenu === "po-table"}
-              onClick={() => handleMenuChange("po-table")}
-            />
-            <SidebarSubItem
-              label="Vendor Management"
-              active={activeMenu === "vendor"}
-              onClick={() => handleMenuChange("vendor")}
-            />
-            <SidebarSubItem
-              label="Material"
-              active={activeMenu === "material"}
-              onClick={() => handleMenuChange("material")}
-            />
-          </SidebarGroup>
-          <SidebarItem
-            icon={<FileInput size={20} />}
-            label="Invoice Receive"
-            active={activeMenu === "invoice"}
-            onClick={() => handleMenuChange("invoice")}
-          />
+          )}
 
           <div className="pt-4 pb-2 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">
             System
           </div>
-          <SidebarItem
-            icon={<User size={20} />}
-            label="ข้อมูลส่วนตัว (Profile)"
-            active={activeMenu === "profile"}
-            onClick={() => handleMenuChange("profile")}
-          />
-          {userRole === "Administrator" && (
+          {canAccessModule("profile") && (
+            <SidebarItem
+              icon={<User size={20} />}
+              label="ข้อมูลส่วนตัว (Profile)"
+              active={activeMenu === "profile"}
+              onClick={() => handleMenuChange("profile")}
+            />
+          )}
+          {canAccessModule("admin") && (
             <SidebarItem
               icon={<Shield size={20} />}
               label="ผู้ดูแลระบบ (Admin)"
@@ -196,8 +231,8 @@ const AppShell = () => {
 
       <main className="flex-1 overflow-y-auto bg-slate-50/50">
         {!isFullScreenModalOpen && (
-        <header className="bg-white/80 backdrop-blur-md shadow-sm px-8 py-4 flex justify-between items-center sticky top-0 z-20 border-b border-slate-100">
-          <h1 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+        <header className="bg-white/80 backdrop-blur-md shadow-sm px-8 py-4 flex items-center gap-4 sticky top-0 z-20 border-b border-slate-100">
+          <h1 className="text-xl font-bold text-slate-800 flex items-center gap-2 shrink-0">
             {activeMenu === "dashboard"
               ? "Dashboard"
               : activeMenu === "projects"
@@ -224,7 +259,31 @@ const AppShell = () => {
                                   ? "Admin Dashboard"
                                   : "Module View"}
           </h1>
-          <div className="flex items-center gap-4">
+          {/* Spacer — ดัน project cards + bell + profile ไปชิดขวา */}
+          <div className="flex-1" />
+
+          {/* Project Cards — อยู่ขวา ก่อนกระดิ่ง ขยายออกซ้ายเมื่อมีโครงการเพิ่ม */}
+          {["budget","pr","pr-table","po","po-table","invoice"].includes(activeMenu) && visibleProjects.length > 0 && (
+            <div className="flex items-center gap-1.5 shrink-0">
+              {visibleProjects.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setSelectedProjectId(p.id)}
+                  title={p.name}
+                  className={`flex-shrink-0 w-10 h-10 rounded-lg text-[10px] font-extrabold transition-all text-center flex items-center justify-center px-0.5 break-all ${
+                    selectedProjectId === p.id
+                      ? "bg-orange-500 text-white shadow-md scale-105"
+                      : "bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200"
+                  }`}
+                >
+                  {p.jobNo || (p.name || "?").slice(0, 4)}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="flex items-center gap-3 shrink-0">
             {/* Bell notification button */}
             <div className="relative">
               <button
@@ -302,26 +361,59 @@ const AppShell = () => {
               )}
               </AnimatePresence>
             </div>
-            <div className="flex items-center gap-3 px-4 py-1.5 bg-slate-100 rounded-full border border-slate-200">
-              <div className="flex flex-col text-right">
-                <span className="text-xs font-bold text-slate-700">
-                  {userData?.firstName} {userData?.lastName}
-                </span>
-                <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wide">
-                  {userRole}
-                </span>
-              </div>
-              <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-xs shadow-md">
-                {userData?.firstName?.charAt(0)}
-              </div>
+            <div className="relative shrink-0" ref={profileDropdownRef}>
+              <button
+                type="button"
+                onClick={() => setProfileDropdownOpen((o) => !o)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200/80 transition-colors"
+                title="โปรไฟล์"
+              >
+                {user?.photoURL ? (
+                  <img
+                    src={user.photoURL}
+                    alt=""
+                    className="w-8 h-8 rounded-full object-cover border border-slate-300"
+                  />
+                ) : (
+                  <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-xs shadow-md">
+                    {userData?.firstName?.charAt(0) || user?.email?.charAt(0) || "?"}
+                  </div>
+                )}
+                <ChevronDown size={16} className="text-slate-500" />
+              </button>
+              <AnimatePresence>
+                {profileDropdownOpen && (
+                  <motion.div
+                    className="absolute right-0 top-full mt-2 w-52 bg-white rounded-xl shadow-xl border border-slate-200 py-1 z-50"
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -4 }}
+                    transition={{ duration: 0.15 }}
+                  >
+                    <button
+                      type="button"
+                      className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50"
+                      onClick={() => {
+                        setActiveMenu("profile");
+                        setProfileDropdownOpen(false);
+                      }}
+                    >
+                      <User size={16} /> อัพเดทโปรไฟล์
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50"
+                      onClick={() => {
+                        setProfileDropdownOpen(false);
+                        logout();
+                      }}
+                    >
+                      <LogOut size={16} /> ออกจากระบบ
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
-            <button
-              onClick={logout}
-              className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
-              title="ออกจากระบบ"
-            >
-              <LogOut size={20} />
-            </button>
           </div>
         </header>
         )}
@@ -361,7 +453,7 @@ const AppShell = () => {
                 <UserProfile />
               </div>
             )}
-            {activeMenu === "admin" && userRole === "Administrator" && (
+            {activeMenu === "admin" && canAccessModule("admin") && (
               <div data-menu-page="admin">
                 <AdminDashboard />
               </div>
@@ -860,6 +952,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 const UserProfile = () => {
   const { user, userData, resetPassword, showAlert, logAction } =
     useContext(AuthContext);
+  const { userRoles = [] } = useAppData();
   const [editMode, setEditMode] = useState(false);
   const [formData, setFormData] = useState({
     firstName: userData?.firstName || "",
@@ -900,15 +993,23 @@ const UserProfile = () => {
     <div className="max-w-2xl mx-auto mt-8">
       <Card className="p-8">
         <div className="flex items-center gap-4 mb-6 pb-6 border-b">
-          <div className="w-20 h-20 bg-slate-200 rounded-full flex items-center justify-center text-slate-500">
-            <User size={40} />
-          </div>
+          {user?.photoURL ? (
+            <img
+              src={user.photoURL}
+              alt=""
+              className="w-20 h-20 rounded-full object-cover border-2 border-slate-200 shadow-md"
+            />
+          ) : (
+            <div className="w-20 h-20 bg-slate-200 rounded-full flex items-center justify-center text-slate-500">
+              <User size={40} />
+            </div>
+          )}
           <div>
             <h2 className="text-2xl font-bold text-slate-800">
               {userData?.firstName} {userData?.lastName}
             </h2>
             <p className="text-slate-500">
-              {userData?.role} | {userData?.email}
+              {userRoles.length ? userRoles.join(", ") : userData?.role} | {userData?.email}
             </p>
           </div>
         </div>
@@ -1277,10 +1378,25 @@ const AdminDashboard = () => {
               {users.map((u) => (
                 <tr key={u.id} className="hover:bg-slate-50">
                   <td className="p-4" title={`${u.firstName || ""} ${u.lastName || ""} | ${u.email || ""}`}>
-                    <div className="font-medium text-slate-900 cell-text">
-                      {u.firstName} {u.lastName}
+                    <div className="flex items-center gap-3">
+                      {u.photoURL ? (
+                        <img
+                          src={u.photoURL}
+                          alt=""
+                          className="w-8 h-8 rounded-full object-cover border border-slate-200 flex-shrink-0"
+                        />
+                      ) : (
+                        <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0">
+                          {u.firstName?.charAt(0) || u.email?.charAt(0) || "?"}
+                        </div>
+                      )}
+                      <div>
+                        <div className="font-medium text-slate-900 cell-text">
+                          {u.firstName} {u.lastName}
+                        </div>
+                        <div className="text-xs text-slate-500 cell-text">{u.email}</div>
+                      </div>
                     </div>
-                    <div className="text-xs text-slate-500 cell-text">{u.email}</div>
                   </td>
                   <td className="p-4">
                     <span className="bg-slate-100 px-2 py-1 rounded text-xs font-semibold cell-text" title={u.role}>

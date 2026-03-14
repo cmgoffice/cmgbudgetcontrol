@@ -24,6 +24,22 @@ export const USER_ROLES = [
   "Admin Site",
 ];
 
+/** สิทธิ์เข้าเมนูตาม role — ถ้ามีหลาย role ได้สิทธิ์รวมทุก role */
+export const MODULE_ACCESS: Record<string, string[]> = {
+  dashboard: ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff", "Admin Site"],
+  projects: ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Admin Site"],
+  budget: ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff"],
+  pr: ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff"],
+  "pr-table": ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff"],
+  po: ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff"],
+  "po-table": ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff"],
+  vendor: ["Administrator", "MD", "GM", "PM", "PCM", "Procurement", "Staff"],
+  material: ["Administrator", "MD", "GM", "PM", "PCM", "Procurement", "Staff"],
+  invoice: ["Administrator", "MD", "GM", "PM", "PCM", "Staff"],
+  profile: ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff", "Admin Site"],
+  admin: ["Administrator"],
+};
+
 export const PURCHASE_TYPES = [
   "จัดซื้อ > WA, ST, ML, CS, SA",
   "อุปกรณ์ใหม่ > EQM",

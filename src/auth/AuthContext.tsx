@@ -5,7 +5,7 @@ import {
   createUserWithEmailAndPassword, signInWithPopup, GoogleAuthProvider,
   sendPasswordResetEmail, updateProfile,
 } from "firebase/auth";
-import { doc, getDoc, setDoc, addDoc, collection } from "firebase/firestore";
+import { doc, getDoc, getDocs, setDoc, addDoc, updateDoc, collection } from "firebase/firestore";
 import { auth, db, appId } from "../lib/firebase";
 import { CustomAlert, CustomConfirmModal } from "../components/Dialogs";
 
@@ -194,6 +194,7 @@ export const AuthProvider = ({ children }) => {
           assignedProjectIds: [],
           createdAt: new Date().toISOString(),
           authProvider: "google",
+          photoURL: user.photoURL || "",
         });
 
         if (status === "Pending") {
@@ -207,6 +208,9 @@ export const AuthProvider = ({ children }) => {
         }
       } else {
         const data = userSnapshot.data();
+        if (user.photoURL && data.photoURL !== user.photoURL) {
+          await updateDoc(userDocRef, { photoURL: user.photoURL });
+        }
         if (data.status === "Pending") {
           await signOut(auth);
           showAlert(

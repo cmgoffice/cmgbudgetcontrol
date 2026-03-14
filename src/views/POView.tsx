@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
-import { Card, Button, InputGroup, Badge, ProjectSelect, formatCurrency } from "../components/ui";
+import { Card, Button, InputGroup, Badge, formatCurrency } from "../components/ui";
 import ResizableTh from "../components/ResizableTh";
 import MaterialAutoComplete from "../components/MaterialAutoComplete";
 import { PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, PURCHASE_TYPE_EQUIPMENT, DELIVERY_LOCATIONS, getPurchaseTypeDisplayLabel, COST_CATEGORIES } from "../lib/constants";
@@ -20,7 +20,7 @@ const POView = React.memo(() => {
   const { prs, pos, projects, budgets, vendors, materials, addData, updateData, deleteData, loadVendors, loadMaterials,
           showAlert, openConfirm, userRole, columnWidths, handleColumnResize,
           visibleProjects, handlePOAction } = useAppData();
-  const { selectedProjectId, handleProjectChange,
+  const { selectedProjectId,
           isFullScreenModalOpen, setIsFullScreenModalOpen,
           expandedPrRows } = useUI();
     // UI States
@@ -569,11 +569,6 @@ const POView = React.memo(() => {
       <div className="space-y-4">
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
           <h2 className="text-xl font-bold text-slate-800">D. Purchase Order (PO)</h2>
-          <ProjectSelect
-            projects={visibleProjects}
-            selectedId={selectedProjectId}
-            onChange={(e) => handleProjectChange(e.target.value, visibleProjects)}
-          />
           <Button
             onClick={() => {
               setEditingPoId(null);

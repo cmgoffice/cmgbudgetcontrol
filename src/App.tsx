@@ -15,13 +15,19 @@ import AppShell from "./AppShell";
 // --- Authenticated wrapper — passes auth values into context providers ---
 const AuthenticatedApp = () => {
   const { user, userData, showAlert, openConfirm, logAction } = useContext(AuthContext);
-  const userRole = userData?.role || "Staff";
+  const userRoles = Array.isArray(userData?.roles)
+    ? userData.roles
+    : userData?.role
+      ? [userData.role]
+      : ["Staff"];
+  const userRole = userRoles[0] || "Staff";
 
   return (
     <AppDataProvider
       user={user}
       userData={userData}
       userRole={userRole}
+      userRoles={userRoles}
       showAlert={showAlert}
       openConfirm={openConfirm}
       logAction={logAction}

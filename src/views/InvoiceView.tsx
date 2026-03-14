@@ -7,11 +7,11 @@ import {
 } from "lucide-react";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
-import { Card, Button, InputGroup, Badge, ProjectSelect, formatCurrency } from "../components/ui";
+import { Card, Button, InputGroup, Badge, formatCurrency } from "../components/ui";
 import ResizableTh from "../components/ResizableTh";
 const InvoiceView = React.memo(() => {
   const { invoices, pos, addData, updateData, deleteData, showAlert, userRole, columnWidths, handleColumnResize, visibleProjects } = useAppData();
-  const { selectedProjectId, handleProjectChange } = useUI();
+  const { selectedProjectId } = useUI();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState({
     invNo: "",
@@ -76,11 +76,6 @@ const InvoiceView = React.memo(() => {
         <h2 className="text-xl font-bold text-slate-800">
           F. รับวางบิล (Invoice Receive)
         </h2>
-        <ProjectSelect
-          projects={visibleProjects}
-          selectedId={selectedProjectId}
-          onChange={(e) => handleProjectChange(e.target.value)}
-        />
         <Button onClick={() => setIsModalOpen(true)}>
           <Plus size={14} /> รับ Invoice
         </Button>

@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
-import { Card, Button, InputGroup, Badge, ProjectSelect, formatCurrency } from "../components/ui";
+import { Card, Button, InputGroup, Badge, formatCurrency } from "../components/ui";
 import ResizableTh from "../components/ResizableTh";
 import { PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, PURCHASE_TYPE_EQUIPMENT, DELIVERY_LOCATIONS, getPurchaseTypeDisplayLabel, COST_CATEGORIES } from "../lib/constants";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
@@ -19,7 +19,7 @@ const PRView = React.memo(() => {
   const { prs, pos, projects, budgets, vendors, materials, addData, updateData, deleteData,
           showAlert, openConfirm, userRole, userData, columnWidths, handleColumnResize,
           visibleProjects, handlePRAction } = useAppData();
-  const { selectedProjectId, handleProjectChange,
+  const { selectedProjectId,
           isFullScreenModalOpen, setIsFullScreenModalOpen,
           expandedPrRows, setExpandedPrRows, togglePrRow } = useUI();
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -51,6 +51,7 @@ const PRView = React.memo(() => {
       requestorEmail: "",
       costCode: "",
       selectedBudgetId: "", // รหัสงบที่เลือก (ใช้แสดงยอดคงเหลือที่ตรงรายการ)
+      selectedSubItemId: "", // id ของ sub-item ที่เลือก
       urgency: "Normal",
       purchaseType: "",
       deliveryLocation: "",
@@ -188,6 +189,7 @@ const PRView = React.memo(() => {
         requestorEmail: pr.requestorEmail || "",
         costCode: pr.costCode,
         selectedBudgetId: pr.budgetId || "",
+        selectedSubItemId: pr.subItemId || "",
         urgency: pr.urgency || "Normal",
         purchaseType: pr.purchaseType || "",
         deliveryLocation: pr.deliveryLocation || "",
@@ -282,6 +284,7 @@ const PRView = React.memo(() => {
           requestorEmail: "",
           costCode: "",
           selectedBudgetId: "",
+          selectedSubItemId: "",
           urgency: "Normal",
           purchaseType: "",
           deliveryLocation: "",
@@ -309,8 +312,10 @@ const PRView = React.memo(() => {
       const budgetCode = first.parentCode;
       const budgetId = first.parentBudgetId || (first.id && String(first.id).startsWith("main-") ? String(first.id).replace("main-", "") : null);
 
-      // Update Header (เก็บรหัสงบที่เลือกเพื่อแสดงยอดคงเหลือของรายการนั้นโดยเฉพาะ)
-      setHeaderData((prev) => ({ ...prev, costCode: budgetCode, selectedBudgetId: budgetId || "" }));
+      // เก็บทั้ง budget ID และ sub-item ID เพื่อแสดงยอดคงเหลือของ sub-item ที่เลือก
+      const isMainItem = typeof first.id === 'string' && first.id.startsWith('main-');
+      const subItemId = isMainItem ? "" : (first.id || "");
+      setHeaderData((prev) => ({ ...prev, costCode: budgetCode, selectedBudgetId: budgetId || "", selectedSubItemId: subItemId }));
 
       // Add Items
       const newItems = selectedSubItemsForPR.map((sub) => {
@@ -355,6 +360,9 @@ const PRView = React.memo(() => {
       const groups = {};
       const ALLOWED_CATS = ["001", "002", "003", "004", "005", "006", "007", "008", "009"];
       availableBudgets.forEach((b) => {
+        // แสดงเฉพาะ budget ที่มี sub-item ที่อนุมัติแล้ว (status === "Approved") อย่างน้อย 1 รายการ
+        const hasApprovedSubs = b.subItems && b.subItems.some(s => s.status === "Approved");
+        if (!hasApprovedSubs) return;
         const cat = b.code.substring(0, 3);
         if (!ALLOWED_CATS.includes(cat)) return;
         if (!groups[cat]) groups[cat] = [];
@@ -369,11 +377,6 @@ const PRView = React.memo(() => {
           <h2 className="text-xl font-bold text-slate-800">
             C. Purchase Request (PR)
           </h2>
-          <ProjectSelect
-            projects={visibleProjects}
-            selectedId={selectedProjectId}
-            onChange={(e) => handleProjectChange(e.target.value, visibleProjects)}
-          />
           <Button
             onClick={() => {
               setIsModalOpen(true);
@@ -386,6 +389,7 @@ const PRView = React.memo(() => {
                 requestorEmail: userData?.email || "",
                 costCode: "",
                 selectedBudgetId: "",
+                selectedSubItemId: "",
                 urgency: "Normal",
                 purchaseType: "",
                 deliveryLocation: "",
@@ -546,51 +550,30 @@ const PRView = React.memo(() => {
                       </tr>
                       {expandedPrRows[pr.id] && (
                         <tr className="bg-slate-50/50 relative z-[7]">
-                          <td colSpan={10} className="p-4 border-b cursor-default" onClick={(e) => e.stopPropagation()}>
-                            <div className="bg-white rounded-lg border border-slate-200 p-3 shadow-sm ml-8">
-                              <h5 className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-2">
-                                <ShoppingCart size={14} /> รายการสินค้าใน PR:{" "}
-                                {pr.prNo}
-                              </h5>
+                          <td colSpan={10} className="px-4 py-1 border-b cursor-default" onClick={(e) => e.stopPropagation()}>
+                            <div className="ml-8 border border-slate-200 rounded overflow-hidden">
                               <table className="w-full text-xs text-left">
-                                <thead className="bg-gray-100 text-gray-600 border-b">
+                                <thead className="bg-slate-100 text-slate-600 border-b">
                                   <tr>
-                                    <th className="p-2 w-10 text-center">#</th>
-                                    <th className="p-2">
-                                      รายการสินค้า (Description)
-                                    </th>
-                                    <th className="p-2 text-right">จำนวน</th>
-                                    <th className="p-2 text-right">ราคา/หน่วย</th>
-                                    <th className="p-2 text-right">รวม</th>
-                                    <th className="p-2 text-center">
-                                      วันที่ต้องใช้
-                                    </th>
+                                    <th className="px-2 py-1 w-8 text-center">#</th>
+                                    <th className="px-2 py-1">รายการ</th>
+                                    <th className="px-2 py-1 text-right">จำนวน</th>
+                                    <th className="px-2 py-1 text-right">ราคา/หน่วย</th>
+                                    <th className="px-2 py-1 text-right">รวม</th>
+                                    <th className="px-2 py-1 text-center">วันที่ใช้</th>
                                   </tr>
                                 </thead>
-                                <tbody className="divide-y divide-gray-100">
-                                  {pr.items &&
-                                    pr.items.map((it, idx) => (
-                                      <tr key={idx} className="hover:bg-gray-50">
-                                        <td className="p-2 text-center text-slate-400">
-                                          {idx + 1}
-                                        </td>
-                                        <td className="p-2 font-medium text-slate-700">
-                                          {it.description}
-                                        </td>
-                                        <td className="p-2 text-right">
-                                          {it.quantity} {it.unit}
-                                        </td>
-                                        <td className="p-2 text-right">
-                                          {formatCurrency(it.price)}
-                                        </td>
-                                        <td className="p-2 text-right font-semibold">
-                                          {formatCurrency(it.quantity * it.price)}
-                                        </td>
-                                        <td className="p-2 text-center text-slate-500">
-                                          {it.requiredDate}
-                                        </td>
-                                      </tr>
-                                    ))}
+                                <tbody className="divide-y divide-slate-100">
+                                  {pr.items && pr.items.map((it, idx) => (
+                                    <tr key={idx} className="hover:bg-blue-50/30">
+                                      <td className="px-2 py-0.5 text-center text-slate-400">{idx + 1}</td>
+                                      <td className="px-2 py-0.5 font-medium text-slate-700">{it.description}</td>
+                                      <td className="px-2 py-0.5 text-right text-slate-500">{it.quantity} {it.unit}</td>
+                                      <td className="px-2 py-0.5 text-right text-slate-500">{formatCurrency(it.price)}</td>
+                                      <td className="px-2 py-0.5 text-right font-semibold text-slate-700">{formatCurrency(it.quantity * it.price)}</td>
+                                      <td className="px-2 py-0.5 text-center text-slate-400">{it.requiredDate}</td>
+                                    </tr>
+                                  ))}
                                 </tbody>
                               </table>
                             </div>
@@ -966,15 +949,37 @@ const PRView = React.memo(() => {
                           const selectedBudget = headerData.selectedBudgetId
                             ? availableBudgets.find((b) => b.id === headerData.selectedBudgetId)
                             : availableBudgets.find((b) => b.code === headerData.costCode);
-                          return selectedBudget ? (
-                            <div className="flex items-center gap-1 mt-1.5 px-2 py-0.5 bg-slate-100 rounded-lg w-fit ml-auto">
-                              <Wallet size={10} className="text-slate-500" />
-                              <span className="text-[10px] text-slate-600 font-semibold">
-                                คงเหลือ:{" "}
-                                {formatCurrency(selectedBudget.remainingBalance)}
+                          if (!selectedBudget) return null;
+
+                          // ถ้าเลือก sub-item ให้แสดงยอดคงเหลือของ sub-item นั้น
+                          let balance = selectedBudget.remainingBalance;
+                          let label = "คงเหลือ";
+                          if (headerData.selectedSubItemId) {
+                            const sub = selectedBudget.subItems?.find(s => s.id === headerData.selectedSubItemId);
+                            if (sub) {
+                              const subUsed = prs
+                                .filter(p => p.projectId === selectedProjectId && p.costCode === selectedBudget.code && p.status !== 'Rejected')
+                                .reduce((sum, p) => {
+                                  const matchItem = p.items?.find(i =>
+                                    (sub.id && i.subItemId === sub.id) ||
+                                    (!i.subItemId && i.description === sub.description)
+                                  );
+                                  return sum + (matchItem ? (matchItem.quantity * matchItem.price) : 0);
+                                }, 0);
+                              balance = sub.amount - subUsed;
+                              label = `คงเหลือ (${sub.description})`;
+                            }
+                          }
+
+                          return (
+                            <div className={`flex items-center gap-1 mt-1.5 px-2 py-0.5 rounded-lg w-fit ml-auto ${balance < 0 ? "bg-red-50" : "bg-slate-100"}`}>
+                              <Wallet size={10} className={balance < 0 ? "text-red-500" : "text-slate-500"} />
+                              <span className={`text-[10px] font-semibold ${balance < 0 ? "text-red-600" : "text-slate-600"}`}>
+                                {label}:{" "}
+                                {formatCurrency(balance)}
                               </span>
                             </div>
-                          ) : null;
+                          );
                         })()}
                       </div>
                     </div>
@@ -1276,108 +1281,81 @@ const PRView = React.memo(() => {
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
-                              {groupedBudgets[cat].map((b) => (
+                              {groupedBudgets[cat].map((b) => {
+                                // เฉพาะ sub-items ที่อนุมัติแล้วและยังมียอดคงเหลือ
+                                const approvedSubItems = (b.subItems || []).filter(sub => sub.status === "Approved");
+                                if (approvedSubItems.length === 0) return null;
+
+                                // คำนวณ Balance ของ main budget = งบรวม - รวม sub-items ทั้งหมด (ตรงกับ BudgetView)
+                                const subItemsTotal = b.subItems ? b.subItems.reduce((sum, s) => sum + s.amount, 0) : 0;
+                                const mainBudgetBalance = b.budgetAmount - subItemsTotal;
+                                return (
                                 <React.Fragment key={b.id}>
-                                  <tr
-                                    className={`transition-colors group ${(!b.subItems || b.subItems.length === 0) ? "cursor-pointer hover:bg-blue-50" : "hover:bg-blue-50"} ${selectedSubItemsForPR.some((i) => i.id === `main-${b.id}`) ? "bg-blue-50 ring-1 ring-blue-200 ring-inset" : ""}`}
-                                    onClick={(e) => {
-                                      if (b.subItems && b.subItems.length > 0) {
-                                        toggleBudgetInModal(b.id);
-                                      } else {
-                                        handleToggleSubItem({
-                                          id: `main-${b.id}`,
-                                          description: b.description,
-                                          quantity: 1,
-                                          unit: "Lot",
-                                          unitPrice: b.remainingBalance,
-                                          amount: b.remainingBalance
-                                        }, b.code, b.id);
-                                      }
-                                    }}
-                                  >
-                                    <td className="py-1.5 px-3 font-medium text-slate-700">
+                                  {/* Main Budget — แสดงเป็น header แบบ non-selectable */}
+                                  <tr className="bg-slate-200/60 border-b border-slate-300 select-none">
+                                    <td className="py-1.5 px-3 font-semibold text-slate-600">
                                       <div className="flex items-center gap-2">
-                                        {(!b.subItems || b.subItems.length === 0) && (
-                                          <span className={`w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center mr-2 transition-all ${selectedSubItemsForPR.some((i) => i.id === `main-${b.id}`) ? "border-blue-600 bg-blue-600" : "border-slate-300 bg-white"}`}>
-                                            {selectedSubItemsForPR.some((i) => i.id === `main-${b.id}`) && <span className="w-1.5 h-1.5 rounded-full bg-white block" />}
-                                          </span>
-                                        )}
-                                        {b.subItems && b.subItems.length > 0 && (
-                                          <button
-                                            type="button"
-                                            className="text-slate-400 hover:text-blue-600"
-                                            onClick={(e) => { e.stopPropagation(); toggleBudgetInModal(b.id); }}
-                                          >
-                                            {expandedBudgetIdsInModal[b.id]
-                                              ? <img src="/arrow_collapse.png" alt="collapse" style={{ width: 18, height: 18, objectFit: 'contain' }} />
-                                              : <img src="/arrow_expand.png" alt="expand" style={{ width: 18, height: 18, objectFit: 'contain' }} />}
-                                          </button>
-                                        )}
+                                        <CornerDownRight size={13} className="text-slate-400 flex-shrink-0" />
                                         {b.code}
                                       </div>
                                     </td>
-                                    <td className="py-1.5 px-3 text-slate-600">
+                                    <td className="py-1.5 px-3 text-slate-600 font-medium italic">
                                       {b.description}
                                     </td>
                                     <td className="py-1.5 px-3 text-right text-slate-500">
                                       {formatCurrency(b.budgetAmount)}
                                     </td>
                                     <td className="py-1.5 px-3 text-right text-orange-600">
-                                      {formatCurrency(b.usedAmount)}
+                                      {formatCurrency(subItemsTotal)}
                                     </td>
-                                    <td className="py-1.5 px-3 text-right font-bold text-green-600">
-                                      {formatCurrency(b.remainingBalance)}
+                                    <td className={`py-1.5 px-3 text-right font-bold ${mainBudgetBalance < 0 ? "text-red-600" : "text-green-600"}`}>
+                                      {formatCurrency(mainBudgetBalance)}
                                     </td>
                                   </tr>
-                                  {
-                                    expandedBudgetIdsInModal[b.id] && b.subItems && b.subItems.map((sub, sIdx) => {
-                                      // Calculate sub-item usage
-                                      // Logic: Find PRs with this CostCode AND containing item with same description
-                                      const subUsed = prs
-                                        .filter(p => p.costCode === b.code && p.status !== 'Rejected')
-                                        .reduce((sum, p) => {
-                                          const matchItem = p.items?.find(i => i.description === sub.description); // Simple matching
-                                          return sum + (matchItem ? (matchItem.quantity * matchItem.price) : 0);
-                                        }, 0);
+                                  {/* Sub-items — เฉพาะที่ Approved แล้ว และยังมียอดคงเหลือ */}
+                                  {approvedSubItems.map((sub, sIdx) => {
+                                    const subUsed = prs
+                                      .filter(p => p.projectId === selectedProjectId && p.costCode === b.code && p.status !== 'Rejected')
+                                      .reduce((sum, p) => {
+                                        const matchItem = p.items?.find(i =>
+                                          (sub.id && i.subItemId === sub.id) ||
+                                          (!i.subItemId && i.description === sub.description)
+                                        );
+                                        return sum + (matchItem ? (matchItem.quantity * matchItem.price) : 0);
+                                      }, 0);
 
-                                      const isFullyUsed = subUsed >= sub.amount; // Or tolerance?
+                                    const subBalance = sub.amount - subUsed;
+                                    if (subUsed >= sub.amount) return null;
 
-                                      if (isFullyUsed) return null; // Hide if used
-
-                                      return (
-                                        <tr
-                                          key={`${b.id}-sub-${sIdx}`}
-                                          className={`bg-slate-50/50 ${sub.status !== "Approved" ? "opacity-60" : "cursor-pointer hover:bg-blue-50"} ${selectedSubItemsForPR.some((i) => i.id === sub.id) ? "bg-blue-50/80 ring-1 ring-blue-200 ring-inset" : ""}`}
-                                          onClick={() => {
-                                            if (sub.status === "Approved") handleToggleSubItem(sub, b.code, b.id);
-                                          }}
-                                        >
-                                          <td className="py-1.5 px-3 pl-8 border-l-2 border-blue-100">
-                                            <span className={`inline-flex w-4 h-4 rounded-full border-2 flex-shrink-0 items-center justify-center transition-all ${selectedSubItemsForPR.some((i) => i.id === sub.id) ? "border-blue-600 bg-blue-600" : "border-slate-300 bg-white"}`}>
-                                              {selectedSubItemsForPR.some((i) => i.id === sub.id) && <span className="w-1.5 h-1.5 rounded-full bg-white block" />}
-                                            </span>
-                                          </td>
-                                          <td className="py-1.5 px-3 text-slate-700">
-                                            {sub.description}
-                                            {sub.status !== "Approved" && (
-                                              <span className="text-orange-500 ml-2 font-bold">(รอ MD อนุมัติ)</span>
-                                            )}
-                                          </td>
-                                          <td className="py-1.5 px-3 text-right text-red-600">
-                                            -{formatCurrency(sub.amount)}
-                                          </td>
-                                          <td className="py-1.5 px-3 text-right text-orange-400">
-                                            {formatCurrency(subUsed)}
-                                          </td>
-                                          <td className="py-1.5 px-3 text-right font-bold text-green-600">
-                                            {formatCurrency(sub.amount - subUsed)}
-                                          </td>
-                                        </tr>
-                                      );
-                                    })
-                                  }
+                                    return (
+                                      <tr
+                                        key={`${b.id}-sub-${sIdx}`}
+                                        className={`bg-slate-50/50 cursor-pointer hover:bg-blue-50 ${selectedSubItemsForPR.some((i) => i.id === sub.id) ? "bg-blue-50/80 ring-1 ring-blue-200 ring-inset" : ""}`}
+                                        onClick={() => handleToggleSubItem(sub, b.code, b.id)}
+                                      >
+                                        <td className="py-1.5 px-3 pl-8 border-l-2 border-blue-100">
+                                          <span className={`inline-flex w-4 h-4 rounded-full border-2 flex-shrink-0 items-center justify-center transition-all ${selectedSubItemsForPR.some((i) => i.id === sub.id) ? "border-blue-600 bg-blue-600" : "border-slate-300 bg-white"}`}>
+                                            {selectedSubItemsForPR.some((i) => i.id === sub.id) && <span className="w-1.5 h-1.5 rounded-full bg-white block" />}
+                                          </span>
+                                        </td>
+                                        <td className="py-1.5 px-3 text-slate-700">
+                                          {sub.description}
+                                        </td>
+                                        <td className="py-1.5 px-3 text-right text-slate-600 font-medium">
+                                          {formatCurrency(sub.amount)}
+                                        </td>
+                                        <td className="py-1.5 px-3 text-right text-orange-500">
+                                          {formatCurrency(subUsed)}
+                                        </td>
+                                        <td className={`py-1.5 px-3 text-right font-bold ${subBalance < 0 ? "text-red-600" : "text-green-600"}`}>
+                                          {formatCurrency(subBalance)}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
                                 </React.Fragment>
-                              ))}
+                                );
+                              })}
                             </tbody>
                           </table>
                         </div>

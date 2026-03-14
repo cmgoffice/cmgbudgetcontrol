@@ -12,6 +12,7 @@ import {
   addDoc, updateDoc, deleteDoc, getDocs,
 } from "firebase/firestore";
 import { db, appId } from "../lib/firebase";
+import { MODULE_ACCESS } from "../lib/constants";
 
 // ─── Context Shape ────────────────────────────────────────────────────────────
 const AppDataContext = createContext(null);
@@ -21,12 +22,14 @@ export const useAppData = () => useContext(AppDataContext);
 export const AppDataProvider = ({
   children,
   userRole,
+  userRoles = [],
   userData,
   user,
   showAlert,
   openConfirm,
   logAction,
 }) => {
+  const roles = Array.isArray(userRoles) && userRoles.length ? userRoles : (userRole ? [userRole] : ["Staff"]);
   // ── Firebase collections ──────────────────────────────────────────────────
   const [projects,  setProjects]  = useState([]);
   const [budgets,   setBudgets]   = useState([]);
@@ -76,7 +79,7 @@ export const AppDataProvider = ({
     }
   }, []);
 
-  // ── Firebase sync (เฉพาะ collection ที่ต้อง realtime) ───────────────────────
+  // ── Firebase sync (realtime ผ่าน onSnapshot — แก้ไขที่ใดก็ตามจะอัปเดตทุกที่โดยไม่ต้องรีเฟรช) ─
   useEffect(() => {
     const syncCollection = (collectionName, setter) => {
       const ref = collection(db, "artifacts", appId, "public", "data", collectionName);
@@ -110,7 +113,7 @@ export const AppDataProvider = ({
 
   // ── Column resize ──────────────────────────────────────────────────────────
   const handleColumnResize = useCallback((tableId, colKey, width) => {
-    if (userRole !== "Administrator") return;
+    if (!roles.includes("Administrator")) return;
     setColumnWidths((prev) => {
       const next = { ...prev, [tableId]: { ...(prev[tableId] || {}), [colKey]: width } };
       if (colSaveTimer.current) clearTimeout(colSaveTimer.current);
@@ -121,7 +124,10 @@ export const AppDataProvider = ({
       }, 700);
       return next;
     });
-  }, [userRole]);
+  }, [roles]);
+
+  // ── ป้องกันการบันทึกซ้ำ (double submit) ───────────────────────────────────
+  const pendingUpdatesRef = useRef(new Set());
 
   // ── CRUD helpers (อัปเดต cache vendors/materials หลัง write เพื่อไม่ต้องโหลดใหม่) ─
   const addData = useCallback(async (collectionName, data, customId = null) => {
@@ -145,15 +151,24 @@ export const AppDataProvider = ({
   }, [logAction, showAlert]);
 
   const updateData = useCallback(async (collectionName, id, data) => {
+    const key = `${collectionName}:${id}`;
+    if (pendingUpdatesRef.current.has(key)) {
+      showAlert("กรุณารอสักครู่", "กำลังบันทึกข้อมูลอยู่ ไม่สามารถบันทึกซ้ำได้", "warning");
+      return false;
+    }
+    pendingUpdatesRef.current.add(key);
+    const payload = { ...data, updatedAt: new Date().toISOString() };
     try {
-      await updateDoc(doc(db, "artifacts", appId, "public", "data", collectionName, id), data);
-      if (collectionName === "vendors") setVendors((prev) => prev.map((v) => (v.id === id ? { ...v, ...data } : v)));
-      if (collectionName === "materials") setMaterials((prev) => prev.map((m) => (m.id === id ? { ...m, ...data } : m)));
+      await updateDoc(doc(db, "artifacts", appId, "public", "data", collectionName, id), payload);
+      if (collectionName === "vendors") setVendors((prev) => prev.map((v) => (v.id === id ? { ...v, ...payload } : v)));
+      if (collectionName === "materials") setMaterials((prev) => prev.map((m) => (m.id === id ? { ...m, ...payload } : m)));
       await logAction("Update", `Updated ${collectionName.slice(0, -1)} ID: ${id}`);
       return true;
     } catch (e) {
       showAlert("Error", "เกิดข้อผิดพลาดในการแก้ไขข้อมูล: " + e.message, "error");
       return false;
+    } finally {
+      pendingUpdatesRef.current.delete(key);
     }
   }, [logAction, showAlert]);
 
@@ -170,23 +185,30 @@ export const AppDataProvider = ({
     }
   }, [logAction, showAlert]);
 
+  const canAccessModule = useCallback((menuId) => {
+    const allowed = MODULE_ACCESS[menuId];
+    if (!allowed) return true;
+    if (roles.includes("Administrator")) return true;
+    return roles.some((r) => allowed.includes(r));
+  }, [roles]);
+
   // ── Visible projects (role-filtered) ──────────────────────────────────────
   const visibleProjects = useMemo(() => {
-    if (userRole === "Administrator") return projects;
+    if (roles.includes("Administrator")) return projects;
     const ids = userData?.assignedProjectIds || [];
     return projects.filter((p) => ids.includes(p.id));
-  }, [projects, userData, userRole]);
+  }, [projects, userData, roles]);
 
   // ── Pending approval counts — GLOBAL (for Bell badge) ─────────────────────
   const pendingBudgetsGlobal = useMemo(() => {
-    if (userRole !== "MD" && userRole !== "Administrator") return [];
+    if (!roles.includes("MD") && !roles.includes("Administrator")) return [];
     return budgets.filter(
       (b) => b.status === "Wait MD Approve" || b.status === "Revision Pending"
     );
-  }, [budgets, userRole]);
+  }, [budgets, roles]);
 
   const pendingSubItemsGlobal = useMemo(() => {
-    if (userRole !== "MD" && userRole !== "Administrator") return [];
+    if (!roles.includes("MD") && !roles.includes("Administrator")) return [];
     const pendingSubs = [];
     budgets.forEach((b) => {
       (b.subItems || []).forEach((sub) => {
@@ -196,23 +218,23 @@ export const AppDataProvider = ({
       });
     });
     return pendingSubs;
-  }, [budgets, userRole]);
+  }, [budgets, roles]);
 
   const pendingPRsGlobal = useMemo(() => prs.filter((pr) => {
-    if (userRole === "Administrator" && pr.status?.startsWith("Pending")) return true;
-    if (userRole === "CM"  && pr.status === "Pending CM")  return true;
-    if (userRole === "PM"  && pr.status === "Pending PM")  return true;
-    if (userRole === "GM"  && pr.status === "Pending GM")  return true;
-    if (userRole === "MD"  && pr.status === "Pending MD")  return true;
+    if (roles.includes("Administrator") && pr.status?.startsWith("Pending")) return true;
+    if (roles.includes("CM")  && pr.status === "Pending CM")  return true;
+    if (roles.includes("PM")  && pr.status === "Pending PM")  return true;
+    if (roles.includes("GM")  && pr.status === "Pending GM")  return true;
+    if (roles.includes("MD")  && pr.status === "Pending MD")  return true;
     return false;
-  }), [prs, userRole]);
+  }), [prs, roles]);
 
   const pendingPOsGlobal = useMemo(() => pos.filter((po) => {
-    if (userRole === "Administrator" && po.status?.startsWith("Pending")) return true;
-    if (userRole === "PCM" && po.status === "Pending PCM") return true;
-    if (userRole === "GM"  && po.status === "Pending GM")  return true;
+    if (roles.includes("Administrator") && po.status?.startsWith("Pending")) return true;
+    if (roles.includes("PCM") && po.status === "Pending PCM") return true;
+    if (roles.includes("GM")  && po.status === "Pending GM")  return true;
     return false;
-  }), [pos, userRole]);
+  }), [pos, roles]);
 
   const totalPendingCount = useMemo(() =>
     pendingBudgetsGlobal.length + pendingSubItemsGlobal.length +
@@ -249,8 +271,8 @@ export const AppDataProvider = ({
     if (!pr) return;
     let newStatus = pr.status;
     if (action === "approve") {
-      if (pr.status === "Pending CM" && (userRole === "CM" || userRole === "Administrator")) newStatus = "Pending PM";
-      else if (pr.status === "Pending PM" && (userRole === "PM" || userRole === "Administrator")) newStatus = "Approved";
+      if (pr.status === "Pending CM" && (roles.includes("CM") || roles.includes("Administrator"))) newStatus = "Pending PM";
+      else if (pr.status === "Pending PM" && (roles.includes("PM") || roles.includes("Administrator"))) newStatus = "Approved";
     } else if (action === "reject") {
       newStatus = "Rejected";
     }
@@ -259,15 +281,15 @@ export const AppDataProvider = ({
       if (action === "approve") payload.rejectReason = "";
       await updateData("prs", id, payload);
     }
-  }, [prs, userRole, updateData]);
+  }, [prs, roles, updateData]);
 
   const handlePOAction = useCallback(async (id, action) => {
     const po = pos.find((p) => p.id === id);
     if (!po) return;
     let newStatus = po.status;
     if (action === "approve") {
-      if (po.status === "Pending PCM" && (userRole === "PCM" || userRole === "Administrator")) newStatus = "Pending GM";
-      else if (po.status === "Pending GM" && (userRole === "GM" || userRole === "Administrator")) newStatus = "Approved";
+      if (po.status === "Pending PCM" && (roles.includes("PCM") || roles.includes("Administrator"))) newStatus = "Pending GM";
+      else if (po.status === "Pending GM" && (roles.includes("GM") || roles.includes("Administrator"))) newStatus = "Approved";
     } else if (action === "reject") {
       newStatus = "Rejected";
     }
@@ -276,7 +298,7 @@ export const AppDataProvider = ({
       if (action === "approve") payload.rejectReason = "";
       await updateData("pos", id, payload);
     }
-  }, [pos, userRole, updateData]);
+  }, [pos, roles, updateData]);
 
   // ── Context value ──────────────────────────────────────────────────────────
   const value = useMemo(() => ({
@@ -299,7 +321,8 @@ export const AppDataProvider = ({
     handlePRAction, handlePOAction,
     // passthrough from AuthContext
     showAlert, openConfirm, logAction,
-    userRole, userData, user,
+    userRole, userRoles: roles, userData, user,
+    canAccessModule,
     // raw Firebase (for views that need direct Firestore access)
     db, appId,
   }), [
@@ -314,7 +337,8 @@ export const AppDataProvider = ({
     columnWidths, handleColumnResize,
     handlePRAction, handlePOAction,
     showAlert, openConfirm, logAction,
-    userRole, userData, user,
+    userRole, roles, userData, user,
+    canAccessModule,
   ]);
 
   return (
