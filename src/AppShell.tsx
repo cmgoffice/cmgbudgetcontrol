@@ -33,6 +33,21 @@ import ProjectsView from "./views/ProjectsView";
 import PRView from "./views/PRView";
 import POView from "./views/POView";
 import BudgetView from "./views/BudgetView";
+
+/** รูปโปรไฟล์ — ถ้าโหลดไม่สำเร็จ (ลิงก์หมดอายุ/ถูกบล็อก) จะแสดง fallback แทนไอคอนรูปพัง */
+const ProfileAvatar = ({ src, className, fallback }) => {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) return fallback;
+  return (
+    <img
+      src={src}
+      alt=""
+      className={className}
+      onError={() => setFailed(true)}
+    />
+  );
+};
+
 const AppShell = () => {
   const { user, userData, logout } = useContext(AuthContext);
   const userRole = userData?.role || "Staff";
@@ -112,17 +127,15 @@ const AppShell = () => {
         <div className={`border-b border-slate-800 bg-slate-950 shrink-0 ${sidebarCollapsed ? "p-2" : "p-4"}`}>
           <div className={`rounded-xl bg-slate-800/80 border border-slate-700 ${sidebarCollapsed ? "p-2" : "p-3"}`}>
             <div className={`flex items-center ${sidebarCollapsed ? "justify-center" : "gap-3"}`}>
-              {user?.photoURL ? (
-                <img
-                  src={user.photoURL}
-                  alt=""
-                  className="w-11 h-11 rounded-full object-cover border-2 border-slate-600 shadow-md flex-shrink-0"
-                />
-              ) : (
-                <div className="w-11 h-11 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-md flex-shrink-0">
-                  {userData?.firstName?.charAt(0) || user?.email?.charAt(0) || "?"}
-                </div>
-              )}
+              <ProfileAvatar
+                src={userData?.profilePhotoUrl || user?.photoURL}
+                className="w-11 h-11 rounded-full object-cover border-2 border-slate-600 shadow-md flex-shrink-0"
+                fallback={
+                  <div className="w-11 h-11 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-md flex-shrink-0">
+                    {userData?.firstName?.charAt(0) || user?.email?.charAt(0) || "?"}
+                  </div>
+                }
+              />
               {!sidebarCollapsed && (
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-bold text-white truncate">
@@ -406,17 +419,15 @@ const AppShell = () => {
                 className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200/80 transition-colors"
                 title="โปรไฟล์"
               >
-                {user?.photoURL ? (
-                  <img
-                    src={user.photoURL}
-                    alt=""
-                    className="w-8 h-8 rounded-full object-cover border border-slate-300"
-                  />
-                ) : (
-                  <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-xs shadow-md">
-                    {userData?.firstName?.charAt(0) || user?.email?.charAt(0) || "?"}
-                  </div>
-                )}
+                <ProfileAvatar
+                  src={userData?.profilePhotoUrl || user?.photoURL}
+                  className="w-8 h-8 rounded-full object-cover border border-slate-300"
+                  fallback={
+                    <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-xs shadow-md">
+                      {userData?.firstName?.charAt(0) || user?.email?.charAt(0) || "?"}
+                    </div>
+                  }
+                />
                 <ChevronDown size={16} className="text-slate-500" />
               </button>
               <AnimatePresence>
@@ -1140,17 +1151,15 @@ const UserProfile = () => {
     <div className="max-w-2xl mx-auto mt-8 space-y-4">
       <Card className="p-8">
         <div className="flex items-center gap-4 mb-6 pb-6 border-b">
-          {user?.photoURL ? (
-            <img
-              src={user.photoURL}
-              alt=""
-              className="w-20 h-20 rounded-full object-cover border-2 border-slate-200 shadow-md"
-            />
-          ) : (
-            <div className="w-20 h-20 bg-slate-200 rounded-full flex items-center justify-center text-slate-500">
-              <User size={40} />
-            </div>
-          )}
+          <ProfileAvatar
+            src={userData?.profilePhotoUrl || user?.photoURL}
+            className="w-20 h-20 rounded-full object-cover border-2 border-slate-200 shadow-md"
+            fallback={
+              <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-2xl">
+                {userData?.firstName?.charAt(0) || user?.email?.charAt(0) || "?"}
+              </div>
+            }
+          />
           <div>
             <h2 className="text-2xl font-bold text-slate-800">
               {userData?.firstName} {userData?.lastName}
@@ -1589,17 +1598,15 @@ const AdminDashboard = () => {
                 <tr key={u.id} className="hover:bg-slate-50">
                   <td className="p-4" title={`${u.firstName || ""} ${u.lastName || ""} | ${u.email || ""}`}>
                     <div className="flex items-center gap-3">
-                      {u.photoURL ? (
-                        <img
-                          src={u.photoURL}
-                          alt=""
-                          className="w-8 h-8 rounded-full object-cover border border-slate-200 flex-shrink-0"
-                        />
-                      ) : (
-                        <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0">
-                          {u.firstName?.charAt(0) || u.email?.charAt(0) || "?"}
-                        </div>
-                      )}
+                      <ProfileAvatar
+                        src={u.profilePhotoUrl || u.photoURL}
+                        className="w-8 h-8 rounded-full object-cover border border-slate-200 flex-shrink-0"
+                        fallback={
+                          <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0">
+                            {u.firstName?.charAt(0) || u.email?.charAt(0) || "?"}
+                          </div>
+                        }
+                      />
                       <div>
                         <div className="font-medium text-slate-900 cell-text">
                           {u.firstName} {u.lastName}

@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React, { useState, useEffect, useMemo, useCallback, useRef, useContext } from "react";
+import { createPortal } from "react-dom";
 import {
   Plus, Trash2, Edit, CheckCircle, XCircle, FileText, ChevronDown, ChevronRight, ChevronUp,
   CircleArrowRight, CircleArrowDown, CornerDownRight, AlertCircle, Save, Play,
@@ -15,7 +16,7 @@ import MaterialAutoComplete from "../components/MaterialAutoComplete";
 import { PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, PURCHASE_TYPE_EQUIPMENT, DELIVERY_LOCATIONS, getPurchaseTypeDisplayLabel, COST_CATEGORIES } from "../lib/constants";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
 import { motion, AnimatePresence } from "framer-motion";
-import { generatePOPdfBytes, uploadGeneratedPdf, stampSignatureToPdf } from "../lib/pdfForms";
+import { generatePOPdfBytes, uploadGeneratedPdf, stampSignatureToField, stampSignatureToPdf, deleteGeneratedPdf } from "../lib/pdfForms";
 const POView = React.memo(() => {
   const { prs, pos, projects, budgets, vendors, materials, addData, updateData, deleteData, loadVendors, loadMaterials,
           showAlert, openConfirm, userRole, columnWidths, handleColumnResize,
@@ -26,6 +27,7 @@ const POView = React.memo(() => {
     // UI States
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isVendorModalOpen, setIsVendorModalOpen] = useState(false);
+    const [savePoProgress, setSavePoProgress] = useState<{ show: boolean; pct: number; step: string }>({ show: false, pct: 0, step: "" });
     const [isPrSelectModalOpen, setIsPrSelectModalOpen] = useState(false);
     const [tempSelectedPrIds, setTempSelectedPrIds] = useState<string[]>([]);
     const [prSelectFilterText, setPrSelectFilterText] = useState("");
@@ -97,6 +99,10 @@ const POView = React.memo(() => {
     const [vendorSearchQuery, setVendorSearchQuery] = useState("");
     const [vendorDropdownOpen, setVendorDropdownOpen] = useState(false);
     const vendorSearchDebounceRef = useRef(null);
+    const poOpenDateInputRef = useRef(null);
+    const requiredDateInputRef = useRef(null);
+    const vendorDropdownAnchorRef = useRef(null);
+    const [vendorDropdownRect, setVendorDropdownRect] = useState(null);
     useEffect(() => {
       if (vendorSearchDebounceRef.current) clearTimeout(vendorSearchDebounceRef.current);
       vendorSearchDebounceRef.current = setTimeout(() => {
@@ -125,8 +131,20 @@ const POView = React.memo(() => {
         const v = vendors.find((x: any) => x.id === formData.vendorId);
         if (v?.name) setVendorSearchText(v.name);
       }
-      if (!isModalOpen) { setVendorSearchText(""); setVendorDropdownOpen(false); }
+      if (!isModalOpen) { setVendorSearchText(""); setVendorDropdownOpen(false); setVendorDropdownRect(null); }
     }, [editingPoId, formData.vendorId, isModalOpen]);
+
+    // วัดตำแหน่ง Vendor dropdown เพื่อ render ผ่าน Portal (ให้ list ล้ำลงไปด้านล่างได้)
+    useEffect(() => {
+      if (!vendorDropdownOpen || !vendorDropdownAnchorRef.current) { setVendorDropdownRect(null); return; }
+      const update = () => {
+        if (vendorDropdownAnchorRef.current) setVendorDropdownRect(vendorDropdownAnchorRef.current.getBoundingClientRect());
+      };
+      update();
+      window.addEventListener("scroll", update, true);
+      window.addEventListener("resize", update);
+      return () => { window.removeEventListener("scroll", update, true); window.removeEventListener("resize", update); };
+    }, [vendorDropdownOpen]);
 
     // Auto-generate PO No.: PO{YY}{JXX}-{POT}{XXXX}
     // ตัวอย่าง: PO26J01-CC0001
@@ -495,8 +513,13 @@ const POView = React.memo(() => {
         );
       }
 
-      // สร้าง PDF และ upload ก่อน save (มี timeout 8s เพื่อไม่ให้ค้าง)
+      // แสดง Progress Modal
+      const setProgress = (pct: number, step: string) => setSavePoProgress({ show: true, pct, step });
+      setProgress(5, "เตรียมข้อมูล...");
+
+      // สร้าง PDF และ upload ก่อน save
       let pdfUrl: string | undefined;
+      let pdfError: string | null = null;
       try {
         const vendor = vendors.find((v: any) => v.id === formData.vendorId) || null;
         const project = projects.find((p: any) => p.id === selectedProjectId) || null;
@@ -507,32 +530,45 @@ const POView = React.memo(() => {
           requiredDate: formData.requiredDate, vatType: formData.vatType,
           items: formData.items, amount: totals.total,
           discount: formData.discount || 0,
+          poDate: formData.poOpenDate
+            ? new Date(formData.poOpenDate + "T00:00:00").toISOString()
+            : new Date().toISOString(),
           ...(manualVatOverride != null && !isNaN(manualVatOverride) ? { manualVat: manualVatOverride } : {}),
         };
         const safePONo = formData.poNo.replace(/[^a-zA-Z0-9\-_]/g, "_");
         const safeProjId = selectedProjectId || "unknown";
         const creatorSignatureUrl = userData?.signatureUrl || null;
+
         const generateAndUpload = async () => {
+          setProgress(20, "กำลังสร้าง PDF...");
           let bytes = await generatePOPdfBytes(draftPayload, { vendor, project });
-          // Step 1: Stamp creator signature on the generated PDF
+
+          setProgress(50, "ประทับลายเซ็นผู้สร้าง...");
           if (creatorSignatureUrl) {
             try {
-              bytes = await stampSignatureToPdf(bytes, creatorSignatureUrl, {
-                x: 60, y: 60, width: 130, height: 55, pageIndex: 0,
-              });
+              bytes = await stampSignatureToField(bytes, creatorSignatureUrl, "Signature1");
             } catch (sigErr) {
-              console.warn("[PO Save] Stamp creator signature failed:", sigErr);
+              console.warn("[PO Save] Stamp Signature1 failed:", sigErr);
             }
           }
+
+          setProgress(70, "อัปโหลด PDF ขึ้น Cloud...");
           return await uploadGeneratedPdf(bytes, `generated/pos/${safeProjId}/${safePONo}.pdf`);
         };
+
         const timeout = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("PDF timeout")), 15000)
         );
         pdfUrl = await Promise.race([generateAndUpload(), timeout]);
       } catch (e) {
-        console.warn("[PO Save] PDF generation skipped:", e);
+        console.warn("[PO Save] PDF generation/upload failed:", e);
+        const msg = e?.message || String(e);
+        pdfError = /permission|unauthorized|403|rules/i.test(msg)
+          ? "ไม่มีสิทธิ์เขียน Storage — กรุณาตั้งค่า Storage Rules ใน Firebase Console"
+          : msg;
       }
+
+      setProgress(85, "บันทึกข้อมูล PO...");
 
       const basePayload = {
         poNo: formData.poNo,
@@ -562,6 +598,7 @@ const POView = React.memo(() => {
       } else {
         success = await addData("pos", basePayload);
         if (success) {
+          setProgress(93, "อัปเดตสถานะใบขอซื้อ...");
           const uniquePrIds = [...new Set(formData.items.map((i: any) => i.prId).filter(Boolean))];
           for (const prId of uniquePrIds) {
             await updateData("prs", prId, { status: "PO Issued" });
@@ -570,6 +607,11 @@ const POView = React.memo(() => {
       }
 
       if (success) {
+        setProgress(100, "เสร็จสิ้น!");
+        // หน่วงเล็กน้อยให้ผู้ใช้เห็น 100%
+        await new Promise(r => setTimeout(r, 600));
+        setSavePoProgress({ show: false, pct: 0, step: "" });
+
         setIsModalOpen(false);
         setIsFullScreenModalOpen(false);
         setEditingPoId(null);
@@ -582,9 +624,13 @@ const POView = React.memo(() => {
         setDiscountEnabled(false);
         if (pdfUrl) {
           showAlert("สำเร็จ", "บันทึก PO และสร้าง PDF เรียบร้อย — กดดาวน์โหลดได้จากตาราง PO", "success");
+        } else if (pdfError) {
+          showAlert("บันทึก PO เรียบร้อย แต่ PDF ไม่บันทึกลง Storage", pdfError, "warning");
         } else {
           showAlert("สำเร็จ", "บันทึก PO เรียบร้อย", "success");
         }
+      } else {
+        setSavePoProgress({ show: false, pct: 0, step: "" });
       }
     };
 
@@ -615,30 +661,30 @@ const POView = React.memo(() => {
 
       // Approve Flow
       const isPCMApprove = po.status === "Pending PCM" && (userRole === "PCM" || userRole === "Administrator");
+      const isGMApprove  = po.status === "Pending GM"  && (userRole === "GM"  || userRole === "Administrator");
       if (isPCMApprove) {
         newStatus = "Pending GM";
-      } else if (po.status === "Pending GM" && (userRole === "GM" || userRole === "Administrator")) {
+      } else if (isGMApprove) {
         newStatus = "Approved";
       }
 
       if (newStatus !== po.status) {
-        // Step 2: Stamp PCM approver's signature onto the existing PDF, overwrite in Storage
         let updatedPdfUrl: string | undefined;
-        if (isPCMApprove && po.pdfUrl && userData?.signatureUrl) {
+        // Signature2 = PCM Approve, Signature3 = GM Approve
+        const stampField = isPCMApprove ? "Signature2" : isGMApprove ? "Signature3" : null;
+        if (stampField && po.pdfUrl && userData?.signatureUrl) {
           try {
             const safePONo = (po.poNo || po.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
             const safeProjId = po.projectId || "unknown";
-            const existingPdfRes = await fetch(po.pdfUrl);
+            // เติม cache buster เพื่อให้ fetch ไฟล์ล่าสุดมา stamp
+            const existingPdfRes = await fetch(`${po.pdfUrl}${po.pdfUrl.includes("?") ? "&" : "?"}t=${Date.now()}`);
             if (existingPdfRes.ok) {
               const existingBytes = new Uint8Array(await existingPdfRes.arrayBuffer());
-              const stampedBytes = await stampSignatureToPdf(existingBytes, userData.signatureUrl, {
-                x: 230, y: 60, width: 130, height: 55, pageIndex: 0,
-              });
-              // Upload to same path — Firebase Storage returns a fresh download URL
+              const stampedBytes = await stampSignatureToField(existingBytes, userData.signatureUrl, stampField as "Signature2" | "Signature3");
               updatedPdfUrl = await uploadGeneratedPdf(stampedBytes, `generated/pos/${safeProjId}/${safePONo}.pdf`);
             }
           } catch (stampErr) {
-            console.warn("[PO Approve] Stamp PCM signature failed:", stampErr);
+            console.warn(`[PO Approve] Stamp ${stampField} failed:`, stampErr);
           }
         }
 
@@ -647,6 +693,17 @@ const POView = React.memo(() => {
           rejectReason: "",
           ...(updatedPdfUrl ? { pdfUrl: updatedPdfUrl } : {}),
         });
+
+        // อัปเดต viewingPO ใน state ให้เป็นข้อมูลล่าสุด (เพื่อให้ Modal โชว์ PDF ใหม่ทันที)
+        if (viewingPO && viewingPO.id === poId) {
+          setViewingPO((prev) => ({
+            ...prev,
+            status: newStatus,
+            rejectReason: "",
+            ...(updatedPdfUrl ? { pdfUrl: updatedPdfUrl } : {}),
+          }));
+        }
+
         showAlert("อนุมัติ", `เลื่อนสถานะเป็น ${newStatus}`, "success");
       }
     };
@@ -657,6 +714,47 @@ const POView = React.memo(() => {
 
     return (
       <div className="space-y-4">
+
+        {/* ── Progress Modal: render ที่ document.body ผ่าน Portal เพื่อไม่ให้ถูกทับโดย modal อื่น ── */}
+        {savePoProgress.show && createPortal(
+          <div style={{ position: "fixed", inset: 0, zIndex: 999999, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)" }}>
+            <div className="bg-white rounded-2xl shadow-2xl px-8 py-7 w-80 flex flex-col items-center gap-4">
+              {/* วงกลม progress ring */}
+              <div className="relative w-16 h-16 flex items-center justify-center">
+                <svg className="absolute inset-0 w-16 h-16 -rotate-90" viewBox="0 0 64 64">
+                  <circle cx="32" cy="32" r="28" fill="none" stroke="#e2e8f0" strokeWidth="6" />
+                  <circle
+                    cx="32" cy="32" r="28" fill="none"
+                    stroke={savePoProgress.pct < 100 ? "#dc2626" : "#16a34a"}
+                    strokeWidth="6"
+                    strokeLinecap="round"
+                    strokeDasharray={`${2 * Math.PI * 28}`}
+                    strokeDashoffset={`${2 * Math.PI * 28 * (1 - savePoProgress.pct / 100)}`}
+                    style={{ transition: "stroke-dashoffset 0.4s ease, stroke 0.3s" }}
+                  />
+                </svg>
+                <span className={`text-base font-bold ${savePoProgress.pct < 100 ? "text-red-600" : "text-green-600"}`}>
+                  {savePoProgress.pct}%
+                </span>
+              </div>
+
+              {/* Step description */}
+              <p className="text-sm font-semibold text-slate-700 text-center">{savePoProgress.step}</p>
+
+              {/* Progress bar */}
+              <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                <div
+                  className={`h-2 rounded-full transition-all duration-500 ${savePoProgress.pct < 100 ? "bg-red-500" : "bg-green-500"}`}
+                  style={{ width: `${savePoProgress.pct}%` }}
+                />
+              </div>
+
+              <p className="text-[11px] text-slate-400">กรุณารอสักครู่...</p>
+            </div>
+          </div>,
+          document.body
+        )}
+
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
           <h2 className="text-xl font-bold text-slate-800">D. Purchase Order (PO)</h2>
           <Button
@@ -665,8 +763,10 @@ const POView = React.memo(() => {
               setFormData({
                 poNo: "",
                 poType: "",
+                receiveType: "",
                 vendorId: "",
                 requiredDate: "",
+                poOpenDate: new Date().toISOString().split("T")[0],
                 vatType: "ex-vat",
                 selectedPrIds: [],
                 items: [],
@@ -813,6 +913,11 @@ const POView = React.memo(() => {
                             onClick={() => {
                               openConfirm("ยืนยันการลบ", "คุณต้องการลบ PO นี้ใช่หรือไม่?", async () => {
                                 const prIds = po.items ? [...new Set(po.items.map((i: any) => i.prId).filter(Boolean))] : (po.prRefId ? [po.prRefId] : []);
+                                if (po.pdfUrl) {
+                                  const safePONo = (po.poNo || po.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
+                                  const safeProjId = po.projectId || "unknown";
+                                  await deleteGeneratedPdf(`generated/pos/${safeProjId}/${safePONo}.pdf`);
+                                }
                                 const deleted = await deleteData("pos", po.id);
                                 if (deleted && prIds.length > 0) {
                                   for (const prId of prIds) {
@@ -874,6 +979,38 @@ const POView = React.memo(() => {
 
                 {/* Body */}
                 <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+                  {/* PDF Thumbnail (ถ้ามี) — ใช้ key บังคับ remount เมื่อ status เปลี่ยน เพื่อโชว์ฉบับลายเซ็นล่าสุด */}
+                  {viewingPO.pdfUrl && (() => {
+                    const pdfUrlWithCacheBuster = `${viewingPO.pdfUrl}${viewingPO.pdfUrl.includes("?") ? "&" : "?"}t=${Date.now()}`;
+                    const iframeKey = `po-pdf-${viewingPO.id}-${viewingPO.status}`;
+                    return (
+                      <div className="mb-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">เอกสาร PDF</span>
+                        </div>
+                        <a
+                          href={pdfUrlWithCacheBuster}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="group relative block w-48 h-64 border border-slate-200 rounded-xl overflow-hidden bg-slate-50 hover:border-blue-400 hover:shadow-md transition-all"
+                          title="คลิกเพื่อเปิด PDF ในแท็บใหม่"
+                        >
+                          <iframe
+                            key={iframeKey}
+                            src={`${pdfUrlWithCacheBuster}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`}
+                            className="w-full h-full pointer-events-none opacity-80 group-hover:opacity-100 transition-opacity"
+                            title="PO PDF Thumbnail"
+                          />
+                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors flex items-center justify-center">
+                            <div className="bg-white/90 backdrop-blur-sm text-blue-600 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5 transform translate-y-2 group-hover:translate-y-0">
+                              <FileOutput size={14} /> เปิดดู PDF
+                            </div>
+                          </div>
+                        </a>
+                      </div>
+                    );
+                  })()}
+
                   {/* Info grid */}
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
                     {[
@@ -1008,23 +1145,24 @@ const POView = React.memo(() => {
 
               {/* Scrollable Content */}
               <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5 bg-gradient-to-b from-slate-50/50 to-white">
-                {/* 1. ข้อมูลส่วนหัว (Header) - โทนแดงขาวดำ */}
-                <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+                {/* 1. ข้อมูลส่วนหัว (Header) - Layout กระชับ + โซน Vendor Details ขวามือ */}
+                <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-visible">
                   <div className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-red-50 to-red-100/80 border-b border-red-200">
                     <div className="w-6 h-6 bg-red-600 rounded-lg flex items-center justify-center">
                       <FileText size={13} className="text-white" />
                     </div>
                     <span className="text-xs font-bold text-red-900 tracking-wide uppercase">1. ข้อมูลส่วนหัว (Header)</span>
                   </div>
-                  <div className="p-5">
-                    <div className="grid grid-cols-4 gap-x-4 gap-y-4">
-                      {/* PO Type */}
-                      <div>
-                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1.5 uppercase tracking-wider">
-                          <Tag size={11} className="text-red-500" /> PO Type
+                  <div className="p-2 flex flex-col sm:flex-row gap-2 sm:gap-3">
+                    {/* ซ้าย: ฟอร์ม + Select PRs */}
+                    <div className="flex-1 min-w-0 flex flex-col gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-[11rem_11rem_1fr] gap-x-2 gap-y-2">
+                      <div className="min-w-0">
+                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1 uppercase tracking-wider">
+                          <Tag size={11} className="text-red-500 shrink-0" /> PO Type
                         </label>
                         <select
-                          className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white hover:border-red-300 focus:border-red-500 focus:ring-2 focus:ring-red-100 transition-all cursor-pointer text-slate-900"
+                          className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-sm bg-white hover:border-red-300 focus:border-red-500 focus:ring-2 focus:ring-red-100 cursor-pointer text-slate-900"
                           value={formData.poType}
                           disabled={!!editingPoId}
                           onChange={(e) => {
@@ -1034,190 +1172,191 @@ const POView = React.memo(() => {
                             setFormData({ ...formData, poType: newType, poNo: newPoNo, receiveType: defaultReceive });
                           }}
                         >
-                          <option value="">-- เลือก PO Type --</option>
+                          <option value="">-- เลือก --</option>
                           {PO_TYPES.map((t) => (
                             <option key={t.code} value={t.code}>{t.label}</option>
                           ))}
                         </select>
                       </div>
-                      {/* PO No. (Auto) */}
-                      <div>
-                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1.5 uppercase tracking-wider">
-                          <Hash size={11} className="text-red-500" /> PO No. (เลขที่ใบสั่งซื้อ)
+                      <div className="min-w-0">
+                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1 uppercase tracking-wider">
+                          <Hash size={11} className="text-red-500 shrink-0" /> PO No.
                         </label>
                         <input
                           type="text"
                           readOnly
-                          className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-slate-100 text-slate-700 font-mono font-semibold cursor-default"
-                          placeholder={formData.poType ? "(Auto)" : "เลือก PO Type ก่อน"}
+                          className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-sm bg-slate-100 text-slate-700 font-mono font-semibold cursor-default"
+                          placeholder={formData.poType ? "(Auto)" : "เลือก Type ก่อน"}
                           value={formData.poNo}
                         />
-                        <p className="text-[10px] text-slate-500 mt-0.5">
-                          รูปแบบ: PO{String(new Date().getFullYear()).slice(-2)}JXX-{formData.poType || "TYPE"}XXXX
-                        </p>
                       </div>
-                      <div className="col-span-2">
-                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1.5 uppercase tracking-wider">
-                          <Building2 size={11} className="text-red-500" /> Vendor (ผู้ขาย)
+                      <div className="min-w-0">
+                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1 uppercase tracking-wider">
+                          <Calendar size={11} className="text-amber-500 shrink-0" /> วันที่เปิด
                         </label>
-                        <div className="flex gap-2">
-                          <div className="flex-1 relative">
-                            <input
-                              type="text"
-                              className="w-full border border-slate-200 rounded-xl px-3 py-2 pl-9 pr-8 text-sm bg-white hover:border-red-300 focus:border-red-500 focus:ring-2 focus:ring-red-100 transition-all text-slate-900 placeholder:text-slate-400"
-                              placeholder="พิมพ์ค้นหา Vendor (ชื่อ, รหัส, ประเภท)... รอ 2 วินาที"
-                              value={vendorSearchText}
-                              onChange={e => { setVendorSearchText(e.target.value); setVendorDropdownOpen(true); }}
-                              onFocus={() => setVendorDropdownOpen(true)}
-                              onBlur={() => setTimeout(() => setVendorDropdownOpen(false), 180)}
-                            />
-                            <Building2 className="absolute left-3 top-2.5 text-red-400 pointer-events-none" size={14} />
-                            {formData.vendorId && (
-                              <button
-                                type="button"
-                                className="absolute right-2 top-2 p-1 text-slate-400 hover:text-red-500"
-                                onClick={() => { setFormData(prev => ({ ...prev, vendorId: "" })); setVendorSearchText(""); }}
-                                title="ล้างการเลือก"
-                              >
-                                <XCircle size={14} />
-                              </button>
-                            )}
-                            {vendorDropdownOpen && (
-                              <div className="absolute left-0 right-0 top-full mt-1 max-h-48 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg z-50 py-1">
-                                {vendorFilteredList.length === 0 ? (
-                                  <div className="px-3 py-4 text-xs text-slate-500 text-center">ไม่พบ Vendor ตามที่ค้นหา</div>
-                                ) : (
-                                  vendorFilteredList.slice(0, 50).map((v: any) => (
-                                    <button
-                                      key={v.id}
-                                      type="button"
-                                      className={`w-full text-left px-3 py-2 text-sm hover:bg-red-50 flex items-center justify-between ${formData.vendorId === v.id ? "bg-red-50 text-red-800" : "text-slate-700"}`}
-                                      onMouseDown={(e) => { e.preventDefault(); setFormData(prev => ({ ...prev, vendorId: v.id })); setVendorSearchText(v.name || ""); setVendorDropdownOpen(false); }}
-                                    >
-                                      <span className="font-medium">{v.name}</span>
-                                      {v.code && <span className="text-xs text-slate-500">{v.code}</span>}
-                                    </button>
-                                  ))
-                                )}
-                              </div>
-                            )}
-                          </div>
-                          <Button variant="secondary" onClick={() => setIsVendorModalOpen(true)} className="px-3 rounded-xl shrink-0" title="เพิ่ม Vendor">
-                            <Plus size={16} />
-                          </Button>
-                        </div>
-                        {formData.vendorId && vendors.find((v: any) => v.id === formData.vendorId) && (
-                          <p className="text-[10px] text-slate-500 mt-0.5">เลือก: {vendors.find((v: any) => v.id === formData.vendorId)?.name}</p>
-                        )}
-                      </div>
-                      <div>
-                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
-                          <Calendar size={11} className="text-amber-500" /> วันที่เปิด PO
-                        </label>
-                        <div className="relative">
+                        <div className="relative cursor-pointer" onClick={() => { if (typeof poOpenDateInputRef.current?.showPicker === "function") poOpenDateInputRef.current.showPicker(); else poOpenDateInputRef.current?.click(); }}>
                           <input
+                            ref={poOpenDateInputRef}
                             type="date"
-                            className="w-full border border-slate-200 rounded-xl px-3 py-2 pl-9 text-sm hover:border-amber-300 focus:border-amber-400 focus:ring-2 focus:ring-amber-100 transition-all"
+                            className="w-full border border-slate-200 rounded-lg px-3 py-1.5 pl-9 text-sm cursor-pointer"
                             value={formData.poOpenDate}
                             onChange={e => setFormData({ ...formData, poOpenDate: e.target.value })}
                           />
-                          <Calendar className="absolute left-3 top-2.5 text-amber-400 pointer-events-none" size={14} />
+                          <Calendar className="absolute left-3 top-2 text-amber-400 pointer-events-none" size={14} />
                         </div>
                       </div>
-                      <div>
-                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
-                          <Calendar size={11} className="text-emerald-500" /> กำหนดส่งของ
+                      <div className="min-w-0">
+                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1 uppercase tracking-wider">
+                          <Calendar size={11} className="text-emerald-500 shrink-0" /> กำหนดส่ง
                         </label>
-                        <div className="relative">
+                        <div className="relative cursor-pointer" onClick={() => { if (typeof requiredDateInputRef.current?.showPicker === "function") requiredDateInputRef.current.showPicker(); else requiredDateInputRef.current?.click(); }}>
                           <input
+                            ref={requiredDateInputRef}
                             type="date"
-                            className="w-full border border-slate-200 rounded-xl px-3 py-2 pl-9 text-sm hover:border-emerald-300 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 transition-all"
+                            className="w-full border border-slate-200 rounded-lg px-3 py-1.5 pl-9 text-sm cursor-pointer"
                             value={formData.requiredDate}
                             onChange={e => setFormData({ ...formData, requiredDate: e.target.value })}
                           />
-                          <Calendar className="absolute left-3 top-2.5 text-emerald-400 pointer-events-none" size={14} />
+                          <Calendar className="absolute left-3 top-2 text-emerald-400 pointer-events-none" size={14} />
                         </div>
                       </div>
-                      <div>
-                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1.5 uppercase tracking-wider">
-                          <Package size={11} className="text-red-500" /> Receive Type
+                      <div className="min-w-0">
+                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1 uppercase tracking-wider">
+                          <Package size={11} className="text-red-500 shrink-0" /> Receive Type
                         </label>
                         <select
-                          className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white hover:border-red-300 focus:border-red-500 focus:ring-2 focus:ring-red-100 transition-all cursor-pointer text-slate-900"
+                          className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-sm bg-white hover:border-red-300 focus:border-red-500 focus:ring-2 cursor-pointer text-slate-900"
                           value={formData.receiveType}
                           onChange={e => setFormData({ ...formData, receiveType: e.target.value })}
                         >
-                          <option value="">-- เลือก Receive Type --</option>
+                          <option value="">-- เลือก --</option>
                           {RECEIVE_TYPES.map((t) => (
                             <option key={t.value} value={t.value}>{t.label}</option>
                           ))}
                         </select>
                       </div>
+                      <div className="col-span-2 sm:col-span-1">
+                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1 uppercase tracking-wider">
+                          <Building2 size={11} className="text-red-500 shrink-0" /> Vendor (ผู้ขาย)
+                        </label>
+                        <div className="flex gap-2">
+                          <div ref={vendorDropdownAnchorRef} className="flex-1 min-w-0 relative">
+                            <input
+                              type="text"
+                              className="w-full border border-slate-200 rounded-lg px-3 py-1.5 pl-9 pr-8 text-sm bg-white hover:border-red-300 focus:border-red-500 focus:ring-2 text-slate-900 placeholder:text-slate-400"
+                              placeholder="ค้นหา Vendor..."
+                              value={vendorSearchText}
+                              onChange={e => { setVendorSearchText(e.target.value); setVendorDropdownOpen(true); }}
+                              onFocus={() => setVendorDropdownOpen(true)}
+                              onBlur={() => setTimeout(() => setVendorDropdownOpen(false), 180)}
+                            />
+                            <Building2 className="absolute left-3 top-2 text-red-400 pointer-events-none" size={14} />
+                            {formData.vendorId && (
+                              <button type="button" className="absolute right-2 top-2 p-1 text-slate-400 hover:text-red-500" onClick={() => { setFormData(prev => ({ ...prev, vendorId: "" })); setVendorSearchText(""); }} title="ล้างการเลือก">
+                                <XCircle size={12} />
+                              </button>
+                            )}
+                            {vendorDropdownOpen && vendorDropdownRect && createPortal(
+                              <div className="fixed max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-xl py-1" style={{ top: vendorDropdownRect.bottom + 4, left: vendorDropdownRect.left, width: vendorDropdownRect.width, zIndex: 9999 }}>
+                                {vendorFilteredList.length === 0 ? (
+                                  <div className="px-3 py-4 text-xs text-slate-500 text-center">ไม่พบ Vendor</div>
+                                ) : (
+                                  vendorFilteredList.slice(0, 50).map((v: any) => (
+                                    <button key={v.id} type="button" className={`w-full text-left px-3 py-2 text-sm hover:bg-red-50 flex items-center justify-between ${formData.vendorId === v.id ? "bg-red-50 text-red-800" : "text-slate-700"}`} onMouseDown={(e) => { e.preventDefault(); setFormData(prev => ({ ...prev, vendorId: v.id })); setVendorSearchText(v.name || ""); setVendorDropdownOpen(false); }}>
+                                      <span className="font-medium truncate">{v.name}</span>
+                                      {v.code && <span className="text-xs text-slate-500 shrink-0 ml-1">{v.code}</span>}
+                                    </button>
+                                  ))
+                                )}
+                              </div>,
+                              document.body
+                            )}
+                          </div>
+                          <Button variant="secondary" onClick={() => setIsVendorModalOpen(true)} className="px-3 rounded-lg shrink-0" title="เพิ่ม Vendor">
+                            <Plus size={16} />
+                          </Button>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
 
-                {/* 2. เลือกใบขอซื้อ (Select PRs) */}
-                <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-                  <div className="flex items-center justify-between px-5 py-2.5 bg-gradient-to-r from-slate-100 to-slate-200/80 border-b border-slate-300">
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 bg-slate-800 rounded-lg flex items-center justify-center">
-                        <ClipboardList size={13} className="text-white" />
-                      </div>
-                      <span className="text-xs font-bold text-slate-800 tracking-wide uppercase">2. เลือกใบขอซื้อ (Select PRs)</span>
-                    </div>
-                    <button
-                      type="button"
-                      className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-slate-800 text-white text-xs font-semibold hover:bg-slate-700 transition-all shadow-sm"
-                      onClick={() => {
-                        setTempSelectedPrIds([...formData.selectedPrIds]);
-                        setPrSelectFilterText("");
-                        setIsPrSelectModalOpen(true);
-                      }}
-                    >
-                      <ListFilter size={13} /> เลือก PR
-                    </button>
-                  </div>
-                  <div className="p-5">
-                    {formData.selectedPrIds.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center py-8 text-slate-400">
-                        <ClipboardList size={32} className="mb-2 opacity-40" />
-                        <p className="text-sm text-slate-500">ยังไม่ได้เลือกใบขอซื้อ</p>
-                        <p className="text-xs mt-0.5">กดปุ่ม "เลือก PR" เพื่อเลือกใบขอซื้อที่อนุมัติแล้ว</p>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="flex flex-wrap gap-2 mb-4">
-                          {formData.selectedPrIds.map(prId => {
-                            const pr = approvedPRs.find(p => p.id === prId);
-                            if (!pr) return null;
-                            return (
-                              <div key={prId} className="flex items-center gap-2 px-3 py-1.5 bg-red-50 border border-red-200 rounded-lg text-xs">
-                                <Hash size={10} className="text-red-500 shrink-0" />
-                                <span className="font-semibold text-slate-800">{pr.prNo}</span>
+                    {/* Select PRs — ในคอลัมน์ซ้าย ใต้ฟอร์ม */}
+                    <div className="flex-1 border border-slate-200 rounded-xl overflow-hidden bg-white">
+                      <div className="flex items-center justify-between px-3 py-2 bg-gradient-to-r from-slate-100 to-slate-200/80 border-b border-slate-300">
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-5 h-5 bg-slate-800 rounded-md flex items-center justify-center">
+                            <ClipboardList size={11} className="text-white" />
+                          </div>
+                          <span className="text-[11px] font-bold text-slate-800 tracking-wide uppercase">2. เลือกใบขอซื้อ (Select PRs)</span>
+                        </div>
                         <button
                           type="button"
-                          className="ml-1 text-red-400 hover:text-red-600"
-                          onClick={() => handlePrToggle(prId)}
+                          className="flex items-center gap-1 px-3 py-1 rounded-lg bg-slate-800 text-white text-xs font-semibold hover:bg-slate-700 transition-all shadow-sm"
+                          onClick={() => { setTempSelectedPrIds([...formData.selectedPrIds]); setPrSelectFilterText(""); setIsPrSelectModalOpen(true); }}
                         >
-                          <XCircle size={13} />
+                          <ListFilter size={11} /> เลือก PR
                         </button>
-                              </div>
-                            );
-                          })}
-                          <button
-                            type="button"
-                            className="flex items-center gap-1 px-3 py-1.5 border border-dashed border-slate-300 rounded-lg text-xs text-slate-500 hover:border-slate-400 hover:text-slate-700 transition-all"
-                            onClick={() => {
-                              setTempSelectedPrIds([...formData.selectedPrIds]);
-                              setIsPrSelectModalOpen(true);
-                            }}
-                          >
-                            <Plus size={12} /> เพิ่ม/แก้ไข
-                          </button>
-                        </div>
-                      </>
-                    )}
+                      </div>
+                      <div className="p-3">
+                        {formData.selectedPrIds.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center py-4 text-slate-400">
+                            <ClipboardList size={24} className="mb-1 opacity-40" />
+                            <p className="text-xs text-slate-500">ยังไม่ได้เลือกใบขอซื้อ</p>
+                            <p className="text-[10px] mt-0.5 text-slate-400">กดปุ่ม "เลือก PR" เพื่อเลือกใบขอซื้อที่อนุมัติแล้ว</p>
+                          </div>
+                        ) : (
+                          <div className="flex flex-wrap gap-1.5">
+                            {formData.selectedPrIds.map(prId => {
+                              const pr = approvedPRs.find(p => p.id === prId);
+                              if (!pr) return null;
+                              return (
+                                <div key={prId} className="flex items-center gap-1.5 px-2.5 py-1 bg-red-50 border border-red-200 rounded-lg text-xs">
+                                  <Hash size={9} className="text-red-500 shrink-0" />
+                                  <span className="font-semibold text-slate-800">{pr.prNo}</span>
+                                  <button type="button" className="ml-0.5 text-red-400 hover:text-red-600" onClick={() => handlePrToggle(prId)}>
+                                    <XCircle size={11} />
+                                  </button>
+                                </div>
+                              );
+                            })}
+                            <button
+                              type="button"
+                              className="flex items-center gap-1 px-2.5 py-1 border border-dashed border-slate-300 rounded-lg text-xs text-slate-500 hover:border-slate-400 hover:text-slate-700 transition-all"
+                              onClick={() => { setTempSelectedPrIds([...formData.selectedPrIds]); setIsPrSelectModalOpen(true); }}
+                            >
+                              <Plus size={10} /> เพิ่ม/แก้ไข
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    </div>{/* end left column */}
+
+                    {/* ขวา: Vendor Details — ขยายความกว้าง + ยืดเต็มความสูง */}
+                    <div className="w-full sm:w-[42rem] shrink-0 border border-slate-200 rounded-xl bg-slate-50/80 overflow-hidden self-stretch flex flex-col">
+                      <div className="px-4 py-2.5 bg-slate-200/80 border-b border-slate-200 flex items-center gap-2">
+                        <Building2 size={16} className="text-slate-600" />
+                        <span className="text-sm font-bold text-slate-700 uppercase tracking-wide">Vendor Details</span>
+                      </div>
+                      <div className="p-3 text-sm flex-1">
+                        {formData.vendorId && (() => {
+                          const v = vendors.find((x: any) => x.id === formData.vendorId);
+                          if (!v) return <p className="text-slate-400">กำลังโหลด...</p>;
+                          return (
+                            <div className="space-y-1.5 text-slate-700">
+                              <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">ชื่อ:</span><span className="font-medium min-w-0 break-words">{v.name || "-"}</span></div>
+                              {v.code && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">รหัส:</span><span className="min-w-0 break-words">{v.code}</span></div>}
+                              {v.address && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">ที่อยู่:</span><span className="min-w-0 whitespace-pre-wrap break-words">{v.address}</span></div>}
+                              {v.tel && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">โทร:</span><span className="min-w-0 break-words">{v.tel}</span></div>}
+                              {(v.creditTerm != null && v.creditTerm !== "") && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">เครดิตเทอม:</span><span className="min-w-0">{v.creditTerm}</span></div>}
+                              {v.type && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">ประเภท:</span><span className="min-w-0">{v.type}</span></div>}
+                            </div>
+                          );
+                        })()}
+                        {!formData.vendorId && (
+                          <p className="text-slate-400 italic">เลือก Vendor ทางซ้ายเพื่อดูข้อมูล</p>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </div>
 

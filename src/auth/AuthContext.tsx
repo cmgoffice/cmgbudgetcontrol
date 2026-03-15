@@ -6,7 +6,8 @@ import {
   sendPasswordResetEmail, updateProfile,
 } from "firebase/auth";
 import { doc, getDoc, getDocs, setDoc, addDoc, updateDoc, collection } from "firebase/firestore";
-import { auth, db, appId } from "../lib/firebase";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { auth, db, appId, storage } from "../lib/firebase";
 import { CustomAlert, CustomConfirmModal } from "../components/Dialogs";
 
 export const AuthContext = createContext(null);
@@ -82,6 +83,25 @@ export const AuthProvider = ({ children }) => {
     [user, userData]
   );
 
+  // ดึงรูปโปรไฟล์จาก URL (เช่น Google) แล้วอัปโหลดไป Storage ของเรา เพื่อไม่ให้รูปหายเมื่อลิงก์หมดอายุ
+  const pullAndUploadProfilePhoto = useCallback(async (uid, photoURL, userDocRef) => {
+    if (!photoURL) return null;
+    try {
+      const res = await fetch(photoURL, { mode: "cors" });
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      const ext = (blob.type || "").includes("png") ? "png" : "jpg";
+      const storageRef = ref(storage, `profiles/${uid}/avatar.${ext}`);
+      await uploadBytes(storageRef, blob, { contentType: blob.type });
+      const downloadURL = await getDownloadURL(storageRef);
+      await updateDoc(userDocRef, { profilePhotoUrl: downloadURL });
+      return downloadURL;
+    } catch (e) {
+      console.warn("[pullAndUploadProfilePhoto]", e);
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
@@ -110,6 +130,12 @@ export const AuthProvider = ({ children }) => {
           } else {
             setUser(currentUser);
             setUserData(data);
+            // ถ้ามีรูปจาก Google แต่ยังไม่มี profilePhotoUrl (รูปของเรา) ให้ดึงมาอัปโหลดเลย
+            if (currentUser.photoURL && !data.profilePhotoUrl) {
+              pullAndUploadProfilePhoto(currentUser.uid, currentUser.photoURL, userDocRef).then((url) => {
+                if (url) getDoc(userDocRef).then((snap) => snap.exists() && setUserData(snap.data()));
+              });
+            }
             // Log login - ใช้ sessionStorage กัน log ซ้ำทุก re-render
             const sessionKey = `logged_${currentUser.uid}`;
             if (!sessionStorage.getItem(sessionKey)) {
@@ -140,7 +166,7 @@ export const AuthProvider = ({ children }) => {
       setLoading(false);
     });
     return unsubscribe;
-  }, [showAlert]);
+  }, [showAlert, pullAndUploadProfilePhoto]);
 
   const login = useCallback(async (email, password) => {
     await signInWithEmailAndPassword(auth, email, password);
@@ -196,6 +222,7 @@ export const AuthProvider = ({ children }) => {
           authProvider: "google",
           photoURL: user.photoURL || "",
         });
+        if (user.photoURL) pullAndUploadProfilePhoto(user.uid, user.photoURL, userDocRef).catch(() => {});
 
         if (status === "Pending") {
           await signOut(auth);
@@ -211,6 +238,9 @@ export const AuthProvider = ({ children }) => {
         if (user.photoURL && data.photoURL !== user.photoURL) {
           await updateDoc(userDocRef, { photoURL: user.photoURL });
         }
+        if (user.photoURL && !data.profilePhotoUrl) {
+          pullAndUploadProfilePhoto(user.uid, user.photoURL, userDocRef).catch(() => {});
+        }
         if (data.status === "Pending") {
           await signOut(auth);
           showAlert(
@@ -224,7 +254,7 @@ export const AuthProvider = ({ children }) => {
       console.error(error);
       showAlert("Login Error", error.message, "error");
     }
-  }, [googleProvider, showAlert]);
+  }, [googleProvider, showAlert, pullAndUploadProfilePhoto]);
 
   const register = useCallback(
     async (email, password, firstName, lastName, position) => {

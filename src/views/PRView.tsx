@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React, { useState, useEffect, useMemo, useCallback, useRef, useContext } from "react";
+import { createPortal } from "react-dom";
 import {
   Plus, Trash2, Edit, CheckCircle, XCircle, FileText, ChevronDown, ChevronRight, ChevronUp,
   CircleArrowRight, CircleArrowDown, CornerDownRight, AlertCircle, Save, Play,
@@ -8,6 +9,7 @@ import {
   Mail, Flame, MapPinned, CircleDot, Zap, Building2, UserCircle, AtSign,
   FileSpreadsheet, Wallet, ShoppingCart, Settings, Upload, CheckSquare, Square
 } from "lucide-react";
+import { generatePRPdfBytes, uploadGeneratedPdf, stampSignatureToField, deleteGeneratedPdf } from "../lib/pdfForms";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "../components/ui";
@@ -24,6 +26,7 @@ const PRView = React.memo(() => {
           isFullScreenModalOpen, setIsFullScreenModalOpen,
           expandedPrRows, setExpandedPrRows, togglePrRow } = useUI();
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [savePrProgress, setSavePrProgress] = useState<{ show: boolean; pct: number; step: string }>({ show: false, pct: 0, step: "" });
     const [isPrRejectModalOpen, setIsPrRejectModalOpen] = useState(false);
     const [prRejectReason, setPrRejectReason] = useState("");
     const [isEditBudgetModalOpen, setIsEditBudgetModalOpen] = useState(false);
@@ -327,11 +330,15 @@ const PRView = React.memo(() => {
         );
       }
 
+      const setProgress = (pct: number, step: string) => setSavePrProgress({ show: true, pct, step });
+      setProgress(5, "เตรียมข้อมูล...");
+
       let success = false;
       const editingPR = editingPRId ? prs.find(p => p.id === editingPRId) : null;
       const wasEditBudget = editingPR?.status === "Edit Budget";
 
-      // อัปโหลดไฟล์แนบไป Firebase Storage (ถ้ามี)
+      // อัปโหลดไฟล์แนบ
+      setProgress(10, "อัปโหลดไฟล์แนบ...");
       let attachmentUrl = headerData.attachmentUrl || null;
       let attachmentName = headerData.attachmentName || null;
       if (headerData.attachment && typeof headerData.attachment === "object" && (headerData.attachment as File).name) {
@@ -345,6 +352,7 @@ const PRView = React.memo(() => {
           attachmentUrl = res.url;
           attachmentName = res.name;
         } catch (err) {
+          setSavePrProgress({ show: false, pct: 0, step: "" });
           return showAlert("อัปโหลดไฟล์แนบไม่สำเร็จ", err?.message || "ไม่สามารถอัปโหลดไฟล์ได้", "error");
         }
       }
@@ -352,33 +360,70 @@ const PRView = React.memo(() => {
       const { attachment: _omitFile, ...headerWithoutFile } = headerData;
       const prPayload = {
         ...headerWithoutFile,
-        attachmentUrl: attachmentUrl || undefined,
-        attachmentName: attachmentName || undefined,
-        budgetId: headerData.selectedBudgetId || undefined,
+        attachmentUrl: attachmentUrl || null,
+        attachmentName: attachmentName || null,
+        budgetId: headerData.selectedBudgetId || null,
         projectId: selectedProjectId,
         items: lineItems,
         totalAmount: thisPrTotal,
         status: "Pending CM",
-        // ล้าง Edit Budget fields เมื่อส่งอนุมัติใหม่
         ...(wasEditBudget ? { editBudgetReason: null, editBudgetBy: null, editBudgetAt: null } : {}),
       };
 
-      if (editingPRId) {
-        success = await updateData("prs", editingPRId, prPayload);
-        if (success) {
-          if (wasEditBudget) {
-            showAlert("ส่งอนุมัติใหม่แล้ว", "PR ถูกส่งให้ CM/PM อนุมัติใหม่เรียบร้อย", "success");
-          } else {
-            showAlert("สำเร็จ", "แก้ไขใบขอซื้อ (PR) เรียบร้อยแล้ว", "success");
+      // สร้าง PDF + stamp + upload
+      let pdfUrl: string | undefined;
+      let pdfError: string | null = null;
+      try {
+        const project = projects.find((p: any) => p.id === selectedProjectId) || null;
+        const safePRNo = (headerData.prNo || "unknown").replace(/[^a-zA-Z0-9\-_]/g, "_");
+        const safeProjId = selectedProjectId || "unknown";
+        const creatorSignatureUrl = userData?.signatureUrl || null;
+
+        setProgress(20, "กำลังสร้าง PDF...");
+        let bytes = await generatePRPdfBytes(prPayload, {
+          projectName: project?.name || "",
+          budgetDesc: "",
+        });
+
+        setProgress(50, "ประทับลายเซ็นผู้สร้าง...");
+        if (creatorSignatureUrl) {
+          try {
+            bytes = await stampSignatureToField(bytes, creatorSignatureUrl, "Signature1");
+          } catch (sigErr) {
+            console.warn("[PR Save] Stamp Signature1 failed:", sigErr);
           }
         }
+
+        setProgress(70, "อัปโหลด PDF ขึ้น Cloud...");
+        const timeout = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("PDF timeout")), 15000)
+        );
+        pdfUrl = await Promise.race([
+          uploadGeneratedPdf(bytes, `generated/prs/${safeProjId}/${safePRNo}.pdf`),
+          timeout,
+        ]);
+      } catch (e) {
+        console.warn("[PR Save] PDF generation/upload failed:", e);
+        const msg = e?.message || String(e);
+        pdfError = /permission|unauthorized|403|rules/i.test(msg)
+          ? "ไม่มีสิทธิ์เขียน Storage — กรุณาตั้งค่า Storage Rules ใน Firebase Console"
+          : msg;
+      }
+
+      setProgress(85, "บันทึกข้อมูล PR...");
+      if (pdfUrl) prPayload.pdfUrl = pdfUrl;
+
+      if (editingPRId) {
+        success = await updateData("prs", editingPRId, prPayload);
       } else {
         success = await addData("prs", prPayload, prPayload.prNo);
-        if (success)
-          showAlert("สำเร็จ", "บันทึกใบขอซื้อ (PR) เรียบร้อยแล้ว", "success");
       }
 
       if (success) {
+        setProgress(100, "เสร็จสิ้น!");
+        await new Promise(r => setTimeout(r, 600));
+        setSavePrProgress({ show: false, pct: 0, step: "" });
+
         setIsModalOpen(false);
         setIsFullScreenModalOpen(false);
         setHeaderData({
@@ -400,6 +445,18 @@ const PRView = React.memo(() => {
         setLineItems([]);
         setEditingItemId(null);
         setEditingPRId(null);
+
+        if (wasEditBudget) {
+          showAlert("ส่งอนุมัติใหม่แล้ว", "PR ถูกส่งให้ CM/PM อนุมัติใหม่เรียบร้อย", "success");
+        } else if (pdfUrl) {
+          showAlert("สำเร็จ", "บันทึก PR และสร้าง PDF เรียบร้อย", "success");
+        } else if (pdfError) {
+          showAlert("บันทึก PR เรียบร้อย แต่ PDF ไม่บันทึกลง Storage", pdfError, "warning");
+        } else {
+          showAlert("สำเร็จ", editingPRId ? "แก้ไขใบขอซื้อ (PR) เรียบร้อยแล้ว" : "บันทึกใบขอซื้อ (PR) เรียบร้อยแล้ว", "success");
+        }
+      } else {
+        setSavePrProgress({ show: false, pct: 0, step: "" });
       }
     };
 
@@ -453,14 +510,56 @@ const PRView = React.memo(() => {
         return;
       }
       let newStatus = pr.status;
+      const isCMApprove = pr.status === "Pending CM" && (userRole === "CM" || userRole === "Administrator");
+      const isPMApprove = pr.status === "Pending PM" && (userRole === "PM" || userRole === "Administrator");
 
-      if (pr.status === "Pending CM" && (userRole === "CM" || userRole === "Administrator"))
-        newStatus = "Pending PM";
-      else if (pr.status === "Pending PM" && (userRole === "PM" || userRole === "Administrator"))
-        newStatus = "Approved";
+      if (isCMApprove) newStatus = "Pending PM";
+      else if (isPMApprove) newStatus = "Approved";
 
-      if (newStatus !== pr.status)
-        await updateData("prs", id, { status: newStatus, rejectReason: "" });
+      if (newStatus !== pr.status) {
+        // Stamp signature + บันทึก email ของผู้ approve
+        let updatedPdfUrl: string | undefined;
+        // PR: CM Approve -> Signature2, PM Approve -> Signature3
+        const stampField = isCMApprove ? "Signature2" : isPMApprove ? "Signature3" : null;
+        const emailField = isCMApprove ? "cmApproverEmail" : isPMApprove ? "pmApproverEmail" : null;
+        const approverEmail = userData?.email || user?.email || "";
+
+        if (stampField && pr.pdfUrl && userData?.signatureUrl) {
+          try {
+            const safePRNo = (pr.prNo || pr.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
+            const safeProjId = pr.projectId || "unknown";
+            // เติม cache buster เพื่อให้ fetch ไฟล์ล่าสุดมา stamp
+            const existingRes = await fetch(`${pr.pdfUrl}${pr.pdfUrl.includes("?") ? "&" : "?"}t=${Date.now()}`);
+            if (existingRes.ok) {
+              let existingBytes = new Uint8Array(await existingRes.arrayBuffer());
+              existingBytes = await stampSignatureToField(existingBytes, userData.signatureUrl, stampField as "Signature2" | "Signature3");
+              updatedPdfUrl = await uploadGeneratedPdf(existingBytes, `generated/prs/${safeProjId}/${safePRNo}.pdf`);
+            }
+          } catch (stampErr) {
+            console.warn(`[PR Approve] Stamp ${stampField} failed:`, stampErr);
+          }
+        }
+
+        await updateData("prs", id, {
+          status: newStatus,
+          rejectReason: "",
+          ...(emailField && approverEmail ? { [emailField]: approverEmail } : {}),
+          ...(updatedPdfUrl ? { pdfUrl: updatedPdfUrl } : {}),
+        });
+
+        // อัปเดต viewingPR ใน state ให้เป็นข้อมูลล่าสุด (เพื่อให้ Modal โชว์ PDF ใหม่ทันที)
+        if (viewingPR && viewingPR.id === id) {
+          setViewingPR((prev) => ({
+            ...prev,
+            status: newStatus,
+            rejectReason: "",
+            ...(emailField && approverEmail ? { [emailField]: approverEmail } : {}),
+            ...(updatedPdfUrl ? { pdfUrl: updatedPdfUrl } : {}),
+          }));
+        }
+
+        showAlert("อนุมัติ", `เลื่อนสถานะเป็น ${newStatus}`, "success");
+      }
     };
 
     const groupedBudgets = useMemo(() => {
@@ -496,6 +595,40 @@ const PRView = React.memo(() => {
 
     return (
       <div className="space-y-4">
+
+        {/* ── Progress Modal: กำลังบันทึก PR ── */}
+        {savePrProgress.show && createPortal(
+          <div style={{ position: "fixed", inset: 0, zIndex: 999999, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)" }}>
+            <div className="bg-white rounded-2xl shadow-2xl px-8 py-7 w-80 flex flex-col items-center gap-4">
+              <div className="relative w-16 h-16 flex items-center justify-center">
+                <svg className="absolute inset-0 w-16 h-16 -rotate-90" viewBox="0 0 64 64">
+                  <circle cx="32" cy="32" r="28" fill="none" stroke="#e2e8f0" strokeWidth="6" />
+                  <circle
+                    cx="32" cy="32" r="28" fill="none"
+                    stroke={savePrProgress.pct < 100 ? "#dc2626" : "#16a34a"}
+                    strokeWidth="6" strokeLinecap="round"
+                    strokeDasharray={`${2 * Math.PI * 28}`}
+                    strokeDashoffset={`${2 * Math.PI * 28 * (1 - savePrProgress.pct / 100)}`}
+                    style={{ transition: "stroke-dashoffset 0.4s ease, stroke 0.3s" }}
+                  />
+                </svg>
+                <span className={`text-base font-bold ${savePrProgress.pct < 100 ? "text-red-600" : "text-green-600"}`}>
+                  {savePrProgress.pct}%
+                </span>
+              </div>
+              <p className="text-sm font-semibold text-slate-700 text-center">{savePrProgress.step}</p>
+              <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                <div
+                  className={`h-2 rounded-full transition-all duration-500 ${savePrProgress.pct < 100 ? "bg-red-500" : "bg-green-500"}`}
+                  style={{ width: `${savePrProgress.pct}%` }}
+                />
+              </div>
+              <p className="text-[11px] text-slate-400">กรุณารอสักครู่...</p>
+            </div>
+          </div>,
+          document.body
+        )}
+
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
           <h2 className="text-xl font-bold text-slate-800">
             C. Purchase Request (PR)
@@ -658,7 +791,14 @@ const PRView = React.memo(() => {
                               openConfirm(
                                 "ยืนยันการลบ",
                                 "คุณต้องการลบรายการ PR นี้ใช่หรือไม่?",
-                                async () => await deleteData("prs", pr.id),
+                                async () => {
+                                  if (pr.pdfUrl) {
+                                    const safePRNo = (pr.prNo || pr.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
+                                    const safeProjId = pr.projectId || "unknown";
+                                    await deleteGeneratedPdf(`generated/prs/${safeProjId}/${safePRNo}.pdf`);
+                                  }
+                                  await deleteData("prs", pr.id);
+                                },
                                 "danger"
                               );
                             }}
@@ -719,6 +859,38 @@ const PRView = React.memo(() => {
 
               {/* Body */}
               <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+                {/* PDF Thumbnail (ถ้ามี) — ใช้ key บังคับ remount เมื่อ status/ลายเซ็นเปลี่ยน เพื่อโชว์ฉบับล่าสุด */}
+                {viewingPR.pdfUrl && (() => {
+                  const pdfUrlWithCacheBuster = `${viewingPR.pdfUrl}${viewingPR.pdfUrl.includes("?") ? "&" : "?"}t=${Date.now()}`;
+                  const iframeKey = `pr-pdf-${viewingPR.id}-${viewingPR.status}-${viewingPR.cmApproverEmail || ""}-${viewingPR.pmApproverEmail || ""}`;
+                  return (
+                    <div className="mb-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">เอกสาร PDF</span>
+                      </div>
+                      <a
+                        href={pdfUrlWithCacheBuster}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="group relative block w-48 h-64 border border-slate-200 rounded-xl overflow-hidden bg-slate-50 hover:border-blue-400 hover:shadow-md transition-all"
+                        title="คลิกเพื่อเปิด PDF ในแท็บใหม่"
+                      >
+                        <iframe
+                          key={iframeKey}
+                          src={`${pdfUrlWithCacheBuster}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`}
+                          className="w-full h-full pointer-events-none opacity-80 group-hover:opacity-100 transition-opacity"
+                          title="PR PDF Thumbnail"
+                        />
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors flex items-center justify-center">
+                          <div className="bg-white/90 backdrop-blur-sm text-blue-600 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5 transform translate-y-2 group-hover:translate-y-0">
+                            <FileOutput size={14} /> เปิดดู PDF
+                          </div>
+                        </div>
+                      </a>
+                    </div>
+                  );
+                })()}
+
                 {/* Info grid */}
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
                   {[
