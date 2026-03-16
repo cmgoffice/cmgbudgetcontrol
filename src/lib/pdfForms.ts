@@ -185,7 +185,8 @@ export async function generatePRPdfBytes(pr: any, { projectName = "", budgetDesc
     setTextIfExists(form, ["pr_date"], safeDate(pr.requestDate), customFont);
     setTextIfExists(form, ["pr_name"], pr.requestor || "", customFont);
     setTextIfExists(form, ["job_no"], jobNo, customFont);
-    setTextIfExists(form, ["pr_type"], pr.purchaseType || "", customFont);
+    setTextIfExists(form, ["pr_type"], (pr.purchaseType || "").split(">")[0].trim(), customFont);
+    setTextIfExists(form, ["pr_urgency"], pr.urgency === "Urgent" ? "ด่วน" : "ปกติ", customFont);
     setTextIfExists(form, ["pr_location", "Text1"], pr.deliveryLocation || "", customFont);
 
     // Approver emails (ใส่เมื่อมีข้อมูล)
@@ -252,7 +253,8 @@ export async function generatePRPdfBytes(pr: any, { projectName = "", budgetDesc
       `วันที่         : ${safeDate(pr.requestDate)}`,
       `Job No.       : ${jobNo}`,
       `ผู้ขอซื้อ      : ${pr.requestor || "-"}`,
-      `ประเภท        : ${pr.purchaseType || "-"}`,
+      `ประเภท        : ${(pr.purchaseType || "-").split(">")[0].trim()}`,
+      `ความเร่งด่วน   : ${pr.urgency === "Urgent" ? "ด่วน" : "ปกติ"}`,
       `สถานที่        : ${pr.deliveryLocation || "-"}`,
       `Cost Code     : ${pr.costCode || "-"}`,
       ``,

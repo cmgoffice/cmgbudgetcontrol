@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React, { useContext, useEffect, useState, useRef } from "react";
+import ReactDOM from "react-dom";
 import {
   LayoutDashboard, Briefcase, Wallet, FileText, ShoppingCart, FileInput,
   Users, Settings, Bell, ChevronDown, LogOut, Shield, UserCircle, AtSign,
@@ -100,6 +101,9 @@ const AppShell = () => {
     pendingSectionRef,
   } = useUI();
 
+  const [prCollapsedOpen, setPrCollapsedOpen] = useState(true);
+  const [poCollapsedOpen, setPoCollapsedOpen] = useState(true);
+
   // handleMenuChange + handleProjectChange → UIContext (useUI() above)
   // pendingBudgetsGlobal, totalPendingCount, pendingByProject → AppDataContext (useAppData() above)
 
@@ -166,7 +170,7 @@ const AppShell = () => {
           )}
           {canAccessModule("projects") && (
             <SidebarItem
-              icon={<Briefcase size={20} />}
+              icon={<Briefcase size={20} className="text-amber-300" />}
               label="จัดการโครงการ"
               active={activeMenu === "projects"}
               onClick={() => handleMenuChange("projects")}
@@ -175,7 +179,7 @@ const AppShell = () => {
           )}
           {canAccessModule("budget") && (
             <SidebarItem
-              icon={<Wallet size={20} />}
+              icon={<Wallet size={20} className="text-emerald-300" />}
               label="Project Budget"
               active={activeMenu === "budget"}
               onClick={() => handleMenuChange("budget")}
@@ -184,50 +188,62 @@ const AppShell = () => {
           )}
           {(canAccessModule("pr") || canAccessModule("pr-table")) && (
             <SidebarGroup
-              icon={<FileText size={20} />}
+              icon={<FileText size={20} className="text-sky-300" />}
               label="Purchase Request (PR)"
               isActive={activeMenu === "pr" || activeMenu === "pr-table"}
               collapsed={sidebarCollapsed}
             >
-              <SidebarSubItem
-                label="ระบบ PR"
-                active={activeMenu === "pr"}
-                onClick={() => handleMenuChange("pr")}
-              />
-              <SidebarSubItem
-                label="ตารางข้อมูล PR"
-                active={activeMenu === "pr-table"}
-                onClick={() => handleMenuChange("pr-table")}
-              />
+              {canAccessModule("pr") && (
+                <SidebarSubItem
+                  label="ระบบ PR"
+                  active={activeMenu === "pr"}
+                  onClick={() => handleMenuChange("pr")}
+                />
+              )}
+              {canAccessModule("pr-table") && (
+                <SidebarSubItem
+                  label="ตารางข้อมูล PR"
+                  active={activeMenu === "pr-table"}
+                  onClick={() => handleMenuChange("pr-table")}
+                />
+              )}
             </SidebarGroup>
           )}
           {(canAccessModule("po") || canAccessModule("po-table") || canAccessModule("vendor") || canAccessModule("material")) && (
             <SidebarGroup
-              icon={<ShoppingCart size={20} />}
+              icon={<ShoppingCart size={20} className="text-rose-300" />}
               label="Purchase Order (PO)"
               isActive={activeMenu === "po" || activeMenu === "po-table" || activeMenu === "vendor" || activeMenu === "material"}
               collapsed={sidebarCollapsed}
             >
-              <SidebarSubItem
-                label="ระบบ PO"
-                active={activeMenu === "po"}
-                onClick={() => handleMenuChange("po")}
-              />
-              <SidebarSubItem
-                label="ตารางข้อมูล PO"
-                active={activeMenu === "po-table"}
-                onClick={() => handleMenuChange("po-table")}
-              />
-              <SidebarSubItem
-                label="Vendor Management"
-                active={activeMenu === "vendor"}
-                onClick={() => handleMenuChange("vendor")}
-              />
-              <SidebarSubItem
-                label="Material"
-                active={activeMenu === "material"}
-                onClick={() => handleMenuChange("material")}
-              />
+              {canAccessModule("po") && (
+                <SidebarSubItem
+                  label="ระบบ PO"
+                  active={activeMenu === "po"}
+                  onClick={() => handleMenuChange("po")}
+                />
+              )}
+              {canAccessModule("po-table") && (
+                <SidebarSubItem
+                  label="ตารางข้อมูล PO"
+                  active={activeMenu === "po-table"}
+                  onClick={() => handleMenuChange("po-table")}
+                />
+              )}
+              {canAccessModule("vendor") && (
+                <SidebarSubItem
+                  label="Vendor Management"
+                  active={activeMenu === "vendor"}
+                  onClick={() => handleMenuChange("vendor")}
+                />
+              )}
+              {canAccessModule("material") && (
+                <SidebarSubItem
+                  label="Material"
+                  active={activeMenu === "material"}
+                  onClick={() => handleMenuChange("material")}
+                />
+              )}
             </SidebarGroup>
           )}
           {canAccessModule("invoice") && (
@@ -536,14 +552,23 @@ const AppShell = () => {
 const SidebarGroup = ({ icon, label, isActive, children, collapsed }) => {
   const [open, setOpen] = React.useState(isActive);
   const [popoverOpen, setPopoverOpen] = React.useState(false);
+  const [popoverPos, setPopoverPos] = React.useState({ top: 0, left: 0 });
   const groupRef = React.useRef(null);
   React.useEffect(() => { if (isActive) setOpen(true); }, [isActive]);
 
   if (collapsed) {
+    const handleBtnClick = () => {
+      if (groupRef.current) {
+        const rect = groupRef.current.getBoundingClientRect();
+        setPopoverPos({ top: rect.top, left: rect.right + 6 });
+      }
+      setPopoverOpen((p) => !p);
+    };
+
     return (
       <div className="relative" ref={groupRef}>
         <motion.button
-          onClick={() => setPopoverOpen((p) => !p)}
+          onClick={handleBtnClick}
           title={label}
           className={`relative w-full flex items-center justify-center p-3 rounded-lg group ${isActive ? "text-white" : "text-slate-400 hover:text-white hover:bg-slate-800/80"}`}
           whileHover={{ scale: 1.02 }}
@@ -559,34 +584,47 @@ const SidebarGroup = ({ icon, label, isActive, children, collapsed }) => {
           )}
           <span className="relative z-10">{icon}</span>
         </motion.button>
-        <AnimatePresence>
-          {popoverOpen && (
-            <>
-              <div className="fixed inset-0 z-30" onClick={() => setPopoverOpen(false)} aria-hidden />
-              <motion.div
-                initial={{ opacity: 0, x: -8 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -8 }}
-                transition={{ duration: 0.15 }}
-                className="absolute left-full top-0 ml-1 z-40 min-w-[180px] py-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl overflow-hidden"
-              >
-                <div className="px-3 py-2 border-b border-slate-700 text-xs font-bold text-slate-400 uppercase tracking-wider">{label}</div>
-                <div className="p-1 space-y-0.5" onClick={() => setPopoverOpen(false)}>
-                  {React.Children.map(children, (child) =>
-                    React.isValidElement(child) && child.props?.onClick
-                      ? React.cloneElement(child, {
-                          onClick: () => {
-                            child.props.onClick?.();
-                            setPopoverOpen(false);
-                          },
-                        })
-                      : child
-                  )}
-                </div>
-              </motion.div>
-            </>
-          )}
-        </AnimatePresence>
+        {ReactDOM.createPortal(
+          <>
+            {/* backdrop — รับ click นอก popup เพื่อปิด, z-index ต่ำกว่า popup */}
+            {popoverOpen && (
+              <div
+                style={{ position: "fixed", inset: 0, zIndex: 9998 }}
+                onClick={() => setPopoverOpen(false)}
+                aria-hidden
+              />
+            )}
+            {/* popup menu — z-index สูงกว่า backdrop ทำให้รับ click ได้ */}
+            <AnimatePresence>
+              {popoverOpen && (
+                <motion.div
+                  key="sidebar-group-popup"
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -8 }}
+                  transition={{ duration: 0.15 }}
+                  style={{ position: "fixed", top: popoverPos.top, left: popoverPos.left, zIndex: 9999 }}
+                  className="min-w-[180px] py-1 bg-slate-800 border border-slate-700 rounded-lg shadow-2xl overflow-hidden"
+                >
+                  <div className="px-3 py-2 border-b border-slate-700 text-xs font-bold text-slate-400 uppercase tracking-wider">{label}</div>
+                  <div className="p-1 space-y-0.5">
+                    {React.Children.map(children, (child) =>
+                      React.isValidElement(child) && child.props?.onClick
+                        ? React.cloneElement(child, {
+                            onClick: () => {
+                              child.props.onClick?.();
+                              setPopoverOpen(false);
+                            },
+                          })
+                        : child
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </>,
+          document.body
+        )}
       </div>
     );
   }
@@ -790,11 +828,24 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
   const filtered = rows.filter((r: any) => {
     const noField = isPR ? r.prNo : r.poNo;
+    const lowerSearch = (searchTerm || "").toLowerCase();
+    const poRefText = isPR
+      ? pos
+          .filter((po: any) =>
+            (po.selectedPrIds || []).includes(r.id) ||
+            (po.items || []).some((it: any) => it.prId === r.id) ||
+            po.prRefId === r.id
+          )
+          .map((po: any) => po.poNo || po.id)
+          .filter(Boolean)
+          .join(", ")
+      : "";
     const matchSearch =
-      !searchTerm ||
-      (noField || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (r.costCode || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (r.requestor || r.vendor || "").toLowerCase().includes(searchTerm.toLowerCase());
+      !lowerSearch ||
+      (noField || "").toLowerCase().includes(lowerSearch) ||
+      (r.costCode || "").toLowerCase().includes(lowerSearch) ||
+      (r.requestor || r.vendor || "").toLowerCase().includes(lowerSearch) ||
+      (poRefText || "").toLowerCase().includes(lowerSearch);
     const matchStatus = filterStatus === "all" || r.status === filterStatus;
     const matchProject = filterProject === "all" || r.projectId === filterProject;
     return matchSearch && matchStatus && matchProject;
@@ -826,7 +877,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
-              placeholder={isPR ? "ค้นหา PR No., Cost Code..." : "ค้นหา PO No., Vendor..."}
+              placeholder={isPR ? "ค้นหา PR No., Cost Code, Ref PO..." : "ค้นหา PO No., Vendor..."}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-56"
@@ -872,6 +923,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                 <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="items" className="px-3 py-3 font-semibold text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths?.[isPR?"pr-table":"po-table"]?.items}>จำนวนรายการ</ResizableTh>
                 <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="amount" className="px-3 py-3 font-semibold text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths?.[isPR?"pr-table":"po-table"]?.amount}>ยอดรวม</ResizableTh>
                 <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="status" className="px-3 py-3 font-semibold text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths?.[isPR?"pr-table":"po-table"]?.status}>สถานะ</ResizableTh>
+                {isPR && <ResizableTh tableId="pr-table" colKey="poRef" className="px-3 py-3 font-semibold text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths?.["pr-table"]?.poRef}>Ref PO</ResizableTh>}
                 <th className="px-3 py-3 font-semibold text-center w-28">Action</th>
               </tr>
             </thead>
@@ -897,6 +949,17 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                   const isEven = idx % 2 === 0;
                   const vendorName = !isPR
                     ? (r.vendor || (vendors || []).find((v: any) => v.id === r.vendorId)?.name || "-")
+                    : "";
+                  const poRefNos = isPR
+                    ? pos
+                        .filter((po: any) =>
+                          (po.selectedPrIds || []).includes(r.id) ||
+                          (po.items || []).some((it: any) => it.prId === r.id) ||
+                          po.prRefId === r.id
+                        )
+                        .map((po: any) => po.poNo || po.id)
+                        .filter(Boolean)
+                        .join(", ")
                     : "";
 
                   return (
@@ -961,6 +1024,11 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                           {r.status || "Draft"}
                         </span>
                       </td>
+                      {isPR && (
+                        <td className="px-3 py-2.5 text-slate-500 text-[11px] text-center">
+                          {poRefNos || "-"}
+                        </td>
+                      )}
                       <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-center gap-1">
                           <button type="button" disabled={pdfLoadingId === r.id} className="p-1.5 rounded hover:bg-slate-200 text-slate-600 hover:text-slate-800 disabled:opacity-40" title="ส่งไฟล์ PDF ทางเมล" onClick={() => { setEmailModal({ doc: r, kind: isPR ? "pr" : "po" }); setEmailTo(""); }}>

@@ -179,7 +179,7 @@ const POView = React.memo(() => {
     // but here we might need a quick add. For now, let's use the main Vendor list.
     // If user wants to add vendor, we can switch view or open a mini-modal.
     // Let's implement a mini vendor modal here for convenience as requested.
-    const [newVendor, setNewVendor] = useState({ name: "", code: "", type: "", tel: "" });
+    const [newVendor, setNewVendor] = useState({ name: "", code: "", type: "", tel: "", address: "", creditTerm: "" });
 
     // Helper: ยอดที่ถูก PO ใช้ไปแล้ว (ไม่นับ PO ที่ Rejected และไม่นับ PO ที่กำลังแก้ถ้ามี)
     const getUsedQuantity = (prId, itemIndex, excludePoId) => {
@@ -637,11 +637,11 @@ const POView = React.memo(() => {
     // Quick Add Vendor
     const handleQuickAddVendor = async () => {
       if (!newVendor.name) return;
-      const payload = { ...newVendor, code: newVendor.code || "AUTO", type: newVendor.type || "General" };
+      const payload = { ...newVendor, code: newVendor.code || "-", type: newVendor.type || "General" };
       const success = await addData("vendors", payload);
       if (success) {
         setIsVendorModalOpen(false);
-        setNewVendor({ name: "", code: "", type: "", tel: "" });
+        setNewVendor({ name: "", code: "", type: "", tel: "", address: "", creditTerm: "" });
         // Ideally select the new vendor automatically, but refetch might delay. 
         // Simplified: User selects from list.
         showAlert("สำเร็จ", "เพิ่ม Vendor เรียบร้อย", "success");
@@ -1836,14 +1836,33 @@ const POView = React.memo(() => {
         {/* Quick Add Vendor Modal */}
         {isVendorModalOpen && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[60]">
-            <Card className="w-full max-w-sm p-6">
-              <h3 className="font-bold mb-4">เพิ่ม Vendor ด่วน</h3>
-              <div className="space-y-3">
-                <InputGroup label="ชื่อร้านค้า/บริษัท"><input type="text" className="w-full border p-2 rounded text-sm" value={newVendor.name} onChange={e => setNewVendor({ ...newVendor, name: e.target.value })} /></InputGroup>
-                <InputGroup label="เบอร์โทร"><input type="text" className="w-full border p-2 rounded text-sm" value={newVendor.tel} onChange={e => setNewVendor({ ...newVendor, tel: e.target.value })} /></InputGroup>
+            <Card className="w-full max-w-lg p-6">
+              <h3 className="font-bold mb-4 flex items-center gap-2">
+                <Building2 size={18} /> เพิ่ม Vendor ด่วน
+              </h3>
+              <div className="grid grid-cols-2 gap-4">
+                <InputGroup label="รหัส">
+                  <input type="text" className="w-full border rounded-lg p-2 text-sm" value={newVendor.code} onChange={e => setNewVendor({ ...newVendor, code: e.target.value })} placeholder="V001" />
+                </InputGroup>
+                <InputGroup label="โทร">
+                  <input type="text" className="w-full border rounded-lg p-2 text-sm" value={newVendor.tel} onChange={e => setNewVendor({ ...newVendor, tel: e.target.value })} placeholder="02-xxx-xxxx" />
+                </InputGroup>
+                <div className="col-span-2">
+                  <InputGroup label="ชื่อ *">
+                    <input type="text" className="w-full border rounded-lg p-2 text-sm" value={newVendor.name} onChange={e => setNewVendor({ ...newVendor, name: e.target.value })} placeholder="ชื่อร้านค้า/บริษัท" />
+                  </InputGroup>
+                </div>
+                <div className="col-span-2">
+                  <InputGroup label="ที่อยู่">
+                    <input type="text" className="w-full border rounded-lg p-2 text-sm" value={newVendor.address} onChange={e => setNewVendor({ ...newVendor, address: e.target.value })} placeholder="ที่อยู่" />
+                  </InputGroup>
+                </div>
+                <InputGroup label="เครดิตเทอม">
+                  <input type="text" className="w-full border rounded-lg p-2 text-sm" value={newVendor.creditTerm} onChange={e => setNewVendor({ ...newVendor, creditTerm: e.target.value })} placeholder="30, 60..." />
+                </InputGroup>
               </div>
               <div className="flex justify-end gap-2 mt-4">
-                <Button variant="secondary" onClick={() => setIsVendorModalOpen(false)}>ยกเลิก</Button>
+                <Button variant="secondary" onClick={() => { setIsVendorModalOpen(false); setNewVendor({ name: "", code: "", type: "", tel: "", address: "", creditTerm: "" }); }}>ยกเลิก</Button>
                 <Button onClick={handleQuickAddVendor}>บันทึก</Button>
               </div>
             </Card>

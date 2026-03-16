@@ -176,15 +176,67 @@ const BudgetView = React.memo(() => {
     };
 
     const handleDownloadTemplate = () => {
-      const headers = "Cost Code,Description,Budget\n";
-      const sampleRows = `001001,ตัวอย่างค่าจัดเตรียมงาน,50000\n002001,ตัวอย่างค่าใช้จ่ายหน่วยงาน,10000\n003001,ตัวอย่างค่าวัสดุ,100000`;
+      if (!selectedProjectId) {
+        showAlert("แจ้งเตือน", "กรุณาเลือกโครงการก่อนดาวน์โหลด Template", "warning");
+        return;
+      }
+      // ฟังก์ชัน escape ค่าสำหรับ CSV
+      const esc = (val: any) => {
+        const s = String(val ?? "");
+        return s.includes(",") || s.includes('"') || s.includes("\n")
+          ? `"${s.replace(/"/g, '""')}"`
+          : s;
+      };
+
+      // คอลัมน์: เพิ่ม MainBudget (งบประมาณหลักที่ตั้งไว้) ให้เห็นยอดรวมของ main item
+      const headers = "MainCostCode,MainDescription,MainBudget,MainStatus,SubDescription,Quantity,Unit,UnitPrice,SubStatus";
+
+      const dataRows: string[] = [];
+
+      if (currentBudgets.length > 0) {
+        currentBudgets.forEach((budget: any) => {
+          const mainCode   = budget.code        || "";
+          const mainDesc   = budget.description  || "";
+          const mainBudget = budget.amount       ?? 0;
+          const mainStatus = budget.status       || "Draft";
+
+          if (budget.subItems && budget.subItems.length > 0) {
+            budget.subItems.forEach((sub: any) => {
+              dataRows.push([
+                mainCode, mainDesc, mainBudget, mainStatus,
+                sub.description || "",
+                sub.quantity  ?? 0,
+                sub.unit      || "",
+                sub.unitPrice ?? 0,
+                sub.status    || "Draft",
+              ].map(esc).join(","));
+            });
+          } else {
+            // งบหลักที่ยังไม่มี sub-items
+            dataRows.push([
+              mainCode, mainDesc, mainBudget, mainStatus,
+              "", "", "", "", "",
+            ].map(esc).join(","));
+          }
+        });
+      } else {
+        // ไม่มีข้อมูล — ใส่แถวตัวอย่างเพื่อให้รู้รูปแบบ
+        dataRows.push([
+          "001001","(ตัวอย่าง) ค่าจัดเตรียมพื้นที่","200000","Draft",
+          "ทำความสะอาดพื้นที่หน้างาน","1","งาน","30000","Draft",
+        ].map(esc).join(","));
+      }
+
+      const projectCode = projects.find((p) => p.id === selectedProjectId)?.jobNo
+        || projects.find((p) => p.id === selectedProjectId)?.name?.slice(0, 10)
+        || selectedProjectId.slice(0, 8);
+
       const bom = "\uFEFF";
-      const csvContent =
-        "data:text/csv;charset=utf-8," +
-        encodeURIComponent(bom + headers + sampleRows);
+      const content = bom + headers + "\n" + dataRows.join("\n");
+      const csvContent = "data:text/csv;charset=utf-8," + encodeURIComponent(content);
       const link = document.createElement("a");
       link.setAttribute("href", csvContent);
-      link.setAttribute("download", "cmg_budget_template.csv");
+      link.setAttribute("download", `budget_${budgetCategory}_${projectCode}.csv`);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -198,18 +250,18 @@ const BudgetView = React.memo(() => {
       reader.onload = (e) => {
         const text = e.target.result;
         const rows = text.split(/\r?\n/).slice(1);
-        const parsedData = {};
+        const parsedData: any = {};
         rows.forEach((row) => {
           if (!row.trim()) return;
-          
-          const cols = [];
+
+          const cols: string[] = [];
           let inQuotes = false;
           let currentVal = "";
           for (let i = 0; i < row.length; i++) {
             const char = row[i];
             if (char === '"') {
               inQuotes = !inQuotes;
-            } else if (char === ',' && !inQuotes) {
+            } else if (char === "," && !inQuotes) {
               cols.push(currentVal);
               currentVal = "";
             } else {
@@ -218,46 +270,93 @@ const BudgetView = React.memo(() => {
           }
           cols.push(currentVal);
 
-          if (cols.length >= 3) {
-            let costCode = cols[0].trim().replace(/^"|"$/g, '').replace(/""/g, '"').trim();
-            let description = cols[1].trim().replace(/^"|"$/g, '').replace(/""/g, '"').trim();
-            let amountStr = cols[2].trim().replace(/^"|"$/g, '').replace(/""/g, '"').trim();
+          // รองรับ 3 รูปแบบ:
+          // 8-col (Export+Status): MainCostCode,MainDescription,MainStatus,SubDescription,Quantity,Unit,UnitPrice,SubStatus
+          // 6-col (Template ใหม่): MainCostCode,MainDescription,SubDescription,Quantity,Unit,UnitPrice
+          // 3-col (Legacy):        Cost Code,Description,Budget
+          // 9-col (Export+Status): MainCostCode,MainDescription,MainBudget,MainStatus,SubDescription,Quantity,Unit,UnitPrice,SubStatus
+          // 6-col (Template ใหม่): MainCostCode,MainDescription,SubDescription,Quantity,Unit,UnitPrice
+          const isExportFormat = cols.length >= 9;
+          if (isExportFormat || cols.length >= 6) {
+            // export format (9 col): cols[2]=MainBudget(ข้าม), cols[3]=MainStatus(ข้าม), cols[4..8]=Sub fields
+            // template  format (6 col): cols[2..5]=Sub fields
+            const cIdx = isExportFormat ? 4 : 2; // index เริ่มต้นของ SubDescription
+            const clean = (v: any) => (v || "").toString().trim().replace(/^"|"$/g, "").replace(/""/g, '"').trim();
+            const rawMainCode     = clean(cols[0]);
+            const mainDescription = clean(cols[1]);
+            // cols[2] = MainBudget (export) — ไม่ใช้ตอน import (ระบบใช้ budget.amount จาก Firestore)
+            // cols[3] = MainStatus (export) — ไม่ใช้ตอน import
+            const subDescription  = clean(cols[cIdx]);
+            let qtyStr            = clean(cols[cIdx + 1]);
+            let unit              = clean(cols[cIdx + 2]);
+            let unitPriceStr      = clean(cols[cIdx + 3]);
+            // cols[cIdx+4] = SubStatus (export) — ไม่ใช้ตอน import
 
-            amountStr = amountStr.replace(/,/g, '');
+            if (!rawMainCode) return;
+
+            // Normalize Main Cost Code (รองรับทั้ง 6 / 9 หลัก และกรณี Excel ตัด 0 นำหน้า)
+            const strippedMain = rawMainCode.replace(/^0+/, "") || "0";
+            const normalizedMainCode =
+              strippedMain.length <= 6
+                ? strippedMain.padStart(6, "0")
+                : strippedMain.padStart(9, "0");
+
+            const category = normalizedMainCode.substring(0, 3);
+            const ALLOWED_PREFIXES = ["001","002","003","004","005","006","007","008","009"];
+            if (!ALLOWED_PREFIXES.includes(category)) return;
+
+            qtyStr = qtyStr.replace(/,/g, "");
+            unitPriceStr = unitPriceStr.replace(/,/g, "");
+
+            const quantity = qtyStr ? Number(qtyStr) || 0 : 0;
+            const unitPrice = unitPriceStr ? Number(unitPriceStr) || 0 : 0;
+            const amount = quantity * unitPrice;
+
+            if (!parsedData[category]) parsedData[category] = [];
+            parsedData[category].push({
+              mainCode: normalizedMainCode,
+              mainDescription,
+              subDescription,
+              quantity,
+              unit: unit || "งาน",
+              unitPrice,
+              amount,
+              isLegacy: false,
+            });
+          } else if (cols.length >= 3) {
+            // Template เก่า: Cost Code,Description,Budget — ยังรองรับอยู่เพื่อ backward compatibility
+            let costCode = cols[0].trim().replace(/^"|"$/g, "").replace(/""/g, '"').trim();
+            const description = cols[1].trim().replace(/^"|"$/g, "").replace(/""/g, '"').trim();
+            let amountStr = cols[2].trim().replace(/^"|"$/g, "").replace(/""/g, '"').trim();
+
+            amountStr = amountStr.replace(/,/g, "");
             if (amountStr === "-" || amountStr === "") {
               amountStr = "0";
             }
 
             const amount = Number(amountStr) || 0;
-            
+
             if (costCode.length >= 1) {
-              // ---- Normalize Cost Code ----
-              // 1. ตัด leading zeros ที่ Excel อาจลบออก แล้ว re-pad ให้ถูกต้อง:
-              //    "2007"      (4) → strip → "2007"    → padStart(6) → "002007"    → cat "002" ✓
-              //    "002007"    (6) → strip → "2007"    → padStart(6) → "002007"    → cat "002" ✓
-              //    "002007003" (9) → strip → "2007003" → padStart(9) → "002007003" → cat "002" ✓
-              //    "000002007" (9) → strip → "2007"    → padStart(6) → "002007"    → cat "002" ✓
-              //    "7003001"   (7) → strip → "7003001" → padStart(9) → "007003001" → cat "007" ✓
               const strippedNum = costCode.replace(/^0+/, "") || "0";
               const normalizedCode =
                 strippedNum.length <= 6
-                  ? strippedNum.padStart(6, "0")   // 6-digit format: CATSUB
-                  : strippedNum.padStart(9, "0");  // 9-digit format: CATSUBITM
+                  ? strippedNum.padStart(6, "0")
+                  : strippedNum.padStart(9, "0");
 
               const category = normalizedCode.substring(0, 3);
-
-              // รับเฉพาะ Cost Code นำหน้า 001-009 เท่านั้น
               const ALLOWED_PREFIXES = ["001","002","003","004","005","006","007","008","009"];
               if (!ALLOWED_PREFIXES.includes(category)) return;
 
               if (!parsedData[category]) parsedData[category] = [];
               parsedData[category].push({
-                category,
-                code: normalizedCode,
-                description,
+                mainCode: normalizedCode,
+                mainDescription: description,
+                subDescription: "",
+                quantity: 0,
+                unit: "",
+                unitPrice: 0,
                 amount,
-                status: "Draft",
-                subItems: [],
+                isLegacy: true,
               });
             }
           }
@@ -272,8 +371,139 @@ const BudgetView = React.memo(() => {
     const handleConfirmImport = async () => {
       if (!selectedProjectId)
         return showAlert("Error", "กรุณาเลือกโครงการก่อน Import", "error");
-      let importCount = 0;
-      const batchPromises = [];
+
+      const normalizeDesc = (s: string) => (s || "").trim().toLowerCase();
+
+      // ---- Phase 1: สร้าง budgetMap ทั้งหมด + ตรวจ violation ทั้งหมดก่อน ----
+      // ไม่มีการ write Firestore ใด ๆ ในขั้นนี้
+      const allViolationMessages: string[] = [];   // บล็อก import ทั้งหมด (ยอดเกินงบหลัก)
+      const allSkipMessages:      string[] = [];   // ข้ามรายการนั้น แต่ยังทำรายการอื่นต่อ
+      const allBudgetMaps: Array<{ cat: string; isLegacy: boolean; budgetMap?: any; legacyRows?: any[] }> = [];
+
+      for (const cat of selectedImportCategories) {
+        const rows = importData[cat] || [];
+        if (rows.length === 0) continue;
+
+        const isLegacyTemplate = rows.every((r: any) => r.isLegacy);
+
+        if (isLegacyTemplate) {
+          allBudgetMaps.push({ cat, isLegacy: true, legacyRows: rows });
+        } else {
+          // สร้าง budgetMap สำหรับ category นี้
+          const budgetMap: any = {};
+          rows.forEach((row: any) => {
+            const key = `${row.mainCode}||${(row.mainDescription || "").trim()}`;
+            if (!budgetMap[key]) {
+              budgetMap[key] = {
+                projectId: selectedProjectId,
+                category: cat,
+                code: row.mainCode,
+                description: row.mainDescription || "",
+                amount: 0,
+                status: "Draft",
+                subItems: [],
+              };
+            }
+            const hasSub = !!row.subDescription;
+            if (hasSub) {
+              const subAmount = Number(row.amount) || 0;
+              budgetMap[key].subItems.push({
+                id: crypto.randomUUID(),
+                description: row.subDescription,
+                quantity: row.quantity || 0,
+                unit: row.unit || "งาน",
+                unitPrice: row.unitPrice || 0,
+                amount: subAmount,
+                status: "Draft",
+                rejectReason: "",
+              });
+              budgetMap[key].amount += subAmount;
+            } else {
+              budgetMap[key].amount += Number(row.amount) || 0;
+            }
+          });
+
+          // ตรวจ violation + skip ทุก budget ใน map นี้
+          Object.values(budgetMap).forEach((budgetItem: any) => {
+            const existingBudget = budgets.find(
+              (b) =>
+                b.projectId === selectedProjectId &&
+                b.code === budgetItem.code &&
+                normalizeDesc(b.description) === normalizeDesc(budgetItem.description)
+            );
+
+            if (existingBudget) {
+              const existingSubs: any[] = existingBudget.subItems || [];
+
+              // 2. กรอง sub-items ที่ซ้ำกับที่มีอยู่แล้ว
+              const duplicateSubs: any[] = [];
+              const newSubs: any[]       = [];
+              budgetItem.subItems.forEach((s: any) => {
+                const isDupe = existingSubs.some(
+                  (e: any) => normalizeDesc(e.description) === normalizeDesc(s.description)
+                );
+                if (isDupe) duplicateSubs.push(s);
+                else newSubs.push(s);
+              });
+
+              if (duplicateSubs.length > 0) {
+                const dupeNames = duplicateSubs.map((s: any) => `"${s.description}"`).join(", ");
+                allSkipMessages.push(
+                  `⚠️ ${budgetItem.code} — ${budgetItem.description || ""} : ข้ามรายการซ้ำ ${duplicateSubs.length} รายการ (${dupeNames})`
+                );
+              }
+
+              // ใช้เฉพาะ sub-items ใหม่ที่ไม่ซ้ำ
+              budgetItem.subItems = newSubs;
+
+              // 3. ตรวจยอดเงิน — คำนวณจาก sub-items ที่จะ merge จริง
+              if (newSubs.length > 0) {
+                const existingTotal = existingSubs.reduce(
+                  (sum: number, s: any) => sum + Number(s.amount || 0), 0
+                );
+                const newTotal = newSubs.reduce(
+                  (sum: number, s: any) => sum + Number(s.amount || 0), 0
+                );
+                const combined = existingTotal + newTotal;
+                if (combined > Number(existingBudget.amount || 0)) {
+                  const overAmount = combined - Number(existingBudget.amount || 0);
+                  const subLines = newSubs
+                    .map(
+                      (s: any) =>
+                        `    • ${s.description || "-"} : ${Number(s.quantity || 0).toLocaleString("th-TH")} ${s.unit || ""} × ${formatCurrency(s.unitPrice)} = ${formatCurrency(s.amount)}`
+                    )
+                    .join("\n");
+                  allViolationMessages.push(
+                    `❌ ${budgetItem.code} — ${budgetItem.description || ""}\n` +
+                    `   งบหลัก: ${formatCurrency(existingBudget.amount || 0)}  |  ยอดรวมปัจจุบัน+ใหม่: ${formatCurrency(combined)}  (เกิน ${formatCurrency(overAmount)})\n` +
+                    `   รายการที่กำลัง Import:\n${subLines}`
+                  );
+                }
+              }
+            }
+          });
+
+          allBudgetMaps.push({ cat, isLegacy: false, budgetMap });
+        }
+      }
+
+      // ---- หากมี violation (ยอดเกิน) → ยกเลิกทั้งหมด ----
+      if (allViolationMessages.length > 0) {
+        showAlert(
+          "Import ไม่สำเร็จ — ยกเลิกทั้งหมด",
+          "ยอดรวม Sub-Items เกินงบหลักในรายการต่อไปนี้ กรุณาแก้ไขไฟล์แล้วลองใหม่:\n" +
+            allViolationMessages.join("\n\n"),
+          "error"
+        );
+        setIsImportModalOpen(false);
+        setImportData({});
+        setImportFile(null);
+        setSelectedImportCategories([]);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
+
+      // ---- Phase 2: ไม่มี violation → อัปโหลดไฟล์แนบ แล้ว write Firestore ทั้งหมด ----
       try {
         if (importFile) {
           await uploadAttachment(importFile, { type: "imports", subPath: "budget", projectId: selectedProjectId });
@@ -283,19 +513,52 @@ const BudgetView = React.memo(() => {
         showAlert("Error", "อัปโหลดไฟล์ไม่สำเร็จ: " + (e?.message || e), "error");
         return;
       }
-      for (const cat of selectedImportCategories) {
-        const items = importData[cat] || [];
-        for (const item of items) {
-          const budgetItem = { ...item, projectId: selectedProjectId };
-          const safeDesc = budgetItem.description
-            .replace(/\//g, "-")
-            .replace(/[.#$[\]]/g, "")
-            .trim();
-          const budgetDocId = `${budgetItem.projectId}-${budgetItem.code}-${safeDesc}`;
-          batchPromises.push(addData("budgets", budgetItem, budgetDocId));
-          importCount++;
+
+      let importCount = 0;
+      const batchPromises = [];
+
+      for (const entry of allBudgetMaps) {
+        if (entry.isLegacy) {
+          for (const row of (entry.legacyRows || [])) {
+            const budgetItem = {
+              projectId: selectedProjectId,
+              category: entry.cat,
+              code: row.mainCode,
+              description: row.mainDescription,
+              amount: row.amount,
+              status: "Draft",
+              subItems: [],
+            };
+            const safeDesc = (budgetItem.description || "")
+              .replace(/\//g, "-").replace(/[.#$[\]]/g, "").trim();
+            const budgetDocId = `${budgetItem.projectId}-${budgetItem.code}-${safeDesc}`;
+            batchPromises.push(addData("budgets", budgetItem, budgetDocId));
+            importCount++;
+          }
+        } else {
+          Object.values(entry.budgetMap || {}).forEach((budgetItem: any) => {
+            const safeDesc = (budgetItem.description || "")
+              .replace(/\//g, "-").replace(/[.#$[\]]/g, "").trim();
+            const budgetDocId = `${budgetItem.projectId}-${budgetItem.code}-${safeDesc}`;
+            const existingBudget = budgets.find(
+              (b) =>
+                b.projectId === selectedProjectId &&
+                b.code === budgetItem.code &&
+                normalizeDesc(b.description) === normalizeDesc(budgetItem.description)
+            );
+            if (existingBudget) {
+              const mergedSubItems = [...(existingBudget.subItems || []), ...budgetItem.subItems];
+              batchPromises.push(
+                updateData("budgets", existingBudget.id, { subItems: mergedSubItems })
+              );
+            } else {
+              batchPromises.push(addData("budgets", budgetItem, budgetDocId));
+            }
+            importCount++;
+          });
         }
       }
+
       await Promise.all(batchPromises);
       await logAction("Import", `Imported ${importCount} budget items`);
       setIsImportModalOpen(false);
@@ -303,10 +566,14 @@ const BudgetView = React.memo(() => {
       setImportFile(null);
       setSelectedImportCategories([]);
       if (fileInputRef.current) fileInputRef.current.value = "";
+
+      const skipSummary = allSkipMessages.length > 0
+        ? `\n\nรายการที่ถูกข้าม (${allSkipMessages.length} กลุ่ม):\n${allSkipMessages.join("\n")}`
+        : "";
       showAlert(
-        "Import สำเร็จ",
-        `นำเข้าข้อมูล ${importCount} รายการเรียบร้อย`,
-        "success"
+        importCount > 0 ? "Import สำเร็จ" : "Import เสร็จสิ้น (ไม่มีรายการใหม่)",
+        `นำเข้าข้อมูล ${importCount} รายการเรียบร้อย${skipSummary}`,
+        importCount > 0 ? "success" : "info"
       );
     };
 
@@ -2409,21 +2676,15 @@ const BudgetView = React.memo(() => {
                       type="number"
                       min="0"
                       step="any"
-                      className={`w-full border border-slate-200 rounded-lg pl-3 pr-10 py-2 text-sm focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all ${selectedBudget?.subItems?.length > 0 ? "bg-slate-50 text-slate-500 cursor-not-allowed" : ""}`}
+                      className="w-full border border-slate-200 rounded-lg pl-3 pr-10 py-2 text-sm focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all"
                       placeholder="0.00"
                       value={formData.amount}
                       onChange={(e) => setFormData({ ...formData, amount: Number(e.target.value) })}
-                      disabled={selectedBudget?.subItems?.length > 0}
                     />
                     <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
                       <span className="text-slate-400 text-xs font-semibold">THB</span>
                     </div>
                   </div>
-                  {selectedBudget?.subItems?.length > 0 && (
-                    <p className="text-[10px] text-orange-500 mt-1.5 flex items-center gap-1">
-                      <AlertCircle size={10} /> ไม่สามารถแก้ไขยอดเงินได้ เนื่องจากมีรายการย่อย (Sub-Items)
-                    </p>
-                  )}
                 </div>
               </div>
 
