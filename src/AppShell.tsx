@@ -538,6 +538,7 @@ const AppShell = () => {
                   updateData={updateData}
                   showAlert={showAlert}
                   openConfirm={openConfirm}
+                  selectedProjectId={selectedProjectId}
                 />
               </div>
             )}
@@ -695,7 +696,7 @@ const SidebarSubItem = ({ label, active, onClick }) => (
 );
 
 // --- PR / PO Combined Table View ---
-const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidths, handleColumnResize, userRole, updateData, showAlert, openConfirm }: {
+const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidths, handleColumnResize, userRole, updateData, showAlert, openConfirm, selectedProjectId }: {
   mode: "pr" | "po";
   prs: any[];
   pos: any[];
@@ -708,10 +709,16 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   updateData?: (collection: string, id: string, data: any) => Promise<boolean>;
   showAlert?: (title: string, message: string, type: string) => void;
   openConfirm?: (title: string, message: string, onConfirm: () => void | Promise<void>, variant?: string) => void;
+  selectedProjectId?: string | null;
 }) => {
   const [searchTerm, setSearchTerm] = React.useState("");
   const [filterStatus, setFilterStatus] = React.useState("all");
-  const [filterProject, setFilterProject] = React.useState("all");
+  const [filterProject, setFilterProject] = React.useState(selectedProjectId || "all");
+
+  // ซิงก์ filterProject เมื่อ selectedProjectId เปลี่ยน (เช่นกดเปลี่ยนโครงการที่ header)
+  React.useEffect(() => {
+    setFilterProject(selectedProjectId || "all");
+  }, [selectedProjectId]);
   const [emailModal, setEmailModal] = React.useState<{ doc: any; kind: "pr" | "po" } | null>(null);
   const [emailTo, setEmailTo] = React.useState("");
   const [pdfLoadingId, setPdfLoadingId] = React.useState<string | null>(null);
