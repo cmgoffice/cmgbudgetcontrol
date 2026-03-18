@@ -570,11 +570,7 @@ const BudgetView = React.memo(() => {
       const skipSummary = allSkipMessages.length > 0
         ? `\n\nรายการที่ถูกข้าม (${allSkipMessages.length} กลุ่ม):\n${allSkipMessages.join("\n")}`
         : "";
-      showAlert(
-        importCount > 0 ? "Import สำเร็จ" : "Import เสร็จสิ้น (ไม่มีรายการใหม่)",
-        `นำเข้าข้อมูล ${importCount} รายการเรียบร้อย${skipSummary}`,
-        importCount > 0 ? "success" : "info"
-      );
+      // เดิมจะแสดง Modal แจ้งผล Import ที่นี่ ตัดออกตามคำขอ
     };
 
     const calculateTotalBudget = (item) => {
@@ -894,7 +890,6 @@ const BudgetView = React.memo(() => {
             updatePayload
           );
           await logAction("Update", `[Budget] ${formData.code} - ${formData.description} | โครงการ: ${projects.find(p => p.id === selectedProjectId)?.name || selectedProjectId}${newStatus ? ` | Status: ${newStatus}` : ''}`);
-          showAlert("สำเร็จ", "แก้ไขรายการ Budget เรียบร้อย", "success");
         } else {
           const budgetData = {
             ...formData,
@@ -911,7 +906,6 @@ const BudgetView = React.memo(() => {
             budgetData
           );
           await logAction("Create", `[Budget] ${formData.code} - ${formData.description} | โครงการ: ${projects.find(p => p.id === selectedProjectId)?.name || selectedProjectId}`);
-          showAlert("สำเร็จ", "เพิ่มรายการ Budget ใหม่เรียบร้อย", "success");
         }
         setIsModalOpen(false);
         setEditingBudgetId(null);
@@ -962,7 +956,6 @@ const BudgetView = React.memo(() => {
         await logAction("Delete", `Cleared all ${currentBudgets.length} budget items in category ${budgetCategory}`);
         setIsClearConfirmOpen(false);
         setClearConfirmText("");
-        showAlert("สำเร็จ", `ลบข้อมูลงบประมาณ ${currentBudgets.length} รายการเรียบร้อยแล้ว`, "success");
       } catch (e) {
         showAlert("Error", e.message, "error");
       }
@@ -986,11 +979,7 @@ const BudgetView = React.memo(() => {
         { status: "Approved", revisionReason: "", rejectReason: "" }
       );
       await logAction("Approve", `Approved Budget ID: ${budgetId}`);
-      showAlert(
-        "อนุมัติแล้ว",
-        "Budget ได้รับการอนุมัติโดย MD เรียบร้อย",
-        "success"
-      );
+      // ไม่แสดง Modal แจ้งเตือนเมื่อ Approve สำเร็จ เพื่อลด pop-up ตามคำขอ
     };
 
     const handleSubmitBudget = async (id) => {
@@ -1031,26 +1020,25 @@ const BudgetView = React.memo(() => {
         showAlert("ไม่สามารถส่งได้", "ไม่มีรายการที่สถานะ Draft ในรายการที่เลือก (ส่งได้เฉพาะรายการแบบร่าง)", "warning");
         return;
       }
-      openConfirm(
-        "ยืนยันส่ง MD Approve",
-        `ส่งรายการที่เลือก ${toSubmit.length} รายการไปยัง MD อนุมัติใช่หรือไม่?`,
-        async () => {
-          try {
-            for (const id of toSubmit) {
-              await updateDoc(
-                doc(db, "artifacts", appId, "public", "data", "budgets", id),
-                { status: "Wait MD Approve" }
-              );
+          openConfirm(
+            "ยืนยันส่ง MD Approve",
+            `ส่งรายการที่เลือก ${toSubmit.length} รายการไปยัง MD อนุมัติใช่หรือไม่?`,
+            async () => {
+              try {
+                for (const id of toSubmit) {
+                  await updateDoc(
+                    doc(db, "artifacts", appId, "public", "data", "budgets", id),
+                    { status: "Wait MD Approve" }
+                  );
+                }
+                await logAction("Bulk", `Sent ${toSubmit.length} budgets to Wait MD Approve`);
+                setSelectedBudgetIds([]);
+                setActionDropdownOpen(false);
+              } catch (e) {
+                showAlert("เกิดข้อผิดพลาด", e?.message || "ไม่สามารถส่งได้", "error");
+              }
             }
-            await logAction("Bulk", `Sent ${toSubmit.length} budgets to Wait MD Approve`);
-            setSelectedBudgetIds([]);
-            setActionDropdownOpen(false);
-            showAlert("สำเร็จ", `ส่ง ${toSubmit.length} รายการไปยัง MD อนุมัติแล้ว`, "success");
-          } catch (e) {
-            showAlert("เกิดข้อผิดพลาด", e?.message || "ไม่สามารถส่งได้", "error");
-          }
-        }
-      );
+          );
     };
 
     const handleBulkDeleteBudgets = () => {
@@ -1089,7 +1077,7 @@ const BudgetView = React.memo(() => {
       );
     };
 
-    const handleBulkApprovePendingBudgets = () => {
+    const handleBulkApprovePendingBudgets = async () => {
       setPendingActionDropdownOpen(false);
       if (pendingSelectedBudgetIds.length === 0) {
         showAlert("กรุณาเลือกรายการ", "กรุณาเลือกรายการงบที่ต้องการ Approve ก่อน (ติ๊กถูกหน้าบรรทัด)", "warning");
@@ -1103,26 +1091,20 @@ const BudgetView = React.memo(() => {
         showAlert("ไม่พบรายการ", "ไม่มีรายการรออนุมัติที่ตรงกับการเลือก", "warning");
         return;
       }
-      openConfirm(
-        "ยืนยัน Approve หลายรายการ",
-        `คุณต้องการ Approve Budget ที่เลือก ${toApprove.length} รายการใช่หรือไม่?`,
-        async () => {
-          try {
-            for (const id of toApprove) {
-              await updateDoc(
-                doc(db, "artifacts", appId, "public", "data", "budgets", id),
-                { status: "Approved", revisionReason: "", rejectReason: "" }
-              );
-            }
-            await logAction("Bulk", `Approved ${toApprove.length} pending budgets from dashboard`);
-            setPendingSelectedBudgetIds([]);
-            setPendingActionDropdownOpen(false);
-            showAlert("สำเร็จ", `Approve งบประมาณ ${toApprove.length} รายการเรียบร้อย`, "success");
-          } catch (e) {
-            showAlert("เกิดข้อผิดพลาด", e?.message || "ไม่สามารถ Approve ได้", "error");
-          }
+      try {
+        for (const id of toApprove) {
+          await updateDoc(
+            doc(db, "artifacts", appId, "public", "data", "budgets", id),
+            { status: "Approved", revisionReason: "", rejectReason: "" }
+          );
         }
-      );
+        await logAction("Bulk", `Approved ${toApprove.length} pending budgets from dashboard`);
+        setPendingSelectedBudgetIds([]);
+        setPendingActionDropdownOpen(false);
+        // ไม่แสดง Modal แจ้งเตือนเมื่อ Approve สำเร็จ เพื่อลด pop-up ตามคำขอ
+      } catch (e) {
+        showAlert("เกิดข้อผิดพลาด", e?.message || "ไม่สามารถ Approve ได้", "error");
+      }
     };
 
     const handleBulkRejectPendingBudgets = () => {
@@ -1183,7 +1165,6 @@ const BudgetView = React.memo(() => {
       setIsRevisionModalOpen(false);
       setRevisionReason("");
       setSelectedBudget(null);
-      showAlert("ส่งคำขอแก้ไข", "ส่งเรื่องรอ MD อนุมัติการแก้ไขแล้ว", "info");
     };
 
     const handleAllowEdit = async (budgetId) => {
@@ -1192,11 +1173,6 @@ const BudgetView = React.memo(() => {
         { status: "Draft", revisionReason: "", rejectReason: "" }
       );
       await logAction("Approve", `Allowed Edit for Budget ID: ${budgetId}`);
-      showAlert(
-        "อนุญาตแล้ว",
-        "ปลดล็อครายการให้แก้ไขได้ (สถานะ Draft)",
-        "success"
-      );
     };
 
     const handleRejectRevision = async (budgetId) => {
@@ -1205,7 +1181,6 @@ const BudgetView = React.memo(() => {
         { status: "Approved", revisionReason: "" }
       );
       await logAction("Reject Revision", `Rejected revision request for Budget ID: ${budgetId} — สถานะกลับเป็น Approved`);
-      showAlert("ไม่อนุญาตแก้ไข", "สถานะกลับเป็น Approved ตามเดิม", "info");
     };
 
     const openRejectModal = (budget) => {
@@ -1240,7 +1215,7 @@ const BudgetView = React.memo(() => {
         { subItems: newSubItems }
       );
       await logAction("Approve Sub-Item", `Approved Sub-Item ID: ${subItemId} in Budget: ${budget.code}`);
-      showAlert("อนุมัติแล้ว", "อนุมัติรายการย่อย (Sub-Item) เรียบร้อย", "success");
+      // ไม่แสดง Modal แจ้งเตือนเมื่อ Approve รายการย่อยสำเร็จ เพื่อลด pop-up ตามคำขอ
     };
 
     const handleRequestRevisionSubItem = async (budgetId, subItemId, reason) => {
@@ -1315,7 +1290,6 @@ const BudgetView = React.memo(() => {
         { subItems: newSubItems }
       );
       await logAction("Submit Sub-Item", `Submitted Sub-Item ID: ${subItemId} in Budget: ${budget.code} for approval`);
-      showAlert("ส่งคำขอสำเร็จ", "ส่งรายการย่อยให้ MD ตรวจสอบแล้ว", "success");
     };
 
     const handleRejectSubItem = async (budgetId, subItemId, reason) => {
@@ -1385,7 +1359,6 @@ const BudgetView = React.memo(() => {
       setIsSubItemModalOpen(false);
       setEditingSubItem(null);
       setExpandedBudgetRows((prev) => ({ ...prev, [selectedBudget.id]: true }));
-      showAlert("ส่งคำขอสำเร็จ", "ส่งรายการย่อยให้ MD ตรวจสอบแล้ว", "success");
     };
 
     const handleSaveSubItem = async () => {
@@ -1439,13 +1412,6 @@ const BudgetView = React.memo(() => {
       );
       setIsSubItemModalOpen(false);
       setExpandedBudgetRows((prev) => ({ ...prev, [selectedBudget.id]: true }));
-      showAlert(
-        "สำเร็จ",
-        editingSubItem
-          ? "แก้ไขรายการย่อยเรียบร้อย"
-          : "เพิ่มรายการย่อยเรียบร้อย",
-        "success"
-      );
     };
 
     const handleDeleteSubItem = async (mainId, subId) => {

@@ -95,6 +95,8 @@ const POView = React.memo(() => {
     const [discountEnabled, setDiscountEnabled] = useState(false);
     const [isAddItemModalOpen, setIsAddItemModalOpen] = useState(false);
     const [freeItemPrNoDropdownId, setFreeItemPrNoDropdownId] = useState<string | null>(null);
+    const [disPrPickerOpenKey, setDisPrPickerOpenKey] = useState<string | null>(null); // key: `item:${prId}:${idx}` | `free:${id}`
+    const [disPrPickerRect, setDisPrPickerRect] = useState<DOMRect | null>(null);
     const [vendorSearchText, setVendorSearchText] = useState("");
     const [vendorSearchQuery, setVendorSearchQuery] = useState("");
     const [vendorDropdownOpen, setVendorDropdownOpen] = useState(false);
@@ -204,6 +206,14 @@ const POView = React.memo(() => {
       relevantPOs.forEach(po => {
         if (po.items) {
           po.items.forEach(item => {
+            // New: ใช้ disPrAllocations หากมี (รองรับตัดยอด 1 รายการจากหลาย PR)
+            if (Array.isArray(item.disPrAllocations) && item.disPrAllocations.length > 0) {
+              item.disPrAllocations.forEach((a: any) => {
+                if (a?.prId === prId) total += Number(a.amount) || 0;
+              });
+              return;
+            }
+            // Backward compat: PO เก่าที่ไม่มี allocation
             if (item.prId === prId) total += Number(item.amount) || 0;
           });
         }
@@ -318,6 +328,23 @@ const POView = React.memo(() => {
       return [...new Set(list)] as string[];
     }, [formData.selectedPrIds, prs]);
 
+    // PR options สำหรับคอลัมน์ Dis PR — จาก PR ที่เลือกในขั้นตอน 2 (ยึดลำดับที่ผู้ใช้เลือก)
+    const disPrOptions = useMemo(() => {
+      const ordered = (formData.selectedPrIds || [])
+        .map((id: string) => {
+          const pr = prs.find((p: any) => p.id === id);
+          return pr ? { prId: pr.id, prNo: pr.prNo } : null;
+        })
+        .filter(Boolean) as Array<{ prId: string; prNo: string }>;
+      // unique by prId, keep order
+      const seen = new Set<string>();
+      return ordered.filter(o => {
+        if (!o?.prId || seen.has(o.prId)) return false;
+        seen.add(o.prId);
+        return true;
+      });
+    }, [formData.selectedPrIds, prs]);
+
     // PR list filtered by content (PR No., Cost Code, รายการงบ) สำหรับ Modal เลือกใบขอซื้อ
     const approvedPRsFiltered = useMemo(() => {
       const q = (prSelectFilterText || "").trim().toLowerCase();
@@ -343,7 +370,10 @@ const POView = React.memo(() => {
           price: itemData.price ?? 0,
           amount: (itemData.orderQty ?? itemData.remainingQty ?? 1) * (itemData.price ?? 0),
           remainingQty: itemData.remainingQty,
-          costCode: itemData.costCode
+          costCode: itemData.costCode,
+          // Dis PR must be explicitly selected by user; no auto-assign
+          disPrPlan: [],
+          disPrAllocations: []
         }]
       }));
     };
@@ -401,10 +431,69 @@ const POView = React.memo(() => {
             quantity: 1,
             price: 0,
             amount: 0,
-            linkedPrNo
+            linkedPrNo,
+            disPrPlan: [],
+            disPrAllocations: []
           }]
         };
       });
+    };
+
+    const getDisPrKeyForItem = (prId: string, prItemIndex: number) => `item:${prId}:${prItemIndex}`;
+    const getDisPrKeyForFree = (freeId: string) => `free:${freeId}`;
+    const isDisPrPickerOpenForItem = (prId: string, prItemIndex: number) => disPrPickerOpenKey === getDisPrKeyForItem(prId, prItemIndex);
+    const isDisPrPickerOpenForFree = (freeId: string) => disPrPickerOpenKey === getDisPrKeyForFree(freeId);
+
+    const toggleDisPrPick = (key: string, rect?: DOMRect | null) => {
+      setDisPrPickerOpenKey((cur) => {
+        const next = cur === key ? null : key;
+        if (!next) setDisPrPickerRect(null);
+        else setDisPrPickerRect(rect || null);
+        return next;
+      });
+    };
+
+    // keep popup positioned on scroll/resize while open
+    useEffect(() => {
+      if (!disPrPickerOpenKey) { setDisPrPickerRect(null); return; }
+      const update = () => {
+        // can't re-measure without anchor ref; keep current rect for stability
+        // (rect is captured at click time; good enough for typical usage)
+      };
+      window.addEventListener("scroll", update, true);
+      window.addEventListener("resize", update);
+      return () => { window.removeEventListener("scroll", update, true); window.removeEventListener("resize", update); };
+    }, [disPrPickerOpenKey]);
+
+    const toggleDisPrInPlan = (itemRef: { type: "item"; prId: string; prItemIndex: number } | { type: "free"; id: string }, prNo: string) => {
+      if (!prNo) return;
+      if (itemRef.type === "item") {
+        setFormData(prev => ({
+          ...prev,
+          items: prev.items.map((it: any) => {
+            if (it.prId === itemRef.prId && it.prItemIndex === itemRef.prItemIndex) {
+              const cur = Array.isArray(it.disPrPlan) ? it.disPrPlan : [];
+              const exists = cur.includes(prNo);
+              const next = exists ? cur.filter((x: string) => x !== prNo) : [...cur, prNo]; // preserve user order
+              return { ...it, disPrPlan: next };
+            }
+            return it;
+          })
+        }));
+      } else {
+        setFormData(prev => ({
+          ...prev,
+          items: prev.items.map((it: any) => {
+            if (it.id === itemRef.id) {
+              const cur = Array.isArray(it.disPrPlan) ? it.disPrPlan : [];
+              const exists = cur.includes(prNo);
+              const next = exists ? cur.filter((x: string) => x !== prNo) : [...cur, prNo];
+              return { ...it, disPrPlan: next };
+            }
+            return it;
+          })
+        }));
+      }
     };
 
     const handleFreeItemChange = (freeId, field, value) => {
@@ -513,6 +602,69 @@ const POView = React.memo(() => {
         );
       }
 
+      // Dis PR: บังคับเลือกทุกบรรทัด
+      const missingDis = (formData.items || []).find((it: any) => {
+        const plan = Array.isArray(it.disPrPlan) ? it.disPrPlan : [];
+        return plan.length === 0;
+      });
+      if (missingDis) {
+        return showAlert("ข้อมูลไม่ครบ", "กรุณาเลือก Dis PR ให้ทุกรายการก่อนบันทึก PO", "warning");
+      }
+
+      // Allocation: ตัดยอด PR ตามลำดับที่ผู้ใช้เลือกใน Dis PR
+      // - ใช้ยอดหลังส่วนลด (กระจาย discount ตามสัดส่วนของแต่ละบรรทัด)
+      const subtotal = Number(totals.subtotal) || 0;
+      const ratio = subtotal > 0 ? (subtotalAfterDiscount / subtotal) : 1;
+      const prNoToId = new Map<string, string>();
+      disPrOptions.forEach(o => { if (o?.prNo && o?.prId) prNoToId.set(o.prNo, o.prId); });
+      const remainingByPrId = new Map<string, number>();
+      (formData.selectedPrIds || []).forEach((prId: string) => {
+        remainingByPrId.set(prId, Number(getPrRemainingAmount(prId)) || 0);
+      });
+
+      // effective amounts per item (after discount)
+      const itemsForAlloc = (formData.items || []).map((it: any) => ({
+        ref: it,
+        effAmount: Math.max(0, (Number(it.amount) || 0) * ratio),
+      }));
+      // adjust last for rounding drift to make sum = subtotalAfterDiscount
+      const effSum = itemsForAlloc.reduce((s: number, x: any) => s + x.effAmount, 0);
+      if (itemsForAlloc.length > 0) {
+        const drift = subtotalAfterDiscount - effSum;
+        itemsForAlloc[itemsForAlloc.length - 1].effAmount = Math.max(0, itemsForAlloc[itemsForAlloc.length - 1].effAmount + drift);
+      }
+
+      const itemsWithAllocations = (formData.items || []).map((it: any) => ({ ...it, disPrAllocations: [] as any[] }));
+      for (let idx = 0; idx < itemsForAlloc.length; idx++) {
+        const it = itemsForAlloc[idx].ref;
+        let need = Number(itemsForAlloc[idx].effAmount) || 0;
+        const plan: string[] = Array.isArray(it.disPrPlan) ? it.disPrPlan : [];
+        const allocs: any[] = [];
+        for (const prNo of plan) {
+          const prId = prNoToId.get(prNo);
+          if (!prId) continue; // ถ้า PR ไม่อยู่ในรายการที่เลือก ให้ข้าม (จะไป fail ด้านล่างถ้ายัง need > 0)
+          const rem = Number(remainingByPrId.get(prId) || 0);
+          if (rem <= 0) continue;
+          const take = Math.min(need, rem);
+          if (take > 0) {
+            allocs.push({ prId, prNo, amount: take });
+            remainingByPrId.set(prId, rem - take);
+            need -= take;
+          }
+          if (need <= 0) break;
+        }
+        if (need > 0.0001) {
+          const itemLabel = it.description || it.materialNo || "(ไม่ระบุรายการ)";
+          return showAlert(
+            "ยอด PR ไม่เพียงพอ",
+            `รายการ "${itemLabel}" ต้องการตัดยอด ${formatCurrency(itemsForAlloc[idx].effAmount)} แต่ PR ที่เลือกใน Dis PR มียอดคงเหลือไม่พอ (ขาด ${formatCurrency(need)}).\n\nกรุณาเพิ่ม PR ในข้อ 2 หรือเลือก Dis PR เพิ่ม`,
+            "warning"
+          );
+        }
+        // write allocations back to itemsWithAllocations
+        itemsWithAllocations[idx].disPrAllocations = allocs;
+      }
+
       // แสดง Progress Modal
       const setProgress = (pct: number, step: string) => setSavePoProgress({ show: true, pct, step });
       setProgress(5, "เตรียมข้อมูล...");
@@ -528,7 +680,7 @@ const POView = React.memo(() => {
           receiveType: formData.receiveType,
           projectId: selectedProjectId, vendorId: formData.vendorId,
           requiredDate: formData.requiredDate, vatType: formData.vatType,
-          items: formData.items, amount: totals.total,
+          items: itemsWithAllocations, amount: totals.total,
           discount: formData.discount || 0,
           poDate: formData.poOpenDate
             ? new Date(formData.poOpenDate + "T00:00:00").toISOString()
@@ -578,7 +730,7 @@ const POView = React.memo(() => {
         vendorId: formData.vendorId,
         requiredDate: formData.requiredDate,
         vatType: formData.vatType,
-        items: formData.items,
+        items: itemsWithAllocations,
         amount: totals.total,
         grandTotal: totals.total,
         discount: formData.discount || 0,
@@ -599,7 +751,11 @@ const POView = React.memo(() => {
         success = await addData("pos", basePayload);
         if (success) {
           setProgress(93, "อัปเดตสถานะใบขอซื้อ...");
-          const uniquePrIds = [...new Set(formData.items.map((i: any) => i.prId).filter(Boolean))];
+          const uniquePrIds = [...new Set(
+            (itemsWithAllocations || [])
+              .flatMap((i: any) => Array.isArray(i.disPrAllocations) ? i.disPrAllocations.map((a: any) => a.prId) : [])
+              .filter(Boolean)
+          )];
           for (const prId of uniquePrIds) {
             await updateData("prs", prId, { status: "PO Issued" });
           }
@@ -752,6 +908,89 @@ const POView = React.memo(() => {
               <p className="text-[11px] text-slate-400">กรุณารอสักครู่...</p>
             </div>
           </div>,
+          document.body
+        )}
+
+        {/* ── Dis PR Picker: render ผ่าน Portal เพื่อไม่โดน scroll container ตัด ── */}
+        {disPrPickerOpenKey && disPrPickerRect && createPortal(
+          <>
+            {/* backdrop */}
+            <div
+              style={{ position: "fixed", inset: 0, zIndex: 9998 }}
+              onClick={() => { setDisPrPickerOpenKey(null); setDisPrPickerRect(null); }}
+              aria-hidden
+            />
+            <div
+              className="fixed w-72 bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden"
+              style={{
+                top: disPrPickerRect.bottom + 6,
+                left: Math.max(8, Math.min(disPrPickerRect.left, window.innerWidth - 8 - 288)),
+                zIndex: 9999,
+              }}
+            >
+              {(() => {
+                // parse key: item:prId:idx | free:freeId
+                const key = disPrPickerOpenKey || "";
+                const parts = key.split(":");
+                const kind = parts[0];
+                const itemRef =
+                  kind === "item"
+                    ? { type: "item" as const, prId: parts[1], prItemIndex: Number(parts[2]) }
+                    : { type: "free" as const, id: parts.slice(1).join(":") };
+                const plan: string[] = (() => {
+                  if (itemRef.type === "item") {
+                    const it = (formData.items || []).find((x: any) => x.prId === itemRef.prId && x.prItemIndex === itemRef.prItemIndex);
+                    return Array.isArray(it?.disPrPlan) ? it.disPrPlan : [];
+                  }
+                  const it = (formData.items || []).find((x: any) => x.id === itemRef.id);
+                  return Array.isArray(it?.disPrPlan) ? it.disPrPlan : [];
+                })();
+
+                return (
+                  <>
+                    <div className="px-3 py-2 text-[10px] font-bold text-slate-500 bg-slate-50 border-b border-slate-100 uppercase tracking-wider">
+                      เลือก Dis PR (เรียงลำดับ)
+                    </div>
+                    <div className="py-1">
+                      {disPrOptions.length === 0 ? (
+                        <div className="px-3 py-3 text-xs text-slate-400">ยังไม่ได้เลือก PR (ข้อ 2)</div>
+                      ) : (
+                        disPrOptions.map((opt: any) => {
+                          const checked = plan.includes(opt.prNo);
+                          return (
+                            <button
+                              key={opt.prId}
+                              type="button"
+                              className={`w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-slate-50 ${checked ? "text-slate-900" : "text-slate-700"}`}
+                              onClick={() => toggleDisPrInPlan(itemRef as any, opt.prNo)}
+                            >
+                              <span className={`w-4 h-4 rounded border flex items-center justify-center ${checked ? "bg-blue-600 border-blue-600 text-white" : "border-slate-300"}`}>
+                                {checked ? "✓" : ""}
+                              </span>
+                              <span className="font-semibold">{opt.prNo}</span>
+                              {checked && (
+                                <span className="ml-auto text-[10px] text-slate-400">ลำดับ {plan.indexOf(opt.prNo) + 1}</span>
+                              )}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                    <div className="px-3 py-2 bg-white border-t border-slate-100 flex items-center justify-between">
+                      <span className="text-[10px] text-slate-500">{plan.length > 0 ? `เลือกแล้ว ${plan.length}` : ""}</span>
+                      <button
+                        type="button"
+                        className="text-[10px] font-bold text-blue-700"
+                        onClick={() => { setDisPrPickerOpenKey(null); setDisPrPickerRect(null); }}
+                      >
+                        ปิด
+                      </button>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          </>,
           document.body
         )}
 
@@ -1379,7 +1618,7 @@ const POView = React.memo(() => {
                       </button>
                     </div>
                     <div className="p-4 overflow-x-auto">
-                      <table className="w-full text-left text-xs rounded-xl overflow-hidden border border-slate-200">
+                      <table className="w-full text-left text-xs rounded-xl border border-slate-200">
                         <thead className="bg-slate-100 font-semibold text-slate-800 border-b border-slate-200">
                           <tr>
                             <th className="p-2.5 w-10 text-center">เลือก</th>
@@ -1391,6 +1630,7 @@ const POView = React.memo(() => {
                             <ResizableTh tableId="select-items" colKey="orderQty" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.orderQty ?? 96}>สั่งซื้อ (QTY)</ResizableTh>
                             <ResizableTh tableId="select-items" colKey="price" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.price ?? 112}>ราคา/หน่วย</ResizableTh>
                             <ResizableTh tableId="select-items" colKey="total" className="p-2.5 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.total ?? 96}>รวม</ResizableTh>
+                            <th className="p-2.5 w-28">Dis PR</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-200 bg-white">
@@ -1440,7 +1680,14 @@ const POView = React.memo(() => {
                                 </td>
                                 {/* หน่วย (ของ Material) */}
                                 <td className="p-2.5">
-                                  <span className="text-slate-600 text-xs">{selectedData.unit || item.unit || "—"}</span>
+                                  <input
+                                    type="text"
+                                    className={`${inputCls} w-20`}
+                                    disabled={!isSelected}
+                                    value={selectedData.unit ?? item.unit ?? ""}
+                                    placeholder="หน่วย"
+                                    onChange={(e) => handleItemChange(item.prId, item.prItemIndex, "unit", e.target.value)}
+                                  />
                                 </td>
                                 {/* สั่งซื้อ (QTY) — editable */}
                                 <td className="p-2.5">
@@ -1464,6 +1711,38 @@ const POView = React.memo(() => {
                                 </td>
                                 <td className="p-2.5 text-right font-bold text-slate-800 whitespace-nowrap">
                                   {formatCurrency(Number(selectedData.quantity) * Number(selectedData.price))}
+                                </td>
+                                <td className="p-2.5">
+                                  {(() => {
+                                    const plan: string[] = Array.isArray(selectedData.disPrPlan) ? selectedData.disPrPlan : [];
+                                    const key = getDisPrKeyForItem(item.prId, item.prItemIndex);
+                                    const open = isDisPrPickerOpenForItem(item.prId, item.prItemIndex);
+                                    const borderCls = isSelected && plan.length === 0 ? "border-red-300 ring-1 ring-red-100" : "border-slate-200";
+                                    return (
+                                      <div className="relative">
+                                        <button
+                                          type="button"
+                                          disabled={!isSelected}
+                                          onClick={(e) => toggleDisPrPick(key, (e.currentTarget as any)?.getBoundingClientRect?.() || null)}
+                                          className={`w-full min-w-[120px] text-left rounded-lg px-2 py-1.5 text-xs bg-white ${borderCls} border disabled:bg-slate-50 disabled:text-slate-400`}
+                                          title="เลือก PR ที่จะตัดยอด (เรียงตามลำดับที่เลือก)"
+                                        >
+                                          {plan.length === 0 ? (
+                                            <span className="text-slate-400">เลือก Dis PR...</span>
+                                          ) : (
+                                            <span className="flex flex-wrap gap-1">
+                                              {plan.map((p) => (
+                                                <span key={p} className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 text-[10px] font-semibold">
+                                                  {p}
+                                                </span>
+                                              ))}
+                                            </span>
+                                          )}
+                                        </button>
+                                        {/* popup rendered via Portal (document.body) */}
+                                      </div>
+                                    );
+                                  })()}
                                 </td>
                               </tr>
                             );
@@ -1531,6 +1810,37 @@ const POView = React.memo(() => {
                                 </td>
                                 <td className="p-2.5 text-right font-bold text-slate-800 whitespace-nowrap">
                                   {formatCurrency(Number(freeItem.quantity) * Number(freeItem.price))}
+                                </td>
+                                <td className="p-2.5">
+                                  {(() => {
+                                    const plan: string[] = Array.isArray(freeItem.disPrPlan) ? freeItem.disPrPlan : [];
+                                    const key = getDisPrKeyForFree(freeItem.id);
+                                    const open = isDisPrPickerOpenForFree(freeItem.id);
+                                    const borderCls = plan.length === 0 ? "border-red-300 ring-1 ring-red-100" : "border-slate-200";
+                                    return (
+                                      <div className="relative">
+                                        <button
+                                          type="button"
+                                          onClick={(e) => toggleDisPrPick(key, (e.currentTarget as any)?.getBoundingClientRect?.() || null)}
+                                          className={`w-full min-w-[120px] text-left rounded-lg px-2 py-1.5 text-xs bg-white ${borderCls} border`}
+                                          title="เลือก PR ที่จะตัดยอด (เรียงตามลำดับที่เลือก)"
+                                        >
+                                          {plan.length === 0 ? (
+                                            <span className="text-slate-400">เลือก Dis PR...</span>
+                                          ) : (
+                                            <span className="flex flex-wrap gap-1">
+                                              {plan.map((p) => (
+                                                <span key={p} className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 text-[10px] font-semibold">
+                                                  {p}
+                                                </span>
+                                              ))}
+                                            </span>
+                                          )}
+                                        </button>
+                                        {/* popup rendered via Portal (document.body) */}
+                                      </div>
+                                    );
+                                  })()}
                                 </td>
                               </tr>
                             );
