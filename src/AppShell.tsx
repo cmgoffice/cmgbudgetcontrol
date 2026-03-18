@@ -16,7 +16,7 @@ import {
   collection, doc, onSnapshot, query, updateDoc, addDoc, deleteDoc,
   orderBy, limit, getDocs, where,
 } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL, uploadBytesResumable } from "firebase/storage";
+import { ref, uploadBytes, getDownloadURL, uploadBytesResumable, getBytes } from "firebase/storage";
 import { db, appId, storage, FORM_TEMPLATE_PATHS } from "./lib/firebase";
 import { generatePRPdfBytes, generatePOPdfBytes, downloadBytes, uploadGeneratedPdf } from "./lib/pdfForms";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "./components/ui";
@@ -1148,6 +1148,36 @@ const UserProfile = () => {
     setSignatureUrl(userData?.signatureUrl || null);
   }, [userData?.signatureUrl]);
 
+  // Auto-generate signatureDataUrl for existing users (แก้ปัญหา CORS ตอน stamp)
+  useEffect(() => {
+    if (!user?.uid) return;
+    if (!userData?.signatureUrl) return;
+    if (userData?.signatureDataUrl) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const storageRef = ref(storage, `signatures/${user.uid}/signature.png`);
+        const bytes = await getBytes(storageRef);
+        if (cancelled) return;
+        const blob = new Blob([bytes], { type: "image/png" });
+        const dataUrl: string = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ""));
+          reader.onerror = () => reject(new Error("Read signature failed"));
+          reader.readAsDataURL(blob);
+        });
+        if (cancelled) return;
+        await updateDoc(
+          doc(db, "artifacts", appId, "public", "data", "users", user.uid),
+          { signatureDataUrl: dataUrl }
+        );
+      } catch (_) {
+        // ignore: user can re-upload if needed
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user?.uid, userData?.signatureUrl, userData?.signatureDataUrl]);
+
   const handleUpdate = async () => {
     try {
       await updateDoc(
@@ -1190,12 +1220,37 @@ const UserProfile = () => {
     }
     setUploadingSignature(true);
     try {
+      const toDataUrl = (f: File) =>
+        new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ""));
+          reader.onerror = () => reject(new Error("Read file failed"));
+          reader.readAsDataURL(f);
+        });
+
+      const toPngFile = async (inputFile: File) => {
+        if (inputFile.type !== "image/webp") return inputFile;
+        const bmp = await createImageBitmap(inputFile);
+        const canvas = document.createElement("canvas");
+        canvas.width = bmp.width;
+        canvas.height = bmp.height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("Canvas not supported");
+        ctx.drawImage(bmp, 0, 0);
+        const blob: Blob = await new Promise((resolve, reject) => {
+          canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Convert WEBP failed"))), "image/png");
+        });
+        return new File([blob], "signature.png", { type: "image/png" });
+      };
+
       const storageRef = ref(storage, `signatures/${user.uid}/signature.png`);
-      await uploadBytes(storageRef, file, { contentType: file.type });
+      const uploadFile = await toPngFile(file);
+      const signatureDataUrl = await toDataUrl(uploadFile);
+      await uploadBytes(storageRef, uploadFile, { contentType: uploadFile.type });
       const url = await getDownloadURL(storageRef);
       await updateDoc(
         doc(db, "artifacts", appId, "public", "data", "users", user.uid),
-        { signatureUrl: url }
+        { signatureUrl: url, signatureDataUrl }
       );
       setSignatureUrl(url);
       await logAction("Update", "Uploaded signature image");
@@ -1212,7 +1267,7 @@ const UserProfile = () => {
     try {
       await updateDoc(
         doc(db, "artifacts", appId, "public", "data", "users", user.uid),
-        { signatureUrl: null }
+        { signatureUrl: null, signatureDataUrl: null }
       );
       setSignatureUrl(null);
       await logAction("Update", "Removed signature image");

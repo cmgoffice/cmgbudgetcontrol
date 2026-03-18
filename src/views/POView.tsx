@@ -16,7 +16,7 @@ import MaterialAutoComplete from "../components/MaterialAutoComplete";
 import { PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, PURCHASE_TYPE_EQUIPMENT, DELIVERY_LOCATIONS, getPurchaseTypeDisplayLabel, COST_CATEGORIES } from "../lib/constants";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
 import { motion, AnimatePresence } from "framer-motion";
-import { generatePOPdfBytes, uploadGeneratedPdf, stampSignatureToField, stampSignatureToPdf, deleteGeneratedPdf } from "../lib/pdfForms";
+import { generatePOPdfBytes, uploadGeneratedPdf, stampSignatureToField, stampSignatureToPdf, deleteGeneratedPdf, stampTextToFieldRect } from "../lib/pdfForms";
 const POView = React.memo(() => {
   const { prs, pos, projects, budgets, vendors, materials, addData, updateData, deleteData, loadVendors, loadMaterials,
           showAlert, openConfirm, userRole, columnWidths, handleColumnResize,
@@ -86,6 +86,7 @@ const POView = React.memo(() => {
       vatType: "ex-vat", // "inc-vat" | "ex-vat"
       selectedPrIds: [], // Array of PR IDs
       items: [], // Array of selected items with order details
+      reason: "",
       note: "",
       discount: 0,
     });
@@ -682,6 +683,7 @@ const POView = React.memo(() => {
           requiredDate: formData.requiredDate, vatType: formData.vatType,
           items: itemsWithAllocations, amount: totals.total,
           discount: formData.discount || 0,
+          reason: formData.reason || "",
           poDate: formData.poOpenDate
             ? new Date(formData.poOpenDate + "T00:00:00").toISOString()
             : new Date().toISOString(),
@@ -689,7 +691,8 @@ const POView = React.memo(() => {
         };
         const safePONo = formData.poNo.replace(/[^a-zA-Z0-9\-_]/g, "_");
         const safeProjId = selectedProjectId || "unknown";
-        const creatorSignatureUrl = userData?.signatureUrl || null;
+        // Prefer dataURL to avoid CORS on Storage URL
+        const creatorSignatureUrl = userData?.signatureDataUrl || userData?.signatureUrl || null;
 
         const generateAndUpload = async () => {
           setProgress(20, "กำลังสร้าง PDF...");
@@ -705,7 +708,10 @@ const POView = React.memo(() => {
           }
 
           setProgress(70, "อัปโหลด PDF ขึ้น Cloud...");
-          return await uploadGeneratedPdf(bytes, `generated/pos/${safeProjId}/${safePONo}.pdf`);
+          const pdfPath = `generated/pos/${safeProjId}/${safePONo}.pdf`;
+          // ลบไฟล์เดิมก่อนอัปโหลดใหม่ เพื่ออัปเดตข้อมูล PDF (กรณี Reject → แก้ไข → บันทึกใหม่)
+          await deleteGeneratedPdf(pdfPath);
+          return await uploadGeneratedPdf(bytes, pdfPath);
         };
 
         const timeout = new Promise<never>((_, reject) =>
@@ -734,9 +740,11 @@ const POView = React.memo(() => {
         amount: totals.total,
         grandTotal: totals.total,
         discount: formData.discount || 0,
+        reason: formData.reason || "",
         ...(manualVatOverride != null && !isNaN(manualVatOverride) ? { manualVat: manualVatOverride } : {}),
-        ...(pdfUrl ? { pdfUrl } : {}),
+        ...(pdfUrl ? { pdfUrl, pdfPath: `generated/pos/${(selectedProjectId || "unknown")}/${formData.poNo.replace(/[^a-zA-Z0-9\-_]/g, "_")}.pdf` } : {}),
         createdByUid: user?.uid || null,
+        creatorSignatureDataUrl: userData?.signatureDataUrl || userData?.signatureUrl || null,
         status: "Pending PCM",
         createdDate: new Date().toISOString(),
         poDate: formData.poOpenDate ? new Date(formData.poOpenDate + "T00:00:00").toISOString() : new Date().toISOString(),
@@ -772,7 +780,7 @@ const POView = React.memo(() => {
         setIsFullScreenModalOpen(false);
         setEditingPoId(null);
         setFormData({
-          poNo: "", poType: "", receiveType: "", vendorId: "", requiredDate: "", poOpenDate: new Date().toISOString().split("T")[0], vatType: "ex-vat", selectedPrIds: [], items: [], note: "", discount: 0
+          poNo: "", poType: "", receiveType: "", vendorId: "", requiredDate: "", poOpenDate: new Date().toISOString().split("T")[0], vatType: "ex-vat", selectedPrIds: [], items: [], reason: "", note: "", discount: 0
         });
         setManualVatOverride(null);
         setVatEditOpen(false);
@@ -810,7 +818,25 @@ const POView = React.memo(() => {
 
       let newStatus = po.status;
       if (action === "reject") {
-        await updateData("pos", poId, { status: "Rejected", rejectReason: reason });
+        // Stamp reason into PDF if available
+        let updatedPdfUrl: string | undefined;
+        if (po.pdfUrl && reason) {
+          try {
+            const safePONo = (po.poNo || po.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
+            const safeProjId = po.projectId || "unknown";
+            const existingPdfRes = await fetch(`${po.pdfUrl}${po.pdfUrl.includes("?") ? "&" : "?"}t=${Date.now()}`);
+            if (existingPdfRes.ok) {
+              let bytes = new Uint8Array(await existingPdfRes.arrayBuffer());
+              bytes = await stampTextToFieldRect(bytes, reason, "reason");
+              const pdfPath = `generated/pos/${safeProjId}/${safePONo}.pdf`;
+              await deleteGeneratedPdf(pdfPath);
+              updatedPdfUrl = await uploadGeneratedPdf(bytes, pdfPath);
+            }
+          } catch (e) {
+            console.warn("[PO Reject] Stamp reason failed:", e);
+          }
+        }
+        await updateData("pos", poId, { status: "Rejected", rejectReason: reason, ...(updatedPdfUrl ? { pdfUrl: updatedPdfUrl } : {}) });
         showAlert("ปฏิเสธ", "PO ถูกปฏิเสธแล้ว", "error");
         return;
       }
@@ -826,28 +852,74 @@ const POView = React.memo(() => {
 
       if (newStatus !== po.status) {
         let updatedPdfUrl: string | undefined;
-        // Signature2 = PCM Approve, Signature3 = GM Approve
-        const stampField = isPCMApprove ? "Signature2" : isGMApprove ? "Signature3" : null;
-        if (stampField && po.pdfUrl && userData?.signatureUrl) {
-          try {
-            const safePONo = (po.poNo || po.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
-            const safeProjId = po.projectId || "unknown";
-            // เติม cache buster เพื่อให้ fetch ไฟล์ล่าสุดมา stamp
-            const existingPdfRes = await fetch(`${po.pdfUrl}${po.pdfUrl.includes("?") ? "&" : "?"}t=${Date.now()}`);
-            if (existingPdfRes.ok) {
-              const existingBytes = new Uint8Array(await existingPdfRes.arrayBuffer());
-              const stampedBytes = await stampSignatureToField(existingBytes, userData.signatureUrl, stampField as "Signature2" | "Signature3");
-              updatedPdfUrl = await uploadGeneratedPdf(stampedBytes, `generated/pos/${safeProjId}/${safePONo}.pdf`);
-            }
-          } catch (stampErr) {
-            console.warn(`[PO Approve] Stamp ${stampField} failed:`, stampErr);
+        let firestoreExtra: Record<string, any> = {};
+
+        const approverSig = userData?.signatureDataUrl || userData?.signatureUrl;
+        const nowDate = new Date().toLocaleDateString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric" });
+        const nowIso = new Date().toISOString();
+
+        try {
+          const safePONo = (po.poNo || po.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
+          const safeProjId = po.projectId || "unknown";
+          const vendor = vendors.find((v: any) => v.id === po.vendorId) || null;
+          const project = projects.find((p: any) => p.id === po.projectId) || null;
+
+          // Build po data with approve dates filled in for regeneration
+          const pcmdate = isPCMApprove ? nowDate : (po.pcmApprovedAt ? new Date(po.pcmApprovedAt).toLocaleDateString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric" }) : "");
+          const gmdate  = isGMApprove  ? nowDate : "";
+
+          const poDataForPdf = {
+            ...po,
+            pcmdate,
+            gmdate,
+            reason: po.reason || "",
+          };
+
+          // Regenerate PDF ใหม่ทั้งหมดจากข้อมูลล่าสุด (แทนการ stamp ทับไฟล์เก่า)
+          let bytes = await generatePOPdfBytes(poDataForPdf, { vendor, project });
+
+          // Stamp Signature1 = ผู้สร้าง PO
+          const creatorSig = po.creatorSignatureDataUrl;
+          if (creatorSig) {
+            try { bytes = await stampSignatureToField(bytes, creatorSig, "Signature1"); }
+            catch (e) { console.warn("[PO Approve] Stamp Signature1 failed:", e); }
           }
+
+          // Stamp Signature2 = PCM (ถ้า GM กำลัง approve ให้ใช้ pcmSignatureDataUrl ที่เก็บไว้)
+          const pcmSig = isPCMApprove ? approverSig : po.pcmSignatureDataUrl;
+          if (pcmSig) {
+            try { bytes = await stampSignatureToField(bytes, pcmSig, "Signature2"); }
+            catch (e) { console.warn("[PO Approve] Stamp Signature2 failed:", e); }
+          }
+
+          // Stamp Signature3 = GM
+          if (isGMApprove && approverSig) {
+            try { bytes = await stampSignatureToField(bytes, approverSig, "Signature3"); }
+            catch (e) { console.warn("[PO Approve] Stamp Signature3 failed:", e); }
+          }
+
+          // pcmdate / gmdate ถูก embed โดยตรงผ่าน form field ใน generatePOPdfBytes แล้ว
+          // ไม่ต้อง stampTextToFieldRect ซ้ำ (ถ้า stamp ซ้ำจะทำให้ข้อความทับกัน)
+
+          const pdfPath = `generated/pos/${safeProjId}/${safePONo}.pdf`;
+          await deleteGeneratedPdf(pdfPath);
+          updatedPdfUrl = await uploadGeneratedPdf(bytes, pdfPath);
+
+          // เก็บ signature ของ PCM ไว้ใช้ตอน GM regenerate ในรอบถัดไป
+          if (isPCMApprove && approverSig) {
+            firestoreExtra.pcmSignatureDataUrl = approverSig;
+          }
+        } catch (stampErr) {
+          console.warn(`[PO Approve] PDF regeneration/stamp failed:`, stampErr);
         }
 
         await updateData("pos", poId, {
           status: newStatus,
           rejectReason: "",
-          ...(updatedPdfUrl ? { pdfUrl: updatedPdfUrl } : {}),
+          ...(isPCMApprove ? { pcmApprovedAt: nowIso } : {}),
+          ...(isGMApprove  ? { gmApprovedAt:  nowIso } : {}),
+          ...(updatedPdfUrl ? { pdfUrl: updatedPdfUrl, pdfUpdatedAt: nowIso } : {}),
+          ...firestoreExtra,
         });
 
         // อัปเดต viewingPO ใน state ให้เป็นข้อมูลล่าสุด (เพื่อให้ Modal โชว์ PDF ใหม่ทันที)
@@ -856,7 +928,7 @@ const POView = React.memo(() => {
             ...prev,
             status: newStatus,
             rejectReason: "",
-            ...(updatedPdfUrl ? { pdfUrl: updatedPdfUrl } : {}),
+            ...(updatedPdfUrl ? { pdfUrl: updatedPdfUrl, pdfUpdatedAt: nowIso } : {}),
           }));
         }
 
@@ -1009,6 +1081,7 @@ const POView = React.memo(() => {
                 vatType: "ex-vat",
                 selectedPrIds: [],
                 items: [],
+                reason: "",
                 note: "",
                 discount: 0,
               });
@@ -1117,6 +1190,7 @@ const POView = React.memo(() => {
                                   vatType: po.vatType || "ex-vat",
                                   selectedPrIds: prIdsFromItems,
                                   items: (po.items || []).map((it, idx) => ((it.prId == null || it.prId === "") && !it.id) ? { ...it, id: `free-${idx}-${Date.now()}` } : it),
+                                  reason: po.reason || "",
                                   note: po.note || "",
                                   discount: po.discount ?? 0,
                                 });
@@ -1851,40 +1925,55 @@ const POView = React.memo(() => {
                   </div>
                 )}
 
-                {/* Footer / ยอดรวม PO */}
-                <div className="mt-4 mb-6 border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm">
-                  {/* Top row: ภาษี + ส่วนลด options */}
-                  <div className="flex flex-wrap items-center gap-3 px-4 py-2 bg-slate-50 border-b border-slate-100">
-                    <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">ภาษี</span>
-                    <label className="flex items-center gap-1 cursor-pointer text-[11px] px-2 py-0.5 rounded border border-slate-200 hover:border-red-300 hover:bg-red-50/50 transition-colors">
-                      <input type="radio" name="vat" value="ex-vat" checked={formData.vatType === "ex-vat"} onChange={() => setFormData({ ...formData, vatType: "ex-vat" })} className="text-red-600 w-3 h-3" />
-                      <span className={formData.vatType === "ex-vat" ? "font-semibold text-red-700" : "text-slate-600"}>Ex-Vat</span>
-                    </label>
-                    <label className="flex items-center gap-1 cursor-pointer text-[11px] px-2 py-0.5 rounded border border-slate-200 hover:border-red-300 hover:bg-red-50/50 transition-colors">
-                      <input type="radio" name="vat" value="inc-vat" checked={formData.vatType === "inc-vat"} onChange={() => setFormData({ ...formData, vatType: "inc-vat" })} className="text-red-600 w-3 h-3" />
-                      <span className={formData.vatType === "inc-vat" ? "font-semibold text-red-700" : "text-slate-600"}>ไม่มี Vat</span>
-                    </label>
-                    <div className="w-px h-3 bg-slate-300" />
-                    <label className="flex items-center gap-1 text-[11px] text-slate-600 cursor-pointer">
-                      <input type="checkbox" checked={discountEnabled} onChange={e => { const checked = e.target.checked; setDiscountEnabled(checked); if (!checked) setFormData({ ...formData, discount: 0 }); }} className="rounded text-red-600 w-3 h-3" />
-                      <span>ส่วนลด</span>
-                    </label>
-                    {discountEnabled && (
-                      <input type="text" className="w-20 border border-slate-200 rounded px-1.5 py-0.5 text-[11px] text-right focus:border-red-400 focus:ring-1 focus:ring-red-100 outline-none" placeholder="0.00" value={formData.discount ? String(formData.discount) : ""} onChange={e => { const v = e.target.value.replace(/,/g, ""); const n = parseFloat(v); setFormData({ ...formData, discount: isNaN(n) ? 0 : Math.max(0, n) }); }} />
-                    )}
-                    {selectedPrsTotalAmount > 0 && (
-                      <div className="ml-auto flex flex-col items-end leading-tight">
-                        <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">คงเหลือ PR</span>
-                        <span className="text-xl font-bold text-blue-600 tabular-nums">{formatCurrency(selectedPrsTotalAmount)}</span>
-                      </div>
-                    )}
+                {/* Footer / ยอดรวม PO + เหตุผล */}
+                <div className="mt-4 mb-6 grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+                  {/* Left: reason input */}
+                  <div className="lg:col-span-8 border border-slate-200 rounded-xl bg-white shadow-sm overflow-hidden">
+                    <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+                      <div className="text-[11px] font-bold text-slate-700">เหตุผล / Reason</div>
+                      <div className="text-[10px] text-slate-400">ระบบจะนำไปใส่ใน PDF ช่อง <span className="font-semibold">reason</span></div>
+                    </div>
+                    <div className="p-4">
+                      <textarea
+                        className="w-full min-h-[90px] border border-slate-200 rounded-xl px-3 py-2 text-sm focus:border-red-400 focus:ring-1 focus:ring-red-100 outline-none resize-none"
+                        placeholder="กรอกเหตุผลในการสร้าง PO..."
+                        value={(formData as any).reason || ""}
+                        onChange={(e) => setFormData({ ...formData, reason: e.target.value })}
+                      />
+                      <div className="mt-2 text-[10px] text-slate-400 italic">แนะนำ: ระบุวัตถุประสงค์/ขอบเขตงาน/อ้างอิงที่เกี่ยวข้อง</div>
+                    </div>
                   </div>
-                  {/* Bottom row: summary table + save button */}
-                  <div className="flex items-end justify-between gap-4 px-4 py-2.5">
-                    <div className="text-[10px] text-slate-400 italic">กรอกข้อมูลให้ครบก่อนบันทึก</div>
-                    <div className="flex items-end gap-3">
-                      {/* Compact totals */}
-                      <div className="text-[11px] w-[220px]">
+
+                  {/* Right: VAT + totals panel */}
+                  <div className="lg:col-span-4 border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm">
+                    <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">ภาษี</span>
+                      <label className="flex items-center gap-1 cursor-pointer text-[11px] px-2 py-0.5 rounded border border-slate-200 hover:border-red-300 hover:bg-red-50/50 transition-colors">
+                        <input type="radio" name="vat" value="ex-vat" checked={formData.vatType === "ex-vat"} onChange={() => setFormData({ ...formData, vatType: "ex-vat" })} className="text-red-600 w-3 h-3" />
+                        <span className={formData.vatType === "ex-vat" ? "font-semibold text-red-700" : "text-slate-600"}>Ex-Vat</span>
+                      </label>
+                      <label className="flex items-center gap-1 cursor-pointer text-[11px] px-2 py-0.5 rounded border border-slate-200 hover:border-red-300 hover:bg-red-50/50 transition-colors">
+                        <input type="radio" name="vat" value="inc-vat" checked={formData.vatType === "inc-vat"} onChange={() => setFormData({ ...formData, vatType: "inc-vat" })} className="text-red-600 w-3 h-3" />
+                        <span className={formData.vatType === "inc-vat" ? "font-semibold text-red-700" : "text-slate-600"}>ไม่มี Vat</span>
+                      </label>
+                      <div className="w-px h-3 bg-slate-300 mx-1" />
+                      <label className="flex items-center gap-1 text-[11px] text-slate-600 cursor-pointer">
+                        <input type="checkbox" checked={discountEnabled} onChange={e => { const checked = e.target.checked; setDiscountEnabled(checked); if (!checked) setFormData({ ...formData, discount: 0 }); }} className="rounded text-red-600 w-3 h-3" />
+                        <span>ส่วนลด</span>
+                      </label>
+                      {discountEnabled && (
+                        <input type="text" className="w-20 border border-slate-200 rounded px-1.5 py-0.5 text-[11px] text-right focus:border-red-400 focus:ring-1 focus:ring-red-100 outline-none" placeholder="0.00" value={formData.discount ? String(formData.discount) : ""} onChange={e => { const v = e.target.value.replace(/,/g, ""); const n = parseFloat(v); setFormData({ ...formData, discount: isNaN(n) ? 0 : Math.max(0, n) }); }} />
+                      )}
+                      {selectedPrsTotalAmount > 0 && (
+                        <div className="ml-auto flex flex-col items-end leading-tight">
+                          <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">คงเหลือ PR</span>
+                          <span className="text-xl font-bold text-blue-600 tabular-nums">{formatCurrency(selectedPrsTotalAmount)}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="px-4 py-3">
+                      <div className="text-[11px]">
                         <div className="flex justify-between py-0.5"><span className="text-slate-500">รวมราคา / Amount</span><span className="font-medium text-slate-700 tabular-nums">{formatCurrency(calculateTotals().subtotal)}</span></div>
                         <div className="flex justify-between py-0.5"><span className="text-slate-500">ส่วนลด / Discount</span><span className="text-slate-600 tabular-nums">-{formatCurrency(formData.discount || 0)}</span></div>
                         <div className="flex justify-between py-0.5 border-t border-slate-100"><span className="text-slate-500">มูลค่า / Sub Total</span><span className="font-medium text-slate-700 tabular-nums">{formatCurrency(Math.max(0, calculateTotals().subtotal - (formData.discount || 0)))}</span></div>
@@ -1904,7 +1993,11 @@ const POView = React.memo(() => {
                           </span>
                         </div>
                       </div>
-                      <Button size="sm" className="px-5 rounded-lg flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold shrink-0 mb-0.5" onClick={handleSavePO}><Save size={13} /> บันทึก PO</Button>
+
+                      <div className="mt-3 flex justify-end">
+                        <Button size="sm" className="px-5 rounded-lg flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold shrink-0" onClick={handleSavePO}><Save size={13} /> บันทึก PO</Button>
+                      </div>
+                      <div className="mt-2 text-[10px] text-slate-400 italic">กรอกข้อมูลให้ครบก่อนบันทึก</div>
                     </div>
                   </div>
                 </div>

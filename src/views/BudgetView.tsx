@@ -38,6 +38,9 @@ const BudgetView = React.memo(() => {
     const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
     const [clearConfirmText, setClearConfirmText] = useState("");
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const attachmentInputRef = useRef<HTMLInputElement>(null);
+    const [attachmentTarget, setAttachmentTarget] = useState<{ budgetId: string; subItemId?: string | null } | null>(null);
+    const [attachmentUploadingKey, setAttachmentUploadingKey] = useState<string | null>(null);
     const [sortConfig, setSortConfig] = useState({
       key: null,
       direction: "ascending",
@@ -173,6 +176,101 @@ const BudgetView = React.memo(() => {
         direction = "descending";
       }
       setSortConfig({ key, direction });
+    };
+
+    const isAllowedAttachmentFile = (file: File) => {
+      const name = (file?.name || "").toLowerCase();
+      const ext = name.includes(".") ? name.split(".").pop() : "";
+      const okExt = new Set(["pdf", "xls", "xlsx", "doc", "docx", "jpg", "jpeg", "png"]);
+      if (ext && okExt.has(ext)) return true;
+      const t = file?.type || "";
+      if (t.startsWith("image/")) return true;
+      const okMime = new Set([
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      ]);
+      return okMime.has(t);
+    };
+
+    const openAttachmentPicker = (budgetId: string, subItemId?: string | null) => {
+      if (!selectedProjectId) {
+        showAlert("แจ้งเตือน", "กรุณาเลือกโครงการก่อนแนบไฟล์", "warning");
+        return;
+      }
+      setAttachmentTarget({ budgetId, subItemId: subItemId || null });
+      // ใช้ timeout เล็กน้อยให้ state set ก่อน (กันกรณี click รัว)
+      setTimeout(() => attachmentInputRef.current?.click(), 0);
+    };
+
+    const handleAttachmentFilesSelected = async (e: any) => {
+      const files: File[] = Array.from(e?.target?.files || []);
+      // reset เพื่อให้เลือกไฟล์เดิมซ้ำได้
+      if (e?.target) e.target.value = "";
+      if (!files.length) return;
+
+      const target = attachmentTarget;
+      if (!target?.budgetId) return;
+
+      const invalid = files.filter((f) => !isAllowedAttachmentFile(f));
+      if (invalid.length > 0) {
+        showAlert(
+          "ไฟล์ไม่รองรับ",
+          `รองรับเฉพาะ PDF/EXCEL/WORD/JPG/JPEG/PNG\nไฟล์ที่ไม่รองรับ: ${invalid.map((f) => f.name).join(", ")}`,
+          "warning"
+        );
+        return;
+      }
+
+      const key = `${target.budgetId}:${target.subItemId || "main"}`;
+      setAttachmentUploadingKey(key);
+      try {
+        const budget = budgets.find((b) => b.id === target.budgetId);
+        if (!budget) throw new Error("ไม่พบรายการ Budget");
+
+        const uploaded = [];
+        for (const f of files) {
+          const up = await uploadAttachment(f, {
+            type: "budget",
+            projectId: selectedProjectId,
+            docId: target.budgetId,
+            subPath: target.subItemId ? `subItem_${target.subItemId}` : "mainItem",
+          });
+          uploaded.push({ ...up, uploadedAt: new Date().toISOString(), uploadedBy: userData?.email || userData?.displayName || userRole || "unknown" });
+        }
+
+        if (!target.subItemId) {
+          const next = [...(budget.attachments || []), ...uploaded];
+          await updateDoc(
+            doc(db, "artifacts", appId, "public", "data", "budgets", target.budgetId),
+            { attachments: next }
+          );
+        } else {
+          const subs = Array.isArray(budget.subItems) ? budget.subItems : [];
+          const nextSubs = subs.map((s: any) => {
+            if (s.id !== target.subItemId) return s;
+            return { ...s, attachments: [...(s.attachments || []), ...uploaded] };
+          });
+          await updateDoc(
+            doc(db, "artifacts", appId, "public", "data", "budgets", target.budgetId),
+            { subItems: nextSubs }
+          );
+        }
+
+        showAlert("อัปโหลดสำเร็จ", `แนบไฟล์เรียบร้อย (${files.length} ไฟล์)`, "success");
+        await logAction?.(
+          "Update",
+          `[Budget Attachments] ${target.budgetId}${target.subItemId ? ` / SubItem ${target.subItemId}` : ""} | +${files.length} files`
+        );
+      } catch (err: any) {
+        console.error("[Budget Attachments] upload error:", err);
+        showAlert("อัปโหลดไม่สำเร็จ", err?.message || "เกิดข้อผิดพลาด", "error");
+      } finally {
+        setAttachmentUploadingKey(null);
+        setAttachmentTarget(null);
+      }
     };
 
     const handleDownloadTemplate = () => {
@@ -2107,6 +2205,7 @@ const BudgetView = React.memo(() => {
                     <ResizableTh tableId="budget" colKey="description" className="py-3 px-4 border-r" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.budget?.description ?? 220}>รายการ</ResizableTh>
                     <ResizableTh tableId="budget" colKey="budget" className="py-3 px-4 text-right bg-blue-100" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.budget?.budget}>Budget</ResizableTh>
                     <ResizableTh tableId="budget" colKey="status" className="py-3 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.budget?.status}>สถานะ</ResizableTh>
+                    <ResizableTh tableId="budget" colKey="attachment" className="py-3 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.budget?.attachment ?? 180}>Attachment</ResizableTh>
                     <ResizableTh tableId="budget" colKey="balance" className="py-3 px-4 text-right text-green-800 font-bold border-r" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.budget?.balance}>Balance</ResizableTh>
                     <ResizableTh tableId="budget" colKey="prTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.budget?.prTotal}>PR Total</ResizableTh>
                     <ResizableTh tableId="budget" colKey="poTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.budget?.poTotal}>PO Total</ResizableTh>
@@ -2197,6 +2296,48 @@ const BudgetView = React.memo(() => {
                           </td>
                           <td className="py-1 px-3 text-center">
                             <Badge status={b.status} />
+                          </td>
+                          <td className="py-1 px-3 border-r align-top" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex items-start gap-2">
+                              <button
+                                type="button"
+                                className="p-1.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-800 disabled:opacity-50"
+                                title="แนบไฟล์ (หลายไฟล์ได้)"
+                                disabled={attachmentUploadingKey === `${b.id}:main`}
+                                onClick={() => openAttachmentPicker(b.id, null)}
+                              >
+                                {attachmentUploadingKey === `${b.id}:main` ? (
+                                  <RefreshCw size={14} className="animate-spin" />
+                                ) : (
+                                  <Upload size={14} />
+                                )}
+                              </button>
+                              <div className="min-w-0 flex-1">
+                                {(b.attachments || []).length === 0 ? (
+                                  <div className="text-[10px] text-slate-400 truncate">-</div>
+                                ) : (
+                                  <div className="space-y-0.5">
+                                    {(b.attachments || []).slice(0, 3).map((att: any, i: number) => (
+                                      <a
+                                        key={`${att.url || att.name || i}`}
+                                        href={att.url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="block text-[10px] text-blue-600 hover:underline truncate"
+                                        title={att.name}
+                                      >
+                                        {att.name || "file"}
+                                      </a>
+                                    ))}
+                                    {(b.attachments || []).length > 3 && (
+                                      <div className="text-[10px] text-slate-400">
+                                        +{(b.attachments || []).length - 3} ไฟล์
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
                           </td>
                           <td
                             className={`py-1 px-3 text-right border-r font-bold ${budgetBalance < 0
@@ -2334,6 +2475,48 @@ const BudgetView = React.memo(() => {
                                 <td className="py-0.5 px-3 text-center border-b border-slate-100">
                                   {sub.status ? <Badge status={sub.status} /> : <Badge status="Approved" />}
                                 </td>
+                                <td className="py-0.5 px-3 border-r border-b border-slate-100 align-top" onClick={(e) => e.stopPropagation()}>
+                                  <div className="flex items-start gap-2">
+                                    <button
+                                      type="button"
+                                      className="p-1.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-800 disabled:opacity-50"
+                                      title="แนบไฟล์ (Sub item)"
+                                      disabled={attachmentUploadingKey === `${b.id}:${sub.id}`}
+                                      onClick={() => openAttachmentPicker(b.id, sub.id)}
+                                    >
+                                      {attachmentUploadingKey === `${b.id}:${sub.id}` ? (
+                                        <RefreshCw size={14} className="animate-spin" />
+                                      ) : (
+                                        <Upload size={14} />
+                                      )}
+                                    </button>
+                                    <div className="min-w-0 flex-1">
+                                      {(sub.attachments || []).length === 0 ? (
+                                        <div className="text-[10px] text-slate-400 truncate">-</div>
+                                      ) : (
+                                        <div className="space-y-0.5">
+                                          {(sub.attachments || []).slice(0, 2).map((att: any, i: number) => (
+                                            <a
+                                              key={`${att.url || att.name || i}`}
+                                              href={att.url}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="block text-[10px] text-blue-600 hover:underline truncate"
+                                              title={att.name}
+                                            >
+                                              {att.name || "file"}
+                                            </a>
+                                          ))}
+                                          {(sub.attachments || []).length > 2 && (
+                                            <div className="text-[10px] text-slate-400">
+                                              +{(sub.attachments || []).length - 2} ไฟล์
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </td>
                                 <td
                                   colSpan="3"
                                   className="border-b border-slate-100"
@@ -2439,7 +2622,7 @@ const BudgetView = React.memo(() => {
                             ))}
                             {/* เว้นพื้นที่ว่างใต้รายการ Sub เมื่อกาง (แยกตารางย่อยจากตารางหลัก) */}
                             <tr className="bg-transparent" aria-hidden="true">
-                              <td colSpan={9} className="py-4 border-0 bg-slate-100/50"></td>
+                              <td colSpan={11} className="py-4 border-0 bg-slate-100/50"></td>
                             </tr>
                           </>
                         }
@@ -2451,6 +2634,14 @@ const BudgetView = React.memo(() => {
             </Card>
           </>
         )}
+        <input
+          ref={attachmentInputRef}
+          type="file"
+          multiple
+          accept=".pdf,.xls,.xlsx,.doc,.docx,.jpg,.jpeg,.png,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/jpeg,image/png"
+          className="hidden"
+          onChange={handleAttachmentFilesSelected}
+        />
         {/* Modals - Same as previous version, condensed for brevity */}
         {isImportModalOpen && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-200">

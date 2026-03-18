@@ -9,7 +9,7 @@ import {
   Mail, Flame, MapPinned, CircleDot, Zap, Building2, UserCircle, AtSign,
   FileSpreadsheet, Wallet, ShoppingCart, Settings, Upload, CheckSquare, Square
 } from "lucide-react";
-import { generatePRPdfBytes, uploadGeneratedPdf, stampSignatureToField, deleteGeneratedPdf } from "../lib/pdfForms";
+import { generatePRPdfBytes, uploadGeneratedPdf, stampSignatureToField, deleteGeneratedPdf, stampTextToFieldRect } from "../lib/pdfForms";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "../components/ui";
@@ -18,6 +18,8 @@ import { PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, PURCHA
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
 import { motion, AnimatePresence } from "framer-motion";
+import { ref, getDownloadURL } from "firebase/storage";
+import { storage } from "../lib/firebase";
 const PRView = React.memo(() => {
   const { prs, pos, projects, budgets, vendors, materials, addData, updateData, deleteData,
           showAlert, openConfirm, userRole, userData, columnWidths, handleColumnResize,
@@ -33,6 +35,7 @@ const PRView = React.memo(() => {
     const [selectedPrForEditBudget, setSelectedPrForEditBudget] = useState(null);
     const [editBudgetReason, setEditBudgetReason] = useState("");
     const [viewingPR, setViewingPR] = useState(null); // PR View Modal
+    const [prPdfReadyUrl, setPrPdfReadyUrl] = useState<string | null>(null);
 
     const [selectedPrForReject, setSelectedPrForReject] = useState(null);
     const [expandedBudgetIdsInModal, setExpandedBudgetIdsInModal] = useState({});
@@ -65,6 +68,37 @@ const PRView = React.memo(() => {
       setSelectedPrForEditBudget(null);
       showAlert("ส่งคำขอแก้ไขแล้ว", "PR ถูกตั้งสถานะ Edit Budget — ผู้เปิด PR ต้องแก้ไขและส่งอนุมัติใหม่", "info");
     };
+
+    // ให้ PR Modal อัปเดตข้อมูลตามรายการล่าสุดเสมอ (แก้ปัญหา preview PDF ค้างเป็นไฟล์เก่า)
+    useEffect(() => {
+      if (!viewingPR?.id) return;
+      const latest = prs.find((p: any) => p.id === viewingPR.id);
+      if (latest && latest !== viewingPR) setViewingPR(latest);
+    }, [prs, viewingPR?.id]);
+
+    // โหลด fresh URL ทันทีที่เปิด Modal — เพื่อให้ปุ่มเปิดดูเป็น synchronous click (กัน popup blocker)
+    useEffect(() => {
+      const pr = viewingPR ? (prs.find((p: any) => p.id === viewingPR.id) || viewingPR) : null;
+      if (!pr) { setPrPdfReadyUrl(null); return; }
+      if (!pr.pdfPath) { setPrPdfReadyUrl(pr.pdfUrl || null); return; }
+      let cancelled = false;
+      (async () => {
+        try {
+          const freshUrl = await getDownloadURL(ref(storage, pr.pdfPath));
+          if (!cancelled) setPrPdfReadyUrl(freshUrl);
+        } catch (_) {
+          if (!cancelled) setPrPdfReadyUrl(pr.pdfUrl || null);
+        }
+      })();
+      return () => { cancelled = true; };
+    }, [viewingPR?.id, viewingPR?.pdfUpdatedAt, viewingPR?.status]);
+
+    // เปิดดู PDF — synchronous click (ใช้ prPdfReadyUrl ที่โหลดไว้แล้วตอนเปิด Modal)
+    const openLatestPrPdf = useCallback(() => {
+      if (prPdfReadyUrl) {
+        window.open(prPdfReadyUrl, "_blank", "noopener,noreferrer");
+      }
+    }, [prPdfReadyUrl]);
     const [headerData, setHeaderData] = useState({
       prNo: "",
       subCode: "",
@@ -377,7 +411,8 @@ const PRView = React.memo(() => {
         const project = projects.find((p: any) => p.id === selectedProjectId) || null;
         const safePRNo = (headerData.prNo || "unknown").replace(/[^a-zA-Z0-9\-_]/g, "_");
         const safeProjId = selectedProjectId || "unknown";
-        const creatorSignatureUrl = userData?.signatureUrl || null;
+        // Prefer dataURL to avoid CORS on Storage URL
+        const creatorSignatureUrl = userData?.signatureDataUrl || userData?.signatureUrl || null;
 
         setProgress(20, "กำลังสร้าง PDF...");
         let bytes = await generatePRPdfBytes(prPayload, {
@@ -385,21 +420,19 @@ const PRView = React.memo(() => {
           budgetDesc: "",
         });
 
-        setProgress(50, "ประทับลายเซ็นผู้สร้าง...");
-        if (creatorSignatureUrl) {
-          try {
-            bytes = await stampSignatureToField(bytes, creatorSignatureUrl, "Signature1");
-          } catch (sigErr) {
-            console.warn("[PR Save] Stamp Signature1 failed:", sigErr);
-          }
-        }
+        // PR: ไม่ stamp Signature1 (ผู้สร้าง) ตาม requirement — ให้แสดงเฉพาะตอน Approve (Signature2/3) แทน
 
         setProgress(70, "อัปโหลด PDF ขึ้น Cloud...");
+        const pdfPath = `generated/prs/${safeProjId}/${safePRNo}.pdf`;
         const timeout = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("PDF timeout")), 15000)
         );
         pdfUrl = await Promise.race([
-          uploadGeneratedPdf(bytes, `generated/prs/${safeProjId}/${safePRNo}.pdf`),
+          (async () => {
+            // ลบไฟล์เดิมก่อนอัปโหลดใหม่ เพื่ออัปเดตข้อมูล PDF (กรณี Reject → แก้ไข → บันทึกใหม่)
+            await deleteGeneratedPdf(pdfPath);
+            return await uploadGeneratedPdf(bytes, pdfPath);
+          })(),
           timeout,
         ]);
       } catch (e) {
@@ -411,7 +444,11 @@ const PRView = React.memo(() => {
       }
 
       setProgress(85, "บันทึกข้อมูล PR...");
-      if (pdfUrl) prPayload.pdfUrl = pdfUrl;
+      if (pdfUrl) {
+        prPayload.pdfUrl = pdfUrl;
+        prPayload.pdfPath = `generated/prs/${(selectedProjectId || "unknown")}/${(headerData.prNo || "unknown").replace(/[^a-zA-Z0-9\-_]/g, "_")}.pdf`;
+        prPayload.pdfUpdatedAt = new Date().toISOString();
+      }
 
       if (editingPRId) {
         success = await updateData("prs", editingPRId, prPayload);
@@ -517,44 +554,65 @@ const PRView = React.memo(() => {
       else if (isPMApprove) newStatus = "Approved";
 
       if (newStatus !== pr.status) {
-        // Stamp signature + บันทึก email ของผู้ approve
-        let updatedPdfUrl: string | undefined;
-        // PR: CM Approve -> Signature2, PM Approve -> Signature3
-        const stampField = isCMApprove ? "Signature2" : isPMApprove ? "Signature3" : null;
         const emailField = isCMApprove ? "cmApproverEmail" : isPMApprove ? "pmApproverEmail" : null;
         const approverEmail = userData?.email || user?.email || "";
+        const approverSig = userData?.signatureDataUrl || userData?.signatureUrl;
+        const stampField = isCMApprove ? "Signature2" : isPMApprove ? "Signature3" : null;
 
-        if (stampField && pr.pdfUrl && userData?.signatureUrl) {
-          try {
-            const safePRNo = (pr.prNo || pr.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
-            const safeProjId = pr.projectId || "unknown";
-            // เติม cache buster เพื่อให้ fetch ไฟล์ล่าสุดมา stamp
-            const existingRes = await fetch(`${pr.pdfUrl}${pr.pdfUrl.includes("?") ? "&" : "?"}t=${Date.now()}`);
-            if (existingRes.ok) {
-              let existingBytes = new Uint8Array(await existingRes.arrayBuffer());
-              existingBytes = await stampSignatureToField(existingBytes, userData.signatureUrl, stampField as "Signature2" | "Signature3");
-              updatedPdfUrl = await uploadGeneratedPdf(existingBytes, `generated/prs/${safeProjId}/${safePRNo}.pdf`);
+        let updatedPdfUrl: string | undefined;
+        let newPdfPath: string | undefined;
+
+        try {
+          const safePRNo = (pr.prNo || pr.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
+          const safeProjId = pr.projectId || "unknown";
+          const project = projects.find((p: any) => p.id === pr.projectId) || null;
+
+          // สร้าง PR data อัปเดตพร้อม email ผู้ approve ปัจจุบัน
+          // (ถ้า PM approve จะมี cmApproverEmail จาก Firestore อยู่แล้ว + เพิ่ม pmApproverEmail)
+          const updatedPrData = {
+            ...pr,
+            ...(emailField && approverEmail ? { [emailField]: approverEmail } : {}),
+          };
+
+          // Regenerate PDF จาก template ใหม่ทั้งหมด (เพื่อให้ prcm/prpm ติดถูกต้องแน่นอน)
+          let bytes = await generatePRPdfBytes(updatedPrData, {
+            projectName: project?.name || "",
+            budgetDesc: "",
+          });
+
+          // Stamp ลายเซ็นผู้ approve บน PDF ที่ regenerate แล้ว
+          if (stampField && approverSig) {
+            try {
+              bytes = await stampSignatureToField(bytes, approverSig, stampField as "Signature2" | "Signature3");
+            } catch (sigErr) {
+              console.warn(`[PR Approve] Stamp ${stampField} failed:`, sigErr);
             }
-          } catch (stampErr) {
-            console.warn(`[PR Approve] Stamp ${stampField} failed:`, stampErr);
           }
+
+          newPdfPath = `generated/prs/${safeProjId}/${safePRNo}.pdf`;
+          await deleteGeneratedPdf(newPdfPath);
+          updatedPdfUrl = await uploadGeneratedPdf(bytes, newPdfPath);
+        } catch (e) {
+          console.warn("[PR Approve] Regenerate PDF failed:", e);
         }
 
         await updateData("prs", id, {
           status: newStatus,
           rejectReason: "",
           ...(emailField && approverEmail ? { [emailField]: approverEmail } : {}),
-          ...(updatedPdfUrl ? { pdfUrl: updatedPdfUrl } : {}),
+          ...(updatedPdfUrl ? { pdfUrl: updatedPdfUrl, pdfPath: newPdfPath } : {}),
+          ...(updatedPdfUrl ? { pdfUpdatedAt: new Date().toISOString() } : {}),
         });
 
-        // อัปเดต viewingPR ใน state ให้เป็นข้อมูลล่าสุด (เพื่อให้ Modal โชว์ PDF ใหม่ทันที)
+        // อัปเดต viewingPR ใน state ให้เป็นข้อมูลล่าสุด
         if (viewingPR && viewingPR.id === id) {
           setViewingPR((prev) => ({
             ...prev,
             status: newStatus,
             rejectReason: "",
             ...(emailField && approverEmail ? { [emailField]: approverEmail } : {}),
-            ...(updatedPdfUrl ? { pdfUrl: updatedPdfUrl } : {}),
+            ...(updatedPdfUrl ? { pdfUrl: updatedPdfUrl, pdfPath: newPdfPath } : {}),
+            ...(updatedPdfUrl ? { pdfUpdatedAt: new Date().toISOString() } : {}),
           }));
         }
 
@@ -815,7 +873,9 @@ const PRView = React.memo(() => {
           </table>
         </Card>
         {/* PR View Modal — ดูข้อมูล + Approve/Reject */}
-        {viewingPR && (
+        {viewingPR && (() => {
+          const prLive = prs.find((p: any) => p.id === viewingPR.id) || viewingPR;
+          return (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9000] p-4">
             <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-[90vh] flex flex-col">
               {/* Header */}
@@ -826,11 +886,11 @@ const PRView = React.memo(() => {
                   </div>
                   <div>
                     <h3 className="text-base font-bold text-white">ใบขอซื้อ (PR)</h3>
-                    <p className="text-slate-300 text-xs mt-0.5">{viewingPR.prNo}</p>
+                    <p className="text-slate-300 text-xs mt-0.5">{prLive.prNo}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge status={viewingPR.status} />
+                  <Badge status={prLive.status} />
                   <button onClick={() => setViewingPR(null)} className="text-white/60 hover:text-white hover:bg-white/20 p-2 rounded-xl transition-all ml-2">
                     <XCircle size={20} />
                   </button>
@@ -838,55 +898,68 @@ const PRView = React.memo(() => {
               </div>
 
               {/* Edit Budget banner */}
-              {viewingPR.status === "Edit Budget" && viewingPR.editBudgetReason && (
+              {prLive.status === "Edit Budget" && prLive.editBudgetReason && (
                 <div className="px-6 py-3 bg-red-600 shrink-0 flex items-start gap-3">
                   <AlertCircle size={16} className="text-white mt-0.5 shrink-0" />
                   <div>
                     <p className="text-white font-bold text-sm">⚠️ ต้องการการแก้ไข Budget</p>
-                    <p className="text-red-100 text-xs mt-0.5"><span className="font-semibold">เหตุผล:</span> {viewingPR.editBudgetReason}</p>
-                    {viewingPR.editBudgetBy && <p className="text-red-200 text-[11px] mt-0.5">ส่งคืนโดย: {viewingPR.editBudgetBy}</p>}
+                    <p className="text-red-100 text-xs mt-0.5"><span className="font-semibold">เหตุผล:</span> {prLive.editBudgetReason}</p>
+                    {prLive.editBudgetBy && <p className="text-red-200 text-[11px] mt-0.5">ส่งคืนโดย: {prLive.editBudgetBy}</p>}
                   </div>
                 </div>
               )}
 
               {/* Reject reason banner */}
-              {viewingPR.status === "Rejected" && viewingPR.rejectReason && (
+              {prLive.status === "Rejected" && prLive.rejectReason && (
                 <div className="px-6 py-2.5 bg-red-50 border-b border-red-200 shrink-0 flex items-center gap-2">
                   <AlertCircle size={14} className="text-red-500 shrink-0" />
-                  <p className="text-red-700 text-xs"><span className="font-semibold">เหตุผลปฏิเสธ:</span> {viewingPR.rejectReason}</p>
+                  <p className="text-red-700 text-xs"><span className="font-semibold">เหตุผลปฏิเสธ:</span> {prLive.rejectReason}</p>
                 </div>
               )}
 
               {/* Body */}
               <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-                {/* PDF Thumbnail (ถ้ามี) — ใช้ key บังคับ remount เมื่อ status/ลายเซ็นเปลี่ยน เพื่อโชว์ฉบับล่าสุด */}
-                {viewingPR.pdfUrl && (() => {
-                  const pdfUrlWithCacheBuster = `${viewingPR.pdfUrl}${viewingPR.pdfUrl.includes("?") ? "&" : "?"}t=${Date.now()}`;
-                  const iframeKey = `pr-pdf-${viewingPR.id}-${viewingPR.status}-${viewingPR.cmApproverEmail || ""}-${viewingPR.pmApproverEmail || ""}`;
+                {/* PDF Preview — iframe thumbnail ใช้ fresh URL (bypass CDN cache) */}
+                {(prLive.pdfUrl || prLive.pdfPath) && (() => {
+                  const ready = !!prPdfReadyUrl;
                   return (
                     <div className="mb-4">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">เอกสาร PDF</span>
+                        {!ready && <span className="text-[10px] text-slate-400 animate-pulse">กำลังโหลด...</span>}
                       </div>
-                      <a
-                        href={pdfUrlWithCacheBuster}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="group relative block w-48 h-64 border border-slate-200 rounded-xl overflow-hidden bg-slate-50 hover:border-blue-400 hover:shadow-md transition-all"
-                        title="คลิกเพื่อเปิด PDF ในแท็บใหม่"
+                      <div
+                        className={`relative w-48 h-64 border rounded-xl overflow-hidden bg-slate-50 shadow-sm transition-all ${ready ? "border-slate-200" : "border-slate-100"}`}
                       >
-                        <iframe
-                          key={iframeKey}
-                          src={`${pdfUrlWithCacheBuster}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`}
-                          className="w-full h-full pointer-events-none opacity-80 group-hover:opacity-100 transition-opacity"
-                          title="PR PDF Thumbnail"
-                        />
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors flex items-center justify-center">
-                          <div className="bg-white/90 backdrop-blur-sm text-blue-600 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5 transform translate-y-2 group-hover:translate-y-0">
-                            <FileOutput size={14} /> เปิดดู PDF
+                        {ready ? (
+                          <>
+                            <iframe
+                              key={prPdfReadyUrl}
+                              src={`${prPdfReadyUrl}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`}
+                              className="w-full h-full pointer-events-none"
+                              title="PR PDF Preview"
+                            />
+                            {/* Overlay กดเปิดแท็บใหม่ */}
+                            <button
+                              type="button"
+                              onClick={openLatestPrPdf}
+                              className="absolute inset-0 w-full h-full flex items-end justify-center pb-3 bg-transparent hover:bg-black/10 transition-colors group"
+                              title="คลิกเพื่อเปิด PDF ในแท็บใหม่"
+                            >
+                              <span className="opacity-0 group-hover:opacity-100 transition-opacity bg-white/90 backdrop-blur-sm text-blue-600 px-3 py-1.5 rounded-lg text-xs font-semibold shadow flex items-center gap-1.5 translate-y-1 group-hover:translate-y-0 transition-transform">
+                                <FileOutput size={13} /> เปิดดูเต็มหน้าจอ
+                              </span>
+                            </button>
+                          </>
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-slate-400">
+                            <div className="text-center">
+                              <FileText size={28} className="mx-auto mb-2 opacity-40" />
+                              <div className="text-[11px] animate-pulse">กำลังโหลด...</div>
+                            </div>
                           </div>
-                        </div>
-                      </a>
+                        )}
+                      </div>
                     </div>
                   );
                 })()}
@@ -894,15 +967,15 @@ const PRView = React.memo(() => {
                 {/* Info grid */}
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
                   {[
-                    { label: "PR No.", value: viewingPR.prNo },
-                    { label: "วันที่", value: viewingPR.requestDate },
-                    { label: "ผู้ขอซื้อ", value: viewingPR.requestor },
-                    { label: "Cost Code", value: viewingPR.costCode },
-                    { label: "ประเภท", value: getPurchaseTypeDisplayLabel(viewingPR.purchaseType) },
-                    { label: "ความเร่งด่วน", value: viewingPR.urgency || "-" },
-                    { label: "สถานที่รับของ", value: viewingPR.deliveryLocation || "-" },
-                    { label: "Email", value: viewingPR.requestorEmail || "-" },
-                    ...(viewingPR.attachmentUrl ? [{ label: "ไฟล์แนบ", value: viewingPR.attachmentName || "ไฟล์แนบ", url: viewingPR.attachmentUrl }] : []),
+                    { label: "PR No.", value: prLive.prNo },
+                    { label: "วันที่", value: prLive.requestDate },
+                    { label: "ผู้ขอซื้อ", value: prLive.requestor },
+                    { label: "Cost Code", value: prLive.costCode },
+                    { label: "ประเภท", value: getPurchaseTypeDisplayLabel(prLive.purchaseType) },
+                    { label: "ความเร่งด่วน", value: prLive.urgency || "-" },
+                    { label: "สถานที่รับของ", value: prLive.deliveryLocation || "-" },
+                    { label: "Email", value: prLive.requestorEmail || "-" },
+                    ...(prLive.attachmentUrl ? [{ label: "ไฟล์แนบ", value: prLive.attachmentName || "ไฟล์แนบ", url: prLive.attachmentUrl }] : []),
                   ].map(({ label, value, url }) => (
                     <div key={label} className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
                       <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">{label}</p>
@@ -919,7 +992,7 @@ const PRView = React.memo(() => {
                 <div className="rounded-xl border border-slate-200 overflow-hidden">
                   <div className="bg-slate-100 px-4 py-2 flex items-center justify-between">
                     <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">รายการสินค้า</span>
-                    <span className="bg-slate-600 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">{viewingPR.items?.length || 0} รายการ</span>
+                    <span className="bg-slate-600 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">{prLive.items?.length || 0} รายการ</span>
                   </div>
                   <table className="w-full text-xs text-left">
                     <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
@@ -933,7 +1006,7 @@ const PRView = React.memo(() => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {(viewingPR.items || []).map((it, idx) => (
+                      {(prLive.items || []).map((it, idx) => (
                         <tr key={idx} className="hover:bg-slate-50">
                           <td className="px-3 py-1.5 text-center text-slate-400">{idx + 1}</td>
                           <td className="px-3 py-1.5 font-medium text-slate-700">{it.description}</td>
@@ -947,7 +1020,7 @@ const PRView = React.memo(() => {
                     <tfoot className="bg-slate-800">
                       <tr>
                         <td colSpan={4} className="px-3 py-2 text-right text-xs font-bold text-white">ยอดรวมทั้งสิ้น:</td>
-                        <td className="px-3 py-2 text-right text-sm font-bold text-white">{formatCurrency(viewingPR.totalAmount || viewingPR.amount)}</td>
+                        <td className="px-3 py-2 text-right text-sm font-bold text-white">{formatCurrency(prLive.totalAmount || prLive.amount)}</td>
                         <td />
                       </tr>
                     </tfoot>
@@ -961,35 +1034,35 @@ const PRView = React.memo(() => {
                   <XCircle size={15} /> ปิด
                 </button>
                 <div className="flex items-center gap-2">
-                  {(userRole === "CM" || userRole === "Administrator") && viewingPR.status === "Pending CM" && (
+                  {(userRole === "CM" || userRole === "Administrator") && prLive.status === "Pending CM" && (
                     <>
-                      <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setViewingPR(null); handleAction(viewingPR.id, "reject"); }}>Reject</Button>
-                      <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(viewingPR.id, "approve"); setViewingPR(null); }}>CM Approve</Button>
+                      <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setViewingPR(null); handleAction(prLive.id, "reject"); }}>Reject</Button>
+                      <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(prLive.id, "approve"); setViewingPR(null); }}>CM Approve</Button>
                     </>
                   )}
-                  {(userRole === "PM" || userRole === "Administrator") && viewingPR.status === "Pending PM" && (
+                  {(userRole === "PM" || userRole === "Administrator") && prLive.status === "Pending PM" && (
                     <>
-                      <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setViewingPR(null); handleAction(viewingPR.id, "reject"); }}>Reject</Button>
-                      <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(viewingPR.id, "approve"); setViewingPR(null); }}>PM Approve</Button>
+                      <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setViewingPR(null); handleAction(prLive.id, "reject"); }}>Reject</Button>
+                      <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(prLive.id, "approve"); setViewingPR(null); }}>PM Approve</Button>
                     </>
                   )}
-                  {(userRole === "GM" || userRole === "Administrator") && viewingPR.status === "Pending GM" && (
+                  {(userRole === "GM" || userRole === "Administrator") && prLive.status === "Pending GM" && (
                     <>
-                      <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setViewingPR(null); handleAction(viewingPR.id, "reject"); }}>Reject</Button>
-                      <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(viewingPR.id, "approve"); setViewingPR(null); }}>GM Approve</Button>
+                      <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setViewingPR(null); handleAction(prLive.id, "reject"); }}>Reject</Button>
+                      <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(prLive.id, "approve"); setViewingPR(null); }}>GM Approve</Button>
                     </>
                   )}
-                  {(userRole === "MD" || userRole === "Administrator") && viewingPR.status === "Pending MD" && (
+                  {(userRole === "MD" || userRole === "Administrator") && prLive.status === "Pending MD" && (
                     <>
-                      <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setViewingPR(null); handleAction(viewingPR.id, "reject"); }}>Reject</Button>
-                      <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(viewingPR.id, "approve"); setViewingPR(null); }}>MD Approve</Button>
+                      <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setViewingPR(null); handleAction(prLive.id, "reject"); }}>Reject</Button>
+                      <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(prLive.id, "approve"); setViewingPR(null); }}>MD Approve</Button>
                     </>
                   )}
                 </div>
               </div>
             </div>
           </div>
-        )}
+        )})()}
 
         {isPrRejectModalOpen && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[60] animate-in fade-in duration-200">
