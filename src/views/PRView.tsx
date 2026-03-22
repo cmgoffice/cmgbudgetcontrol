@@ -14,6 +14,7 @@ import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "../components/ui";
 import ResizableTh from "../components/ResizableTh";
+import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 import { useProportionalTableLayout } from "../hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 import { PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, PURCHASE_TYPE_EQUIPMENT, DELIVERY_LOCATIONS, getPurchaseTypeDisplayLabel, COST_CATEGORIES } from "../lib/constants";
@@ -27,7 +28,7 @@ const CONTRACT_PR_TYPES = ["จ้างเหมา > DL", "ค่าแรง 
 const PRView = React.memo(({ filterMode = "regular" }: { filterMode?: "regular" | "contract" }) => {
   const { prs, pos, projects, budgets, vendors, materials, addData, updateData, deleteData,
           showAlert, openConfirm, userRole, userRoles, userData, user, columnWidths, handleColumnResize,
-          visibleProjects, handlePRAction, canUseFunction } = useAppData();
+          visibleProjects, handlePRAction, canUseFunction, isColumnVisible } = useAppData();
   const { selectedProjectId,
           isFullScreenModalOpen, setIsFullScreenModalOpen,
           expandedPrRows, setExpandedPrRows, togglePrRow } = useUI();
@@ -865,14 +866,14 @@ const PRView = React.memo(({ filterMode = "regular" }: { filterMode?: "regular" 
       return groupPrs.map((pr) => (
         <React.Fragment key={pr.id}>
           <tr className={dataRowClass} onClick={() => setViewingPR(pr)}>
-            <td className="py-1 px-3 font-medium" title={pr.prNo}><span className="cell-text">{pr.prNo}</span></td>
-            <td className="py-1 px-3" title={pr.requestDate}><span className="cell-text">{pr.requestDate}</span></td>
-            <td className="py-1 px-3">
+            {isColumnVisible("pr", "prNo") && <td className="py-1 px-3 font-medium" title={pr.prNo}><span className="cell-text">{pr.prNo}</span></td>}
+            {isColumnVisible("pr", "date") && <td className="py-1 px-3" title={pr.requestDate}><span className="cell-text">{pr.requestDate}</span></td>}
+            {isColumnVisible("pr", "costCode") && <td className="py-1 px-3">
               <span className="bg-gray-100 px-2 py-0.5 rounded text-xs border border-gray-200 cell-text" title={pr.costCode}>
                 {pr.costCode}
               </span>
-            </td>
-            <td
+            </td>}
+            {isColumnVisible("pr", "description") && <td
               className="py-1 px-3 text-xs text-slate-500"
               title={(() => {
                 const itemDescs = pr.items && pr.items.length > 0
@@ -886,21 +887,21 @@ const PRView = React.memo(({ filterMode = "regular" }: { filterMode?: "regular" 
                   ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
                   : "-"}
               </span>
-            </td>
-            <td className="py-1 px-3" title={pr.purchaseType}><span className="cell-text">{getPurchaseTypeDisplayLabel(pr.purchaseType)}</span></td>
-            <td className="py-1 px-3" title={pr.requestor}><span className="cell-text">{pr.requestor}</span></td>
-            <td className="py-1 px-3">
+            </td>}
+            {isColumnVisible("pr", "type") && <td className="py-1 px-3" title={pr.purchaseType}><span className="cell-text">{getPurchaseTypeDisplayLabel(pr.purchaseType)}</span></td>}
+            {isColumnVisible("pr", "requestor") && <td className="py-1 px-3" title={pr.requestor}><span className="cell-text">{pr.requestor}</span></td>}
+            {isColumnVisible("pr", "items") && <td className="py-1 px-3">
               <span className="font-bold text-slate-700">
                 {pr.items?.length || 0} รายการ
               </span>
-            </td>
-            <td className="py-1 px-3 text-right font-semibold">
+            </td>}
+            {isColumnVisible("pr", "amount") && <td className="py-1 px-3 text-right font-semibold">
               {formatCurrency(pr.totalAmount || pr.amount)}
-            </td>
-            <td className="py-1 px-3 text-center">
+            </td>}
+            {isColumnVisible("pr", "status") && <td className="py-1 px-3 text-center">
               <Badge status={pr.status} />
-            </td>
-            <td
+            </td>}
+            {isColumnVisible("pr", "actions") && <td
               className="py-1 px-3 text-right flex justify-end gap-1"
               onClick={(e) => e.stopPropagation()}
             >
@@ -972,7 +973,7 @@ const PRView = React.memo(({ filterMode = "regular" }: { filterMode?: "regular" 
                   <Trash2 size={14} />
                 </button>
               )}
-            </td>
+            </td>}
           </tr>
         </React.Fragment>
       ));
@@ -983,7 +984,7 @@ const PRView = React.memo(({ filterMode = "regular" }: { filterMode?: "regular" 
       return entries.map(([type, groupPrs]) => (
         <React.Fragment key={`main-${type}`}>
           <tr className={groupRowClass}>
-            <td colSpan={10} className="py-2 px-3 font-bold text-slate-700">
+            <td colSpan={["prNo","date","costCode","description","type","requestor","items","amount","status","actions"].filter(k => isColumnVisible("pr", k)).length} className="py-2 px-3 font-bold text-slate-700">
               {type} ({groupPrs.length})
             </td>
           </tr>
@@ -1093,9 +1094,12 @@ const PRView = React.memo(({ filterMode = "regular" }: { filterMode?: "regular" 
         )}
 
         <div className="w-full min-w-0 flex flex-col md:flex-row justify-between items-center gap-4">
-          <h2 className={`text-xl font-bold ${filterMode === "contract" ? "text-purple-800" : "text-slate-800"}`}>
-            {filterMode === "contract" ? "C. Purchase Request — จ้าง/เหมา" : "C. Purchase Request (PR)"}
-          </h2>
+          <div className="flex items-center gap-2">
+            <h2 className={`text-xl font-bold ${filterMode === "contract" ? "text-purple-800" : "text-slate-800"}`}>
+              {filterMode === "contract" ? "C. Purchase Request — จ้าง/เหมา" : "C. Purchase Request (PR)"}
+            </h2>
+            <ColumnVisibilityToggle tableId="pr" />
+          </div>
           {canUseFunction("pr", "create") && (
             <Button
               onClick={() => {
@@ -1136,16 +1140,16 @@ const PRView = React.memo(({ filterMode = "regular" }: { filterMode?: "regular" 
           <table className="w-full text-left text-xs text-slate-600 table-fixed">
             <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
               <tr>
-                <ResizableTh tableId="pr" colKey="prNo" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.prNo}>PR No.</ResizableTh>
-                <ResizableTh tableId="pr" colKey="date" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.date}>Date</ResizableTh>
-                <ResizableTh tableId="pr" colKey="costCode" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.costCode}>Cost Code</ResizableTh>
-                <ResizableTh tableId="pr" colKey="description" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.description}>Description</ResizableTh>
-                <ResizableTh tableId="pr" colKey="type" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.type}>Type</ResizableTh>
-                <ResizableTh tableId="pr" colKey="requestor" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.requestor}>Requestor</ResizableTh>
-                <ResizableTh tableId="pr" colKey="items" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.items}>Items</ResizableTh>
-                <ResizableTh tableId="pr" colKey="amount" className="py-1 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.amount}>Amount</ResizableTh>
-                <ResizableTh tableId="pr" colKey="status" className="py-1 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.status}>Status</ResizableTh>
-                <th className="py-1 px-3 text-right" style={{ width: prTableLayout.scaled.actions }}>Actions</th>
+                {isColumnVisible("pr", "prNo") && <ResizableTh tableId="pr" colKey="prNo" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.prNo}>PR No.</ResizableTh>}
+                {isColumnVisible("pr", "date") && <ResizableTh tableId="pr" colKey="date" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.date}>Date</ResizableTh>}
+                {isColumnVisible("pr", "costCode") && <ResizableTh tableId="pr" colKey="costCode" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.costCode}>Cost Code</ResizableTh>}
+                {isColumnVisible("pr", "description") && <ResizableTh tableId="pr" colKey="description" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.description}>Description</ResizableTh>}
+                {isColumnVisible("pr", "type") && <ResizableTh tableId="pr" colKey="type" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.type}>Type</ResizableTh>}
+                {isColumnVisible("pr", "requestor") && <ResizableTh tableId="pr" colKey="requestor" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.requestor}>Requestor</ResizableTh>}
+                {isColumnVisible("pr", "items") && <ResizableTh tableId="pr" colKey="items" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.items}>Items</ResizableTh>}
+                {isColumnVisible("pr", "amount") && <ResizableTh tableId="pr" colKey="amount" className="py-1 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.amount}>Amount</ResizableTh>}
+                {isColumnVisible("pr", "status") && <ResizableTh tableId="pr" colKey="status" className="py-1 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.status}>Status</ResizableTh>}
+                {isColumnVisible("pr", "actions") && <th className="py-1 px-3 text-right" style={{ width: prTableLayout.scaled.actions }}>Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -1167,16 +1171,16 @@ const PRView = React.memo(({ filterMode = "regular" }: { filterMode?: "regular" 
               <table className="w-full text-left text-xs text-slate-600 table-fixed">
                 <thead className="bg-teal-100/60 text-slate-900 uppercase font-semibold">
                   <tr>
-                    <ResizableTh tableId="pr" colKey="prNo" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.prNo}>PR No.</ResizableTh>
-                    <ResizableTh tableId="pr" colKey="date" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.date}>Date</ResizableTh>
-                    <ResizableTh tableId="pr" colKey="costCode" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.costCode}>Cost Code</ResizableTh>
-                    <ResizableTh tableId="pr" colKey="description" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.description}>Description</ResizableTh>
-                    <ResizableTh tableId="pr" colKey="type" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.type}>Type</ResizableTh>
-                    <ResizableTh tableId="pr" colKey="requestor" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.requestor}>Requestor</ResizableTh>
-                    <ResizableTh tableId="pr" colKey="items" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.items}>Items</ResizableTh>
-                    <ResizableTh tableId="pr" colKey="amount" className="py-1 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.amount}>Amount</ResizableTh>
-                    <ResizableTh tableId="pr" colKey="status" className="py-1 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.status}>Status</ResizableTh>
-                    <th className="py-1 px-3 text-right" style={{ width: prTableLayout.scaled.actions }}>Actions</th>
+                    {isColumnVisible("pr", "prNo") && <ResizableTh tableId="pr" colKey="prNo" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.prNo}>PR No.</ResizableTh>}
+                    {isColumnVisible("pr", "date") && <ResizableTh tableId="pr" colKey="date" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.date}>Date</ResizableTh>}
+                    {isColumnVisible("pr", "costCode") && <ResizableTh tableId="pr" colKey="costCode" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.costCode}>Cost Code</ResizableTh>}
+                    {isColumnVisible("pr", "description") && <ResizableTh tableId="pr" colKey="description" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.description}>Description</ResizableTh>}
+                    {isColumnVisible("pr", "type") && <ResizableTh tableId="pr" colKey="type" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.type}>Type</ResizableTh>}
+                    {isColumnVisible("pr", "requestor") && <ResizableTh tableId="pr" colKey="requestor" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.requestor}>Requestor</ResizableTh>}
+                    {isColumnVisible("pr", "items") && <ResizableTh tableId="pr" colKey="items" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.items}>Items</ResizableTh>}
+                    {isColumnVisible("pr", "amount") && <ResizableTh tableId="pr" colKey="amount" className="py-1 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.amount}>Amount</ResizableTh>}
+                    {isColumnVisible("pr", "status") && <ResizableTh tableId="pr" colKey="status" className="py-1 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.status}>Status</ResizableTh>}
+                    {isColumnVisible("pr", "actions") && <th className="py-1 px-3 text-right" style={{ width: prTableLayout.scaled.actions }}>Actions</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">

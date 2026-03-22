@@ -4,10 +4,11 @@ import { Plus, Trash2, Edit, Upload, Download, Lock, Unlock, Users, UserCheck, H
 import { useAppData } from "../contexts/AppDataContext";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "../components/ui";
 import ResizableTh from "../components/ResizableTh";
+import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 import { useProportionalTableLayout } from "../hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 const ProjectsView = React.memo(() => {
-  const { visibleProjects, updateData, deleteData, showAlert, openConfirm, userRole, userData, columnWidths, handleColumnResize, logAction, canUseFunction } = useAppData();
+  const { visibleProjects, updateData, deleteData, showAlert, openConfirm, userRole, userData, columnWidths, handleColumnResize, logAction, canUseFunction, isColumnVisible } = useAppData();
   const projectTableRef = useRef(null);
   const projectTableLayout = useProportionalTableLayout({
     tableId: "project",
@@ -108,9 +109,13 @@ const ProjectsView = React.memo(() => {
   return (
     <div className="space-y-4 w-full min-w-0">
       <div className="flex justify-between items-center">
-        <h2 className="text-xl font-bold text-slate-800">
-          A. จัดการโครงการ (Projects)
-        </h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-xl font-bold text-slate-800">
+            A. จัดการโครงการ (Projects)
+          </h2>
+          <ColumnVisibilityToggle tableId="project" />
+        </div>
+        <div className="flex items-center gap-2">
         {canUseFunction("projects", "add") && (
           <Button
             onClick={() => {
@@ -131,42 +136,60 @@ const ProjectsView = React.memo(() => {
             <Plus size={14} /> เพิ่มโครงการใหม่
           </Button>
         )}
+        </div>
       </div>
       <Card className="overflow-hidden w-full min-w-0">
         <div ref={projectTableRef} className="w-full min-w-0">
         <table className="w-full text-left text-xs text-slate-600 table-fixed">
           <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
             <tr>
-              <ResizableTh tableId="project" colKey="jobNo" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.jobNo}>Job No.</ResizableTh>
-              <ResizableTh tableId="project" colKey="name" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.name}>Project Name</ResizableTh>
-              <ResizableTh tableId="project" colKey="location" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.location}>Location</ResizableTh>
-              <ResizableTh tableId="project" colKey="contractValue" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.contractValue}>Contract Value</ResizableTh>
-              <ResizableTh tableId="project" colKey="start" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.start}>Start</ResizableTh>
-              <ResizableTh tableId="project" colKey="finish" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.finish}>Finish</ResizableTh>
-              <ResizableTh tableId="project" colKey="pm" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.pm}>PM</ResizableTh>
-              <ResizableTh tableId="project" colKey="cm" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.cm}>CM</ResizableTh>
-              <th className="py-2 px-3 text-right" style={{ width: projectTableLayout.scaled.actions }}>Actions</th>
+              {isColumnVisible("project", "jobNo") && <ResizableTh tableId="project" colKey="jobNo" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.jobNo}>Job No.</ResizableTh>}
+              {isColumnVisible("project", "name") && <ResizableTh tableId="project" colKey="name" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.name}>Project Name</ResizableTh>}
+              {isColumnVisible("project", "location") && <ResizableTh tableId="project" colKey="location" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.location}>Location</ResizableTh>}
+              {isColumnVisible("project", "contractValue") && <ResizableTh tableId="project" colKey="contractValue" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.contractValue}>Contract Value</ResizableTh>}
+              {isColumnVisible("project", "start") && <ResizableTh tableId="project" colKey="start" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.start}>Start</ResizableTh>}
+              {isColumnVisible("project", "finish") && <ResizableTh tableId="project" colKey="finish" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.finish}>Finish</ResizableTh>}
+              {isColumnVisible("project", "pm") && <ResizableTh tableId="project" colKey="pm" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.pm}>PM</ResizableTh>}
+              {isColumnVisible("project", "cm") && <ResizableTh tableId="project" colKey="cm" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.cm}>CM</ResizableTh>}
+              {isColumnVisible("project", "actions") && <th className="py-2 px-3 text-right" style={{ width: projectTableLayout.scaled.actions }}>Actions</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {visibleProjects.map((p) => (
               <tr key={p.id} className="hover:bg-slate-50">
+                {isColumnVisible("project", "jobNo") && (
                 <td className="py-2 px-3 font-medium text-slate-900" title={p.jobNo}>
                   <span className="cell-text">{p.jobNo}</span>
                 </td>
+                )}
+                {isColumnVisible("project", "name") && (
                 <td className="py-2 px-3 font-medium" title={p.name}><span className="cell-text">{p.name}</span></td>
+                )}
+                {isColumnVisible("project", "location") && (
                 <td className="py-2 px-3 text-slate-500" title={p.location}><span className="cell-text">{p.location}</span></td>
+                )}
+                {isColumnVisible("project", "contractValue") && (
                 <td className="py-2 px-3 text-right font-semibold text-blue-700">
                   {formatCurrency(p.contractValue)}
                 </td>
+                )}
+                {isColumnVisible("project", "start") && (
                 <td className="py-2 px-3 text-xs" title={p.startDate}><span className="cell-text">{p.startDate}</span></td>
+                )}
+                {isColumnVisible("project", "finish") && (
                 <td className="py-2 px-3 text-xs" title={p.endDate}><span className="cell-text">{p.endDate}</span></td>
+                )}
+                {isColumnVisible("project", "pm") && (
                 <td className="py-2 px-3 text-blue-600 font-medium" title={p.pmName}>
                   <span className="cell-text">{p.pmName}</span>
                 </td>
+                )}
+                {isColumnVisible("project", "cm") && (
                 <td className="py-2 px-3 text-green-600 font-medium" title={p.cmName}>
                   <span className="cell-text">{p.cmName}</span>
                 </td>
+                )}
+                {isColumnVisible("project", "actions") && (
                 <td className="py-2 px-3 text-right flex justify-end gap-1">
                   {canUseFunction("projects", "edit") && (
                     <button
@@ -185,6 +208,7 @@ const ProjectsView = React.memo(() => {
                     </button>
                   )}
                 </td>
+                )}
               </tr>
             ))}
           </tbody>

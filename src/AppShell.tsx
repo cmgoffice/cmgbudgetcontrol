@@ -38,6 +38,7 @@ import POView from "./views/POView";
 import PaymentView from "./views/PaymentView";
 import PaymentTableView from "./views/PaymentTableView";
 import BudgetView from "./views/BudgetView";
+import ColumnVisibilityToggle from "./components/ColumnVisibilityToggle";
 
 /** รูปโปรไฟล์ — ถ้าโหลดไม่สำเร็จ (ลิงก์หมดอายุ/ถูกบล็อก) จะแสดง fallback แทนไอคอนรูปพัง */
 const ProfileAvatar = ({ src, className, fallback }) => {
@@ -71,6 +72,7 @@ const AppShell = () => {
     rolePermissionsReady,
     userRoles = [userRole],
     logAction,
+    isColumnVisible,
   } = useAppData();
 
   useEffect(() => {
@@ -839,8 +841,9 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   openConfirm?: (title: string, message: string, onConfirm: () => void | Promise<void>, variant?: string) => void;
   selectedProjectId?: string | null;
 }) => {
-  const { canUseFunction, userRoles = [], logAction } = useAppData();
+  const { canUseFunction, userRoles = [], logAction, isColumnVisible } = useAppData();
   const tableModule = mode === "pr" ? "pr-table" : "po-table";
+  const tblId = mode === "pr" ? "pr-table" : "po-table";
   const [searchTerm, setSearchTerm] = React.useState("");
   const [filterStatus, setFilterStatus] = React.useState("all");
   const [filterProject, setFilterProject] = React.useState(selectedProjectId || "all");
@@ -1029,9 +1032,12 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
             {isPR ? <FileText size={18} className="text-white" /> : <ShoppingCart size={18} className="text-white" />}
           </div>
           <div>
-            <h2 className="text-lg font-bold text-slate-800">
-              {isPR ? "ตารางข้อมูล Purchase Request" : "ตารางข้อมูล Purchase Order"}
-            </h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-bold text-slate-800">
+                {isPR ? "ตารางข้อมูล Purchase Request" : "ตารางข้อมูล Purchase Order"}
+              </h2>
+              <ColumnVisibilityToggle tableId={tblId} />
+            </div>
             <p className="text-xs text-slate-500">
               {filtered.length} รายการ {filterStatus !== "all" ? `(${filterStatus})` : "ทั้งหมด"}
             </p>
@@ -1077,27 +1083,27 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
           <table className="w-full text-left text-xs table-fixed">
             <thead>
               <tr className="bg-slate-800 text-white">
-                <th className="px-3 py-3 font-semibold" style={{ width: prPoScaled.rowNum }}>#</th>
-                <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="no" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.no}>{isPR ? "PR No." : "PO No."}</ResizableTh>
-                <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="project" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.project}>โครงการ</ResizableTh>
-                {isPR && <ResizableTh tableId="pr-table" colKey="costCode" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.costCode}>Cost Code</ResizableTh>}
-                {isPR && <ResizableTh tableId="pr-table" colKey="description" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.description}>รายการงบ</ResizableTh>}
-                {!isPR && <ResizableTh tableId="po-table" colKey="vendor" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.vendor}>Vendor</ResizableTh>}
-                {!isPR && <ResizableTh tableId="po-table" colKey="prRef" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.prRef}>PR อ้างอิง</ResizableTh>}
-                <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="date" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.date}>วันที่</ResizableTh>
-                {isPR && <ResizableTh tableId="pr-table" colKey="requestor" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.requestor}>ผู้ขอ</ResizableTh>}
-                {isPR && <ResizableTh tableId="pr-table" colKey="type" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.type}>ประเภท</ResizableTh>}
-                <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="items" className="px-3 py-3 font-semibold text-right" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.items}>จำนวนรายการ</ResizableTh>
-                <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="amount" className="px-3 py-3 font-semibold text-right" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.amount}>ยอดรวม</ResizableTh>
-                <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="status" className="px-3 py-3 font-semibold text-center" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.status}>สถานะ</ResizableTh>
-                {isPR && <ResizableTh tableId="pr-table" colKey="poRef" className="px-3 py-3 font-semibold text-center" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.poRef}>Ref PO</ResizableTh>}
-                <th className="px-3 py-3 font-semibold text-center" style={{ width: prPoScaled.action }}>Action</th>
+                {isColumnVisible(tblId, "rowNum") && <th className="px-3 py-3 font-semibold" style={{ width: prPoScaled.rowNum }}>#</th>}
+                {isColumnVisible(tblId, "no") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="no" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.no}>{isPR ? "PR No." : "PO No."}</ResizableTh>}
+                {isColumnVisible(tblId, "project") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="project" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.project}>โครงการ</ResizableTh>}
+                {isPR && isColumnVisible("pr-table", "costCode") && <ResizableTh tableId="pr-table" colKey="costCode" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.costCode}>Cost Code</ResizableTh>}
+                {isPR && isColumnVisible("pr-table", "description") && <ResizableTh tableId="pr-table" colKey="description" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.description}>รายการงบ</ResizableTh>}
+                {!isPR && isColumnVisible("po-table", "vendor") && <ResizableTh tableId="po-table" colKey="vendor" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.vendor}>Vendor</ResizableTh>}
+                {!isPR && isColumnVisible("po-table", "prRef") && <ResizableTh tableId="po-table" colKey="prRef" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.prRef}>PR อ้างอิง</ResizableTh>}
+                {isColumnVisible(tblId, "date") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="date" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.date}>วันที่</ResizableTh>}
+                {isPR && isColumnVisible("pr-table", "requestor") && <ResizableTh tableId="pr-table" colKey="requestor" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.requestor}>ผู้ขอ</ResizableTh>}
+                {isPR && isColumnVisible("pr-table", "type") && <ResizableTh tableId="pr-table" colKey="type" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.type}>ประเภท</ResizableTh>}
+                {isColumnVisible(tblId, "items") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="items" className="px-3 py-3 font-semibold text-right" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.items}>จำนวนรายการ</ResizableTh>}
+                {isColumnVisible(tblId, "amount") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="amount" className="px-3 py-3 font-semibold text-right" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.amount}>ยอดรวม</ResizableTh>}
+                {isColumnVisible(tblId, "status") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="status" className="px-3 py-3 font-semibold text-center" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.status}>สถานะ</ResizableTh>}
+                {isPR && isColumnVisible("pr-table", "poRef") && <ResizableTh tableId="pr-table" colKey="poRef" className="px-3 py-3 font-semibold text-center" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.poRef}>Ref PO</ResizableTh>}
+                {isColumnVisible(tblId, "action") && <th className="px-3 py-3 font-semibold text-center" style={{ width: prPoScaled.action }}>Action</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="py-16 text-center text-slate-400">
+                  <td colSpan={99} className="py-16 text-center text-slate-400">
                     <div className="flex flex-col items-center gap-2">
                       <FileText size={32} className="opacity-30" />
                       <span>ไม่พบข้อมูล</span>
@@ -1131,7 +1137,8 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
                   return (
                     <tr key={r.id} className={`hover:bg-blue-50/40 transition-colors cursor-pointer ${isEven ? "bg-white" : "bg-slate-50/40"}`} onClick={() => { if (!isPR && r.pdfUrl) setPdfPreviewUrl(r.pdfUrl); }}>
-                      <td className="px-3 py-2.5 text-slate-400 font-mono">{idx + 1}</td>
+                      {isColumnVisible(tblId, "rowNum") && <td className="px-3 py-2.5 text-slate-400 font-mono">{idx + 1}</td>}
+                      {isColumnVisible(tblId, "no") && (
                       <td className="px-3 py-2.5 font-bold text-slate-800 whitespace-nowrap">
                         <div className="flex items-center gap-1">
                           <Hash size={10} className={isPR ? "text-slate-500" : "text-red-500"} />
@@ -1141,13 +1148,16 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                           )}
                         </div>
                       </td>
+                      )}
+                      {isColumnVisible(tblId, "project") && (
                       <td className="px-3 py-2.5 text-slate-600 max-w-[140px] truncate" title={getProjectName(r.projectId)}>
                         {getProjectName(r.projectId)}
                       </td>
-                      {isPR && (
+                      )}
+                      {isPR && isColumnVisible("pr-table", "costCode") && (
                         <td className="px-3 py-2.5 font-mono text-slate-700">{r.costCode || "-"}</td>
                       )}
-                      {isPR && (
+                      {isPR && isColumnVisible("pr-table", "description") && (
                         <td className="px-3 py-2.5 text-slate-600 max-w-[180px] truncate"
                           title={r.items && r.items.length > 0
                             ? r.items.map((it: any) => it.description).filter(Boolean).join(", ")
@@ -1157,16 +1167,17 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                             : getBudgetDesc(r.costCode, r.projectId)}
                         </td>
                       )}
-                      {!isPR && (
+                      {!isPR && isColumnVisible("po-table", "vendor") && (
                         <td className="px-3 py-2.5 text-slate-700 font-medium">{vendorName}</td>
                       )}
-                      {!isPR && (
+                      {!isPR && isColumnVisible("po-table", "prRef") && (
                         <td className="px-3 py-2.5 text-slate-500 text-[11px]">
                           {(r.selectedPrIds || []).length > 0
                             ? prs.filter((p: any) => (r.selectedPrIds || []).includes(p.id)).map((p: any) => p.prNo).join(", ")
                             : "-"}
                         </td>
                       )}
+                      {isColumnVisible(tblId, "date") && (
                       <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">
                         {dateField
                           ? (dateField.includes("T")
@@ -1174,29 +1185,34 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                               : dateField)
                           : "-"}
                       </td>
-                      {isPR && <td className="px-3 py-2.5 text-slate-600">{r.requestor || "-"}</td>}
-                      {isPR && (
+                      )}
+                      {isPR && isColumnVisible("pr-table", "requestor") && <td className="px-3 py-2.5 text-slate-600">{r.requestor || "-"}</td>}
+                      {isPR && isColumnVisible("pr-table", "type") && (
                         <td className="px-3 py-2.5">
                           {r.purchaseType ? (
                             <span className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded text-[10px]">{r.purchaseType}</span>
                           ) : "-"}
                         </td>
                       )}
-                      <td className="px-3 py-2.5 text-right text-slate-600">{itemCount} รายการ</td>
+                      {isColumnVisible(tblId, "items") && <td className="px-3 py-2.5 text-right text-slate-600">{itemCount} รายการ</td>}
+                      {isColumnVisible(tblId, "amount") && (
                       <td className="px-3 py-2.5 text-right font-bold text-slate-800">
                         ฿{Number(amount || 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
                       </td>
+                      )}
+                      {isColumnVisible(tblId, "status") && (
                       <td className="px-3 py-2.5 text-center">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-semibold whitespace-nowrap ${statusClass}`}>
                           {r.status || "Draft"}
                         </span>
                       </td>
-                      {isPR && (
+                      )}
+                      {isPR && isColumnVisible("pr-table", "poRef") && (
                         <td className="px-3 py-2.5 text-slate-500 text-[11px] text-center">
                           {poRefNos || "-"}
                         </td>
                       )}
-                      <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
+                      {isColumnVisible(tblId, "action") && <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-center gap-1">
                           {canUseFunction(tableModule, "email") && (
                             <button type="button" disabled={pdfLoadingId === r.id} className="p-1.5 rounded hover:bg-slate-200 text-slate-600 hover:text-slate-800 disabled:opacity-40" title="ส่งไฟล์ PDF ทางเมล" onClick={() => { setEmailModal({ doc: r, kind: isPR ? "pr" : "po" }); setEmailTo(""); }}>
@@ -1260,7 +1276,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                             </button>
                           )}
                         </div>
-                      </td>
+                      </td>}
                     </tr>
                   );
                 })
@@ -1661,7 +1677,7 @@ function normalizePartialFunctionPermissions(
 
 const AdminDashboard = () => {
   const { showAlert, logAction, userData } = useContext(AuthContext);
-  const { columnWidths, handleColumnResize, rolePermissions, saveRolePermissions, functionPermissions, saveFunctionPermissions } = useAppData();
+  const { columnWidths, handleColumnResize, rolePermissions, saveRolePermissions, functionPermissions, saveFunctionPermissions, isColumnVisible } = useAppData();
   const userRole = userData?.role || "Staff";
   const adminUsersTableRef = useRef(null);
   const [activeTab, setActiveTab] = useState("users"); // 'users' | 'logs' | 'roles'
@@ -1944,9 +1960,12 @@ const AdminDashboard = () => {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-        <Shield size={24} className="text-blue-600" /> Admin Dashboard
-      </h2>
+      <div className="flex items-center gap-2">
+        <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+          <Shield size={24} className="text-blue-600" /> Admin Dashboard
+        </h2>
+        {activeTab === "users" && <ColumnVisibilityToggle tableId="users" />}
+      </div>
 
       <div className="flex gap-1 border-b border-slate-200">
         <button
@@ -1985,21 +2004,23 @@ const AdminDashboard = () => {
       </div>
 
       {activeTab === "users" && (
+        <>
         <Card className="overflow-hidden animate-in fade-in slide-in-from-bottom-2 w-full min-w-0">
           <div ref={adminUsersTableRef} className="w-full min-w-0">
           <table className="w-full text-left text-sm table-fixed">
             <thead className="bg-slate-50 text-slate-700 font-semibold border-b">
               <tr>
-                <ResizableTh tableId="users" colKey="name" className="p-4" isAdmin={userRole==="Administrator"} onResize={adminUsersTableLayout.handleResize} currentWidth={adminUsersTableLayout.scaled.name}>Name</ResizableTh>
-                <ResizableTh tableId="users" colKey="role" className="p-4" isAdmin={userRole==="Administrator"} onResize={adminUsersTableLayout.handleResize} currentWidth={adminUsersTableLayout.scaled.role}>Role</ResizableTh>
-                <ResizableTh tableId="users" colKey="status" className="p-4" isAdmin={userRole==="Administrator"} onResize={adminUsersTableLayout.handleResize} currentWidth={adminUsersTableLayout.scaled.status}>Status</ResizableTh>
-                <ResizableTh tableId="users" colKey="projects" className="p-4" isAdmin={userRole==="Administrator"} onResize={adminUsersTableLayout.handleResize} currentWidth={adminUsersTableLayout.scaled.projects}>Projects</ResizableTh>
-                <th className="p-4 text-right" style={{ width: adminUsersTableLayout.scaled.actions }}>Actions</th>
+                {isColumnVisible("users", "name") && <ResizableTh tableId="users" colKey="name" className="p-4" isAdmin={userRole==="Administrator"} onResize={adminUsersTableLayout.handleResize} currentWidth={adminUsersTableLayout.scaled.name}>Name</ResizableTh>}
+                {isColumnVisible("users", "role") && <ResizableTh tableId="users" colKey="role" className="p-4" isAdmin={userRole==="Administrator"} onResize={adminUsersTableLayout.handleResize} currentWidth={adminUsersTableLayout.scaled.role}>Role</ResizableTh>}
+                {isColumnVisible("users", "status") && <ResizableTh tableId="users" colKey="status" className="p-4" isAdmin={userRole==="Administrator"} onResize={adminUsersTableLayout.handleResize} currentWidth={adminUsersTableLayout.scaled.status}>Status</ResizableTh>}
+                {isColumnVisible("users", "projects") && <ResizableTh tableId="users" colKey="projects" className="p-4" isAdmin={userRole==="Administrator"} onResize={adminUsersTableLayout.handleResize} currentWidth={adminUsersTableLayout.scaled.projects}>Projects</ResizableTh>}
+                {isColumnVisible("users", "actions") && <th className="p-4 text-right" style={{ width: adminUsersTableLayout.scaled.actions }}>Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {users.map((u) => (
                 <tr key={u.id} className="hover:bg-slate-50">
+                  {isColumnVisible("users", "name") && (
                   <td className="p-4" title={`${u.firstName || ""} ${u.lastName || ""} | ${u.email || ""}`}>
                     <div className="flex items-center gap-3">
                       <ProfileAvatar
@@ -2019,11 +2040,15 @@ const AdminDashboard = () => {
                       </div>
                     </div>
                   </td>
+                  )}
+                  {isColumnVisible("users", "role") && (
                   <td className="p-4">
                     <span className="bg-slate-100 px-2 py-1 rounded text-xs font-semibold cell-text" title={u.role}>
                       {u.role}
                     </span>
                   </td>
+                  )}
+                  {isColumnVisible("users", "status") && (
                   <td className="p-4">
                     <Badge
                       status={
@@ -2031,6 +2056,8 @@ const AdminDashboard = () => {
                       }
                     />
                   </td>
+                  )}
+                  {isColumnVisible("users", "projects") && (
                   <td className="p-4">
                     <div className="flex -space-x-2 overflow-hidden">
                       {(u.assignedProjectIds || []).length > 0 ? (
@@ -2042,6 +2069,8 @@ const AdminDashboard = () => {
                       )}
                     </div>
                   </td>
+                  )}
+                  {isColumnVisible("users", "actions") && (
                   <td className="p-4 text-right">
                     <div className="flex justify-end gap-2 items-center">
                       {u.status === "Pending" && (
@@ -2067,12 +2096,14 @@ const AdminDashboard = () => {
                       </button>
                     </div>
                   </td>
+                  )}
                 </tr>
               ))}
             </tbody>
           </table>
           </div>
         </Card>
+        </>
       )}
 
       {activeTab === "logs" && (

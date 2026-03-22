@@ -9,6 +9,7 @@ import { useAppData } from "../contexts/AppDataContext";
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { Card, Button, InputGroup, formatCurrency } from "../components/ui";
 import ResizableTh from "../components/ResizableTh";
+import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 import { useProportionalTableLayout } from "../hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 
@@ -16,7 +17,7 @@ const PAGE_SIZE_OPTIONS = [100, 200, 500];
 const BATCH_SIZE = 500;
 
 const MaterialView = React.memo(() => {
-  const { materials, addData, updateData, deleteData, showAlert, openConfirm, userRole, columnWidths, handleColumnResize, db, appId, loadMaterials, canUseFunction } = useAppData();
+  const { materials, addData, updateData, deleteData, showAlert, openConfirm, userRole, columnWidths, handleColumnResize, db, appId, loadMaterials, canUseFunction, isColumnVisible } = useAppData();
   const materialTableRef = useRef(null);
   const materialTableLayout = useProportionalTableLayout({
     tableId: "material",
@@ -260,9 +261,12 @@ const MaterialView = React.memo(() => {
     <div className="space-y-4">
       {/* Header */}
       <div className="flex justify-between items-center flex-wrap gap-2">
-        <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-          <Package size={20} className="text-slate-600" /> Material
-        </h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+            <Package size={20} className="text-slate-600" /> Material
+          </h2>
+          <ColumnVisibilityToggle tableId="material" />
+        </div>
         <div className="flex items-center gap-2 flex-wrap">
           {/* Search */}
           <div className="relative">
@@ -406,6 +410,7 @@ const MaterialView = React.memo(() => {
         <table className="w-full text-left text-xs text-slate-600 table-fixed">
           <thead className="bg-slate-50 text-slate-800 font-semibold border-b border-slate-200">
             <tr>
+              {isColumnVisible("material", "select") && (
               <th className="py-2 px-2 text-center" style={{ width: materialTableLayout.scaled.select }}>
                 <button
                   type="button"
@@ -416,18 +421,31 @@ const MaterialView = React.memo(() => {
                   {allOnPageSelected ? <CheckSquare size={16} className="text-blue-600" /> : <Square size={16} className="text-slate-400" />}
                 </button>
               </th>
+              )}
+              {isColumnVisible("material", "rowNo") && (
               <th className="py-2 px-3 text-center" style={{ width: materialTableLayout.scaled.rowNo }}>No.</th>
+              )}
+              {isColumnVisible("material", "materialNo") && (
               <ResizableTh tableId="material" colKey="materialNo" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={materialTableLayout.handleResize} currentWidth={materialTableLayout.scaled.materialNo}>รหัสสินค้า</ResizableTh>
+              )}
+              {isColumnVisible("material", "name") && (
               <ResizableTh tableId="material" colKey="name" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={materialTableLayout.handleResize} currentWidth={materialTableLayout.scaled.name}>ชื่อสินค้า</ResizableTh>
+              )}
+              {isColumnVisible("material", "price") && (
               <ResizableTh tableId="material" colKey="price" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={materialTableLayout.handleResize} currentWidth={materialTableLayout.scaled.price}>ราคาต่อหน่วย</ResizableTh>
+              )}
+              {isColumnVisible("material", "unit") && (
               <ResizableTh tableId="material" colKey="unit" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={materialTableLayout.handleResize} currentWidth={materialTableLayout.scaled.unit}>หน่วย</ResizableTh>
+              )}
+              {isColumnVisible("material", "actions") && (
               <th className="py-2 px-3 text-right" style={{ width: materialTableLayout.scaled.actions }}>Actions</th>
+              )}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={7} className="py-8 text-center text-slate-400">
+                <td colSpan={["select","rowNo","materialNo","name","price","unit","actions"].filter(k => isColumnVisible("material", k)).length} className="py-8 text-center text-slate-400">
                   <Package size={32} className="mx-auto mb-2 opacity-30" />
                   ยังไม่มีรายการ Material
                 </td>
@@ -435,6 +453,7 @@ const MaterialView = React.memo(() => {
             ) : (
               paginated.map((m, idx) => (
                 <tr key={m.id} className="hover:bg-slate-50 odd:bg-white even:bg-slate-50/40">
+                  {isColumnVisible("material", "select") && (
                   <td className="py-1.5 px-2 text-center">
                     <button
                       type="button"
@@ -444,11 +463,23 @@ const MaterialView = React.memo(() => {
                       {selectedIds.has(m.id) ? <CheckSquare size={15} className="text-blue-600" /> : <Square size={15} className="text-slate-400" />}
                     </button>
                   </td>
+                  )}
+                  {isColumnVisible("material", "rowNo") && (
                   <td className="py-1.5 px-3 text-center text-slate-400 font-mono text-[11px]">{startItem + idx}</td>
+                  )}
+                  {isColumnVisible("material", "materialNo") && (
                   <td className="py-1.5 px-3 font-medium text-slate-700" title={m.materialNo}><span className="cell-text">{m.materialNo || "-"}</span></td>
+                  )}
+                  {isColumnVisible("material", "name") && (
                   <td className="py-1.5 px-3" title={m.name}><span className="cell-text">{m.name}</span></td>
+                  )}
+                  {isColumnVisible("material", "price") && (
                   <td className="py-1.5 px-3 text-right font-semibold text-slate-700">{formatCurrency(m.price || 0)}</td>
+                  )}
+                  {isColumnVisible("material", "unit") && (
                   <td className="py-1.5 px-3 text-center text-slate-500" title={m.unit}><span className="cell-text">{m.unit || "-"}</span></td>
+                  )}
+                  {isColumnVisible("material", "actions") && (
                   <td className="py-1.5 px-3 text-right">
                     <div className="flex justify-end gap-1">
                       {canUseFunction("material", "edit") && (
@@ -463,6 +494,7 @@ const MaterialView = React.memo(() => {
                       )}
                     </div>
                   </td>
+                  )}
                 </tr>
               ))
             )}

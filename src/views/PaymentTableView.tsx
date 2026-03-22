@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
+import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 import { Card, Badge, formatCurrency } from "../components/ui";
 
 const PaymentTableView = React.memo(() => {
@@ -20,6 +21,7 @@ const PaymentTableView = React.memo(() => {
     logAction,
     canUseFunction,
     userRole,
+    isColumnVisible,
   } = useAppData();
 
   const { selectedProjectId } = useUI();
@@ -83,7 +85,10 @@ const PaymentTableView = React.memo(() => {
             <FileSpreadsheet size={18} className="text-white" />
           </div>
           <div>
-            <h2 className="text-lg font-bold text-slate-800">ตารางข้อมูล Payment Subcontract</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-bold text-slate-800">ตารางข้อมูล Payment Subcontract</h2>
+              <ColumnVisibilityToggle tableId="payment-table" />
+            </div>
             <p className="text-xs text-slate-500">
               {filtered.length} รายการ{filterStatus !== "all" ? ` (${filterStatus})` : " ทั้งหมด"}
             </p>
@@ -134,6 +139,7 @@ const PaymentTableView = React.memo(() => {
               <option key={proj.id} value={proj.id}>{proj.name || proj.id}</option>
             ))}
           </select>
+
         </div>
       </div>
 
@@ -142,21 +148,21 @@ const PaymentTableView = React.memo(() => {
         <table className="w-full text-left text-xs text-slate-600 min-w-[800px]">
           <thead className="bg-slate-50 text-slate-900 uppercase font-semibold border-b border-slate-200">
             <tr>
-              <th className="py-2.5 px-3 w-40">Payment No.</th>
-              <th className="py-2.5 px-3 text-center w-20">Type</th>
-              <th className="py-2.5 px-3">ผู้รับเหมา</th>
-              <th className="py-2.5 px-3 w-36">รอบวางบิล</th>
-              <th className="py-2.5 px-3 w-28">วันที่เปิด</th>
-              <th className="py-2.5 px-3 text-right w-32">ยอดรวม</th>
-              <th className="py-2.5 px-3 text-center w-24">เอกสาร</th>
-              <th className="py-2.5 px-3 text-center w-28">Status</th>
-              <th className="py-2.5 px-3 text-right w-24">Action</th>
+              {isColumnVisible("payment-table", "paymentNo") && <th className="py-2.5 px-3 w-40">Payment No.</th>}
+              {isColumnVisible("payment-table", "type") && <th className="py-2.5 px-3 text-center w-20">Type</th>}
+              {isColumnVisible("payment-table", "contractor") && <th className="py-2.5 px-3">ผู้รับเหมา</th>}
+              {isColumnVisible("payment-table", "billingCycle") && <th className="py-2.5 px-3 w-36">รอบวางบิล</th>}
+              {isColumnVisible("payment-table", "openDate") && <th className="py-2.5 px-3 w-28">วันที่เปิด</th>}
+              {isColumnVisible("payment-table", "amount") && <th className="py-2.5 px-3 text-right w-32">ยอดรวม</th>}
+              {isColumnVisible("payment-table", "attachment") && <th className="py-2.5 px-3 text-center w-24">เอกสาร</th>}
+              {isColumnVisible("payment-table", "status") && <th className="py-2.5 px-3 text-center w-28">Status</th>}
+              {isColumnVisible("payment-table", "actions") && <th className="py-2.5 px-3 text-right w-24">Action</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={9} className="py-12 text-center text-slate-400 text-sm">
+                <td colSpan={["paymentNo","type","contractor","billingCycle","openDate","amount","attachment","status","actions"].filter(k => isColumnVisible("payment-table", k)).length} className="py-12 text-center text-slate-400 text-sm">
                   ไม่พบรายการ Payment ที่ตรงกับเงื่อนไข
                 </td>
               </tr>
@@ -171,62 +177,80 @@ const PaymentTableView = React.memo(() => {
                     className="hover:bg-orange-50/40 transition-colors cursor-pointer odd:bg-white even:bg-slate-50/50"
                     onClick={() => setViewingPayment(p)}
                   >
-                    <td className="py-2 px-3 font-semibold text-orange-700">{p.paymentNo || "-"}</td>
-                    <td className="py-2 px-3 text-center">
-                      {p.paymentType && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-700 border border-orange-200">
-                          {p.paymentType}
+                    {isColumnVisible("payment-table", "paymentNo") && (
+                      <td className="py-2 px-3 font-semibold text-orange-700">{p.paymentNo || "-"}</td>
+                    )}
+                    {isColumnVisible("payment-table", "type") && (
+                      <td className="py-2 px-3 text-center">
+                        {p.paymentType && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-700 border border-orange-200">
+                            {p.paymentType}
+                          </span>
+                        )}
+                      </td>
+                    )}
+                    {isColumnVisible("payment-table", "contractor") && (
+                      <td className="py-2 px-3 truncate max-w-[200px]" title={contractor?.name || "-"}>
+                        {contractor?.name || "-"}
+                      </td>
+                    )}
+                    {isColumnVisible("payment-table", "billingCycle") && (
+                      <td className="py-2 px-3 text-slate-500 text-[11px]">{p.billingCycle || "-"}</td>
+                    )}
+                    {isColumnVisible("payment-table", "openDate") && (
+                      <td className="py-2 px-3 text-slate-500 text-[11px]">{p.openDate || "-"}</td>
+                    )}
+                    {isColumnVisible("payment-table", "amount") && (
+                      <td className="py-2 px-3 text-right font-semibold">{formatCurrency(p.amount || 0)}</td>
+                    )}
+                    {isColumnVisible("payment-table", "attachment") && (
+                      <td className="py-2 px-3 text-center" onClick={(e) => e.stopPropagation()}>
+                        {p.attachmentUrl ? (
+                          <a
+                            href={p.attachmentUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-orange-600 hover:text-orange-800 text-[10px] font-medium underline"
+                            title={p.attachmentName || "เอกสารแนบ"}
+                          >
+                            <Paperclip size={11} />
+                            ดูไฟล์
+                          </a>
+                        ) : (
+                          <span className="text-slate-300 text-[10px]">—</span>
+                        )}
+                      </td>
+                    )}
+                    {isColumnVisible("payment-table", "status") && (
+                      <td className="py-2 px-3 text-center">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-semibold ${statusCls}`}>
+                          {p.status || "Draft"}
                         </span>
-                      )}
-                    </td>
-                    <td className="py-2 px-3 truncate max-w-[200px]" title={contractor?.name || "-"}>
-                      {contractor?.name || "-"}
-                    </td>
-                    <td className="py-2 px-3 text-slate-500 text-[11px]">{p.billingCycle || "-"}</td>
-                    <td className="py-2 px-3 text-slate-500 text-[11px]">{p.openDate || "-"}</td>
-                    <td className="py-2 px-3 text-right font-semibold">{formatCurrency(p.amount || 0)}</td>
-                    <td className="py-2 px-3 text-center" onClick={(e) => e.stopPropagation()}>
-                      {p.attachmentUrl ? (
-                        <a
-                          href={p.attachmentUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-orange-600 hover:text-orange-800 text-[10px] font-medium underline"
-                          title={p.attachmentName || "เอกสารแนบ"}
-                        >
-                          <Paperclip size={11} />
-                          ดูไฟล์
-                        </a>
-                      ) : (
-                        <span className="text-slate-300 text-[10px]">—</span>
-                      )}
-                    </td>
-                    <td className="py-2 px-3 text-center">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-semibold ${statusCls}`}>
-                        {p.status || "Draft"}
-                      </span>
-                    </td>
-                    <td
-                      className="py-2 px-3 text-right flex justify-end gap-1"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <button
-                        className="p-1.5 rounded hover:bg-orange-100 text-orange-600 transition-colors"
-                        title="ดูรายละเอียด"
-                        onClick={() => setViewingPayment(p)}
+                      </td>
+                    )}
+                    {isColumnVisible("payment-table", "actions") && (
+                      <td
+                        className="py-2 px-3 text-right flex justify-end gap-1"
+                        onClick={(e) => e.stopPropagation()}
                       >
-                        <Eye size={13} />
-                      </button>
-                      {canUseFunction?.("payment-subcontract", "delete") !== false && (
                         <button
-                          className="p-1.5 rounded hover:bg-red-100 text-red-500 transition-colors"
-                          title="ลบ"
-                          onClick={() => handleDelete(p)}
+                          className="p-1.5 rounded hover:bg-orange-100 text-orange-600 transition-colors"
+                          title="ดูรายละเอียด"
+                          onClick={() => setViewingPayment(p)}
                         >
-                          <Trash2 size={13} />
+                          <Eye size={13} />
                         </button>
-                      )}
-                    </td>
+                        {canUseFunction?.("payment-subcontract", "delete") !== false && (
+                          <button
+                            className="p-1.5 rounded hover:bg-red-100 text-red-500 transition-colors"
+                            title="ลบ"
+                            onClick={() => handleDelete(p)}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 );
               })
@@ -235,13 +259,15 @@ const PaymentTableView = React.memo(() => {
           {filtered.length > 0 && (
             <tfoot className="bg-slate-50 border-t border-slate-200">
               <tr>
-                <td colSpan={5} className="py-2 px-3 text-xs font-bold text-slate-600">
+                <td colSpan={["paymentNo","type","contractor","billingCycle","openDate"].filter(k => isColumnVisible("payment-table", k)).length || 1} className="py-2 px-3 text-xs font-bold text-slate-600">
                   รวม {filtered.length} รายการ
                 </td>
-                <td className="py-2 px-3 text-right text-xs font-bold text-orange-700">
-                  {formatCurrency(filtered.reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0))}
-                </td>
-                <td colSpan={3} />
+                {isColumnVisible("payment-table", "amount") && (
+                  <td className="py-2 px-3 text-right text-xs font-bold text-orange-700">
+                    {formatCurrency(filtered.reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0))}
+                  </td>
+                )}
+                <td colSpan={["attachment","status","actions"].filter(k => isColumnVisible("payment-table", k)).length || 1} />
               </tr>
             </tfoot>
           )}

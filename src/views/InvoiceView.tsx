@@ -9,10 +9,11 @@ import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "../components/ui";
 import ResizableTh from "../components/ResizableTh";
+import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 import { useProportionalTableLayout } from "../hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 const InvoiceView = React.memo(() => {
-  const { invoices, pos, addData, updateData, deleteData, showAlert, userRole, userRoles, columnWidths, handleColumnResize, visibleProjects, canUseFunction } = useAppData();
+  const { invoices, pos, addData, updateData, deleteData, showAlert, userRole, userRoles, columnWidths, handleColumnResize, visibleProjects, canUseFunction, isColumnVisible } = useAppData();
   const { selectedProjectId } = useUI();
   const invoiceTableRef = useRef(null);
   const invoiceTableLayout = useProportionalTableLayout({
@@ -85,26 +86,31 @@ const InvoiceView = React.memo(() => {
   return (
     <div className="space-y-4">
       <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-        <h2 className="text-xl font-bold text-slate-800">
-          F. รับวางบิล (Invoice Receive)
-        </h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-xl font-bold text-slate-800">
+            F. รับวางบิล (Invoice Receive)
+          </h2>
+          <ColumnVisibilityToggle tableId="invoice" />
+        </div>
+        <div className="flex items-center gap-2">
         {canUseFunction("invoice", "add") && (
           <Button onClick={() => setIsModalOpen(true)}>
             <Plus size={14} /> รับ Invoice
           </Button>
         )}
+        </div>
       </div>
       <Card className="overflow-hidden w-full min-w-0">
         <div ref={invoiceTableRef} className="w-full min-w-0">
         <table className="w-full text-left text-xs text-slate-600 table-fixed">
           <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
             <tr>
-              <ResizableTh tableId="invoice" colKey="invNo" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={invoiceTableLayout.handleResize} currentWidth={invoiceTableLayout.scaled.invNo}>INV No.</ResizableTh>
-              <ResizableTh tableId="invoice" colKey="poRef" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={invoiceTableLayout.handleResize} currentWidth={invoiceTableLayout.scaled.poRef}>Ref. PO</ResizableTh>
-              <ResizableTh tableId="invoice" colKey="description" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={invoiceTableLayout.handleResize} currentWidth={invoiceTableLayout.scaled.description}>รายละเอียด</ResizableTh>
-              <ResizableTh tableId="invoice" colKey="amount" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={invoiceTableLayout.handleResize} currentWidth={invoiceTableLayout.scaled.amount}>จำนวนเงิน</ResizableTh>
-              <ResizableTh tableId="invoice" colKey="status" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={invoiceTableLayout.handleResize} currentWidth={invoiceTableLayout.scaled.status}>สถานะ</ResizableTh>
-              <th className="py-2 px-3 text-right" style={{ width: invoiceTableLayout.scaled.actions }}>Actions</th>
+              {isColumnVisible("invoice", "invNo") && <ResizableTh tableId="invoice" colKey="invNo" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={invoiceTableLayout.handleResize} currentWidth={invoiceTableLayout.scaled.invNo}>INV No.</ResizableTh>}
+              {isColumnVisible("invoice", "poRef") && <ResizableTh tableId="invoice" colKey="poRef" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={invoiceTableLayout.handleResize} currentWidth={invoiceTableLayout.scaled.poRef}>Ref. PO</ResizableTh>}
+              {isColumnVisible("invoice", "description") && <ResizableTh tableId="invoice" colKey="description" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={invoiceTableLayout.handleResize} currentWidth={invoiceTableLayout.scaled.description}>รายละเอียด</ResizableTh>}
+              {isColumnVisible("invoice", "amount") && <ResizableTh tableId="invoice" colKey="amount" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={invoiceTableLayout.handleResize} currentWidth={invoiceTableLayout.scaled.amount}>จำนวนเงิน</ResizableTh>}
+              {isColumnVisible("invoice", "status") && <ResizableTh tableId="invoice" colKey="status" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={invoiceTableLayout.handleResize} currentWidth={invoiceTableLayout.scaled.status}>สถานะ</ResizableTh>}
+              {isColumnVisible("invoice", "actions") && <th className="py-2 px-3 text-right" style={{ width: invoiceTableLayout.scaled.actions }}>Actions</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -112,15 +118,20 @@ const InvoiceView = React.memo(() => {
               .filter((inv) => inv.projectId === selectedProjectId)
               .map((inv) => (
                 <tr key={inv.id} className="hover:bg-slate-50">
-                  <td className="py-2 px-3 font-medium" title={inv.invNo}><span className="cell-text">{inv.invNo}</span></td>
-                  <td className="py-2 px-3 text-blue-600" title={inv.poRef}><span className="cell-text">{inv.poRef}</span></td>
-                  <td className="py-2 px-3" title={inv.description}><span className="cell-text">{inv.description}</span></td>
+                  {isColumnVisible("invoice", "invNo") && <td className="py-2 px-3 font-medium" title={inv.invNo}><span className="cell-text">{inv.invNo}</span></td>}
+                  {isColumnVisible("invoice", "poRef") && <td className="py-2 px-3 text-blue-600" title={inv.poRef}><span className="cell-text">{inv.poRef}</span></td>}
+                  {isColumnVisible("invoice", "description") && <td className="py-2 px-3" title={inv.description}><span className="cell-text">{inv.description}</span></td>}
+                  {isColumnVisible("invoice", "amount") && (
                   <td className="py-2 px-3 text-right font-semibold">
                     {formatCurrency(inv.amount)}
                   </td>
+                  )}
+                  {isColumnVisible("invoice", "status") && (
                   <td className="py-2 px-3 text-center">
                     <Badge status={inv.status} />
                   </td>
+                  )}
+                  {isColumnVisible("invoice", "actions") && (
                   <td className="py-2 px-3 text-right flex justify-end gap-1">
                     {canUseFunction("invoice", "approve") && (userRoles.includes("PM") || userRoles.includes("Administrator")) && inv.status === "Pending PM" && (
                       <Button
@@ -151,6 +162,7 @@ const InvoiceView = React.memo(() => {
                       </button>
                     )}
                   </td>
+                  )}
                 </tr>
               ))}
           </tbody>

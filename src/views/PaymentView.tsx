@@ -4,10 +4,12 @@ import { createPortal } from "react-dom";
 import {
   Plus, Trash2, Edit, XCircle, Save, Calendar, Hash, Tag,
   ClipboardList, Upload, Building2, CreditCard, FileSpreadsheet,
-  Paperclip, AlertCircle, CheckCircle,
+  Paperclip, AlertCircle, CheckCircle, Send, RotateCcw,
+  ThumbsUp, ThumbsDown, Zap, Clock, ShieldCheck, MessageSquare,
 } from "lucide-react";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
+import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "../components/ui";
 import { motion, AnimatePresence } from "framer-motion";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
@@ -26,10 +28,74 @@ const BILLING_CYCLES = [
 
 const PAYMENT_PR_TYPES = ["จ้างเหมา > DL", "ค่าแรง > DC"];
 
+// ─── Approval Flow Constants ──────────────────────────────────────────────────
+const STATUS_APPROVER_ROLES: Record<string, string[]> = {
+  "Pending CM":          ["CM", "Administrator"],
+  "Pending PM":          ["PM", "PCM", "Administrator"],
+  "Pending MD":          ["MD", "GM", "Administrator"],
+  "Pending Procurement": ["Procurement", "Administrator"],
+};
+
+const getFirstPendingStatus = (roles: string[]): string => {
+  if (roles.some((r) => ["MD", "GM"].includes(r))) return "Pending Procurement";
+  if (roles.some((r) => ["PM", "PCM"].includes(r))) return "Pending MD";
+  if (roles.includes("CM")) return "Pending PM";
+  return "Pending CM";
+};
+
+const getNextStatus = (status: string): string => {
+  const chain = ["Pending CM", "Pending PM", "Pending MD", "Pending Procurement", "Active"];
+  const idx = chain.indexOf(status);
+  return idx >= 0 && idx < chain.length - 1 ? chain[idx + 1] : "Active";
+};
+
+const isPendingForMe = (status: string, roles: string[]): boolean => {
+  const approvers = STATUS_APPROVER_ROLES[status];
+  return !!approvers && roles.some((r) => approvers.includes(r));
+};
+
+const isFlowActive = (status: string): boolean =>
+  ["Pending CM", "Pending PM", "Pending MD", "Pending Procurement"].includes(status);
+
+const STATUS_BADGE_COLORS: Record<string, string> = {
+  "Draft":                  "bg-gray-100 text-gray-700 border border-gray-200",
+  "Pending CM":             "bg-yellow-100 text-yellow-800 border border-yellow-200",
+  "Pending PM":             "bg-amber-100 text-amber-800 border border-amber-200",
+  "Pending MD":             "bg-orange-100 text-orange-800 border border-orange-200",
+  "Pending Procurement":    "bg-blue-100 text-blue-800 border border-blue-200",
+  "Active":                 "bg-green-100 text-green-800 border border-green-200",
+  "งวดงาน Pending CM":     "bg-yellow-200 text-yellow-900 border border-yellow-400",
+  "งวดงาน Pending PM":     "bg-amber-200 text-amber-900 border border-amber-400",
+  "Wait Pay":               "bg-orange-200 text-orange-900 border border-orange-400",
+  "Revision Requested":     "bg-rose-100 text-rose-800 border border-rose-200",
+  "Rejected":               "bg-red-100 text-red-800 border border-red-300",
+};
+
+const PERIOD_APPROVER_ROLES: Record<string, string[]> = {
+  "งวดงาน Pending CM": ["CM", "Administrator"],
+  "งวดงาน Pending PM": ["PM", "PCM", "Administrator"],
+};
+
+const isPeriodFlow = (status: string): boolean =>
+  ["งวดงาน Pending CM", "งวดงาน Pending PM"].includes(status);
+
+const isPeriodPendingForMe = (status: string, roles: string[]): boolean => {
+  const approvers = PERIOD_APPROVER_ROLES[status];
+  return !!approvers && roles.some((r) => approvers.includes(r));
+};
+
+const PaymentStatusBadge = ({ status }: { status: string }) => (
+  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_BADGE_COLORS[status] || "bg-slate-100 text-slate-700 border border-slate-200"}`}>
+    {status || "Draft"}
+  </span>
+);
+
 const emptyForm = () => ({
   paymentNo: "",
   paymentType: "",
   contractorId: "",
+  contractTitle: "",
+  periodNo: "",
   openDate: new Date().toISOString().split("T")[0],
   billingCycle: "",
   note: "",
@@ -41,8 +107,9 @@ const emptyForm = () => ({
 const PaymentView = React.memo(() => {
   const {
     prs, payments = [], vendors, projects, addData, updateData, deleteData, loadVendors,
-    showAlert, openConfirm, logAction, userData, user, canUseFunction,
+    showAlert, openConfirm, logAction, userData, user, userRoles, canUseFunction, isColumnVisible,
   } = useAppData();
+  const myRoles: string[] = userRoles || [];
 
   const { selectedProjectId, isFullScreenModalOpen, setIsFullScreenModalOpen } = useUI();
 
@@ -51,6 +118,20 @@ const PaymentView = React.memo(() => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [viewingPayment, setViewingPayment] = useState<any>(null);
   const [saving, setSaving] = useState(false);
+  const [actioning, setActioning] = useState(false);
+
+  // ─── Active-state qty edit ────────────────────────────────────────────────
+  const [activeQtyEdits, setActiveQtyEdits] = useState<Record<string, any>>({});
+  const [savingActiveQty, setSavingActiveQty] = useState(false);
+  const [isQtyEditMode, setIsQtyEditMode] = useState(false);
+
+  // ─── Revision Request ─────────────────────────────────────────────────────
+  const [revisionModalPayment, setRevisionModalPayment] = useState<any>(null);
+  const [revisionNote, setRevisionNote] = useState("");
+
+  // ─── Reject Reason ───────────────────────────────────────────────────────
+  const [rejectModalPayment, setRejectModalPayment] = useState<any>(null);
+  const [rejectReason, setRejectReason] = useState("");
 
   // ─── Form State ─────────────────────────────────────────────────────────────
   const [form, setForm] = useState(emptyForm());
@@ -142,11 +223,18 @@ const PaymentView = React.memo(() => {
   };
 
   const openEdit = (p: any) => {
+    const s = p.status || "Draft";
+    if (s !== "Draft" && s !== "Rejected") {
+      showAlert("ไม่สามารถแก้ไขได้", "Payment นี้อยู่ในระหว่างขั้นตอนอนุมัติ หากต้องการแก้ไขกรุณากดปุ่มขอแก้ไข (วงกลมสีส้ม)", "warning");
+      return;
+    }
     setEditingId(p.id);
     setForm({
       paymentNo: p.paymentNo || "",
       paymentType: p.paymentType || "",
       contractorId: p.contractorId || "",
+      contractTitle: p.contractTitle || "",
+      periodNo: p.periodNo || "",
       openDate: p.openDate || new Date().toISOString().split("T")[0],
       billingCycle: p.billingCycle || "",
       note: p.note || "",
@@ -193,6 +281,8 @@ const PaymentView = React.memo(() => {
         paymentNo: form.paymentNo.trim(),
         paymentType: form.paymentType,
         contractorId: form.contractorId,
+        contractTitle: form.contractTitle.trim(),
+        periodNo: form.periodNo.trim(),
         openDate: form.openDate,
         billingCycle: form.billingCycle,
         note: form.note,
@@ -201,6 +291,9 @@ const PaymentView = React.memo(() => {
         amount: totalAmount,
         projectId: selectedProjectId,
         status: "Draft",
+        rejectReason: null,
+        rejectedBy: null,
+        rejectedAt: null,
         attachmentUrl: resolvedAttachmentUrl || null,
         attachmentName: resolvedAttachmentName || null,
         createdBy: userData?.name || user?.email || "",
@@ -232,6 +325,210 @@ const PaymentView = React.memo(() => {
       await deleteData("payments", p.id);
       await logAction("Delete Payment", `ลบ Payment ${p.paymentNo}`);
     }, "danger");
+  };
+
+  // ─── Approval Actions ────────────────────────────────────────────────────────
+
+  const handleSubmit = async (p: any) => {
+    const firstStatus = getFirstPendingStatus(myRoles);
+    setActioning(true);
+    try {
+      await updateData("payments", p.id, {
+        status: firstStatus,
+        submittedBy: userData?.name || user?.email || "",
+        submittedAt: new Date().toISOString(),
+        revisionRequested: false,
+      });
+      await logAction("Submit Payment", `ส่ง Payment ${p.paymentNo} เพื่ออนุมัติ → ${firstStatus}`);
+      showAlert("ส่งสำเร็จ", `Payment ถูกส่งเพื่ออนุมัติแล้ว (${firstStatus})`, "success");
+      setViewingPayment(null);
+    } catch (e) { showAlert("เกิดข้อผิดพลาด", String(e), "error"); }
+    finally { setActioning(false); }
+  };
+
+  const handleApprove = async (p: any) => {
+    const next = getNextStatus(p.status);
+    const label = p.status === "Pending Procurement" ? "Active" : next;
+    setActioning(true);
+    try {
+      await updateData("payments", p.id, {
+        status: next,
+        [`approvedBy.${p.status.replace("Pending ", "")}`]: userData?.name || user?.email || "",
+        [`approvedAt.${p.status.replace("Pending ", "")}`]: new Date().toISOString(),
+        revisionRequested: false,
+      });
+      await logAction("Approve Payment", `อนุมัติ Payment ${p.paymentNo} → ${label}`);
+      showAlert("อนุมัติสำเร็จ", `Payment ถูกเปลี่ยนสถานะเป็น ${label}`, "success");
+      setViewingPayment(null);
+    } catch (e) { showAlert("เกิดข้อผิดพลาด", String(e), "error"); }
+    finally { setActioning(false); }
+  };
+
+  const handleRejectConfirm = async () => {
+    if (!rejectModalPayment) return;
+    setActioning(true);
+    try {
+      await updateData("payments", rejectModalPayment.id, {
+        status: "Rejected",
+        rejectReason: rejectReason.trim() || "-",
+        rejectedBy: userData?.name || user?.email || "",
+        rejectedAt: new Date().toISOString(),
+        revisionRequested: false,
+      });
+      await logAction("Reject Payment", `ปฏิเสธ Payment ${rejectModalPayment.paymentNo}`);
+      showAlert("ปฏิเสธแล้ว", "Payment ถูกตีกลับ สามารถแก้ไขและส่งใหม่ได้", "warning");
+      setRejectModalPayment(null);
+      setRejectReason("");
+      setViewingPayment(null);
+    } catch (e) { showAlert("เกิดข้อผิดพลาด", String(e), "error"); }
+    finally { setActioning(false); }
+  };
+
+  const handleRequestRevision = async () => {
+    if (!revisionModalPayment) return;
+    const p = revisionModalPayment;
+    const targetRole = p.status === "Active" ? "MD" : p.status.replace("Pending ", "");
+    setActioning(true);
+    try {
+      await updateData("payments", p.id, {
+        revisionRequested: true,
+        revisionRequestedBy: userData?.name || user?.email || "",
+        revisionRequestedAt: new Date().toISOString(),
+        revisionNote: revisionNote.trim(),
+        revisionTargetRole: targetRole,
+        revisionFromStatus: p.status,
+      });
+      await logAction("Request Revision", `ขอแก้ไข Payment ${p.paymentNo} → ${targetRole}`);
+      showAlert("ส่งขอแก้ไขแล้ว", `คำขอแก้ไขถูกส่งไปยัง ${targetRole}`, "success");
+      setRevisionModalPayment(null);
+      setRevisionNote("");
+      setViewingPayment(null);
+    } catch (e) { showAlert("เกิดข้อผิดพลาด", String(e), "error"); }
+    finally { setActioning(false); }
+  };
+
+  const handleApproveRevision = async (p: any) => {
+    setActioning(true);
+    try {
+      await updateData("payments", p.id, {
+        status: "Draft",
+        revisionRequested: false,
+        revisionApprovedBy: userData?.name || user?.email || "",
+        revisionApprovedAt: new Date().toISOString(),
+      });
+      await logAction("Approve Revision", `อนุมัติขอแก้ไข Payment ${p.paymentNo} → Draft`);
+      showAlert("อนุมัติแก้ไขแล้ว", "Payment กลับเป็น Draft สามารถแก้ไขได้แล้ว", "success");
+      setViewingPayment(null);
+    } catch (e) { showAlert("เกิดข้อผิดพลาด", String(e), "error"); }
+    finally { setActioning(false); }
+  };
+
+  const handleRejectRevision = async (p: any) => {
+    setActioning(true);
+    try {
+      await updateData("payments", p.id, {
+        revisionRequested: false,
+      });
+      await logAction("Reject Revision", `ปฏิเสธขอแก้ไข Payment ${p.paymentNo}`);
+      showAlert("ปฏิเสธคำขอแก้ไข", "Payment ยังคงสถานะเดิม", "info");
+      setViewingPayment(null);
+    } catch (e) { showAlert("เกิดข้อผิดพลาด", String(e), "error"); }
+    finally { setActioning(false); }
+  };
+
+  // ─── Active Qty Update ────────────────────────────────────────────────────────
+  const updateActiveQty = (key: string, field: string, val: any, contractPrice: number, contractAmount: number) => {
+    setActiveQtyEdits((prev) => {
+      const existing = prev[key] || {};
+      let updated = { ...existing, [field]: val };
+      if (field === "thisPeriodQty") {
+        const newAmt = parseFloat(val) * contractPrice;
+        updated.thisPeriodAmount = isNaN(newAmt) ? 0 : newAmt;
+        updated.thisPeriodPct = contractAmount > 0
+          ? Math.round((updated.thisPeriodAmount / contractAmount) * 10000) / 100
+          : 0;
+      }
+      if (field === "thisPeriodAmount") {
+        updated.thisPeriodPct = contractAmount > 0
+          ? Math.round((parseFloat(val) / contractAmount) * 10000) / 100 : 0;
+      }
+      return { ...prev, [key]: updated };
+    });
+  };
+
+  const handleSaveActiveQty = async (p: any, finalize = false) => {
+    const updatedItems = (p.items || []).map((it: any) => {
+      const key = `${it.prId}_${it.prItemIndex}`;
+      const edit = activeQtyEdits[key];
+      if (!edit) return it;
+      const qty = parseFloat(edit.thisPeriodQty ?? it.thisPeriodQty) || 0;
+      const amt = parseFloat(edit.thisPeriodAmount ?? it.thisPeriodAmount) || 0;
+      const contractAmt = (it.contractQty || 0) * (it.contractPrice || 0);
+      const pct = contractAmt > 0 ? Math.round((amt / contractAmt) * 10000) / 100 : 0;
+      if (qty < 0 || qty > 9999) {
+        showAlert("ค่าไม่ถูกต้อง", `ปริมาณต้องอยู่ระหว่าง 0.01 - 9999.00`, "warning");
+        throw new Error("invalid qty");
+      }
+      if (pct > 100) {
+        showAlert("เกิน 100%", `ผลงานงวดนี้ต้องไม่เกิน 100% ของยอดสัญญา`, "warning");
+        throw new Error("exceed 100%");
+      }
+      return { ...it, thisPeriodQty: qty, thisPeriodAmount: amt, thisPeriodPct: pct };
+    });
+    setSavingActiveQty(true);
+    try {
+      const totalAmt = updatedItems.reduce((s: number, it: any) => s + (Number(it.thisPeriodAmount) || 0), 0);
+      const now = new Date().toISOString();
+      const extraFields: Record<string, any> = {};
+      if (finalize) {
+        extraFields.status = "งวดงาน Pending CM";
+        extraFields.periodPreparedBy = userData?.name || user?.email || "";
+        extraFields.periodPreparedAt = now;
+        // reset previous period approvals when re-submitting
+        extraFields.periodCheckedBy = null;
+        extraFields.periodCheckedAt = null;
+        extraFields.periodApprovedBy = null;
+        extraFields.periodApprovedAt = null;
+      }
+      await updateData("payments", p.id, { items: updatedItems, amount: totalAmt, ...extraFields });
+      await logAction(
+        finalize ? "Submit งวดงาน" : "Save Draft งวดงาน",
+        `${finalize ? "บันทึกงวดงาน" : "Save Draft"} Payment ${p.paymentNo}`
+      );
+      showAlert("บันทึกสำเร็จ",
+        finalize ? "บันทึกงวดงานแล้ว ส่งให้ CM ตรวจสอบ" : "Save Draft สำเร็จ",
+        "success"
+      );
+      setActiveQtyEdits({});
+      setViewingPayment((prev: any) => {
+        if (!prev) return prev;
+        return { ...prev, items: updatedItems, amount: totalAmt, ...extraFields };
+      });
+    } catch (_) {}
+    finally { setSavingActiveQty(false); }
+  };
+
+  // ─── Period (งวดงาน) Approve ─────────────────────────────────────────────────
+  const handlePeriodApprove = async (p: any) => {
+    const isCheckStep = p.status === "งวดงาน Pending CM";
+    const nextStatus = isCheckStep ? "งวดงาน Pending PM" : "Wait Pay";
+    const sigField = isCheckStep ? "periodCheckedBy" : "periodApprovedBy";
+    const dateField = isCheckStep ? "periodCheckedAt" : "periodApprovedAt";
+    setActioning(true);
+    try {
+      await updateData("payments", p.id, {
+        status: nextStatus,
+        [sigField]: userData?.name || user?.email || "",
+        [dateField]: new Date().toISOString(),
+      });
+      await logAction("Approve งวดงาน", `${isCheckStep ? "CM Check" : "PM Approve"} Payment ${p.paymentNo} → ${nextStatus}`);
+      showAlert("อนุมัติสำเร็จ",
+        isCheckStep ? "CM ตรวจสอบแล้ว ส่งให้ PM อนุมัติ" : "PM อนุมัติแล้ว สถานะเปลี่ยนเป็น Wait Pay",
+        "success"
+      );
+      setViewingPayment(null);
+    } catch (e) { showAlert("เกิดข้อผิดพลาด", String(e), "error"); }
+    finally { setActioning(false); }
   };
 
   // ─── Item field update ───────────────────────────────────────────────────────
@@ -270,15 +567,20 @@ const PaymentView = React.memo(() => {
     <div className="space-y-4 w-full min-w-0">
       {/* Header */}
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-xl font-bold text-orange-800">Payment Subcontract</h2>
-        {canUseFunction?.("payment-subcontract", "create") !== false && (
-          <Button
-            onClick={openCreate}
-            className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow-sm"
-          >
-            <Plus size={14} /> สร้าง Payment
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          <h2 className="text-xl font-bold text-orange-800">Payment Subcontract</h2>
+          <ColumnVisibilityToggle tableId="payment" />
+        </div>
+        <div className="flex items-center gap-2">
+          {canUseFunction?.("payment-subcontract", "create") !== false && (
+            <Button
+              onClick={openCreate}
+              className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow-sm"
+            >
+              <Plus size={14} /> สร้าง Payment
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Table */}
@@ -286,19 +588,19 @@ const PaymentView = React.memo(() => {
         <table className="w-full text-left text-xs text-slate-600 table-fixed">
           <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
             <tr>
-              <th className="py-2 px-3 w-40">Payment No.</th>
-              <th className="py-2 px-3 text-center w-20">Type</th>
-              <th className="py-2 px-3">ผู้รับเหมา</th>
-              <th className="py-2 px-3 w-36">รอบวางบิล</th>
-              <th className="py-2 px-3 text-right w-32">ยอดรวม</th>
-              <th className="py-2 px-3 text-center w-28">Status</th>
-              <th className="py-2 px-3 text-right w-24">Action</th>
+              {isColumnVisible("payment", "paymentNo") && <th className="py-2 px-3 w-40">Payment No.</th>}
+              {isColumnVisible("payment", "type") && <th className="py-2 px-3 text-center w-20">Type</th>}
+              {isColumnVisible("payment", "contractor") && <th className="py-2 px-3">ผู้รับเหมา</th>}
+              {isColumnVisible("payment", "billingCycle") && <th className="py-2 px-3 w-36">รอบวางบิล</th>}
+              {isColumnVisible("payment", "amount") && <th className="py-2 px-3 text-right w-32">ยอดรวม</th>}
+              {isColumnVisible("payment", "status") && <th className="py-2 px-3 text-center w-28">Status</th>}
+              {isColumnVisible("payment", "actions") && <th className="py-2 px-3 text-right w-24">Action</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {projectPayments.length === 0 ? (
               <tr>
-                <td colSpan={7} className="py-10 text-center text-slate-400 text-sm">
+                <td colSpan={["paymentNo","type","contractor","billingCycle","amount","status","actions"].filter(k => isColumnVisible("payment", k)).length} className="py-10 text-center text-slate-400 text-sm">
                   ยังไม่มีรายการ Payment — กด "สร้าง Payment" เพื่อเริ่มต้น
                 </td>
               </tr>
@@ -308,42 +610,124 @@ const PaymentView = React.memo(() => {
                 return (
                   <tr
                     key={p.id}
-                    className="hover:bg-orange-50 cursor-pointer transition-colors border-b odd:bg-white even:bg-slate-50"
+                    className={`cursor-pointer transition-colors border-b ${
+                      p.status === "Wait Pay"
+                        ? "bg-orange-50 hover:bg-orange-100"
+                        : "hover:bg-orange-50 odd:bg-white even:bg-slate-50"
+                    }`}
                     onClick={() => setViewingPayment(p)}
                   >
-                    <td className="py-2 px-3 font-medium text-orange-700">{p.paymentNo}</td>
-                    <td className="py-2 px-3 text-center">
-                      {p.paymentType && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-700 border border-orange-200">
-                          {p.paymentType}
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-2 px-3 truncate">{contractor?.name || "-"}</td>
-                    <td className="py-2 px-3 text-xs text-slate-500">{p.billingCycle || "-"}</td>
-                    <td className="py-2 px-3 text-right font-semibold">{formatCurrency(p.amount || 0)}</td>
-                    <td className="py-2 px-3 text-center">
-                      <Badge status={p.status || "Draft"} />
-                    </td>
-                    <td
-                      className="py-2 px-3 text-right flex justify-end gap-1"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <button
-                        className="p-1 rounded text-blue-500 hover:text-blue-700 hover:bg-blue-50 transition-colors"
-                        title="แก้ไข"
-                        onClick={() => openEdit(p)}
+                    {isColumnVisible("payment", "paymentNo") && (
+                      <td className="py-2 px-3 font-medium text-orange-700">{p.paymentNo}</td>
+                    )}
+                    {isColumnVisible("payment", "type") && (
+                      <td className="py-2 px-3 text-center">
+                        {p.paymentType && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-700 border border-orange-200">
+                            {p.paymentType}
+                          </span>
+                        )}
+                      </td>
+                    )}
+                    {isColumnVisible("payment", "contractor") && (
+                      <td className="py-2 px-3 truncate">{contractor?.name || "-"}</td>
+                    )}
+                    {isColumnVisible("payment", "billingCycle") && (
+                      <td className="py-2 px-3 text-xs text-slate-500">{p.billingCycle || "-"}</td>
+                    )}
+                    {isColumnVisible("payment", "amount") && (
+                      <td className="py-2 px-3 text-right font-semibold">{formatCurrency(p.amount || 0)}</td>
+                    )}
+                    {isColumnVisible("payment", "status") && (
+                      <td className="py-2 px-3 text-center">
+                        <div className="flex flex-col items-center gap-0.5">
+                          <PaymentStatusBadge status={p.status || "Draft"} />
+                          {p.revisionRequested && (
+                            <span className="text-[9px] text-rose-600 font-semibold">ขอแก้ไข</span>
+                          )}
+                          {p.status === "Rejected" && p.rejectReason && (
+                            <span className="text-[9px] text-red-600 max-w-[100px] truncate" title={p.rejectReason}>
+                              {p.rejectReason}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                    )}
+                    {isColumnVisible("payment", "actions") && (
+                      <td
+                        className="py-2 px-3 text-right"
+                        onClick={(e) => e.stopPropagation()}
                       >
-                        <Edit size={14} />
-                      </button>
-                      <button
-                        className="p-1 rounded text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
-                        title="ลบ"
-                        onClick={() => handleDelete(p)}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </td>
+                        <div className="flex justify-end gap-1 flex-wrap">
+                          {/* Period flow approve */}
+                          {isPeriodFlow(p.status) && isPeriodPendingForMe(p.status, myRoles) && (
+                            <button
+                              title={p.status === "งวดงาน Pending CM" ? "CM ตรวจสอบ" : "PM อนุมัติ"}
+                              className="p-1 rounded text-teal-600 hover:bg-teal-50 transition-colors"
+                              onClick={() => handlePeriodApprove(p)}
+                            >
+                              <ThumbsUp size={13} />
+                            </button>
+                          )}
+                          {/* Draft → Submit */}
+                          {(p.status || "Draft") === "Draft" && canUseFunction?.("payment-subcontract", "create") !== false && (
+                            <button
+                              title="ส่งอนุมัติ"
+                              className="p-1 rounded text-orange-500 hover:text-orange-700 hover:bg-orange-50 transition-colors"
+                              onClick={() => handleSubmit(p)}
+                            >
+                              <Send size={13} />
+                            </button>
+                          )}
+                          {/* Pending → Approve/Reject */}
+                          {isFlowActive(p.status) && !p.revisionRequested && isPendingForMe(p.status, myRoles) && (
+                            <>
+                              <button title="อนุมัติ" className="p-1 rounded text-green-600 hover:bg-green-50 transition-colors" onClick={() => handleApprove(p)}>
+                                <ThumbsUp size={13} />
+                              </button>
+                              <button title="ปฏิเสธ" className="p-1 rounded text-red-500 hover:bg-red-50 transition-colors" onClick={() => { setRejectModalPayment(p); setRejectReason(""); }}>
+                                <ThumbsDown size={13} />
+                              </button>
+                            </>
+                          )}
+                          {/* Pending Procurement → Active */}
+                          {p.status === "Pending Procurement" && !p.revisionRequested && isPendingForMe(p.status, myRoles) && (
+                            <button title="Active" className="p-1 rounded text-blue-600 hover:bg-blue-50 transition-colors" onClick={() => handleApprove(p)}>
+                              <Zap size={13} />
+                            </button>
+                          )}
+                          {/* Revision request pending — for current approver */}
+                          {p.revisionRequested && isPendingForMe(p.status === "Active" ? "Pending MD" : p.status, myRoles) && (
+                            <>
+                              <button title="อนุมัติขอแก้ไข" className="p-1 rounded text-green-600 hover:bg-green-50" onClick={() => handleApproveRevision(p)}><ShieldCheck size={13} /></button>
+                              <button title="ปฏิเสธขอแก้ไข" className="p-1 rounded text-red-500 hover:bg-red-50" onClick={() => handleRejectRevision(p)}><XCircle size={13} /></button>
+                            </>
+                          )}
+                          {/* Revision request button (orange circle) */}
+                          {(isFlowActive(p.status) || p.status === "Active") && !p.revisionRequested && (
+                            <button
+                              title="ขอแก้ไข"
+                              className="w-5 h-5 rounded-full bg-orange-500 hover:bg-orange-600 text-white flex items-center justify-center transition-colors"
+                              onClick={() => { setRevisionModalPayment(p); setRevisionNote(""); }}
+                            >
+                              <RotateCcw size={10} />
+                            </button>
+                          )}
+                          {/* Edit (Draft or Rejected) */}
+                          {["Draft", "Rejected"].includes(p.status || "Draft") && canUseFunction?.("payment-subcontract", "edit") !== false && (
+                            <button title="แก้ไข" className={`p-1 rounded transition-colors ${p.status === "Rejected" ? "text-red-500 hover:text-red-700 hover:bg-red-50" : "text-blue-500 hover:text-blue-700 hover:bg-blue-50"}`} onClick={() => openEdit(p)}>
+                              <Edit size={13} />
+                            </button>
+                          )}
+                          {/* Delete (Draft only) */}
+                          {(p.status || "Draft") === "Draft" && canUseFunction?.("payment-subcontract", "delete") !== false && (
+                            <button title="ลบ" className="p-1 rounded text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors" onClick={() => handleDelete(p)}>
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 );
               })
@@ -361,7 +745,11 @@ const PaymentView = React.memo(() => {
         const contractTitle = refPRs.map((pr: any) => pr.prNo).join(", ");
         const vpItems = vp.items || [];
         const contractGrandTotal = vpItems.reduce((s: number, it: any) => s + ((it.contractQty || 0) * (it.contractPrice || 0)), 0);
-        const thisPeriodGrandTotal = vpItems.reduce((s: number, it: any) => s + (Number(it.thisPeriodAmount) || 0), 0);
+        const thisPeriodGrandTotal = vpItems.reduce((s: number, it: any) => {
+          const k = `${it.prId}_${it.prItemIndex}`;
+          const ed = activeQtyEdits[k];
+          return s + (ed?.thisPeriodAmount !== undefined ? Number(ed.thisPeriodAmount) : (Number(it.thisPeriodAmount) || 0));
+        }, 0);
         const thisPeriodPctTotal = contractGrandTotal > 0 ? ((thisPeriodGrandTotal / contractGrandTotal) * 100) : 0;
 
         return (
@@ -372,7 +760,12 @@ const PaymentView = React.memo(() => {
               <div className="flex items-center justify-between px-6 py-3 bg-gradient-to-r from-blue-900 to-blue-700 shrink-0 rounded-t-2xl">
                 <h3 className="text-sm font-bold text-white tracking-wide">แบบฟอร์มเบิกงวดงาน / PAYMENT APPLICATION</h3>
                 <div className="flex items-center gap-2">
-                  <Badge status={vp.status || "Draft"} />
+                  <PaymentStatusBadge status={vp.status || "Draft"} />
+                  {vp.revisionRequested && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500 text-white">
+                      <RotateCcw size={9} /> ขอแก้ไข
+                    </span>
+                  )}
                   <button onClick={() => setViewingPayment(null)} className="text-white/60 hover:text-white hover:bg-white/20 p-1.5 rounded-lg transition-all">
                     <XCircle size={18} />
                   </button>
@@ -401,7 +794,7 @@ const PaymentView = React.memo(() => {
                       </div>
                       <div className="flex">
                         <span className="w-52 text-slate-500 font-semibold shrink-0">ชื่อสัญญา / CONTRACT TITLE :</span>
-                        <span className="font-medium text-slate-700">{vp.note || "-"}</span>
+                        <span className="font-medium text-slate-700">{vp.contractTitle || "-"}</span>
                       </div>
                     </div>
                     {/* Right */}
@@ -413,6 +806,10 @@ const PaymentView = React.memo(() => {
                       <div className="flex">
                         <span className="w-56 text-slate-500 font-semibold shrink-0">Payment Type :</span>
                         <span className="font-bold text-slate-800">{vp.paymentType || "-"}</span>
+                      </div>
+                      <div className="flex">
+                        <span className="w-56 text-slate-500 font-semibold shrink-0">งวดงาน / PERIOD NO. :</span>
+                        <span className="font-bold text-orange-700 bg-orange-50 border border-orange-200 rounded px-2 py-0.5">{vp.periodNo || "-"}</span>
                       </div>
                       <div className="flex">
                         <span className="w-56 text-slate-500 font-semibold shrink-0">รอบวางบิล :</span>
@@ -492,15 +889,18 @@ const PaymentView = React.memo(() => {
                             </tr>
                           ) : (
                             vpItems.map((it: any, i: number) => {
+                              const key = `${it.prId}_${it.prItemIndex ?? i}`;
+                              const edit = activeQtyEdits[key] || {};
+                              const canEditQty = vp.status === "Active" && isQtyEditMode;
                               const cQty = Number(it.contractQty) || 0;
                               const cPrice = Number(it.contractPrice) || 0;
                               const cAmount = cQty * cPrice;
-                              const tpQty = Number(it.thisPeriodQty) || 0;
-                              const tpAmt = Number(it.thisPeriodAmount) || 0;
-                              const tpPct = cAmount > 0 ? (tpAmt / cAmount) * 100 : 0;
                               const prevQty = Number(it.prevAccumQty) || 0;
                               const prevAmt = Number(it.prevAccumAmount) || 0;
                               const prevPct = cAmount > 0 ? (prevAmt / cAmount) * 100 : 0;
+                              const tpQty = edit.thisPeriodQty !== undefined ? Number(edit.thisPeriodQty) : (Number(it.thisPeriodQty) || 0);
+                              const tpAmt = edit.thisPeriodAmount !== undefined ? Number(edit.thisPeriodAmount) : (Number(it.thisPeriodAmount) || 0);
+                              const tpPct = cAmount > 0 ? (tpAmt / cAmount) * 100 : 0;
                               const totalQty = prevQty + tpQty;
                               const totalAmt = prevAmt + tpAmt;
                               const totalPct = cAmount > 0 ? (totalAmt / cAmount) * 100 : 0;
@@ -522,10 +922,21 @@ const PaymentView = React.memo(() => {
                                   <td className="border border-slate-200 px-2 py-1.5 text-right font-mono bg-amber-50/20 text-slate-400">{prevQty > 0 ? prevQty.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "-"}</td>
                                   <td className="border border-slate-200 px-2 py-1.5 text-right font-mono bg-amber-50/20 text-slate-400">{prevAmt > 0 ? formatCurrency(prevAmt) : "-"}</td>
                                   <td className="border border-slate-200 px-2 py-1.5 text-right font-mono bg-amber-50/20 text-slate-400">{prevPct > 0 ? prevPct.toFixed(2) + "%" : "-"}</td>
-                                  {/* THIS PERIOD */}
-                                  <td className="border border-slate-200 px-2 py-1.5 text-right font-mono bg-green-50/20">{tpQty > 0 ? tpQty.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "-"}</td>
-                                  <td className="border border-slate-200 px-2 py-1.5 text-right font-mono font-semibold bg-green-50/20">{tpAmt > 0 ? formatCurrency(tpAmt) : "-"}</td>
-                                  <td className="border border-slate-200 px-2 py-1.5 text-right font-mono bg-green-50/20">{tpPct > 0 ? tpPct.toFixed(2) + "%" : "-"}</td>
+                                  {/* THIS PERIOD — editable when isQtyEditMode */}
+                                  <td className="border border-slate-200 px-1 py-1 bg-green-50/40">
+                                    {canEditQty ? (
+                                      <input
+                                        type="number" min={0} max={9999} step={0.01}
+                                        className="w-full border border-green-400 rounded px-1 py-0.5 text-xs text-right focus:outline-none focus:ring-1 focus:ring-green-500 bg-white font-mono"
+                                        value={edit.thisPeriodQty !== undefined ? edit.thisPeriodQty : (it.thisPeriodQty || "")}
+                                        onChange={(e) => updateActiveQty(key, "thisPeriodQty", e.target.value, cPrice, cAmount)}
+                                      />
+                                    ) : (
+                                      <span className="block text-right font-mono px-1">{tpQty > 0 ? tpQty.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "-"}</span>
+                                    )}
+                                  </td>
+                                  <td className="border border-slate-200 px-2 py-1.5 text-right font-mono font-semibold bg-green-50/40 text-green-700">{tpAmt > 0 ? formatCurrency(tpAmt) : "-"}</td>
+                                  <td className="border border-slate-200 px-2 py-1.5 text-right font-mono bg-green-50/40 text-green-600">{tpPct > 0 ? tpPct.toFixed(2) + "%" : "-"}</td>
                                   <td className="border border-slate-200 px-2 py-1.5 text-slate-400">{it.remark || "-"}</td>
                                 </tr>
                               );
@@ -570,16 +981,36 @@ const PaymentView = React.memo(() => {
                   {/* ── Signature section ── */}
                   <div className="grid grid-cols-3 gap-4 text-xs mt-6 px-2">
                     {[
-                      { title: "PREPARE BY", position: "ผู้จัดทำ" },
-                      { title: "CHECK BY", position: "Construction Manager" },
-                      { title: "APPROVE BY", position: "Project Manager" },
+                      {
+                        title: "PREPARE BY", position: "ผู้จัดทำ",
+                        name: vp.periodPreparedBy, date: vp.periodPreparedAt,
+                        filled: !!vp.periodPreparedBy,
+                      },
+                      {
+                        title: "CHECK BY", position: "Construction Manager",
+                        name: vp.periodCheckedBy, date: vp.periodCheckedAt,
+                        filled: !!vp.periodCheckedBy,
+                      },
+                      {
+                        title: "APPROVE BY", position: "Project Manager",
+                        name: vp.periodApprovedBy, date: vp.periodApprovedAt,
+                        filled: !!vp.periodApprovedBy,
+                      },
                     ].map((sig) => (
-                      <div key={sig.title} className="border border-slate-200 rounded-lg p-3 bg-slate-50/50 text-center space-y-6">
+                      <div key={sig.title} className={`border rounded-lg p-3 text-center space-y-3 ${sig.filled ? "border-green-300 bg-green-50/40" : "border-slate-200 bg-slate-50/50"}`}>
                         <p className="font-bold text-slate-700 text-[11px]">{sig.title}</p>
-                        <div className="h-10" />
+                        <div className="h-8 flex items-center justify-center">
+                          {sig.filled ? (
+                            <span className="text-[11px] font-bold text-green-700 border-b-2 border-green-500 pb-0.5 px-2">{sig.name}</span>
+                          ) : (
+                            <span className="text-[10px] text-slate-300 italic">— ยังไม่ได้ลงนาม —</span>
+                          )}
+                        </div>
                         <div className="border-t border-slate-300 pt-2 space-y-1">
                           <p className="text-[10px] text-slate-500">POSITION : <span className="font-semibold text-slate-700">{sig.position}</span></p>
-                          <p className="text-[10px] text-slate-500">DATE : _______________</p>
+                          <p className="text-[10px] text-slate-500">
+                            DATE : {sig.date ? new Date(sig.date).toLocaleDateString("th-TH", { day: "2-digit", month: "short", year: "numeric" }) : "_______________"}
+                          </p>
                         </div>
                       </div>
                     ))}
@@ -591,19 +1022,152 @@ const PaymentView = React.memo(() => {
                       <span className="font-bold">หมายเหตุ:</span> {vp.note}
                     </div>
                   )}
+
+                  {/* ── Rejection banner ── */}
+                  {vp.status === "Rejected" && (
+                    <div className="bg-red-50 border border-red-300 rounded-lg px-4 py-3 text-xs text-red-800 flex items-start gap-2">
+                      <ThumbsDown size={14} className="mt-0.5 shrink-0 text-red-600" />
+                      <div className="space-y-0.5">
+                        <p className="font-bold text-red-700">Payment ถูกปฏิเสธ — กรุณาแก้ไขและส่งอนุมัติใหม่</p>
+                        {vp.rejectReason && vp.rejectReason !== "-" && (
+                          <p>เหตุผล: <span className="font-semibold">{vp.rejectReason}</span></p>
+                        )}
+                        <p className="text-red-500">ปฏิเสธโดย: {vp.rejectedBy || "-"} เมื่อ {vp.rejectedAt ? new Date(vp.rejectedAt).toLocaleDateString("th-TH") : "-"}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── Revision info banner ── */}
+                  {vp.revisionRequested && (
+                    <div className="bg-rose-50 border border-rose-200 rounded-lg px-4 py-3 text-xs text-rose-800 flex items-start gap-2">
+                      <RotateCcw size={14} className="mt-0.5 shrink-0" />
+                      <div>
+                        <p className="font-bold">คำขอแก้ไข</p>
+                        <p>ผู้ขอ: <span className="font-semibold">{vp.revisionRequestedBy || "-"}</span></p>
+                        {vp.revisionNote && <p>เหตุผล: {vp.revisionNote}</p>}
+                        <p>ส่งถึง: <span className="font-semibold">{vp.revisionTargetRole || "-"}</span></p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
               {/* ─ Footer buttons ─ */}
-              <div className="px-6 py-3 border-t border-slate-200 bg-slate-50 flex justify-end gap-2 shrink-0 rounded-b-2xl">
-                <Button
-                  onClick={() => { setViewingPayment(null); openEdit(viewingPayment); }}
-                  className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center gap-2"
-                >
-                  <Edit size={14} /> แก้ไข
-                </Button>
+              <div className="px-6 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-2 shrink-0 rounded-b-2xl">
+                {/* Left: action buttons based on status */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Submit (Draft) */}
+                  {(vp.status || "Draft") === "Draft" && canUseFunction?.("payment-subcontract", "create") !== false && (
+                    <button
+                      disabled={actioning}
+                      onClick={() => handleSubmit(vp)}
+                      className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-700 text-white text-sm font-medium flex items-center gap-2 disabled:opacity-60"
+                    >
+                      <Send size={14} /> ส่งอนุมัติ
+                    </button>
+                  )}
+                  {/* Approve/Reject (Pending) */}
+                  {isFlowActive(vp.status) && !vp.revisionRequested && isPendingForMe(vp.status, myRoles) && (
+                    <>
+                      <button
+                        disabled={actioning}
+                        onClick={() => handleApprove(vp)}
+                        className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium flex items-center gap-2 disabled:opacity-60"
+                      >
+                        <ThumbsUp size={14} /> {vp.status === "Pending Procurement" ? "Active" : "อนุมัติ"}
+                      </button>
+                      <button
+                        disabled={actioning}
+                        onClick={() => { setRejectModalPayment(vp); setRejectReason(""); }}
+                        className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium flex items-center gap-2 disabled:opacity-60"
+                      >
+                        <ThumbsDown size={14} /> ปฏิเสธ
+                      </button>
+                    </>
+                  )}
+                  {/* Revision pending — for current approver */}
+                  {vp.revisionRequested && isPendingForMe(vp.status === "Active" ? "Pending MD" : vp.status, myRoles) && (
+                    <>
+                      <button
+                        disabled={actioning}
+                        onClick={() => handleApproveRevision(vp)}
+                        className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium flex items-center gap-2 disabled:opacity-60"
+                      >
+                        <ShieldCheck size={14} /> อนุมัติขอแก้ไข
+                      </button>
+                      <button
+                        disabled={actioning}
+                        onClick={() => handleRejectRevision(vp)}
+                        className="px-4 py-2 rounded-lg border border-red-300 text-red-600 text-sm font-medium flex items-center gap-2 hover:bg-red-50 disabled:opacity-60"
+                      >
+                        <XCircle size={14} /> ปฏิเสธขอแก้ไข
+                      </button>
+                    </>
+                  )}
+                  {/* งวดงาน Period Approve */}
+                  {isPeriodFlow(vp.status) && isPeriodPendingForMe(vp.status, myRoles) && (
+                    <button
+                      disabled={actioning}
+                      onClick={() => handlePeriodApprove(vp)}
+                      className="px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+                    >
+                      <ThumbsUp size={14} />
+                      {vp.status === "งวดงาน Pending CM" ? "CHECK — ตรวจสอบ (CM)" : "APPROVE — อนุมัติ (PM)"}
+                    </button>
+                  )}
+                  {/* Active: ใส่ปริมาณ / บันทึกงวดงาน + Save Draft */}
+                  {vp.status === "Active" && !isQtyEditMode && (
+                    <button
+                      onClick={() => setIsQtyEditMode(true)}
+                      className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-semibold flex items-center gap-2"
+                    >
+                      <Edit size={14} /> ใส่ปริมาณ
+                    </button>
+                  )}
+                  {vp.status === "Active" && isQtyEditMode && (
+                    <>
+                      <button
+                        disabled={savingActiveQty}
+                        onClick={async () => { await handleSaveActiveQty(vp, true); setIsQtyEditMode(false); }}
+                        className="px-4 py-2 rounded-lg bg-green-700 hover:bg-green-800 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+                      >
+                        {savingActiveQty ? <span className="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full" /> : <Save size={14} />}
+                        บันทึกงวดงาน
+                      </button>
+                      <button
+                        disabled={savingActiveQty}
+                        onClick={() => handleSaveActiveQty(vp, false)}
+                        className="px-4 py-2 rounded-lg border border-green-400 text-green-700 hover:bg-green-50 text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+                      >
+                        {savingActiveQty ? <span className="animate-spin w-3 h-3 border-2 border-green-500 border-t-transparent rounded-full" /> : <Save size={14} />}
+                        Save Draft
+                      </button>
+                    </>
+                  )}
+                  {/* Request Revision (orange circle) */}
+                  {(isFlowActive(vp.status) || vp.status === "Active") && !vp.revisionRequested && (
+                    <button
+                      disabled={actioning}
+                      onClick={() => { setRevisionModalPayment(vp); setRevisionNote(""); }}
+                      className="w-8 h-8 rounded-full bg-orange-500 hover:bg-orange-600 text-white flex items-center justify-center transition-colors disabled:opacity-60"
+                      title="ขอแก้ไข"
+                    >
+                      <RotateCcw size={13} />
+                    </button>
+                  )}
+                  {/* Edit (Draft or Rejected) */}
+                  {["Draft", "Rejected"].includes(vp.status || "Draft") && canUseFunction?.("payment-subcontract", "edit") !== false && (
+                    <button
+                      onClick={() => { setViewingPayment(null); openEdit(viewingPayment); }}
+                      className={`px-4 py-2 rounded-lg text-white text-sm font-medium flex items-center gap-2 ${vp.status === "Rejected" ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"}`}
+                    >
+                      <Edit size={14} /> แก้ไข{vp.status === "Rejected" ? " (ส่งใหม่)" : ""}
+                    </button>
+                  )}
+                </div>
+                {/* Right: close */}
                 <button
-                  onClick={() => setViewingPayment(null)}
+                  onClick={() => { setViewingPayment(null); setActiveQtyEdits({}); setIsQtyEditMode(false); }}
                   className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-600 text-sm font-medium hover:bg-slate-50 flex items-center gap-2"
                 >
                   <XCircle size={15} /> ปิด
@@ -613,6 +1177,83 @@ const PaymentView = React.memo(() => {
           </div>
         );
       })(), document.body)}
+
+      {/* ─── Revision Request Modal ─────────────────────────────────────────────── */}
+      {revisionModalPayment && createPortal((
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[10001] p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+            <h3 className="font-bold text-slate-800 flex items-center gap-2">
+              <span className="w-7 h-7 rounded-full bg-orange-500 flex items-center justify-center"><RotateCcw size={14} className="text-white" /></span>
+              ขอแก้ไข Payment
+            </h3>
+            <p className="text-xs text-slate-500">
+              Payment: <strong>{revisionModalPayment.paymentNo}</strong><br />
+              คำขอนี้จะถูกส่งไปยัง <strong>{revisionModalPayment.status === "Active" ? "MD" : revisionModalPayment.status.replace("Pending ", "")}</strong> เพื่ออนุมัติการแก้ไข
+            </p>
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-slate-700">เหตุผลที่ขอแก้ไข (ไม่บังคับ)</label>
+              <textarea
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-orange-400"
+                rows={3}
+                placeholder="กรอกเหตุผล..."
+                value={revisionNote}
+                onChange={(e) => setRevisionNote(e.target.value)}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setRevisionModalPayment(null)} className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm hover:bg-slate-50">
+                ยกเลิก
+              </button>
+              <button
+                disabled={actioning}
+                onClick={handleRequestRevision}
+                className="px-4 py-2 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+              >
+                {actioning ? <span className="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full" /> : <Send size={13} />}
+                ส่งขอแก้ไข
+              </button>
+            </div>
+          </div>
+        </div>
+      ), document.body)}
+
+      {/* ─── Reject Modal ────────────────────────────────────────────────────────── */}
+      {rejectModalPayment && createPortal((
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[10001] p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+            <h3 className="font-bold text-slate-800 flex items-center gap-2">
+              <ThumbsDown size={18} className="text-red-500" /> ปฏิเสธ Payment
+            </h3>
+            <p className="text-xs text-slate-500">
+              Payment: <strong>{rejectModalPayment.paymentNo}</strong><br />
+              Payment จะถูกส่งกลับไปยังสถานะ <strong>Draft</strong>
+            </p>
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-slate-700">เหตุผลที่ปฏิเสธ</label>
+              <textarea
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-red-400"
+                rows={3}
+                placeholder="กรอกเหตุผล..."
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setRejectModalPayment(null)} className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm hover:bg-slate-50">
+                ยกเลิก
+              </button>
+              <button
+                disabled={actioning}
+                onClick={handleRejectConfirm}
+                className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+              >
+                {actioning ? <span className="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full" /> : <ThumbsDown size={13} />}
+                ปฏิเสธ
+              </button>
+            </div>
+          </div>
+        </div>
+      ), document.body)}
 
       {/* ─── Create / Edit Modal ─────────────────────────────────────────────────── */}
       <AnimatePresence>
@@ -695,6 +1336,20 @@ const PaymentView = React.memo(() => {
                       />
                     </div>
 
+                    {/* งวดงาน */}
+                    <div>
+                      <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1 uppercase tracking-wider">
+                        <Hash size={11} className="text-orange-400" /> งวดงาน / Period No.
+                      </label>
+                      <input
+                        type="text"
+                        className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-sm hover:border-orange-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-100"
+                        placeholder="เช่น 1, 2, ..."
+                        value={form.periodNo}
+                        onChange={(e) => setForm((f) => ({ ...f, periodNo: e.target.value }))}
+                      />
+                    </div>
+
                     {/* วันที่เปิด */}
                     <div>
                       <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1 uppercase tracking-wider">
@@ -723,6 +1378,20 @@ const PaymentView = React.memo(() => {
                           <option key={c.value} value={c.value}>{c.label}</option>
                         ))}
                       </select>
+                    </div>
+
+                    {/* ชื่อสัญญา */}
+                    <div className="col-span-2">
+                      <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1 uppercase tracking-wider">
+                        <Tag size={11} className="text-blue-500" /> ชื่อสัญญา / CONTRACT TITLE
+                      </label>
+                      <input
+                        type="text"
+                        className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-sm hover:border-orange-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-100"
+                        placeholder="กรอกชื่อสัญญา..."
+                        value={form.contractTitle}
+                        onChange={(e) => setForm((f) => ({ ...f, contractTitle: e.target.value }))}
+                      />
                     </div>
 
                     {/* ผู้รับเหมา */}

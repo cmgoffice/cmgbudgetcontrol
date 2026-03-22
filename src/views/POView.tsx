@@ -12,6 +12,7 @@ import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "../components/ui";
 import ResizableTh from "../components/ResizableTh";
+import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 import { useProportionalTableLayout, chainTableResizeHandlers } from "../hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 import MaterialAutoComplete from "../components/MaterialAutoComplete";
@@ -61,7 +62,7 @@ const POView = React.memo(() => {
   const { prs, pos, projects, budgets, vendors, materials, addData, updateData, deleteData, loadVendors, loadMaterials,
           showAlert, openConfirm, logAction, userRole, userRoles, columnWidths, handleColumnResize,
           visibleProjects, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,
-          userData, user, canUseFunction } = useAppData();
+          userData, user, canUseFunction, isColumnVisible } = useAppData();
   const { selectedProjectId,
           isFullScreenModalOpen, setIsFullScreenModalOpen,
           expandedPrRows } = useUI();
@@ -1352,9 +1353,12 @@ const POView = React.memo(() => {
         )}
 
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-          <h2 className="text-xl font-bold text-slate-800">
-            {L.pageTitle}
-          </h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-xl font-bold text-slate-800">
+              {L.pageTitle}
+            </h2>
+            <ColumnVisibilityToggle tableId="po" />
+          </div>
           {canUseFunction("po", "create") && (
             <Button
               onClick={() => {
@@ -1391,15 +1395,15 @@ const POView = React.memo(() => {
           <table className="w-full text-left text-xs text-slate-600 table-fixed">
             <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
               <tr>
-                <ResizableTh tableId="po" colKey="poNo" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.poNo}>{L.docNo}</ResizableTh>
-                <ResizableTh tableId="po" colKey="poType" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.poType}>Type</ResizableTh>
-                <ResizableTh tableId="po" colKey="prNos" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.prNos}>Ref PR No.</ResizableTh>
-                <ResizableTh tableId="po" colKey="description" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.description}>Description PR</ResizableTh>
-                <ResizableTh tableId="po" colKey="vendor" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.vendor}>Vendor</ResizableTh>
-                <ResizableTh tableId="po" colKey="items" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.items}>Item</ResizableTh>
-                <ResizableTh tableId="po" colKey="amount" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.amount}>Amount</ResizableTh>
-                <ResizableTh tableId="po" colKey="status" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.status}>Status</ResizableTh>
-                <th className="py-2 px-3 text-right" style={{ width: poMainLayout.scaled.actions }}>Action</th>
+                {isColumnVisible("po", "poNo") && <ResizableTh tableId="po" colKey="poNo" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.poNo}>{L.docNo}</ResizableTh>}
+                {isColumnVisible("po", "poType") && <ResizableTh tableId="po" colKey="poType" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.poType}>Type</ResizableTh>}
+                {isColumnVisible("po", "prNos") && <ResizableTh tableId="po" colKey="prNos" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.prNos}>Ref PR No.</ResizableTh>}
+                {isColumnVisible("po", "description") && <ResizableTh tableId="po" colKey="description" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.description}>Description PR</ResizableTh>}
+                {isColumnVisible("po", "vendor") && <ResizableTh tableId="po" colKey="vendor" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.vendor}>Vendor</ResizableTh>}
+                {isColumnVisible("po", "items") && <ResizableTh tableId="po" colKey="items" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.items}>Item</ResizableTh>}
+                {isColumnVisible("po", "amount") && <ResizableTh tableId="po" colKey="amount" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.amount}>Amount</ResizableTh>}
+                {isColumnVisible("po", "status") && <ResizableTh tableId="po" colKey="status" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.status}>Status</ResizableTh>}
+                {isColumnVisible("po", "actions") && <th className="py-2 px-3 text-right" style={{ width: poMainLayout.scaled.actions }}>Action</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -1421,20 +1425,20 @@ const POView = React.memo(() => {
                         className="hover:bg-blue-50 cursor-pointer transition-colors border-b odd:bg-white even:bg-slate-50"
                         onClick={() => setViewingPO(po)}
                       >
-                        <td className="py-2 px-3 font-medium text-blue-700" title={po.poNo}><span className="cell-text">{po.poNo}</span></td>
-                        <td className="py-2 px-3 text-center">
+                        {isColumnVisible("po", "poNo") && <td className="py-2 px-3 font-medium text-blue-700" title={po.poNo}><span className="cell-text">{po.poNo}</span></td>}
+                        {isColumnVisible("po", "poType") && <td className="py-2 px-3 text-center">
                           {po.poType && (
                             <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 whitespace-nowrap">
                               {po.poType}
                             </span>
                           )}
-                        </td>
-                        <td className="py-2 px-3 text-xs" title={prNos}><span className="cell-text">{prNos}</span></td>
-                        <td className="py-2 px-3 text-xs text-slate-600" title={descSummary}><span className="cell-text">{descSummary}</span></td>
-                        <td className="py-2 px-3" title={vendor?.name || "-"}><span className="cell-text">{vendor?.name || "-"}</span></td>
-                        <td className="py-2 px-3 text-center">{po.items ? po.items.length : 1}</td>
-                        <td className="py-2 px-3 text-right font-semibold">{formatCurrency(po.amount)}</td>
-                        <td className="py-2 px-3 text-center">
+                        </td>}
+                        {isColumnVisible("po", "prNos") && <td className="py-2 px-3 text-xs" title={prNos}><span className="cell-text">{prNos}</span></td>}
+                        {isColumnVisible("po", "description") && <td className="py-2 px-3 text-xs text-slate-600" title={descSummary}><span className="cell-text">{descSummary}</span></td>}
+                        {isColumnVisible("po", "vendor") && <td className="py-2 px-3" title={vendor?.name || "-"}><span className="cell-text">{vendor?.name || "-"}</span></td>}
+                        {isColumnVisible("po", "items") && <td className="py-2 px-3 text-center">{po.items ? po.items.length : 1}</td>}
+                        {isColumnVisible("po", "amount") && <td className="py-2 px-3 text-right font-semibold">{formatCurrency(po.amount)}</td>}
+                        {isColumnVisible("po", "status") && <td className="py-2 px-3 text-center">
                           <div className="flex flex-col items-center">
                             <Badge status={po.status} />
                             {po.poEditRevisionReason && (po.status === PO_REVISION_PENDING_PCM || po.status === PO_REVISION_PENDING_GM) && (
@@ -1448,8 +1452,8 @@ const POView = React.memo(() => {
                               </span>
                             )}
                           </div>
-                        </td>
-                        <td
+                        </td>}
+                        {isColumnVisible("po", "actions") && <td
                           className="py-2 px-3 text-right flex justify-end gap-1 flex-wrap"
                           onClick={(e) => e.stopPropagation()}
                         >
@@ -1573,7 +1577,7 @@ const POView = React.memo(() => {
                               <Trash2 size={14} />
                             </button>
                           )}
-                        </td>
+                        </td>}
                       </tr>
                     </React.Fragment>
                   );

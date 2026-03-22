@@ -62,6 +62,10 @@ export const AppDataProvider = ({
   const [columnWidths, setColumnWidths] = useState({});
   const colSaveTimer = useRef(null);
 
+  // ── Column visibility (per-user, synced to Firestore) ─────────────────────
+  const [columnVisibility, setColumnVisibility] = useState<Record<string, Record<string, boolean>>>({});
+  const colVisSaveTimer = useRef(null);
+
   // ── Lazy-loaded collections (โหลดเมื่อเข้าหน้าที่ใช้ ลดโควต้าเปิดแอป) ─────
   const [vendorsLoading, setVendorsLoading] = useState(false);
   const [materialsLoading, setMaterialsLoading] = useState(false);
@@ -140,14 +144,27 @@ export const AppDataProvider = ({
       syncCollection("payments",  setPayments),
     ];
 
+    // Per-user column visibility
+    let unsubColVis = () => {};
+    if (user?.uid) {
+      const colVisRef = doc(db, "artifacts", appId, "public", "data", "userSettings", user.uid);
+      unsubColVis = onSnapshot(colVisRef, (snap) => {
+        if (snap.exists() && snap.data()?.columnVisibility) {
+          setColumnVisibility(snap.data().columnVisibility);
+        }
+      });
+    }
+
     return () => {
       unsubs.forEach((u) => u());
       unsubColWidths();
       unsubRolePerms();
       unsubFuncPerms();
+      unsubColVis();
       if (colSaveTimer.current) clearTimeout(colSaveTimer.current);
+      if (colVisSaveTimer.current) clearTimeout(colVisSaveTimer.current);
     };
-  }, []);
+  }, [user?.uid]);
 
   // ── Column resize ──────────────────────────────────────────────────────────
   const handleColumnResize = useCallback((tableId, colKey, width) => {
@@ -163,6 +180,31 @@ export const AppDataProvider = ({
       return next;
     });
   }, [roles]);
+
+  // ── Column visibility (per-user) ────────────────────────────────────────
+  const saveColumnVisibility = useCallback((tableId, colKey, visible) => {
+    if (!user?.uid) return;
+    setColumnVisibility((prev) => {
+      const next = { ...prev, [tableId]: { ...(prev[tableId] || {}), [colKey]: visible } };
+      if (colVisSaveTimer.current) clearTimeout(colVisSaveTimer.current);
+      colVisSaveTimer.current = setTimeout(async () => {
+        try {
+          await setDoc(
+            doc(db, "artifacts", appId, "public", "data", "userSettings", user.uid),
+            { columnVisibility: next },
+            { merge: true }
+          );
+        } catch (_) { /* silent */ }
+      }, 700);
+      return next;
+    });
+  }, [user?.uid]);
+
+  const isColumnVisible = useCallback((tableId, colKey) => {
+    const userPref = columnVisibility[tableId]?.[colKey];
+    if (userPref !== undefined) return userPref;
+    return true;
+  }, [columnVisibility]);
 
   // ── ป้องกันการบันทึกซ้ำ (double submit) ───────────────────────────────────
   const pendingUpdatesRef = useRef(new Set());
@@ -475,6 +517,8 @@ export const AppDataProvider = ({
     vendorsLoading, materialsLoading,
     // column widths
     columnWidths, handleColumnResize,
+    // column visibility (per-user)
+    columnVisibility, saveColumnVisibility, isColumnVisible,
     // approval actions
     handlePRAction, handlePOAction,
     handlePORevisionAllow, handlePORevisionDeny,
@@ -496,6 +540,7 @@ export const AppDataProvider = ({
     loadVendors, loadMaterials,
     vendorsLoading, materialsLoading,
     columnWidths, handleColumnResize,
+    columnVisibility, saveColumnVisibility, isColumnVisible,
     handlePRAction, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,
     showAlert, openConfirm, logAction,
     userRole, roles, userData, user,

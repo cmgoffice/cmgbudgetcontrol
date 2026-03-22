@@ -9,6 +9,7 @@ import { useAppData } from "../contexts/AppDataContext";
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { Card, Button, InputGroup } from "../components/ui";
 import ResizableTh from "../components/ResizableTh";
+import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 import { useProportionalTableLayout } from "../hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 
@@ -16,7 +17,7 @@ const PAGE_SIZE_OPTIONS = [100, 200, 500];
 const BATCH_SIZE = 500;
 
 const VendorView = React.memo(() => {
-  const { vendors, addData, updateData, deleteData, showAlert, openConfirm, userRole, columnWidths, handleColumnResize, db, appId, loadVendors, canUseFunction } = useAppData();
+  const { vendors, addData, updateData, deleteData, showAlert, openConfirm, userRole, columnWidths, handleColumnResize, db, appId, loadVendors, canUseFunction, isColumnVisible } = useAppData();
   const vendorTableRef = useRef(null);
   const vendorTableLayout = useProportionalTableLayout({
     tableId: "vendor",
@@ -255,9 +256,12 @@ const VendorView = React.memo(() => {
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center flex-wrap gap-2">
-        <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-          <Building2 size={20} className="text-slate-600" /> Vendor Management
-        </h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+            <Building2 size={20} className="text-slate-600" /> Vendor Management
+          </h2>
+          <ColumnVisibilityToggle tableId="vendor" />
+        </div>
         <div className="flex items-center gap-2 flex-wrap">
           <div className="relative">
             <Search size={13} className="absolute left-2.5 top-2 text-slate-400" />
@@ -356,24 +360,40 @@ const VendorView = React.memo(() => {
         <table className="w-full text-left text-xs text-slate-600 table-fixed">
           <thead className="bg-slate-50 text-slate-800 font-semibold border-b border-slate-200">
             <tr>
+              {isColumnVisible("vendor", "select") && (
               <th className="py-2 px-2 text-center" style={{ width: vendorTableLayout.scaled.select }}>
                 <button type="button" className="p-0.5 rounded hover:bg-slate-200" onClick={() => selectAllOnPage(!allOnPageSelected)} title={allOnPageSelected ? "ยกเลิกเลือกทั้งหมด" : "เลือกทั้งหมดในหน้านี้"}>
                   {allOnPageSelected ? <CheckSquare size={16} className="text-blue-600" /> : <Square size={16} className="text-slate-400" />}
                 </button>
               </th>
+              )}
+              {isColumnVisible("vendor", "rowNo") && (
               <th className="py-2 px-3 text-center" style={{ width: vendorTableLayout.scaled.rowNo }}>ลำดับ</th>
+              )}
+              {isColumnVisible("vendor", "code") && (
               <ResizableTh tableId="vendor" colKey="code" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={vendorTableLayout.handleResize} currentWidth={vendorTableLayout.scaled.code}>รหัส</ResizableTh>
+              )}
+              {isColumnVisible("vendor", "name") && (
               <ResizableTh tableId="vendor" colKey="name" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={vendorTableLayout.handleResize} currentWidth={vendorTableLayout.scaled.name}>ชื่อ</ResizableTh>
+              )}
+              {isColumnVisible("vendor", "address") && (
               <ResizableTh tableId="vendor" colKey="address" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={vendorTableLayout.handleResize} currentWidth={vendorTableLayout.scaled.address}>ที่อยู่</ResizableTh>
+              )}
+              {isColumnVisible("vendor", "tel") && (
               <ResizableTh tableId="vendor" colKey="tel" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={vendorTableLayout.handleResize} currentWidth={vendorTableLayout.scaled.tel}>โทร</ResizableTh>
+              )}
+              {isColumnVisible("vendor", "creditTerm") && (
               <ResizableTh tableId="vendor" colKey="creditTerm" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={vendorTableLayout.handleResize} currentWidth={vendorTableLayout.scaled.creditTerm}>เครดิตเทอม</ResizableTh>
+              )}
+              {isColumnVisible("vendor", "actions") && (
               <th className="py-2 px-3 text-right" style={{ width: vendorTableLayout.scaled.actions }}>Actions</th>
+              )}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={8} className="py-8 text-center text-slate-400">
+                <td colSpan={["select","rowNo","code","name","address","tel","creditTerm","actions"].filter(k => isColumnVisible("vendor", k)).length} className="py-8 text-center text-slate-400">
                   <Building2 size={32} className="mx-auto mb-2 opacity-30" />
                   ยังไม่มีรายการ Vendor
                 </td>
@@ -381,17 +401,32 @@ const VendorView = React.memo(() => {
             ) : (
               paginated.map((v, idx) => (
                 <tr key={v.id} className="hover:bg-slate-50 odd:bg-white even:bg-slate-50/40">
+                  {isColumnVisible("vendor", "select") && (
                   <td className="py-1.5 px-2 text-center">
                     <button type="button" className="p-0.5 rounded hover:bg-slate-200" onClick={() => toggleSelect(v.id)}>
                       {selectedIds.has(v.id) ? <CheckSquare size={15} className="text-blue-600" /> : <Square size={15} className="text-slate-400" />}
                     </button>
                   </td>
+                  )}
+                  {isColumnVisible("vendor", "rowNo") && (
                   <td className="py-1.5 px-3 text-center text-slate-400 font-mono text-[11px]">{startItem + idx}</td>
+                  )}
+                  {isColumnVisible("vendor", "code") && (
                   <td className="py-1.5 px-3 font-medium text-slate-700" title={v.code}><span className="cell-text">{v.code || "-"}</span></td>
+                  )}
+                  {isColumnVisible("vendor", "name") && (
                   <td className="py-1.5 px-3" title={v.name}><span className="cell-text">{v.name || "-"}</span></td>
+                  )}
+                  {isColumnVisible("vendor", "address") && (
                   <td className="py-1.5 px-3 text-slate-600 max-w-[200px] truncate" title={v.address}><span className="cell-text">{v.address || "-"}</span></td>
+                  )}
+                  {isColumnVisible("vendor", "tel") && (
                   <td className="py-1.5 px-3" title={v.tel}><span className="cell-text">{v.tel || "-"}</span></td>
+                  )}
+                  {isColumnVisible("vendor", "creditTerm") && (
                   <td className="py-1.5 px-3" title={v.creditTerm}><span className="cell-text">{v.creditTerm || "-"}</span></td>
+                  )}
+                  {isColumnVisible("vendor", "actions") && (
                   <td className="py-1.5 px-3 text-right">
                     <div className="flex justify-end gap-1">
                       {canUseFunction("vendor", "edit") && (
@@ -402,6 +437,7 @@ const VendorView = React.memo(() => {
                       )}
                     </div>
                   </td>
+                  )}
                 </tr>
               ))
             )}

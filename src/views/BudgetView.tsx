@@ -21,12 +21,13 @@ import {
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { useProportionalTableLayout, chainTableResizeHandlers } from "../hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
+import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 
 const BudgetView = React.memo(() => {
   const { budgets, projects, prs, pos, invoices, addData, updateData, deleteData,
           showAlert, openConfirm, logAction, userRole, userRoles, userData, columnWidths, handleColumnResize,
           visibleProjects, handlePRAction, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,
-          db, appId, canUseFunction } = useAppData();
+          db, appId, canUseFunction, isColumnVisible } = useAppData();
   const { selectedProjectId,
           budgetCategory, setBudgetCategory,
           expandedBudgetRows, setExpandedBudgetRows,
@@ -1796,9 +1797,12 @@ const BudgetView = React.memo(() => {
     return (
       <div className="space-y-4 w-full min-w-0">
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-          <h2 className="text-xl font-bold text-slate-800">
-            B. Project Budget
-          </h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-xl font-bold text-slate-800">
+              B. Project Budget
+            </h2>
+            <ColumnVisibilityToggle tableId="budget" />
+          </div>
         </div>
         <div className="flex overflow-x-auto gap-1 pb-2 border-b border-slate-200 no-scrollbar">
           <button
@@ -2518,7 +2522,7 @@ const BudgetView = React.memo(() => {
               <table className="w-full text-left text-xs text-slate-600 table-fixed">
                 <thead className="bg-slate-200 text-slate-900 uppercase font-bold border-b text-sm">
                   <tr>
-                    {budgetCategory !== "OVERVIEW" && (
+                    {budgetCategory !== "OVERVIEW" && isColumnVisible("budget", "checkbox") && (
                       <th
                         className="py-3 px-2 border-r text-center align-middle"
                         style={{ width: budgetMainLayout.scaled.checkbox }}
@@ -2535,6 +2539,7 @@ const BudgetView = React.memo(() => {
                         <span className="block text-[9px] text-slate-500 mt-0.5">Select all</span>
                       </th>
                     )}
+                    {isColumnVisible("budget", "code") && (
                     <th
                       className="py-3 px-4 border-r cursor-pointer hover:bg-slate-300 transition-colors"
                       style={{ width: budgetMainLayout.scaled.code }}
@@ -2550,15 +2555,16 @@ const BudgetView = React.memo(() => {
                           ))}
                       </div>
                     </th>
-                    <ResizableTh tableId="budget" colKey="description" className="py-3 px-4 border-r" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.description}>รายการ</ResizableTh>
-                    <ResizableTh tableId="budget" colKey="budget" className="py-3 px-4 text-right bg-blue-100" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.budget}>Budget</ResizableTh>
-                    <ResizableTh tableId="budget" colKey="status" className="py-3 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.status}>สถานะ</ResizableTh>
-                    <ResizableTh tableId="budget" colKey="attachment" className="py-3 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.attachment}>Attachment</ResizableTh>
-                    <ResizableTh tableId="budget" colKey="balance" className="py-3 px-4 text-right text-green-800 font-bold border-r" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.balance}>Balance</ResizableTh>
-                    <ResizableTh tableId="budget" colKey="prTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.prTotal}>PR Total</ResizableTh>
-                    <ResizableTh tableId="budget" colKey="poTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.poTotal}>PO Total</ResizableTh>
-                    <ResizableTh tableId="budget" colKey="nowStatus" className="py-3 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.nowStatus}>Now Status</ResizableTh>
-                    <th className="py-3 px-4 text-right" style={{ width: budgetMainLayout.scaled.actions }}>Actions</th>
+                    )}
+                    {isColumnVisible("budget", "description") && <ResizableTh tableId="budget" colKey="description" className="py-3 px-4 border-r" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.description}>รายการ</ResizableTh>}
+                    {isColumnVisible("budget", "budget") && <ResizableTh tableId="budget" colKey="budget" className="py-3 px-4 text-right bg-blue-100" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.budget}>Budget</ResizableTh>}
+                    {isColumnVisible("budget", "status") && <ResizableTh tableId="budget" colKey="status" className="py-3 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.status}>สถานะ</ResizableTh>}
+                    {isColumnVisible("budget", "attachment") && <ResizableTh tableId="budget" colKey="attachment" className="py-3 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.attachment}>Attachment</ResizableTh>}
+                    {isColumnVisible("budget", "balance") && <ResizableTh tableId="budget" colKey="balance" className="py-3 px-4 text-right text-green-800 font-bold border-r" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.balance}>Balance</ResizableTh>}
+                    {isColumnVisible("budget", "prTotal") && <ResizableTh tableId="budget" colKey="prTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.prTotal}>PR Total</ResizableTh>}
+                    {isColumnVisible("budget", "poTotal") && <ResizableTh tableId="budget" colKey="poTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.poTotal}>PO Total</ResizableTh>}
+                    {isColumnVisible("budget", "nowStatus") && <ResizableTh tableId="budget" colKey="nowStatus" className="py-3 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.nowStatus}>Now Status</ResizableTh>}
+                    {isColumnVisible("budget", "actions") && <th className="py-3 px-4 text-right" style={{ width: budgetMainLayout.scaled.actions }}>Actions</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -2581,7 +2587,7 @@ const BudgetView = React.memo(() => {
                           className={`cursor-pointer transition-colors group ${isExpanded ? "bg-amber-50/80 ring-1 ring-amber-200 ring-inset" : "hover:bg-blue-50 odd:bg-white even:bg-slate-50"}`}
                           onClick={() => toggleRow(b.id)}
                         >
-                          {budgetCategory !== "OVERVIEW" && (
+                          {budgetCategory !== "OVERVIEW" && isColumnVisible("budget", "checkbox") && (
                             <td
                               className="py-1 px-2 border-r text-center align-middle"
                               onClick={(e) => e.stopPropagation()}
@@ -2598,7 +2604,7 @@ const BudgetView = React.memo(() => {
                               />
                             </td>
                           )}
-                          <td className="py-1 px-3 border-r font-medium text-slate-900">
+                          {isColumnVisible("budget", "code") && <td className="py-1 px-3 border-r font-medium text-slate-900">
                             <div className="flex items-center gap-2">
                               {hasSubItems ? (
                                 <button
@@ -2615,8 +2621,8 @@ const BudgetView = React.memo(() => {
                               )}
                               {b.code}
                             </div>
-                          </td>
-                          <td className="py-1 px-3 border-r min-w-0 overflow-hidden" title={b.description}>
+                          </td>}
+                          {isColumnVisible("budget", "description") && <td className="py-1 px-3 border-r min-w-0 overflow-hidden" title={b.description}>
                             <div className="flex items-center justify-between group min-w-0">
                               <div className="flex flex-col min-w-0 flex-1">
                                 <span className="truncate block" title={b.description}>{b.description}</span>
@@ -2641,14 +2647,18 @@ const BudgetView = React.memo(() => {
                                 </button>
                               )}
                             </div>
-                          </td>
+                          </td>}
+                          {isColumnVisible("budget", "budget") && (
                           <td className="py-1 px-3 text-right bg-blue-50/50 font-semibold">
                             {formatCurrency(totalBudget)}
                           </td>
+                          )}
+                          {isColumnVisible("budget", "status") && (
                           <td className="py-1 px-3 text-center">
                             <Badge status={b.status} />
                           </td>
-                          <td className="py-1 px-3 border-r align-top" onClick={(e) => e.stopPropagation()}>
+                          )}
+                          {isColumnVisible("budget", "attachment") && <td className="py-1 px-3 border-r align-top" onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-start gap-2">
                               <button
                                 type="button"
@@ -2689,7 +2699,8 @@ const BudgetView = React.memo(() => {
                                 )}
                               </div>
                             </div>
-                          </td>
+                          </td>}
+                          {isColumnVisible("budget", "balance") && (
                           <td
                             className={`py-1 px-3 text-right border-r font-bold ${budgetBalance < 0
                               ? "text-red-600"
@@ -2698,14 +2709,19 @@ const BudgetView = React.memo(() => {
                           >
                             {formatCurrency(budgetBalance)}
                           </td>
+                          )}
+                          {isColumnVisible("budget", "prTotal") && (
                           <td className="py-1 px-3 text-right text-slate-400">
                             {formatCurrency(stats.prTotal)}
                           </td>
+                          )}
+                          {isColumnVisible("budget", "poTotal") && (
                           <td className="py-1 px-3 text-right text-slate-400">
                             {formatCurrency(stats.poTotal)}
                           </td>
-                          <td className="py-1 px-3 min-w-0 overflow-hidden"></td>
-                          <td className="py-1 px-3 text-right">
+                          )}
+                          {isColumnVisible("budget", "nowStatus") && <td className="py-1 px-3 min-w-0 overflow-hidden"></td>}
+                          {isColumnVisible("budget", "actions") && <td className="py-1 px-3 text-right">
                             <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                               {canUseFunction("budget", "approve") && (userRole === "MD" || userRole === "Administrator") &&
                                 b.status === "Wait MD Approve" && (
@@ -2786,7 +2802,7 @@ const BudgetView = React.memo(() => {
                                 </button>
                               )}
                             </div>
-                          </td>
+                          </td>}
                         </tr>
                         {isExpanded &&
                           b.subItems &&
@@ -2796,16 +2812,16 @@ const BudgetView = React.memo(() => {
                                 key={sub.id}
                                 className="bg-slate-50/50 text-xs group"
                               >
-                                {budgetCategory !== "OVERVIEW" && (
+                                {budgetCategory !== "OVERVIEW" && isColumnVisible("budget", "checkbox") && (
                                   <td className="py-0.5 px-2 border-r bg-slate-50/50" />
                                 )}
-                                <td className="py-0.5 px-3 border-r text-right text-slate-500 pr-4 font-mono relative">
+                                {isColumnVisible("budget", "code") && <td className="py-0.5 px-3 border-r text-right text-slate-500 pr-4 font-mono relative">
                                   <span className="text-[9px] font-bold text-slate-400 absolute left-2 top-1.5">
                                     QTY
                                   </span>
                                   {sub.quantity}
-                                </td>
-                                <td className="py-0.5 px-3 border-r pl-8 min-w-0 overflow-hidden text-slate-600" title={sub.description}>
+                                </td>}
+                                {isColumnVisible("budget", "description") && <td className="py-0.5 px-3 border-r pl-8 min-w-0 overflow-hidden text-slate-600" title={sub.description}>
                                   <div className="flex items-center justify-between min-w-0 gap-1">
                                     <div className="flex items-center gap-2 min-w-0 flex-1">
                                       <span className="text-slate-400 w-4 text-center shrink-0">{index + 1}</span>
@@ -2819,14 +2835,18 @@ const BudgetView = React.memo(() => {
                                     </div>
                                     <div className="text-slate-400 text-[10px] shrink-0">@ {formatCurrency(sub.unitPrice)}</div>
                                   </div>
-                                </td>
+                                </td>}
+                                {isColumnVisible("budget", "budget") && (
                                 <td className="py-0.5 px-3 text-right pr-4 font-medium border-b border-slate-100">
                                   <span className="text-red-600">-{formatCurrency(sub.amount)}</span>
                                 </td>
+                                )}
+                                {isColumnVisible("budget", "status") && (
                                 <td className="py-0.5 px-3 text-center border-b border-slate-100">
                                   {sub.status ? <Badge status={sub.status} /> : <Badge status="Approved" />}
                                 </td>
-                                <td className="py-0.5 px-3 border-r border-b border-slate-100 align-top" onClick={(e) => e.stopPropagation()}>
+                                )}
+                                {isColumnVisible("budget", "attachment") && <td className="py-0.5 px-3 border-r border-b border-slate-100 align-top" onClick={(e) => e.stopPropagation()}>
                                   <div className="flex items-start gap-2">
                                     <button
                                       type="button"
@@ -2867,12 +2887,9 @@ const BudgetView = React.memo(() => {
                                       )}
                                     </div>
                                   </div>
-                                </td>
-                                <td
-                                  colSpan="3"
-                                  className="border-b border-slate-100"
-                                ></td>
-                                <td className="py-0.5 px-3 text-center min-w-0 border-b border-slate-100">
+                                </td>}
+                                {(() => { const cnt = [isColumnVisible("budget", "balance"), isColumnVisible("budget", "prTotal"), isColumnVisible("budget", "poTotal")].filter(Boolean).length; return cnt > 0 ? <td colSpan={cnt} className="border-b border-slate-100"></td> : null; })()}
+                                {isColumnVisible("budget", "nowStatus") && <td className="py-0.5 px-3 text-center min-w-0 border-b border-slate-100">
                                   {(() => {
                                     const subStatuses = getNowStatus(b, stats, "SUB_ITEM", sub.id);
                                     const colorMap = {
@@ -2897,8 +2914,8 @@ const BudgetView = React.memo(() => {
                                       </div>
                                     );
                                   })()}
-                                </td>
-                                <td className="py-0.5 px-3 text-right border-b border-slate-100">
+                                </td>}
+                                {isColumnVisible("budget", "actions") && <td className="py-0.5 px-3 text-right border-b border-slate-100">
                                   <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                     {(sub.status === "Rejected" && (userRole === "PM" || userRole === "CM" || userRole === "MD" || userRole === "Administrator")) && (
                                       <button
@@ -2974,12 +2991,12 @@ const BudgetView = React.memo(() => {
                                       </>
                                     )}
                                   </div>
-                                </td>
+                                </td>}
                               </tr>
                             ))}
                             {/* เว้นพื้นที่ว่างใต้รายการ Sub เมื่อกาง (แยกตารางย่อยจากตารางหลัก) */}
                             <tr className="bg-transparent" aria-hidden="true">
-                              <td colSpan={11} className="py-4 border-0 bg-slate-100/50"></td>
+                              <td colSpan={["checkbox","code","description","budget","status","attachment","balance","prTotal","poTotal","nowStatus","actions"].filter(k => k === "checkbox" ? (budgetCategory !== "OVERVIEW" && isColumnVisible("budget","checkbox")) : isColumnVisible("budget",k)).length || 1} className="py-4 border-0 bg-slate-100/50"></td>
                             </tr>
                           </>
                         }
