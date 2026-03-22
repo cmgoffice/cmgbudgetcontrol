@@ -35,6 +35,8 @@ import InvoiceView from "./views/InvoiceView";
 import ProjectsView from "./views/ProjectsView";
 import PRView from "./views/PRView";
 import POView from "./views/POView";
+import PaymentView from "./views/PaymentView";
+import PaymentTableView from "./views/PaymentTableView";
 import BudgetView from "./views/BudgetView";
 
 /** รูปโปรไฟล์ — ถ้าโหลดไม่สำเร็จ (ลิงก์หมดอายุ/ถูกบล็อก) จะแสดง fallback แทนไอคอนรูปพัง */
@@ -222,7 +224,7 @@ const AppShell = () => {
               collapsed={sidebarCollapsed}
             />
           )}
-          {(canAccessModule("po") || canAccessModule("po-table")) && (
+          {canAccessModule("payment-subcontract") && (
             <SidebarItem
               icon={<CreditCard size={20} className="text-orange-300" />}
               label="Payment Subcontract"
@@ -335,7 +337,7 @@ const AppShell = () => {
           <div className="flex-1" />
 
           {/* Project Cards — อยู่ขวา ก่อนกระดิ่ง ขยายออกซ้ายเมื่อมีโครงการเพิ่ม */}
-          {["budget","pr","po","invoice"].includes(activeMenu) && visibleProjects.length > 0 && (
+          {["budget","pr","po","payment-subcontract","invoice"].includes(activeMenu) && visibleProjects.length > 0 && (
             <div className="flex items-center gap-1.5 shrink-0">
               {visibleProjects.map((p) => (
                 <button
@@ -645,24 +647,8 @@ const AppShell = () => {
                   <span className="flex items-center gap-2"><FileSpreadsheet size={16} /> ตารางข้อมูล Payment</span>
                 </button>
               </div>
-              {paymentSubTab === "system" && <POView mode="payment" />}
-              {paymentSubTab === "table" && (
-                <PRPOTableView
-                  mode="po"
-                  prs={prs}
-                  pos={pos}
-                  budgets={budgets}
-                  projects={projects}
-                  vendors={vendors}
-                  columnWidths={columnWidths}
-                  handleColumnResize={handleColumnResize}
-                  userRole={userRole}
-                  updateData={updateData}
-                  showAlert={showAlert}
-                  openConfirm={openConfirm}
-                  selectedProjectId={selectedProjectId}
-                />
-              )}
+              {paymentSubTab === "system" && <PaymentView />}
+              {paymentSubTab === "table" && <PaymentTableView />}
             </div>
             <div data-menu-page="vendor" style={{ display: activeMenu === "vendor" ? undefined : "none" }}>
               <VendorView />
@@ -1647,6 +1633,7 @@ const SIDEBAR_MODULES = [
   { key: "pr-table", label: "PR (ตาราง)" },
   { key: "po", label: "PO (ระบบ)" },
   { key: "po-table", label: "PO (ตาราง)" },
+  { key: "payment-subcontract", label: "Payment Subcontract" },
   { key: "vendor", label: "Vendor" },
   { key: "material", label: "Material" },
   { key: "invoice", label: "Invoice" },

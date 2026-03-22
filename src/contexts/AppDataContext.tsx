@@ -48,6 +48,7 @@ export const AppDataProvider = ({
   const [prs,       setPrs]       = useState([]);
   const [pos,       setPos]       = useState([]);
   const [invoices,  setInvoices]  = useState([]);
+  const [payments,  setPayments]  = useState([]);
 
   // ── Role permissions (admin-controlled, synced to Firestore) ─────────────
   const [rolePermissions, setRolePermissions] = useState<Record<string, string[]>>(MODULE_ACCESS);
@@ -136,6 +137,7 @@ export const AppDataProvider = ({
       syncCollection("prs",       setPrs),
       syncCollection("pos",       setPos),
       syncCollection("invoices",  setInvoices),
+      syncCollection("payments",  setPayments),
     ];
 
     return () => {
@@ -459,7 +461,7 @@ export const AppDataProvider = ({
   // ── Context value ──────────────────────────────────────────────────────────
   const value = useMemo(() => ({
     // collections
-    projects, budgets, vendors, materials, prs, pos, invoices,
+    projects, budgets, vendors, materials, prs, pos, invoices, payments,
     // derived
     visibleProjects,
     // pending (global, for bell)
@@ -485,7 +487,7 @@ export const AppDataProvider = ({
     // raw Firebase (for views that need direct Firestore access)
     db, appId,
   }), [
-    projects, budgets, vendors, materials, prs, pos, invoices,
+    projects, budgets, vendors, materials, prs, pos, invoices, payments,
     visibleProjects,
     pendingBudgetsGlobal, pendingSubItemsGlobal,
     pendingPRsGlobal, pendingPOsGlobal,
