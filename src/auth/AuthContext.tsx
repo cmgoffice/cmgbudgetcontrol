@@ -312,6 +312,14 @@ export const AuthProvider = ({ children }) => {
     return sendPasswordResetEmail(auth, email);
   }, []);
 
+  const refreshUserData = useCallback(async () => {
+    if (!user?.uid) return;
+    try {
+      const snap = await getDoc(doc(db, "artifacts", appId, "public", "data", "users", user.uid));
+      if (snap.exists()) setUserData(snap.data());
+    } catch (_) {}
+  }, [user?.uid]);
+
   const authContextValue = useMemo(
     () => ({
       user,
@@ -321,6 +329,7 @@ export const AuthProvider = ({ children }) => {
       register,
       logout,
       resetPassword,
+      refreshUserData,
       loading,
       showAlert,
       openConfirm,
@@ -334,6 +343,7 @@ export const AuthProvider = ({ children }) => {
       register,
       logout,
       resetPassword,
+      refreshUserData,
       loading,
       showAlert,
       openConfirm,

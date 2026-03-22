@@ -6,21 +6,29 @@ import {
   CircleArrowRight, CircleArrowDown, CornerDownRight, AlertCircle, Save, Play,
   PlusCircle, Briefcase, Calendar, MapPin, DollarSign, FileOutput, Search, ListFilter,
   Truck, Package, Paperclip, Clock, Hash, Tag, ClipboardList, FileSpreadsheet, Upload, Download,
-  BarChart3, Zap, Building2, ShoppingCart
+  BarChart3, Zap, Building2, ShoppingCart, RefreshCw
 } from "lucide-react";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "../components/ui";
 import ResizableTh from "../components/ResizableTh";
+import { useProportionalTableLayout, chainTableResizeHandlers } from "../hooks/useProportionalTableLayout";
+import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 import MaterialAutoComplete from "../components/MaterialAutoComplete";
-import { PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, PURCHASE_TYPE_EQUIPMENT, DELIVERY_LOCATIONS, getPurchaseTypeDisplayLabel, COST_CATEGORIES } from "../lib/constants";
+import {
+  PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, PURCHASE_TYPE_EQUIPMENT, DELIVERY_LOCATIONS,
+  getPurchaseTypeDisplayLabel, COST_CATEGORIES,
+  getPORevisionFlow, PO_REVISION_PENDING_PCM, PO_REVISION_PENDING_GM,
+} from "../lib/constants";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
 import { motion, AnimatePresence } from "framer-motion";
 import { generatePOPdfBytes, uploadGeneratedPdf, stampSignatureToField, stampSignatureToPdf, deleteGeneratedPdf, stampTextToFieldRect } from "../lib/pdfForms";
-const POView = React.memo(() => {
+const POView = React.memo(({ mode = "po" }: { mode?: "po" | "payment" }) => {
+  const isPaymentMode = mode === "payment";
   const { prs, pos, projects, budgets, vendors, materials, addData, updateData, deleteData, loadVendors, loadMaterials,
-          showAlert, openConfirm, userRole, columnWidths, handleColumnResize,
-          visibleProjects, handlePOAction, userData, user } = useAppData();
+          showAlert, openConfirm, logAction, userRole, userRoles, columnWidths, handleColumnResize,
+          visibleProjects, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,
+          userData, user, canUseFunction } = useAppData();
   const { selectedProjectId,
           isFullScreenModalOpen, setIsFullScreenModalOpen,
           expandedPrRows } = useUI();
@@ -34,6 +42,14 @@ const POView = React.memo(() => {
     const [expandedPoRows, setExpandedPoRows] = useState({});
     const [editingPoId, setEditingPoId] = useState(null);
     const [viewingPO, setViewingPO] = useState<any>(null);
+    const [isPoRevisionModalOpen, setIsPoRevisionModalOpen] = useState(false);
+    const [poRevisionReason, setPoRevisionReason] = useState("");
+    const [poRevisionPoId, setPoRevisionPoId] = useState<string | null>(null);
+
+    // ─── PR Return Confirmation (กรณี save PO แก้ไขแล้วยอดลดลง) ─────────────
+    const [prReturnConfirmOpen, setPrReturnConfirmOpen] = useState(false);
+    const [prReturnPendingSaveFn, setPrReturnPendingSaveFn] = useState<null | (() => Promise<void>)>(null);
+    const [prReturnMeta, setPrReturnMeta] = useState<{ diff: number; prIds: string[] } | null>(null);
 
     const togglePoRow = (id) => {
       setExpandedPoRows((prev) => ({
@@ -64,6 +80,19 @@ const POView = React.memo(() => {
       { value: "Receive Auto", label: "Receive Auto" },
       { value: "RE", label: "RE" },
     ];
+
+    // Payment Subcontract specific
+    const PAYMENT_TYPES = [
+      { code: "DL", label: "DL — จ้างเหมา" },
+      { code: "DC", label: "DC — ค่าแรง" },
+    ];
+    const BILLING_CYCLES = [
+      { value: "วันที่ 10 จ่าย 25", label: "วันที่ 10 จ่าย 25" },
+      { value: "วันที่ 25 จ่าย 10", label: "วันที่ 25 จ่าย 10" },
+    ];
+    const [paymentAttachment, setPaymentAttachment] = useState<File | null>(null);
+    const [paymentAttachmentUrl, setPaymentAttachmentUrl] = useState<string | undefined>("");
+    const [paymentAttachmentName, setPaymentAttachmentName] = useState<string | undefined>("");
     const getDefaultReceiveType = (poType: string) => {
       if (!poType) return "";
       if (poType === "SP") return "Subcontractor";
@@ -127,6 +156,50 @@ const POView = React.memo(() => {
       loadVendors();
       loadMaterials();
     }, [loadVendors, loadMaterials]);
+
+    const poTableRef = useRef(null);
+    const selectItemsTableRef = useRef(null);
+    const selectPrTableRef = useRef(null);
+
+    const poMainLayout = useProportionalTableLayout({
+      tableId: "po",
+      defaultWeights: TABLE_LAYOUT_DEFAULTS.po,
+      savedWidths: columnWidths.po,
+      containerRef: poTableRef,
+      enabled: true,
+      driftKey: "description",
+      handleColumnResize,
+    });
+
+    const selectItemsLayout = useProportionalTableLayout({
+      tableId: "select-items",
+      defaultWeights: TABLE_LAYOUT_DEFAULTS["select-items"],
+      savedWidths: columnWidths["select-items"],
+      containerRef: selectItemsTableRef,
+      enabled: isModalOpen && formData.selectedPrIds.length > 0,
+      driftKey: "description",
+      handleColumnResize,
+    });
+
+    const selectPrLayout = useProportionalTableLayout({
+      tableId: "select-pr",
+      defaultWeights: TABLE_LAYOUT_DEFAULTS["select-pr"],
+      savedWidths: columnWidths["select-pr"],
+      containerRef: selectPrTableRef,
+      enabled: isPrSelectModalOpen,
+      driftKey: "description",
+      handleColumnResize,
+    });
+
+    const onPOViewColumnResize = useMemo(
+      () =>
+        chainTableResizeHandlers(
+          poMainLayout.handleResize,
+          selectItemsLayout.handleResize,
+          selectPrLayout.handleResize
+        ),
+      [poMainLayout.handleResize, selectItemsLayout.handleResize, selectPrLayout.handleResize]
+    );
 
     // Sync vendor search text when editing PO (มี vendorId แล้ว)
     useEffect(() => {
@@ -201,20 +274,24 @@ const POView = React.memo(() => {
     };
 
     // ยอดเงินจาก PO ที่อ้างอิง PR นี้ (ไม่นับ PO ที่ Rejected และไม่นับ PO ที่กำลังแก้)
+    // รองรับ lockedPrAllocations — ถ้ากรณี "ไม่คืนยอด PR" จะมี field นี้เก็บยอดเดิมไว้ล็อก
     const getUsedAmountByPR = (prId, excludePoId) => {
       const relevantPOs = pos.filter(po => po.status !== "Rejected" && po.id !== excludePoId);
       let total = 0;
       relevantPOs.forEach(po => {
+        // ถ้ามี lockedPrAllocations — ใช้ยอดที่ล็อกไว้แทน (กรณีเลือก "ไม่คืนยอด PR")
+        if (po.lockedPrAllocations && po.lockedPrAllocations[prId] != null) {
+          total += Number(po.lockedPrAllocations[prId]) || 0;
+          return;
+        }
         if (po.items) {
           po.items.forEach(item => {
-            // New: ใช้ disPrAllocations หากมี (รองรับตัดยอด 1 รายการจากหลาย PR)
             if (Array.isArray(item.disPrAllocations) && item.disPrAllocations.length > 0) {
               item.disPrAllocations.forEach((a: any) => {
                 if (a?.prId === prId) total += Number(a.amount) || 0;
               });
               return;
             }
-            // Backward compat: PO เก่าที่ไม่มี allocation
             if (item.prId === prId) total += Number(item.amount) || 0;
           });
         }
@@ -235,14 +312,38 @@ const POView = React.memo(() => {
       return list;
     };
 
-    // รายการ PR ที่ให้เลือกได้ใน "เลือกใบขอซื้อ": Approve แล้ว, ยังไม่ Closed, ยอดเงินยังไม่หมด
-    // - แสดงเฉพาะ PR ที่สถานะ Approved หรือ PO Issued
-    // - ไม่แสดงถ้าสถานะ Closed PR
-    // - ไม่แสดงถ้ายอดเงินที่ PO ใช้ไปแล้ว ≥ ยอด PR (เช็คเฉพาะยอดเงิน)
+    // PR ที่ PO ที่กำลัง edit อ้างอิงไว้แล้ว (ใช้สำหรับ revision edit)
+    const editingPoLinkedPrIds = useMemo(() => {
+      if (!editingPoId) return new Set<string>();
+      const po = pos.find((p) => p.id === editingPoId);
+      if (!po) return new Set<string>();
+      const ids = (po.items || [])
+        .flatMap((i: any) => Array.isArray(i.disPrAllocations)
+          ? i.disPrAllocations.map((a: any) => a.prId)
+          : i.prId ? [i.prId] : [])
+        .filter(Boolean);
+      return new Set<string>(ids);
+    }, [editingPoId, pos]);
+
+    // รายการ PR ที่ให้เลือกได้ใน "เลือกใบขอซื้อ"
+    // - ปกติ: Approved/PO Issued และยอดยังเหลือ
+    // - กรณีแก้ไข PO (revision): รวม PR ที่ผูกกับ PO เดิมไว้ด้วย แม้สถานะ Closed/อื่น
+    const PAYMENT_PR_TYPES = ["จ้างเหมา > DL", "ค่าแรง > DC"];
     const approvedPRs = useMemo(() => {
+      const editingPo = editingPoId ? pos.find((p) => p.id === editingPoId) : null;
+      const isRevisionEdit = editingPo?.status === "Draft" && editingPo?.originalPoAmount != null;
+
       return prs.filter((pr) => {
         if (pr.projectId !== selectedProjectId) return false;
-        if (pr.status === "Closed PR") return false;
+
+        // Payment mode: only DL/DC PRs
+        if (isPaymentMode && !PAYMENT_PR_TYPES.includes(pr.purchaseType)) return false;
+
+        // กรณีแก้ไข PO จากการขอแก้ไข (revision) — แสดง PR ที่ผูกไว้เดิมเสมอ
+        if (isRevisionEdit && editingPoLinkedPrIds.has(pr.id)) return true;
+
+        // กรณีปกติ
+        if (pr.status === "Closed PR" || pr.status === "Closed PR Auto") return false;
         if (pr.status !== "Approved" && pr.status !== "PO Issued") return false;
 
         const prTotal = Number(pr.totalAmount) || 0;
@@ -251,7 +352,7 @@ const POView = React.memo(() => {
 
         return true;
       });
-    }, [prs, selectedProjectId, pos, editingPoId]);
+    }, [prs, selectedProjectId, pos, editingPoId, editingPoLinkedPrIds, isPaymentMode]);
 
     // Handle toggling a PR selection
     const handlePrToggle = (prId) => {
@@ -299,13 +400,35 @@ const POView = React.memo(() => {
               costCode: pr.costCode,
               orderQty: orderQtyDefault,
               price,
-              amount: orderQtyDefault * price
+              amount: orderQtyDefault * price,
+              subItemId: item.subItemId || null,
             });
           });
         }
       });
       return items;
     }, [formData.selectedPrIds, approvedPRs, pos, budgets, editingPoId]);
+
+    // Payment mode: auto-select all available items when PRs are selected
+    useEffect(() => {
+      if (!isPaymentMode || availableItems.length === 0) return;
+      const missingItems = availableItems.filter(
+        ai => !formData.items.some(fi => fi.prId === ai.prId && fi.prItemIndex === ai.prItemIndex)
+      );
+      if (missingItems.length > 0) {
+        setFormData(prev => ({
+          ...prev,
+          items: [
+            ...prev.items,
+            ...missingItems.map(ai => ({
+              ...ai,
+              quantity: 0,
+              amount: 0,
+            })),
+          ],
+        }));
+      }
+    }, [isPaymentMode, availableItems.length, formData.selectedPrIds]);
 
     // ยอดคงเหลือของแต่ละ PR (ยอด PR - ยอดที่ PO ใช้ไปแล้ว)
     const getPrRemainingAmount = (prId) => {
@@ -372,6 +495,7 @@ const POView = React.memo(() => {
           amount: (itemData.orderQty ?? itemData.remainingQty ?? 1) * (itemData.price ?? 0),
           remainingQty: itemData.remainingQty,
           costCode: itemData.costCode,
+          subItemId: itemData.subItemId || null,
           // Dis PR must be explicitly selected by user; no auto-assign
           disPrPlan: [],
           disPrAllocations: []
@@ -426,6 +550,7 @@ const POView = React.memo(() => {
             id: `free-${Date.now()}`,
             prId: null,
             prItemIndex: -1,
+            subItemId: null,
             materialNo: "",
             description: "",
             unit: "",
@@ -753,29 +878,9 @@ const POView = React.memo(() => {
 
       let success = false;
 
-      if (editingPoId) {
-        success = await updateData("pos", editingPoId, basePayload);
-      } else {
-        success = await addData("pos", basePayload);
-        if (success) {
-          setProgress(93, "อัปเดตสถานะใบขอซื้อ...");
-          const uniquePrIds = [...new Set(
-            (itemsWithAllocations || [])
-              .flatMap((i: any) => Array.isArray(i.disPrAllocations) ? i.disPrAllocations.map((a: any) => a.prId) : [])
-              .filter(Boolean)
-          )];
-          for (const prId of uniquePrIds) {
-            await updateData("prs", prId, { status: "PO Issued" });
-          }
-        }
-      }
-
-      if (success) {
-        setProgress(100, "เสร็จสิ้น!");
-        // หน่วงเล็กน้อยให้ผู้ใช้เห็น 100%
-        await new Promise(r => setTimeout(r, 600));
+      // ─── doPostSave ต้องนิยามก่อนใช้ใน callback ────────────────────────────
+      const doPostSave = (resolvedPdfUrl: string | undefined, resolvedPdfError: string | null) => {
         setSavePoProgress({ show: false, pct: 0, step: "" });
-
         setIsModalOpen(false);
         setIsFullScreenModalOpen(false);
         setEditingPoId(null);
@@ -786,13 +891,126 @@ const POView = React.memo(() => {
         setVatEditOpen(false);
         setVatEditValue("");
         setDiscountEnabled(false);
-        if (pdfUrl) {
+        if (resolvedPdfUrl) {
           showAlert("สำเร็จ", "บันทึก PO และสร้าง PDF เรียบร้อย — กดดาวน์โหลดได้จากตาราง PO", "success");
-        } else if (pdfError) {
-          showAlert("บันทึก PO เรียบร้อย แต่ PDF ไม่บันทึกลง Storage", pdfError, "warning");
+        } else if (resolvedPdfError) {
+          showAlert("บันทึก PO เรียบร้อย แต่ PDF ไม่บันทึกลง Storage", resolvedPdfError, "warning");
         } else {
           showAlert("สำเร็จ", "บันทึก PO เรียบร้อย", "success");
         }
+      };
+
+      if (editingPoId) {
+        // ─── ตรวจสอบว่าเป็นการแก้ไข PO จากการขอแก้ไข (Draft) หรือไม่ ────────
+        const editingPo = pos.find((p) => p.id === editingPoId);
+        const isRevisionEdit = editingPo?.status === "Draft" && editingPo?.originalPoAmount != null;
+        // เปรียบเทียบที่ยอด pre-VAT (subtotal หลังหักส่วนลด) เพราะ PR allocation ไม่รวม VAT
+        const newSubtotal = Math.max(0, totals.subtotal - (Number(formData.discount) || 0));
+        const originalAmount = isRevisionEdit ? Number(editingPo.originalPoAmount) : null;
+
+        if (isRevisionEdit && originalAmount != null && newSubtotal < originalAmount - 0.01) {
+          // ยอดใหม่ต่ำกว่าเดิม → ถามคืนยอด PR (ใช้ยอด pre-VAT)
+          const diff = originalAmount - newSubtotal;
+
+          // หา PR IDs ที่ PO นี้อ้างอิง
+          const affectedPrIds = [...new Set(
+            (editingPo.items || [])
+              .flatMap((i: any) => Array.isArray(i.disPrAllocations) ? i.disPrAllocations.map((a: any) => a.prId) : (i.prId ? [i.prId] : []))
+              .filter(Boolean)
+          )] as string[];
+
+          // หยุด Progress ชั่วคราว — แสดงคำถามภายใน Progress Modal
+          setSavePoProgress({ show: true, pct: 80, step: "กรุณาเลือกการจัดการยอด PR..." });
+          setPrReturnMeta({ diff, prIds: affectedPrIds });
+          setPrReturnPendingSaveFn(() => async (returnToPR: boolean) => {
+            const setP = (pct: number, step: string) => setSavePoProgress({ show: true, pct, step });
+            setP(85, "บันทึกข้อมูล PO...");
+            let extraFields: Record<string, any> = { originalPoAmount: null };
+            if (!returnToPR) {
+              // ล็อกยอดเดิมไว้ — PR ยังถูกตัดยอดเดิม
+              const lockMap: Record<string, number> = {};
+              if (editingPo.lockedPrAllocations) {
+                Object.assign(lockMap, editingPo.lockedPrAllocations);
+              } else {
+                affectedPrIds.forEach((prId) => {
+                  const oldAlloc = (editingPo.items || []).reduce((s: number, it: any) => {
+                    if (Array.isArray(it.disPrAllocations)) {
+                      it.disPrAllocations.forEach((a: any) => { if (a?.prId === prId) s += Number(a.amount) || 0; });
+                    } else if (it.prId === prId) { s += Number(it.amount) || 0; }
+                    return s;
+                  }, 0);
+                  lockMap[prId] = oldAlloc;
+                });
+              }
+              extraFields.lockedPrAllocations = lockMap;
+            } else {
+              // คืนยอด PR → ตรวจสอบก่อนว่า PR ที่จะคืนไม่ได้อยู่ใน Closed/Pending Close
+              for (const prId of affectedPrIds) {
+                const pr = prs.find((p) => p.id === prId);
+                if (!pr) continue;
+                if (pr.status === "Closed PR" || pr.status === "Closed PR Auto" || pr.status === "Pending Close") {
+                  showAlert(
+                    "PR ถูกปิดอยู่",
+                    `PR ${pr.prNo || pr.id} มีสถานะ ${pr.status} — กรุณา Active PR รายการนี้ก่อน แล้วค่อยบันทึก PO อีกครั้ง`,
+                    "warning"
+                  );
+                  setSavePoProgress({ show: false, pct: 0, step: "" });
+                  return;
+                }
+              }
+              extraFields.lockedPrAllocations = null;
+            }
+            const finalPayload = { ...basePayload, ...extraFields };
+            const ok = await updateData("pos", editingPoId, finalPayload);
+            if (ok) { setP(100, "เสร็จสิ้น!"); await new Promise(r => setTimeout(r, 600)); doPostSave(pdfUrl, pdfError); }
+            else setSavePoProgress({ show: false, pct: 0, step: "" });
+          });
+          setPrReturnConfirmOpen(true);
+          return;
+        }
+
+        // ปกติ (ยอดไม่ลด หรือไม่ใช่ revision edit) — ล้าง lock เดิมถ้ามี
+        const normalPayload = { ...basePayload, originalPoAmount: null, lockedPrAllocations: null };
+        success = await updateData("pos", editingPoId, normalPayload);
+      } else {
+        success = await addData("pos", basePayload);
+        if (success) {
+          setProgress(93, "อัปเดตสถานะใบขอซื้อ...");
+          const uniquePrIds = [...new Set(
+            (itemsWithAllocations || [])
+              .flatMap((i: any) => Array.isArray(i.disPrAllocations) ? i.disPrAllocations.map((a: any) => a.prId) : [])
+              .filter(Boolean)
+          )];
+          // คำนวณยอด Dis PR ที่ใช้ไปแล้วจาก PO ปัจจุบัน (ก่อน Firestore state update)
+          const newPoAllocByPr: Record<string, number> = {};
+          (itemsWithAllocations || []).forEach((i: any) => {
+            if (Array.isArray(i.disPrAllocations)) {
+              i.disPrAllocations.forEach((a: any) => {
+                if (a?.prId) newPoAllocByPr[a.prId] = (newPoAllocByPr[a.prId] || 0) + (Number(a.amount) || 0);
+              });
+            }
+          });
+          for (const prId of uniquePrIds) {
+            const pr = prs.find((p: any) => p.id === prId);
+            if (!pr) continue;
+            const prTotal = Number(pr.totalAmount) || 0;
+            // ยอดที่ถูก Dis PR แล้ว = ยอดจาก PO เดิม + ยอดจาก PO ที่เพิ่งบันทึก
+            const existingUsed = getUsedAmountByPR(prId, null);
+            const totalUsed = existingUsed + (newPoAllocByPr[prId] || 0);
+            if (prTotal > 0 && totalUsed >= prTotal - 0.01) {
+              // ยอด Dis PR ครบ → ปิด PR อัตโนมัติ
+              await updateData("prs", prId, { status: "Closed PR Auto", preCloseStatus: pr.status });
+            } else {
+              await updateData("prs", prId, { status: "PO Issued" });
+            }
+          }
+        }
+      }
+
+      if (success) {
+        setProgress(100, "เสร็จสิ้น!");
+        await new Promise(r => setTimeout(r, 600));
+        doPostSave(pdfUrl, pdfError);
       } else {
         setSavePoProgress({ show: false, pct: 0, step: "" });
       }
@@ -812,9 +1030,45 @@ const POView = React.memo(() => {
       }
     }
 
+    const handleSubmitPoRevisionRequest = async () => {
+      if (!poRevisionPoId) return;
+      if (!canUseFunction("po", "requestRevision")) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ขอแก้ไข PO", "warning");
+        return;
+      }
+      const reason = poRevisionReason.trim();
+      if (!reason) {
+        showAlert("กรุณาระบุเหตุผล", "กรอกเหตุผลที่ต้องการขอแก้ไข PO", "warning");
+        return;
+      }
+      const po = pos.find((p) => p.id === poRevisionPoId);
+      if (!po) return;
+      const flow = getPORevisionFlow(po.status);
+      if (!flow) {
+        showAlert("ไม่สามารถขอแก้ไข", "สถานะ PO นี้ไม่อยู่ในขั้นที่ขอแก้ไขได้", "warning");
+        return;
+      }
+      const ok = await updateData("pos", po.id, {
+        status: flow.pendingStatus,
+        poEditRevisionResumeStatus: po.status,
+        poEditRevisionReason: reason,
+      });
+      if (ok) {
+        await logAction("Request PO Revision", `ขอแก้ไข PO ${po.poNo || po.id} → ${flow.pendingStatus}: ${reason}`);
+        showAlert("ส่งคำขอแล้ว", "รอผู้อนุมัติขั้นที่เกี่ยวข้องพิจารณา", "success");
+        setIsPoRevisionModalOpen(false);
+        setPoRevisionReason("");
+        setPoRevisionPoId(null);
+        if (viewingPO && viewingPO.id === po.id) {
+          setViewingPO((prev: any) => (prev ? { ...prev, status: flow.pendingStatus, poEditRevisionResumeStatus: po.status, poEditRevisionReason: reason } : null));
+        }
+      }
+    };
+
     const handleAction = async (poId, action, reason = "") => {
       const po = pos.find(p => p.id === poId);
       if (!po) return;
+      if (po.status === PO_REVISION_PENDING_PCM || po.status === PO_REVISION_PENDING_GM) return;
 
       let newStatus = po.status;
       if (action === "reject") {
@@ -842,8 +1096,8 @@ const POView = React.memo(() => {
       }
 
       // Approve Flow
-      const isPCMApprove = po.status === "Pending PCM" && (userRole === "PCM" || userRole === "Administrator");
-      const isGMApprove  = po.status === "Pending GM"  && (userRole === "GM"  || userRole === "Administrator");
+      const isPCMApprove = po.status === "Pending PCM" && (userRoles.includes("PCM") || userRoles.includes("Administrator"));
+      const isGMApprove  = po.status === "Pending GM"  && (userRoles.includes("GM")  || userRoles.includes("Administrator"));
       if (isPCMApprove) {
         newStatus = "Pending GM";
       } else if (isGMApprove) {
@@ -977,7 +1231,44 @@ const POView = React.memo(() => {
                 />
               </div>
 
-              <p className="text-[11px] text-slate-400">กรุณารอสักครู่...</p>
+              {/* ── คำถามคืนยอด PR (แทรกภายใน Modal เดียวกัน) ── */}
+              {prReturnConfirmOpen && prReturnMeta ? (
+                <div className="w-full border-t border-slate-100 pt-3 flex flex-col gap-2">
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    ยอด PO ลดลง <span className="font-bold text-red-600">{formatCurrency(prReturnMeta.diff)}</span> จากยอดเดิม
+                  </p>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    <span className="font-semibold text-green-700">คืนยอด</span> — ยอดคงเหลือ PR เพิ่มขึ้นตามส่วนต่าง<br />
+                    <span className="font-semibold text-slate-600">ไม่คืน</span> — PR ยังถูกตัดยอดตามยอดเดิม
+                  </p>
+                  <div className="flex gap-2 justify-end mt-1">
+                    <button
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors"
+                      onClick={async () => {
+                        setPrReturnConfirmOpen(false);
+                        if (prReturnPendingSaveFn) await prReturnPendingSaveFn(false);
+                        setPrReturnPendingSaveFn(null);
+                        setPrReturnMeta(null);
+                      }}
+                    >
+                      ไม่คืนยอด PR
+                    </button>
+                    <button
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-green-600 hover:bg-green-700 text-white transition-colors"
+                      onClick={async () => {
+                        setPrReturnConfirmOpen(false);
+                        if (prReturnPendingSaveFn) await prReturnPendingSaveFn(true);
+                        setPrReturnPendingSaveFn(null);
+                        setPrReturnMeta(null);
+                      }}
+                    >
+                      คืนยอด PR
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-[11px] text-slate-400">กรุณารอสักครู่...</p>
+              )}
             </div>
           </div>,
           document.body
@@ -1067,49 +1358,54 @@ const POView = React.memo(() => {
         )}
 
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-          <h2 className="text-xl font-bold text-slate-800">D. Purchase Order (PO)</h2>
-          <Button
-            onClick={() => {
-              setEditingPoId(null);
-              setFormData({
-                poNo: "",
-                poType: "",
-                receiveType: "",
-                vendorId: "",
-                requiredDate: "",
-                poOpenDate: new Date().toISOString().split("T")[0],
-                vatType: "ex-vat",
-                selectedPrIds: [],
-                items: [],
-                reason: "",
-                note: "",
-                discount: 0,
-              });
-              setManualVatOverride(null);
-              setVatEditOpen(false);
-              setDiscountEnabled(false);
-              setIsModalOpen(true);
-              setIsFullScreenModalOpen(true);
-            }}
-            variant="warning"
-          >
-            <Plus size={14} /> สร้างใบสั่งซื้อ (PO)
-          </Button>
+          <h2 className={`text-xl font-bold ${isPaymentMode ? "text-orange-800" : "text-slate-800"}`}>
+            {isPaymentMode ? "Payment Subcontract" : "D. Purchase Order (PO)"}
+          </h2>
+          {canUseFunction("po", "create") && (
+            <Button
+              onClick={() => {
+                setEditingPoId(null);
+                setFormData({
+                  poNo: "",
+                  poType: "",
+                  receiveType: "",
+                  vendorId: "",
+                  requiredDate: "",
+                  poOpenDate: new Date().toISOString().split("T")[0],
+                  vatType: "ex-vat",
+                  selectedPrIds: [],
+                  items: [],
+                  reason: "",
+                  note: "",
+                  discount: 0,
+                });
+                setManualVatOverride(null);
+                setVatEditOpen(false);
+                setDiscountEnabled(false);
+                setIsModalOpen(true);
+                setIsFullScreenModalOpen(true);
+              }}
+              variant="warning"
+            >
+              <Plus size={14} /> {isPaymentMode ? "สร้าง Payment" : "สร้างใบสั่งซื้อ (PO)"}
+            </Button>
+          )}
         </div>
 
-        <Card>
-          <table className="w-full text-left text-xs text-slate-600">
+        <Card className="overflow-hidden w-full min-w-0">
+          <div ref={poTableRef} className="w-full min-w-0">
+          <table className="w-full text-left text-xs text-slate-600 table-fixed">
             <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
               <tr>
-                <ResizableTh tableId="po" colKey="poNo" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.po?.poNo}>PO No.</ResizableTh>
-                <ResizableTh tableId="po" colKey="poType" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.po?.poType}>Type</ResizableTh>
-                <ResizableTh tableId="po" colKey="prNos" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.po?.prNos}>Ref PR No.</ResizableTh>
-                <ResizableTh tableId="po" colKey="description" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.po?.description}>Description PR</ResizableTh>
-                <ResizableTh tableId="po" colKey="vendor" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.po?.vendor}>Vendor</ResizableTh>
-                <ResizableTh tableId="po" colKey="items" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.po?.items}>Item</ResizableTh>
-                <ResizableTh tableId="po" colKey="amount" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.po?.amount}>Amount</ResizableTh>
-                <ResizableTh tableId="po" colKey="status" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.po?.status}>Status</ResizableTh>
-                <th className="py-2 px-3 text-right">Action</th>
+                <ResizableTh tableId="po" colKey="poNo" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.poNo}>PO No.</ResizableTh>
+                <ResizableTh tableId="po" colKey="poType" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.poType}>Type</ResizableTh>
+                <ResizableTh tableId="po" colKey="prNos" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.prNos}>Ref PR No.</ResizableTh>
+                <ResizableTh tableId="po" colKey="description" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.description}>Description PR</ResizableTh>
+                <ResizableTh tableId="po" colKey="vendor" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.vendor}>Vendor</ResizableTh>
+                <ResizableTh tableId="po" colKey="items" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.items}>Item</ResizableTh>
+                <ResizableTh tableId="po" colKey="amount" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.amount}>Amount</ResizableTh>
+                <ResizableTh tableId="po" colKey="status" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.status}>Status</ResizableTh>
+                <th className="py-2 px-3 text-right" style={{ width: poMainLayout.scaled.actions }}>Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -1147,6 +1443,11 @@ const POView = React.memo(() => {
                         <td className="py-2 px-3 text-center">
                           <div className="flex flex-col items-center">
                             <Badge status={po.status} />
+                            {po.poEditRevisionReason && (po.status === PO_REVISION_PENDING_PCM || po.status === PO_REVISION_PENDING_GM) && (
+                              <span className="text-[9px] text-amber-700 mt-0.5 max-w-[100px] truncate" title={po.poEditRevisionReason}>
+                                เหตุผลขอแก้: {po.poEditRevisionReason}
+                              </span>
+                            )}
                             {po.rejectReason && (
                               <span className="text-[10px] text-red-500 mt-1 max-w-[100px] truncate" title={po.rejectReason}>
                                 {po.rejectReason}
@@ -1155,23 +1456,54 @@ const POView = React.memo(() => {
                           </div>
                         </td>
                         <td
-                          className="py-2 px-3 text-right flex justify-end gap-1"
+                          className="py-2 px-3 text-right flex justify-end gap-1 flex-wrap"
                           onClick={(e) => e.stopPropagation()}
                         >
+                          {/* ขอแก้ไข PO — ตามสถานะส่งไป PCM หรือ GM */}
+                          {canUseFunction("po", "requestRevision") &&
+                            getPORevisionFlow(po.status) &&
+                            po.status !== PO_REVISION_PENDING_PCM &&
+                            po.status !== PO_REVISION_PENDING_GM && (
+                            <button
+                              type="button"
+                              className="inline-flex items-center justify-center p-1 rounded text-orange-600 hover:text-orange-800 hover:bg-orange-50 transition-colors"
+                              title="ขอแก้ไข PO (รออนุญาต)"
+                              onClick={() => {
+                                setPoRevisionPoId(po.id);
+                                setPoRevisionReason("");
+                                setIsPoRevisionModalOpen(true);
+                              }}
+                            >
+                              <RefreshCw size={15} />
+                            </button>
+                          )}
+                          {/* อนุญาต / ไม่อนุญาต แก้ไข PO */}
+                          {canUseFunction("po", "approve") && po.status === PO_REVISION_PENDING_PCM && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
+                            <>
+                              <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionAllow(po.id)}>อนุญาตแก้ไข</Button>
+                              <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionDeny(po.id)}>ไม่อนุญาต</Button>
+                            </>
+                          )}
+                          {canUseFunction("po", "approve") && po.status === PO_REVISION_PENDING_GM && (userRoles.includes("GM") || userRoles.includes("Administrator")) && (
+                            <>
+                              <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionAllow(po.id)}>อนุญาตแก้ไข</Button>
+                              <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionDeny(po.id)}>ไม่อนุญาต</Button>
+                            </>
+                          )}
                           {/* Approval Buttons */}
-                          {po.status === "Pending PCM" && (userRole === "PCM" || userRole === "Administrator") && (
+                          {canUseFunction("po", "approve") && po.status === "Pending PCM" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
                             <>
                               <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(po.id, "approve")}>PCM Approve</Button>
                               <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>
                             </>
                           )}
-                          {po.status === "Pending GM" && (userRole === "GM" || userRole === "Administrator") && (
+                          {canUseFunction("po", "approve") && po.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator")) && (
                             <>
                               <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(po.id, "approve")}>GM Approve</Button>
                               <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>
                             </>
                           )}
-                          {po.status === "Rejected" && (userRole === "Procurement" || userRole === "Administrator") && (
+                          {canUseFunction("po", "edit") && (po.status === "Rejected" || po.status === "Draft") && (userRoles.includes("Procurement") || userRoles.includes("Administrator")) && (
                             <Button
                               variant="secondary"
                               size="sm"
@@ -1221,30 +1553,32 @@ const POView = React.memo(() => {
                             </a>
                           )}
 
-                          <button
-                            className="text-red-500 hover:text-red-700 p-1"
-                            onClick={() => {
-                              openConfirm("ยืนยันการลบ", "คุณต้องการลบ PO นี้ใช่หรือไม่?", async () => {
-                                const prIds = po.items ? [...new Set(po.items.map((i: any) => i.prId).filter(Boolean))] : (po.prRefId ? [po.prRefId] : []);
-                                if (po.pdfUrl) {
-                                  const safePONo = (po.poNo || po.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
-                                  const safeProjId = po.projectId || "unknown";
-                                  await deleteGeneratedPdf(`generated/pos/${safeProjId}/${safePONo}.pdf`);
-                                }
-                                const deleted = await deleteData("pos", po.id);
-                                if (deleted && prIds.length > 0) {
-                                  for (const prId of prIds) {
-                                    const stillUsedByOtherPO = pos.some((p: any) => p.id !== po.id && p.items?.some((i: any) => i.prId === prId));
-                                    if (!stillUsedByOtherPO) {
-                                      await updateData("prs", prId, { status: "Approved" });
+                          {canUseFunction("po", "delete") && (
+                            <button
+                              className="text-red-500 hover:text-red-700 p-1"
+                              onClick={() => {
+                                openConfirm("ยืนยันการลบ", "คุณต้องการลบ PO นี้ใช่หรือไม่?", async () => {
+                                  const prIds = po.items ? [...new Set(po.items.map((i: any) => i.prId).filter(Boolean))] : (po.prRefId ? [po.prRefId] : []);
+                                  if (po.pdfUrl) {
+                                    const safePONo = (po.poNo || po.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
+                                    const safeProjId = po.projectId || "unknown";
+                                    await deleteGeneratedPdf(`generated/pos/${safeProjId}/${safePONo}.pdf`);
+                                  }
+                                  const deleted = await deleteData("pos", po.id);
+                                  if (deleted && prIds.length > 0) {
+                                    for (const prId of prIds) {
+                                      const stillUsedByOtherPO = pos.some((p: any) => p.id !== po.id && p.items?.some((i: any) => i.prId === prId));
+                                      if (!stillUsedByOtherPO) {
+                                        await updateData("prs", prId, { status: "Approved" });
+                                      }
                                     }
                                   }
-                                }
-                              }, "danger");
-                            }}
-                          >
-                            <Trash2 size={14} />
-                          </button>
+                                }, "danger");
+                              }}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
                         </td>
                       </tr>
                     </React.Fragment>
@@ -1252,6 +1586,7 @@ const POView = React.memo(() => {
                 })}
             </tbody>
           </table>
+          </div>
         </Card>
 
         {/* PO View Modal — ดูข้อมูล + Approve/Reject */}
@@ -1388,6 +1723,12 @@ const POView = React.memo(() => {
                       <span className="font-bold">หมายเหตุ:</span> {viewingPO.note}
                     </div>
                   )}
+
+                  {viewingPO.poEditRevisionReason && (viewingPO.status === PO_REVISION_PENDING_PCM || viewingPO.status === PO_REVISION_PENDING_GM) && (
+                    <div className="bg-orange-50 border border-orange-200 rounded-lg px-4 py-3 text-xs text-orange-900">
+                      <span className="font-bold">เหตุผลขอแก้ไข PO:</span> {viewingPO.poEditRevisionReason}
+                    </div>
+                  )}
                 </div>
 
                 {/* Footer — ปุ่ม Approve/Reject ตาม Role */}
@@ -1395,14 +1736,26 @@ const POView = React.memo(() => {
                   <button onClick={() => setViewingPO(null)} className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-600 text-sm font-medium hover:bg-slate-50 transition-all flex items-center gap-2">
                     <XCircle size={15} /> ปิด
                   </button>
-                  <div className="flex items-center gap-2">
-                    {viewingPO.status === "Pending PCM" && (userRole === "PCM" || userRole === "Administrator") && (
+                  <div className="flex items-center gap-2 flex-wrap justify-end">
+                    {canUseFunction("po", "approve") && viewingPO.status === PO_REVISION_PENDING_PCM && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
+                      <>
+                        <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { handlePORevisionDeny(viewingPO.id); setViewingPO(null); }}>ไม่อนุญาต</Button>
+                        <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handlePORevisionAllow(viewingPO.id); setViewingPO(null); }}>อนุญาตแก้ไข</Button>
+                      </>
+                    )}
+                    {canUseFunction("po", "approve") && viewingPO.status === PO_REVISION_PENDING_GM && (userRoles.includes("GM") || userRoles.includes("Administrator")) && (
+                      <>
+                        <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { handlePORevisionDeny(viewingPO.id); setViewingPO(null); }}>ไม่อนุญาต</Button>
+                        <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handlePORevisionAllow(viewingPO.id); setViewingPO(null); }}>อนุญาตแก้ไข</Button>
+                      </>
+                    )}
+                    {canUseFunction("po", "approve") && viewingPO.status === "Pending PCM" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
                       <>
                         <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setRejectPoId(viewingPO.id); setRejectReason(""); setViewingPO(null); }}>Reject</Button>
                         <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(viewingPO.id, "approve"); setViewingPO(null); }}>PCM Approve</Button>
                       </>
                     )}
-                    {viewingPO.status === "Pending GM" && (userRole === "GM" || userRole === "Administrator") && (
+                    {canUseFunction("po", "approve") && viewingPO.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator")) && (
                       <>
                         <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setRejectPoId(viewingPO.id); setRejectReason(""); setViewingPO(null); }}>Reject</Button>
                         <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(viewingPO.id, "approve"); setViewingPO(null); }}>GM Approve</Button>
@@ -1414,6 +1767,37 @@ const POView = React.memo(() => {
             </div>
           );
         })()}
+
+        {isPoRevisionModalOpen && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[9100] p-4">
+            <Card className="w-full max-w-md p-6">
+              <h3 className="text-lg font-bold text-slate-800 mb-1 flex items-center gap-2">
+                <RefreshCw size={20} className="text-orange-600" /> ขอแก้ไข PO
+              </h3>
+              <p className="text-xs text-slate-500 mb-3">
+                ระบบจะส่งคำขอไปยังผู้อนุมัติตามสถานะปัจจุบัน (Pending PCM → PCM, Pending GM / Approved / Closed PO → GM)
+              </p>
+              <InputGroup label="เหตุผลที่ขอแก้ไข">
+                <textarea
+                  className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm min-h-[100px]"
+                  value={poRevisionReason}
+                  onChange={(e) => setPoRevisionReason(e.target.value)}
+                  placeholder="ระบุเหตุผล..."
+                />
+              </InputGroup>
+              <div className="flex justify-end gap-2 mt-4">
+                <Button variant="secondary" onClick={() => { setIsPoRevisionModalOpen(false); setPoRevisionPoId(null); setPoRevisionReason(""); }}>
+                  ยกเลิก
+                </Button>
+                <Button variant="warning" onClick={handleSubmitPoRevisionRequest}>
+                  ส่งคำขอ
+                </Button>
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* ─── Modal: ยืนยันคืนยอด PR เมื่อยอด PO แก้ไขลดลง ─── */}
 
         {/* Create PO Modal — ทับ Header, เต็มความสูง, Footer เลื่อนตามเนื้อหา */}
         {isModalOpen && (
@@ -1440,8 +1824,12 @@ const POView = React.memo(() => {
                       <ShoppingCart size={22} className="text-white" />
                     </div>
                     <div>
-                      <h3 className="text-lg font-bold text-white tracking-wide">สร้างใบสั่งซื้อ (Create PO)</h3>
-                      <p className="text-white/80 text-xs mt-0.5">กรอกข้อมูลให้ครบถ้วนเพื่อสร้างใบสั่งซื้อ</p>
+                      <h3 className="text-lg font-bold text-white tracking-wide">
+                        {isPaymentMode ? "สร้าง Payment Subcontract" : "สร้างใบสั่งซื้อ (Create PO)"}
+                      </h3>
+                      <p className="text-white/80 text-xs mt-0.5">
+                        {isPaymentMode ? "กรอกข้อมูลให้ครบถ้วนเพื่อสร้างรายการ Payment" : "กรอกข้อมูลให้ครบถ้วนเพื่อสร้างใบสั่งซื้อ"}
+                      </p>
                     </div>
                   </div>
                   <button
@@ -1470,9 +1858,10 @@ const POView = React.memo(() => {
                     {/* ซ้าย: ฟอร์ม + Select PRs */}
                     <div className="flex-1 min-w-0 flex flex-col gap-2">
                     <div className="grid grid-cols-2 sm:grid-cols-[11rem_11rem_1fr] gap-x-2 gap-y-2">
+                      {/* PO Type / Payment Type */}
                       <div className="min-w-0">
                         <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1 uppercase tracking-wider">
-                          <Tag size={11} className="text-red-500 shrink-0" /> PO Type
+                          <Tag size={11} className="text-red-500 shrink-0" /> {isPaymentMode ? "Payment Type" : "PO Type"}
                         </label>
                         <select
                           className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-sm bg-white hover:border-red-300 focus:border-red-500 focus:ring-2 focus:ring-red-100 cursor-pointer text-slate-900"
@@ -1480,29 +1869,45 @@ const POView = React.memo(() => {
                           disabled={!!editingPoId}
                           onChange={(e) => {
                             const newType = e.target.value;
-                            const newPoNo = newType ? generatePoNo(newType) : "";
-                            const defaultReceive = getDefaultReceiveType(newType);
-                            setFormData({ ...formData, poType: newType, poNo: newPoNo, receiveType: defaultReceive });
+                            if (isPaymentMode) {
+                              setFormData({ ...formData, poType: newType, receiveType: "Subcontractor" });
+                            } else {
+                              const newPoNo = newType ? generatePoNo(newType) : "";
+                              const defaultReceive = getDefaultReceiveType(newType);
+                              setFormData({ ...formData, poType: newType, poNo: newPoNo, receiveType: defaultReceive });
+                            }
                           }}
                         >
                           <option value="">-- เลือก --</option>
-                          {PO_TYPES.map((t) => (
+                          {(isPaymentMode ? PAYMENT_TYPES : PO_TYPES).map((t) => (
                             <option key={t.code} value={t.code}>{t.label}</option>
                           ))}
                         </select>
                       </div>
+                      {/* PO No. / Payment No. */}
                       <div className="min-w-0">
                         <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1 uppercase tracking-wider">
-                          <Hash size={11} className="text-red-500 shrink-0" /> PO No.
+                          <Hash size={11} className="text-red-500 shrink-0" /> {isPaymentMode ? "Payment No." : "PO No."}
                         </label>
-                        <input
-                          type="text"
-                          readOnly
-                          className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-sm bg-slate-100 text-slate-700 font-mono font-semibold cursor-default"
-                          placeholder={formData.poType ? "(Auto)" : "เลือก Type ก่อน"}
-                          value={formData.poNo}
-                        />
+                        {isPaymentMode ? (
+                          <input
+                            type="text"
+                            className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-sm bg-white text-slate-700 font-mono font-semibold hover:border-orange-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-100"
+                            placeholder="กรอก Payment No."
+                            value={formData.poNo}
+                            onChange={e => setFormData({ ...formData, poNo: e.target.value })}
+                          />
+                        ) : (
+                          <input
+                            type="text"
+                            readOnly
+                            className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-sm bg-slate-100 text-slate-700 font-mono font-semibold cursor-default"
+                            placeholder={formData.poType ? "(Auto)" : "เลือก Type ก่อน"}
+                            value={formData.poNo}
+                          />
+                        )}
                       </div>
+                      {/* วันที่เปิด */}
                       <div className="min-w-0">
                         <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1 uppercase tracking-wider">
                           <Calendar size={11} className="text-amber-500 shrink-0" /> วันที่เปิด
@@ -1518,39 +1923,74 @@ const POView = React.memo(() => {
                           <Calendar className="absolute left-3 top-2 text-amber-400 pointer-events-none" size={14} />
                         </div>
                       </div>
+                      {/* กำหนดส่ง / รอบวางบิล */}
                       <div className="min-w-0">
                         <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1 uppercase tracking-wider">
-                          <Calendar size={11} className="text-emerald-500 shrink-0" /> กำหนดส่ง
+                          <Calendar size={11} className="text-emerald-500 shrink-0" /> {isPaymentMode ? "รอบวางบิล" : "กำหนดส่ง"}
                         </label>
-                        <div className="relative cursor-pointer" onClick={() => { if (typeof requiredDateInputRef.current?.showPicker === "function") requiredDateInputRef.current.showPicker(); else requiredDateInputRef.current?.click(); }}>
-                          <input
-                            ref={requiredDateInputRef}
-                            type="date"
-                            className="w-full border border-slate-200 rounded-lg px-3 py-1.5 pl-9 text-sm cursor-pointer"
+                        {isPaymentMode ? (
+                          <select
+                            className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-sm bg-white hover:border-orange-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-100 cursor-pointer text-slate-900"
                             value={formData.requiredDate}
                             onChange={e => setFormData({ ...formData, requiredDate: e.target.value })}
-                          />
-                          <Calendar className="absolute left-3 top-2 text-emerald-400 pointer-events-none" size={14} />
-                        </div>
+                          >
+                            <option value="">-- เลือกรอบวางบิล --</option>
+                            {BILLING_CYCLES.map(c => (
+                              <option key={c.value} value={c.value}>{c.label}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <div className="relative cursor-pointer" onClick={() => { if (typeof requiredDateInputRef.current?.showPicker === "function") requiredDateInputRef.current.showPicker(); else requiredDateInputRef.current?.click(); }}>
+                            <input
+                              ref={requiredDateInputRef}
+                              type="date"
+                              className="w-full border border-slate-200 rounded-lg px-3 py-1.5 pl-9 text-sm cursor-pointer"
+                              value={formData.requiredDate}
+                              onChange={e => setFormData({ ...formData, requiredDate: e.target.value })}
+                            />
+                            <Calendar className="absolute left-3 top-2 text-emerald-400 pointer-events-none" size={14} />
+                          </div>
+                        )}
                       </div>
+                      {/* Receive Type / เอกสารแนบ */}
                       <div className="min-w-0">
                         <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1 uppercase tracking-wider">
-                          <Package size={11} className="text-red-500 shrink-0" /> Receive Type
+                          {isPaymentMode ? (
+                            <><Paperclip size={11} className="text-orange-500 shrink-0" /> เอกสารแนบ</>
+                          ) : (
+                            <><Package size={11} className="text-red-500 shrink-0" /> Receive Type</>
+                          )}
                         </label>
-                        <select
-                          className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-sm bg-white hover:border-red-300 focus:border-red-500 focus:ring-2 cursor-pointer text-slate-900"
-                          value={formData.receiveType}
-                          onChange={e => setFormData({ ...formData, receiveType: e.target.value })}
-                        >
-                          <option value="">-- เลือก --</option>
-                          {RECEIVE_TYPES.map((t) => (
-                            <option key={t.value} value={t.value}>{t.label}</option>
-                          ))}
-                        </select>
+                        {isPaymentMode ? (
+                          <div className="flex items-center gap-2 w-full border border-dashed border-slate-200 rounded-lg px-3 py-1 bg-slate-50 hover:border-orange-300 hover:bg-orange-50/30 transition-all cursor-pointer group">
+                            <Upload size={14} className="text-slate-400 group-hover:text-orange-500 transition-colors shrink-0" />
+                            <input type="file" className="hidden" id="payment-attachment-upload"
+                              onChange={(e) => { setPaymentAttachment(e.target.files?.[0] || null); }} />
+                            <label htmlFor="payment-attachment-upload" className="flex-1 text-xs text-slate-600 cursor-pointer py-0.5 truncate">
+                              {paymentAttachment
+                                ? paymentAttachment.name
+                                : paymentAttachmentUrl
+                                  ? (paymentAttachmentName || "ไฟล์แนบ") + " (บันทึกแล้ว)"
+                                  : "คลิกเพื่อแนบไฟล์"}
+                            </label>
+                          </div>
+                        ) : (
+                          <select
+                            className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-sm bg-white hover:border-red-300 focus:border-red-500 focus:ring-2 cursor-pointer text-slate-900"
+                            value={formData.receiveType}
+                            onChange={e => setFormData({ ...formData, receiveType: e.target.value })}
+                          >
+                            <option value="">-- เลือก --</option>
+                            {RECEIVE_TYPES.map((t) => (
+                              <option key={t.value} value={t.value}>{t.label}</option>
+                            ))}
+                          </select>
+                        )}
                       </div>
+                      {/* Vendor / ผู้รับเหมา */}
                       <div className="col-span-2 sm:col-span-1">
                         <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1 uppercase tracking-wider">
-                          <Building2 size={11} className="text-red-500 shrink-0" /> Vendor (ผู้ขาย)
+                          <Building2 size={11} className="text-red-500 shrink-0" /> {isPaymentMode ? "ผู้รับเหมา" : "Vendor (ผู้ขาย)"}
                         </label>
                         <div className="flex gap-2">
                           <div ref={vendorDropdownAnchorRef} className="flex-1 min-w-0 relative">
@@ -1599,7 +2039,9 @@ const POView = React.memo(() => {
                           <div className="w-5 h-5 bg-slate-800 rounded-md flex items-center justify-center">
                             <ClipboardList size={11} className="text-white" />
                           </div>
-                          <span className="text-[11px] font-bold text-slate-800 tracking-wide uppercase">2. เลือกใบขอซื้อ (Select PRs)</span>
+                          <span className="text-[11px] font-bold text-slate-800 tracking-wide uppercase">
+                            {isPaymentMode ? "2. เลือกใบขอซื้อ (Select PRs — เฉพาะ DL/DC)" : "2. เลือกใบขอซื้อ (Select PRs)"}
+                          </span>
                         </div>
                         <button
                           type="button"
@@ -1681,30 +2123,162 @@ const POView = React.memo(() => {
                         <div className="w-6 h-6 bg-slate-800 rounded-lg flex items-center justify-center">
                           <Package size={13} className="text-white" />
                         </div>
-                        <span className="text-xs font-bold text-slate-800 tracking-wide uppercase">3. เลือกรายการสินค้า (Select Items)</span>
+                        <span className="text-xs font-bold text-slate-800 tracking-wide uppercase">
+                          {isPaymentMode ? "3. รายการสินค้า / งาน (Contract Items)" : "3. เลือกรายการสินค้า (Select Items)"}
+                        </span>
                       </div>
-                      <button
-                        type="button"
-                        className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-slate-800 text-white text-xs font-semibold hover:bg-slate-700 transition-all shadow-sm"
-                        onClick={addFreeItem}
-                      >
-                        <Plus size={13} /> เพิ่มรายการ
-                      </button>
+                      {!isPaymentMode && (
+                        <button
+                          type="button"
+                          className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-slate-800 text-white text-xs font-semibold hover:bg-slate-700 transition-all shadow-sm"
+                          onClick={addFreeItem}
+                        >
+                          <Plus size={13} /> เพิ่มรายการ
+                        </button>
+                      )}
                     </div>
-                    <div className="p-4 overflow-x-auto">
-                      <table className="w-full text-left text-xs rounded-xl border border-slate-200">
+
+                    {/* ─── Payment Mode: Contract Items Table ─── */}
+                    {isPaymentMode ? (
+                      <div className="p-4 overflow-x-auto w-full min-w-0">
+                        <table className="w-full text-xs border-collapse">
+                          <thead>
+                            <tr className="border-b-2 border-slate-300">
+                              <th rowSpan={2} className="px-2 py-2 text-center bg-slate-100 text-slate-600 font-bold w-12 border-r border-slate-200">ITEM<br /><span className="font-normal text-[10px]">ลำดับ</span></th>
+                              <th rowSpan={2} className="px-2 py-2 text-center bg-slate-100 text-slate-600 font-bold border-r border-slate-200 min-w-[180px]">DESCRIPTION<br /><span className="font-normal text-[10px]">รายละเอียด</span></th>
+                              <th rowSpan={2} className="px-2 py-2 text-center bg-slate-100 text-slate-600 font-bold w-20 border-r border-slate-200">หน่วย<br /><span className="font-normal text-[10px]">Unit</span></th>
+                              <th colSpan={3} className="px-2 py-1.5 text-center bg-purple-100 text-purple-700 font-bold border-r border-purple-200">ราคาตามสัญญา/ใบสั่งซื้อ<br /><span className="font-normal text-[10px]">CONTRACT/PO PRICE</span></th>
+                              <th colSpan={3} className="px-2 py-1.5 text-center bg-green-100 text-green-700 font-bold border-r border-green-200">ผลงานงวดนี้<br /><span className="font-normal text-[10px]">THIS PERIOD</span></th>
+                              <th rowSpan={2} className="px-2 py-2 text-center bg-slate-100 text-slate-600 font-bold w-16 border-r border-slate-200">%<br /><span className="font-normal text-[10px]">CURR</span></th>
+                              <th rowSpan={2} className="px-2 py-2 text-center bg-slate-100 text-slate-600 font-bold w-24">หมายเหตุ<br /><span className="font-normal text-[10px]">REMARK</span></th>
+                            </tr>
+                            <tr className="border-b border-slate-200">
+                              <th className="px-2 py-1 text-center bg-purple-50 text-purple-700 font-bold text-[10px] w-24 border-r border-purple-100">ปริมาณ<br />QUANTITY</th>
+                              <th className="px-2 py-1 text-center bg-purple-50 text-purple-700 font-bold text-[10px] w-28 border-r border-purple-100">ราคา<br />PRICE</th>
+                              <th className="px-2 py-1 text-center bg-purple-50 text-purple-700 font-bold text-[10px] w-32 border-r border-purple-200">จำนวนเงิน<br />AMOUNT</th>
+                              <th className="px-2 py-1 text-center bg-green-50 text-green-700 font-bold text-[10px] w-24 border-r border-green-100">ปริมาณ<br />QUANTITY</th>
+                              <th className="px-2 py-1 text-center bg-green-50 text-green-700 font-bold text-[10px] w-32 border-r border-green-100">จำนวนเงิน<br />AMOUNT</th>
+                              <th className="px-2 py-1 text-center bg-slate-50 text-slate-600 font-bold text-[10px] w-16 border-r border-slate-200">%</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {availableItems.length === 0 ? (
+                              <tr><td colSpan={11} className="py-8 text-center text-slate-400 text-sm">ยังไม่มีรายการ — เลือก PR ด้านบน</td></tr>
+                            ) : (
+                              availableItems.map((item, idx) => {
+                                const selectedData = formData.items.find(i => i.prId === item.prId && i.prItemIndex === item.prItemIndex) || item;
+                                const contractQty = Number(item.originalQty) || 0;
+                                const contractPrice = Number(item.price) || 0;
+                                const contractAmount = contractQty * contractPrice;
+                                const thisPeriodQty = Number(selectedData.quantity) || 0;
+                                const thisPeriodAmount = thisPeriodQty * contractPrice;
+                                const pctCurr = contractAmount > 0 ? ((thisPeriodAmount / contractAmount) * 100) : 0;
+
+                                return (
+                                  <tr key={`${item.prId}-${item.prItemIndex}`} className="hover:bg-slate-50/50 transition-colors">
+                                    <td className="px-2 py-2 text-center border-r border-slate-100">
+                                      <span className="inline-flex items-center justify-center w-6 h-6 bg-slate-100 rounded-full text-[11px] font-bold text-slate-600">{idx + 1}</span>
+                                    </td>
+                                    {/* Description — read-only (purple zone) */}
+                                    <td className="px-2 py-2 border-r border-slate-100 text-slate-700 font-medium text-xs">
+                                      {item.description || "-"}
+                                    </td>
+                                    {/* Unit — read-only */}
+                                    <td className="px-2 py-2 text-center border-r border-slate-100 text-slate-600 text-xs">
+                                      {item.unit || "-"}
+                                    </td>
+                                    {/* Contract Qty — read-only (purple zone) */}
+                                    <td className="px-2 py-2 text-right border-r border-purple-100 bg-purple-50/30 text-slate-700 font-medium">
+                                      {contractQty.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </td>
+                                    {/* Contract Price — read-only (purple zone) */}
+                                    <td className="px-2 py-2 text-right border-r border-purple-100 bg-purple-50/30 text-slate-700 font-medium">
+                                      {formatCurrency(contractPrice)}
+                                    </td>
+                                    {/* Contract Amount — auto-calc (purple zone) */}
+                                    <td className="px-2 py-2 text-right border-r border-purple-200 bg-purple-50/30 font-semibold text-slate-800">
+                                      {formatCurrency(contractAmount)}
+                                    </td>
+                                    {/* This Period Qty — EDITABLE (green zone) */}
+                                    <td className="px-1.5 py-1.5 border-r border-green-100 bg-green-50/40">
+                                      <input
+                                        type="number"
+                                        className="w-full border border-green-300 hover:border-green-400 focus:border-green-500 focus:ring-1 focus:ring-green-200 rounded px-2 py-1 text-xs text-right font-medium text-slate-700 bg-white transition-all"
+                                        value={thisPeriodQty === 0 ? "" : thisPeriodQty}
+                                        onChange={(e) => {
+                                          const val = parseFloat(e.target.value) || 0;
+                                          handleItemChange(item.prId, item.prItemIndex, "quantity", val);
+                                        }}
+                                        placeholder="0.00"
+                                        min="0"
+                                        step="any"
+                                      />
+                                    </td>
+                                    {/* This Period Amount — auto-calc (green zone) */}
+                                    <td className="px-2 py-2 text-right border-r border-green-100 bg-green-50/40 font-semibold text-slate-800">
+                                      {formatCurrency(thisPeriodAmount)}
+                                    </td>
+                                    {/* % CURR — auto-calc */}
+                                    <td className="px-2 py-2 text-right border-r border-slate-100 font-medium text-slate-600">
+                                      {pctCurr.toFixed(2)}%
+                                    </td>
+                                    {/* Remark — editable */}
+                                    <td className="px-1.5 py-1.5">
+                                      <input
+                                        type="text"
+                                        className="w-full border border-transparent hover:border-slate-200 focus:border-slate-300 focus:ring-1 focus:ring-slate-200 rounded px-2 py-1 text-xs text-slate-600 bg-transparent focus:bg-white transition-all"
+                                        value={selectedData.note ?? ""}
+                                        onChange={(e) => handleItemChange(item.prId, item.prItemIndex, "note", e.target.value)}
+                                        placeholder="หมายเหตุ"
+                                      />
+                                    </td>
+                                  </tr>
+                                );
+                              })
+                            )}
+                          </tbody>
+                          {availableItems.length > 0 && (
+                            <tfoot>
+                              <tr className="bg-slate-700">
+                                <td colSpan={5} className="py-2.5 px-3 text-right text-xs text-slate-200 font-bold tracking-wide">
+                                  ผลรวมทั้งสิ้น / GRAND TOTAL
+                                </td>
+                                <td className="py-2.5 px-3 text-right font-bold text-white text-sm">
+                                  {formatCurrency(availableItems.reduce((s, i) => s + (Number(i.originalQty) || 0) * (Number(i.price) || 0), 0))}
+                                </td>
+                                <td />
+                                <td className="py-2.5 px-3 text-right font-bold text-white text-sm">
+                                  {formatCurrency(formData.items.reduce((s, i) => s + (Number(i.quantity) || 0) * (Number(i.price) || 0), 0))}
+                                </td>
+                                <td className="py-2.5 px-3 text-right font-bold text-green-300 text-xs">
+                                  {(() => {
+                                    const contractTotal = availableItems.reduce((s, i) => s + (Number(i.originalQty) || 0) * (Number(i.price) || 0), 0);
+                                    const periodTotal = formData.items.reduce((s, i) => s + (Number(i.quantity) || 0) * (Number(i.price) || 0), 0);
+                                    return contractTotal > 0 ? ((periodTotal / contractTotal) * 100).toFixed(2) + "%" : "0.00%";
+                                  })()}
+                                </td>
+                                <td />
+                              </tr>
+                            </tfoot>
+                          )}
+                        </table>
+                      </div>
+                    ) : (
+                    <div className="p-4 overflow-hidden w-full min-w-0">
+                      <div ref={selectItemsTableRef} className="w-full min-w-0">
+                      <table className="w-full text-left text-xs rounded-xl border border-slate-200 table-fixed">
                         <thead className="bg-slate-100 font-semibold text-slate-800 border-b border-slate-200">
                           <tr>
-                            <th className="p-2.5 w-10 text-center">เลือก</th>
-                            <ResizableTh tableId="select-items" colKey="prNo" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.prNo ?? 96}>PR No.</ResizableTh>
-                            <th className="p-2.5 w-24">สถานะ</th>
-                            <ResizableTh tableId="select-items" colKey="materialNo" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.materialNo ?? 112}>Material No.</ResizableTh>
-                            <ResizableTh tableId="select-items" colKey="description" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.description}>รายการ</ResizableTh>
-                            <ResizableTh tableId="select-items" colKey="unit" className="p-2.5 w-20" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.unit}>หน่วย</ResizableTh>
-                            <ResizableTh tableId="select-items" colKey="orderQty" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.orderQty ?? 96}>สั่งซื้อ (QTY)</ResizableTh>
-                            <ResizableTh tableId="select-items" colKey="price" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.price ?? 112}>ราคา/หน่วย</ResizableTh>
-                            <ResizableTh tableId="select-items" colKey="total" className="p-2.5 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-items"]?.total ?? 96}>รวม</ResizableTh>
-                            <th className="p-2.5 w-28">Dis PR</th>
+                            <th className="p-2.5 text-center" style={{ width: selectItemsLayout.scaled.pick }}>เลือก</th>
+                            <ResizableTh tableId="select-items" colKey="prNo" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={selectItemsLayout.scaled.prNo}>PR No.</ResizableTh>
+                            <th className="p-2.5" style={{ width: selectItemsLayout.scaled.status }}>สถานะ</th>
+                            <ResizableTh tableId="select-items" colKey="materialNo" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={selectItemsLayout.scaled.materialNo}>Material No.</ResizableTh>
+                            <ResizableTh tableId="select-items" colKey="description" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={selectItemsLayout.scaled.description}>รายการ</ResizableTh>
+                            <ResizableTh tableId="select-items" colKey="unit" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={selectItemsLayout.scaled.unit}>หน่วย</ResizableTh>
+                            <ResizableTh tableId="select-items" colKey="orderQty" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={selectItemsLayout.scaled.orderQty}>สั่งซื้อ (QTY)</ResizableTh>
+                            <ResizableTh tableId="select-items" colKey="price" className="p-2.5" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={selectItemsLayout.scaled.price}>ราคา/หน่วย</ResizableTh>
+                            <ResizableTh tableId="select-items" colKey="total" className="p-2.5 text-right" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={selectItemsLayout.scaled.total}>รวม</ResizableTh>
+                            <th className="p-2.5" style={{ width: selectItemsLayout.scaled.disPr }}>Dis PR</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-200 bg-white">
@@ -1921,7 +2495,9 @@ const POView = React.memo(() => {
                           })}
                         </tbody>
                       </table>
+                      </div>
                     </div>
+                    )}
                   </div>
                 )}
 
@@ -1995,7 +2571,7 @@ const POView = React.memo(() => {
                       </div>
 
                       <div className="mt-3 flex justify-end">
-                        <Button size="sm" className="px-5 rounded-lg flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold shrink-0" onClick={handleSavePO}><Save size={13} /> บันทึก PO</Button>
+                        <Button size="sm" className="px-5 rounded-lg flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold shrink-0" onClick={handleSavePO}><Save size={13} /> {isPaymentMode ? "บันทึก Payment" : "บันทึก PO"}</Button>
                       </div>
                       <div className="mt-2 text-[10px] text-slate-400 italic">กรอกข้อมูลให้ครบก่อนบันทึก</div>
                     </div>
@@ -2047,7 +2623,7 @@ const POView = React.memo(() => {
               </div>
 
               {/* Content — Table View */}
-              <div className="flex-1 overflow-y-auto">
+              <div ref={selectPrTableRef} className="flex-1 overflow-y-auto w-full min-w-0">
                 {approvedPRs.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-16 text-slate-400">
                     <ClipboardList size={40} className="mb-3 opacity-40" />
@@ -2060,10 +2636,10 @@ const POView = React.memo(() => {
                     <p className="text-xs mt-1">ลองเปลี่ยนคำค้นหรือล้างฟิลเตอร์</p>
                   </div>
                 ) : (
-                  <table className="w-full text-xs text-left">
+                  <table className="w-full text-xs text-left table-fixed">
                     <thead className="bg-slate-100 text-slate-700 uppercase font-bold border-b border-slate-200 sticky top-0 z-10">
                       <tr>
-                        <th className="px-4 py-3 w-12 text-center">
+                        <th className="px-4 py-3 text-center" style={{ width: selectPrLayout.scaled.checkbox }}>
                           <input
                             type="checkbox"
                             className="rounded border-slate-300 cursor-pointer"
@@ -2074,13 +2650,13 @@ const POView = React.memo(() => {
                             title="เลือกทั้งหมด"
                           />
                         </th>
-                        <ResizableTh tableId="select-pr" colKey="prNo" className="px-4 py-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-pr"]?.prNo}>PR No.</ResizableTh>
-                        <ResizableTh tableId="select-pr" colKey="costCode" className="px-4 py-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-pr"]?.costCode}>Cost Code</ResizableTh>
-                        <ResizableTh tableId="select-pr" colKey="description" className="px-4 py-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-pr"]?.description}>รายการงบ</ResizableTh>
-                        <ResizableTh tableId="select-pr" colKey="requestor" className="px-4 py-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-pr"]?.requestor}>ผู้ขอซื้อ</ResizableTh>
-                        <ResizableTh tableId="select-pr" colKey="date" className="px-4 py-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-pr"]?.date}>วันที่</ResizableTh>
-                        <ResizableTh tableId="select-pr" colKey="items" className="px-4 py-3 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-pr"]?.items}>สินค้า</ResizableTh>
-                        <ResizableTh tableId="select-pr" colKey="amount" className="px-4 py-3 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["select-pr"]?.amount}>ยอดรวม</ResizableTh>
+                        <ResizableTh tableId="select-pr" colKey="prNo" className="px-4 py-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={selectPrLayout.scaled.prNo}>PR No.</ResizableTh>
+                        <ResizableTh tableId="select-pr" colKey="costCode" className="px-4 py-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={selectPrLayout.scaled.costCode}>Cost Code</ResizableTh>
+                        <ResizableTh tableId="select-pr" colKey="description" className="px-4 py-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={selectPrLayout.scaled.description}>รายการงบ</ResizableTh>
+                        <ResizableTh tableId="select-pr" colKey="requestor" className="px-4 py-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={selectPrLayout.scaled.requestor}>ผู้ขอซื้อ</ResizableTh>
+                        <ResizableTh tableId="select-pr" colKey="date" className="px-4 py-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={selectPrLayout.scaled.date}>วันที่</ResizableTh>
+                        <ResizableTh tableId="select-pr" colKey="items" className="px-4 py-3 text-center" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={selectPrLayout.scaled.items}>สินค้า</ResizableTh>
+                        <ResizableTh tableId="select-pr" colKey="amount" className="px-4 py-3 text-right" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={selectPrLayout.scaled.amount}>ยอดรวม</ResizableTh>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -2090,6 +2666,7 @@ const POView = React.memo(() => {
                           ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
                           : "-";
                         const totalAmt = pr.items?.reduce((s, i) => s + Number(i.quantity) * Number(i.price), 0) || 0;
+                        const remainingAmt = getPrRemainingAmount(pr.id);
                         return (
                           <tr
                             key={pr.id}
@@ -2124,7 +2701,12 @@ const POView = React.memo(() => {
                             <td className="px-4 py-3 text-center">
                               <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded font-semibold">{pr.items?.length || 0}</span>
                             </td>
-                            <td className="px-4 py-3 text-right font-semibold text-slate-800">{formatCurrency(totalAmt)}</td>
+                            <td className="px-4 py-3 text-right font-semibold text-slate-800">
+                              <span>{formatCurrency(remainingAmt)}</span>
+                              {remainingAmt < totalAmt && (
+                                <span className="block text-xs text-slate-400 font-normal">จาก {formatCurrency(totalAmt)}</span>
+                              )}
+                            </td>
                           </tr>
                         );
                       })}

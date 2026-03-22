@@ -15,11 +15,13 @@ import AppShell from "./AppShell";
 // --- Authenticated wrapper — passes auth values into context providers ---
 const AuthenticatedApp = () => {
   const { user, userData, showAlert, openConfirm, logAction } = useContext(AuthContext);
-  const userRoles = Array.isArray(userData?.roles)
-    ? userData.roles
-    : userData?.role
-      ? [userData.role]
-      : ["Staff"];
+  // รวม roles[] กับ role เดี่ยว — ใช้ includes() ตรวจสิทธิ์ขั้นอนุมัติ (ไม่พึ่งแค่ roles[0])
+  const userRoles = (() => {
+    const fromArr = Array.isArray(userData?.roles) ? userData.roles.filter(Boolean) : [];
+    const primary = userData?.role ? [userData.role] : [];
+    const merged = [...new Set([...fromArr, ...primary])];
+    return merged.length ? merged : ["Staff"];
+  })();
   const userRole = userRoles[0] || "Staff";
 
   return (

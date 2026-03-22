@@ -4,8 +4,20 @@ import { Plus, Trash2, Edit, Upload, Download, Lock, Unlock, Users, UserCheck, H
 import { useAppData } from "../contexts/AppDataContext";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "../components/ui";
 import ResizableTh from "../components/ResizableTh";
+import { useProportionalTableLayout } from "../hooks/useProportionalTableLayout";
+import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 const ProjectsView = React.memo(() => {
-  const { projects, updateData, deleteData, showAlert, openConfirm, userRole, userData, columnWidths, handleColumnResize, logAction } = useAppData();
+  const { visibleProjects, updateData, deleteData, showAlert, openConfirm, userRole, userData, columnWidths, handleColumnResize, logAction, canUseFunction } = useAppData();
+  const projectTableRef = useRef(null);
+  const projectTableLayout = useProportionalTableLayout({
+    tableId: "project",
+    defaultWeights: TABLE_LAYOUT_DEFAULTS.project,
+    savedWidths: columnWidths.project,
+    containerRef: projectTableRef,
+    enabled: true,
+    driftKey: "name",
+    handleColumnResize,
+  });
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProjectId, setEditingProjectId] = useState(null);
   const [formData, setFormData] = useState({
@@ -94,47 +106,50 @@ const ProjectsView = React.memo(() => {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 w-full min-w-0">
       <div className="flex justify-between items-center">
         <h2 className="text-xl font-bold text-slate-800">
           A. จัดการโครงการ (Projects)
         </h2>
-        <Button
-          onClick={() => {
-            setEditingProjectId(null);
-            setFormData({
-              jobNo: "",
-              name: "",
-              location: "",
-              contractValue: 0,
-              startDate: "",
-              endDate: "",
-              pmName: "",
-              cmName: "",
-            });
-            setIsModalOpen(true);
-          }}
-        >
-          <Plus size={14} /> เพิ่มโครงการใหม่
-        </Button>
+        {canUseFunction("projects", "add") && (
+          <Button
+            onClick={() => {
+              setEditingProjectId(null);
+              setFormData({
+                jobNo: "",
+                name: "",
+                location: "",
+                contractValue: 0,
+                startDate: "",
+                endDate: "",
+                pmName: "",
+                cmName: "",
+              });
+              setIsModalOpen(true);
+            }}
+          >
+            <Plus size={14} /> เพิ่มโครงการใหม่
+          </Button>
+        )}
       </div>
-      <Card className="overflow-x-auto">
-        <table className="w-full text-left text-xs text-slate-600 whitespace-nowrap">
+      <Card className="overflow-hidden w-full min-w-0">
+        <div ref={projectTableRef} className="w-full min-w-0">
+        <table className="w-full text-left text-xs text-slate-600 table-fixed">
           <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
             <tr>
-              <ResizableTh tableId="project" colKey="jobNo" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.project?.jobNo}>Job No.</ResizableTh>
-              <ResizableTh tableId="project" colKey="name" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.project?.name}>Project Name</ResizableTh>
-              <ResizableTh tableId="project" colKey="location" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.project?.location}>Location</ResizableTh>
-              <ResizableTh tableId="project" colKey="contractValue" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.project?.contractValue}>Contract Value</ResizableTh>
-              <ResizableTh tableId="project" colKey="start" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.project?.start}>Start</ResizableTh>
-              <ResizableTh tableId="project" colKey="finish" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.project?.finish}>Finish</ResizableTh>
-              <ResizableTh tableId="project" colKey="pm" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.project?.pm}>PM</ResizableTh>
-              <ResizableTh tableId="project" colKey="cm" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.project?.cm}>CM</ResizableTh>
-              <th className="py-2 px-3 text-right">Actions</th>
+              <ResizableTh tableId="project" colKey="jobNo" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.jobNo}>Job No.</ResizableTh>
+              <ResizableTh tableId="project" colKey="name" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.name}>Project Name</ResizableTh>
+              <ResizableTh tableId="project" colKey="location" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.location}>Location</ResizableTh>
+              <ResizableTh tableId="project" colKey="contractValue" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.contractValue}>Contract Value</ResizableTh>
+              <ResizableTh tableId="project" colKey="start" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.start}>Start</ResizableTh>
+              <ResizableTh tableId="project" colKey="finish" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.finish}>Finish</ResizableTh>
+              <ResizableTh tableId="project" colKey="pm" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.pm}>PM</ResizableTh>
+              <ResizableTh tableId="project" colKey="cm" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.cm}>CM</ResizableTh>
+              <th className="py-2 px-3 text-right" style={{ width: projectTableLayout.scaled.actions }}>Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {projects.map((p) => (
+            {visibleProjects.map((p) => (
               <tr key={p.id} className="hover:bg-slate-50">
                 <td className="py-2 px-3 font-medium text-slate-900" title={p.jobNo}>
                   <span className="cell-text">{p.jobNo}</span>
@@ -153,23 +168,28 @@ const ProjectsView = React.memo(() => {
                   <span className="cell-text">{p.cmName}</span>
                 </td>
                 <td className="py-2 px-3 text-right flex justify-end gap-1">
-                  <button
-                    className="text-blue-500 hover:text-blue-700 p-1 hover:bg-blue-50 rounded"
-                    onClick={() => handleEdit(p)}
-                  >
-                    <Edit size={14} />
-                  </button>
-                  <button
-                    className="text-red-500 hover:text-red-700 p-1 hover:bg-red-50 rounded"
-                    onClick={() => handleDelete(p.id)}
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  {canUseFunction("projects", "edit") && (
+                    <button
+                      className="text-blue-500 hover:text-blue-700 p-1 hover:bg-blue-50 rounded"
+                      onClick={() => handleEdit(p)}
+                    >
+                      <Edit size={14} />
+                    </button>
+                  )}
+                  {canUseFunction("projects", "delete") && (
+                    <button
+                      className="text-red-500 hover:text-red-700 p-1 hover:bg-red-50 rounded"
+                      onClick={() => handleDelete(p.id)}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+        </div>
       </Card>
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-in fade-in duration-200">

@@ -9,12 +9,24 @@ import { useAppData } from "../contexts/AppDataContext";
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { Card, Button, InputGroup } from "../components/ui";
 import ResizableTh from "../components/ResizableTh";
+import { useProportionalTableLayout } from "../hooks/useProportionalTableLayout";
+import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 
 const PAGE_SIZE_OPTIONS = [100, 200, 500];
 const BATCH_SIZE = 500;
 
 const VendorView = React.memo(() => {
-  const { vendors, addData, updateData, deleteData, showAlert, openConfirm, userRole, columnWidths, handleColumnResize, db, appId, loadVendors } = useAppData();
+  const { vendors, addData, updateData, deleteData, showAlert, openConfirm, userRole, columnWidths, handleColumnResize, db, appId, loadVendors, canUseFunction } = useAppData();
+  const vendorTableRef = useRef(null);
+  const vendorTableLayout = useProportionalTableLayout({
+    tableId: "vendor",
+    defaultWeights: TABLE_LAYOUT_DEFAULTS.vendor,
+    savedWidths: columnWidths.vendor,
+    containerRef: vendorTableRef,
+    enabled: true,
+    driftKey: "address",
+    handleColumnResize,
+  });
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [searchText, setSearchText] = useState("");
@@ -260,11 +272,13 @@ const VendorView = React.memo(() => {
           <Button variant="outline" className="text-xs h-8" onClick={handleDownloadTemplate}>
             <Download size={13} /> Template
           </Button>
-          <label className="flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium text-xs shadow-sm bg-green-600 text-white hover:bg-green-700 cursor-pointer h-8 transition-colors">
-            <FileSpreadsheet size={13} /> Import CSV
-            <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
-          </label>
-          {someSelected && (
+          {canUseFunction("vendor", "import") && (
+            <label className="flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium text-xs shadow-sm bg-green-600 text-white hover:bg-green-700 cursor-pointer h-8 transition-colors">
+              <FileSpreadsheet size={13} /> Import CSV
+              <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
+            </label>
+          )}
+          {someSelected && canUseFunction("vendor", "delete") && (
             <div className="relative" ref={actionDropdownRef}>
               <Button variant="secondary" className="h-8 text-xs flex items-center gap-1" onClick={() => setActionDropdownOpen((o) => !o)}>
                 Action <ChevronDown size={12} />
@@ -278,9 +292,11 @@ const VendorView = React.memo(() => {
               )}
             </div>
           )}
-          <Button onClick={handleOpenAdd} className="h-8 text-xs">
-            <Plus size={13} /> เพิ่ม Vendor
-          </Button>
+          {canUseFunction("vendor", "add") && (
+            <Button onClick={handleOpenAdd} className="h-8 text-xs">
+              <Plus size={13} /> เพิ่ม Vendor
+            </Button>
+          )}
         </div>
       </div>
 
@@ -336,21 +352,22 @@ const VendorView = React.memo(() => {
             </span>
           </div>
         )}
-        <table className="w-full text-left text-xs text-slate-600">
+        <div ref={vendorTableRef} className="w-full min-w-0">
+        <table className="w-full text-left text-xs text-slate-600 table-fixed">
           <thead className="bg-slate-50 text-slate-800 font-semibold border-b border-slate-200">
             <tr>
-              <th className="py-2 px-2 w-10 text-center">
+              <th className="py-2 px-2 text-center" style={{ width: vendorTableLayout.scaled.select }}>
                 <button type="button" className="p-0.5 rounded hover:bg-slate-200" onClick={() => selectAllOnPage(!allOnPageSelected)} title={allOnPageSelected ? "ยกเลิกเลือกทั้งหมด" : "เลือกทั้งหมดในหน้านี้"}>
                   {allOnPageSelected ? <CheckSquare size={16} className="text-blue-600" /> : <Square size={16} className="text-slate-400" />}
                 </button>
               </th>
-              <th className="py-2 px-3 w-12 text-center">ลำดับ</th>
-              <ResizableTh tableId="vendor" colKey="code" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.vendor?.code}>รหัส</ResizableTh>
-              <ResizableTh tableId="vendor" colKey="name" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.vendor?.name}>ชื่อ</ResizableTh>
-              <ResizableTh tableId="vendor" colKey="address" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.vendor?.address}>ที่อยู่</ResizableTh>
-              <ResizableTh tableId="vendor" colKey="tel" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.vendor?.tel}>โทร</ResizableTh>
-              <ResizableTh tableId="vendor" colKey="creditTerm" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.vendor?.creditTerm}>เครดิตเทอม</ResizableTh>
-              <th className="py-2 px-3 w-20 text-right">Actions</th>
+              <th className="py-2 px-3 text-center" style={{ width: vendorTableLayout.scaled.rowNo }}>ลำดับ</th>
+              <ResizableTh tableId="vendor" colKey="code" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={vendorTableLayout.handleResize} currentWidth={vendorTableLayout.scaled.code}>รหัส</ResizableTh>
+              <ResizableTh tableId="vendor" colKey="name" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={vendorTableLayout.handleResize} currentWidth={vendorTableLayout.scaled.name}>ชื่อ</ResizableTh>
+              <ResizableTh tableId="vendor" colKey="address" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={vendorTableLayout.handleResize} currentWidth={vendorTableLayout.scaled.address}>ที่อยู่</ResizableTh>
+              <ResizableTh tableId="vendor" colKey="tel" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={vendorTableLayout.handleResize} currentWidth={vendorTableLayout.scaled.tel}>โทร</ResizableTh>
+              <ResizableTh tableId="vendor" colKey="creditTerm" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={vendorTableLayout.handleResize} currentWidth={vendorTableLayout.scaled.creditTerm}>เครดิตเทอม</ResizableTh>
+              <th className="py-2 px-3 text-right" style={{ width: vendorTableLayout.scaled.actions }}>Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -377,8 +394,12 @@ const VendorView = React.memo(() => {
                   <td className="py-1.5 px-3" title={v.creditTerm}><span className="cell-text">{v.creditTerm || "-"}</span></td>
                   <td className="py-1.5 px-3 text-right">
                     <div className="flex justify-end gap-1">
-                      <button className="text-blue-500 hover:text-blue-700 p-1 hover:bg-blue-50 rounded" onClick={() => handleOpenEdit(v)} title="แก้ไข"><Edit size={13} /></button>
-                      <button className="text-red-500 hover:text-red-700 p-1 hover:bg-red-50 rounded" onClick={() => handleDelete(v.id)} title="ลบ"><Trash2 size={13} /></button>
+                      {canUseFunction("vendor", "edit") && (
+                        <button className="text-blue-500 hover:text-blue-700 p-1 hover:bg-blue-50 rounded" onClick={() => handleOpenEdit(v)} title="แก้ไข"><Edit size={13} /></button>
+                      )}
+                      {canUseFunction("vendor", "delete") && (
+                        <button className="text-red-500 hover:text-red-700 p-1 hover:bg-red-50 rounded" onClick={() => handleDelete(v.id)} title="ลบ"><Trash2 size={13} /></button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -386,6 +407,7 @@ const VendorView = React.memo(() => {
             )}
           </tbody>
         </table>
+        </div>
       </Card>
 
       {isModalOpen && (

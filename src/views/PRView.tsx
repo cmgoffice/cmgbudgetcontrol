@@ -14,19 +14,33 @@ import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "../components/ui";
 import ResizableTh from "../components/ResizableTh";
+import { useProportionalTableLayout } from "../hooks/useProportionalTableLayout";
+import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 import { PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, PURCHASE_TYPE_EQUIPMENT, DELIVERY_LOCATIONS, getPurchaseTypeDisplayLabel, COST_CATEGORIES } from "../lib/constants";
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
 import { motion, AnimatePresence } from "framer-motion";
 import { ref, getDownloadURL } from "firebase/storage";
 import { storage } from "../lib/firebase";
-const PRView = React.memo(() => {
+const CONTRACT_PR_TYPES = ["จ้างเหมา > DL", "ค่าแรง > DC"];
+
+const PRView = React.memo(({ filterMode = "regular" }: { filterMode?: "regular" | "contract" }) => {
   const { prs, pos, projects, budgets, vendors, materials, addData, updateData, deleteData,
-          showAlert, openConfirm, userRole, userData, columnWidths, handleColumnResize,
-          visibleProjects, handlePRAction } = useAppData();
+          showAlert, openConfirm, userRole, userRoles, userData, user, columnWidths, handleColumnResize,
+          visibleProjects, handlePRAction, canUseFunction } = useAppData();
   const { selectedProjectId,
           isFullScreenModalOpen, setIsFullScreenModalOpen,
           expandedPrRows, setExpandedPrRows, togglePrRow } = useUI();
+    const prTableRef = useRef(null);
+    const prTableLayout = useProportionalTableLayout({
+      tableId: "pr",
+      defaultWeights: TABLE_LAYOUT_DEFAULTS.pr,
+      savedWidths: columnWidths.pr,
+      containerRef: prTableRef,
+      enabled: true,
+      driftKey: "description",
+      handleColumnResize,
+    });
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [savePrProgress, setSavePrProgress] = useState<{ show: boolean; pct: number; step: string }>({ show: false, pct: 0, step: "" });
     const [isPrRejectModalOpen, setIsPrRejectModalOpen] = useState(false);
@@ -151,6 +165,33 @@ const PRView = React.memo(() => {
     const [isCostCodeModalOpen, setIsCostCodeModalOpen] = useState(false);
     const [budgetSearchText, setBudgetSearchText] = useState("");
     const [selectedSubItemsForPR, setSelectedSubItemsForPR] = useState([]); // Multi-select state
+
+    // PR Type Selection Modal
+    const [isPrTypeModalOpen, setIsPrTypeModalOpen] = useState(false);
+
+    // Contract PR (จ้าง/เหมา) Modal
+    const [isContractPrModalOpen, setIsContractPrModalOpen] = useState(false);
+    const [contractEditingPRId, setContractEditingPRId] = useState(null);
+    const [contractHeaderData, setContractHeaderData] = useState({
+      prNo: "",
+      subCode: "",
+      requestDate: new Date().toISOString().split("T")[0],
+      requestor: "",
+      requestorEmail: "",
+      costCode: "",
+      selectedBudgetId: "",
+      selectedSubItemId: "",
+      urgency: "Normal",
+      purchaseType: "",
+      deliveryLocation: "",
+      attachment: null as File | null,
+      attachmentUrl: "" as string | undefined,
+      attachmentName: "" as string | undefined,
+    });
+    const [contractLineItems, setContractLineItems] = useState([]);
+    const [isContractCostCodeModalOpen, setIsContractCostCodeModalOpen] = useState(false);
+    const [contractBudgetSearchText, setContractBudgetSearchText] = useState("");
+    const [selectedSubItemsForContractPR, setSelectedSubItemsForContractPR] = useState([]);
 
     const projectBudgets = budgets.filter(
       (b) => b.projectId === selectedProjectId
@@ -321,7 +362,7 @@ const PRView = React.memo(() => {
             .reduce((sum, p) => {
               const matchItem = p.items?.find(i =>
                 (selectedSub.id && i.subItemId === selectedSub.id) ||
-                (i.description?.trim() === selectedSub.description?.trim())
+                (!i.subItemId && i.description?.trim() === selectedSub.description?.trim())
               );
               return sum + (matchItem ? (matchItem.quantity * matchItem.price) : 0);
             }, 0);
@@ -537,6 +578,159 @@ const PRView = React.memo(() => {
       setIsCostCodeModalOpen(false);
     };
 
+    // ─── Contract PR helpers ───────────────────────────────────────────────────
+    const updateContractLineItem = (id, field, value) => {
+      setContractLineItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
+    };
+    const removeContractLineItem = (id) => {
+      setContractLineItems(prev => prev.filter(item => item.id !== id));
+    };
+    const addNewContractLineItem = () => {
+      setContractLineItems(prev => [...prev, {
+        id: crypto.randomUUID(),
+        description: "",
+        unit: "Job",
+        quantity: 0,
+        price: 0,
+        note: "",
+        subItemId: null,
+        budgetCode: "",
+        budgetId: null,
+      }]);
+    };
+
+    const handleToggleSubItemContract = (sub, budgetCode, budgetId) => {
+      setSelectedSubItemsForContractPR((prev) => {
+        const withBudgetId = { ...sub, parentCode: budgetCode, parentBudgetId: budgetId || null };
+        const exists = prev.find(i => i.id === sub.id);
+        if (exists) return prev.filter(i => i.id !== sub.id);
+        return [...prev, withBudgetId];
+      });
+    };
+
+    const handleAddSelectedSubItemsForContract = () => {
+      if (selectedSubItemsForContractPR.length === 0) return;
+      const first = selectedSubItemsForContractPR[0];
+      const budgetCode = first.parentCode;
+      const budgetId = first.parentBudgetId || null;
+      const subItemId = first.id || "";
+      setContractHeaderData((prev) => ({
+        ...prev,
+        costCode: budgetCode,
+        selectedBudgetId: budgetId || "",
+        selectedSubItemId: subItemId,
+      }));
+      const newItems = selectedSubItemsForContractPR.map((sub) => ({
+        id: crypto.randomUUID(),
+        subItemId: sub.id || null,
+        description: sub.description || "",
+        quantity: 0,
+        unit: sub.unit || "Job",
+        price: 0,
+        note: "",
+        budgetCode: sub.parentCode || "",
+        budgetId: sub.parentBudgetId || null,
+      }));
+      setContractLineItems((prev) => [...prev, ...newItems]);
+      setSelectedSubItemsForContractPR([]);
+      setIsContractCostCodeModalOpen(false);
+    };
+
+    const handleSaveContractPR = async () => {
+      if (
+        !contractHeaderData.prNo ||
+        !contractHeaderData.costCode ||
+        !contractHeaderData.requestDate ||
+        !contractHeaderData.purchaseType ||
+        !contractHeaderData.deliveryLocation ||
+        contractLineItems.length === 0
+      ) {
+        return showAlert("ข้อมูลไม่ครบ", "กรุณากรอกข้อมูลให้ครบถ้วน ทุกช่อง รวมถึงรายการสินค้าอย่างน้อย 1 รายการ", "warning");
+      }
+      const budgetItem = contractHeaderData.selectedBudgetId
+        ? budgets.find((b) => b.id === contractHeaderData.selectedBudgetId && b.projectId === selectedProjectId)
+        : budgets.find((b) => b.code === contractHeaderData.costCode && b.projectId === selectedProjectId);
+      if (!budgetItem)
+        return showAlert("ไม่พบ Cost Code", "กรุณาเลือก Cost Code ที่ถูกต้อง", "error");
+      if (budgetItem.status !== "Approved")
+        return showAlert("Budget ไม่ได้รับการ Approve", `Cost Code ${budgetItem.code} ยังไม่ได้รับการ Approve`, "error");
+
+      const contractTotal = contractLineItems.reduce((sum, item) => sum + (Number(item.quantity) || 0) * (Number(item.price) || 0), 0);
+      const setProgress = (pct: number, step: string) => setSavePrProgress({ show: true, pct, step });
+      setProgress(5, "เตรียมข้อมูล...");
+
+      let attachmentUrl = contractHeaderData.attachmentUrl || null;
+      let attachmentName = contractHeaderData.attachmentName || null;
+      setProgress(10, "อัปโหลดไฟล์แนบ...");
+      if (contractHeaderData.attachment && typeof contractHeaderData.attachment === "object" && (contractHeaderData.attachment as File).name) {
+        try {
+          const file = contractHeaderData.attachment as File;
+          const res = await uploadAttachment(file, {
+            type: "pr",
+            projectId: selectedProjectId || undefined,
+            prNo: contractHeaderData.prNo || undefined,
+          });
+          attachmentUrl = res.url;
+          attachmentName = res.name;
+        } catch (err) {
+          setSavePrProgress({ show: false, pct: 0, step: "" });
+          return showAlert("อัปโหลดไฟล์แนบไม่สำเร็จ", err?.message || "ไม่สามารถอัปโหลดไฟล์ได้", "error");
+        }
+      }
+
+      const { attachment: _omitFile, ...headerWithoutFile } = contractHeaderData;
+      const prPayload = {
+        ...headerWithoutFile,
+        attachmentUrl: attachmentUrl || null,
+        attachmentName: attachmentName || null,
+        budgetId: contractHeaderData.selectedBudgetId || null,
+        projectId: selectedProjectId,
+        items: contractLineItems,
+        totalAmount: contractTotal,
+        status: "Pending CM",
+        prType: "contract",
+      };
+
+      let pdfUrl: string | undefined;
+      try {
+        const project = projects.find((p: any) => p.id === selectedProjectId) || null;
+        const safePRNo = (contractHeaderData.prNo || "unknown").replace(/[^a-zA-Z0-9\-_]/g, "_");
+        const safeProjId = selectedProjectId || "unknown";
+        setProgress(20, "กำลังสร้าง PDF...");
+        let bytes = await generatePRPdfBytes(prPayload, { projectName: project?.name || "", budgetDesc: "" });
+        setProgress(70, "อัปโหลด PDF ขึ้น Cloud...");
+        const pdfPath = `generated/prs/${safeProjId}/${safePRNo}.pdf`;
+        const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("PDF timeout")), 15000));
+        pdfUrl = await Promise.race([
+          (async () => {
+            await deleteGeneratedPdf(pdfPath);
+            return await uploadGeneratedPdf(bytes, pdfPath);
+          })(),
+          timeout,
+        ]);
+        setProgress(85, "บันทึกข้อมูล...");
+        await addData("prs", { ...prPayload, pdfUrl, pdfPath, pdfUpdatedAt: new Date().toISOString() });
+        setProgress(100, "บันทึกสำเร็จ!");
+        setTimeout(() => {
+          setSavePrProgress({ show: false, pct: 0, step: "" });
+          setIsContractPrModalOpen(false);
+          setIsFullScreenModalOpen(false);
+        }, 600);
+        showAlert("บันทึก PR จ้าง/เหมา สำเร็จ", `PR No. ${contractHeaderData.prNo} ถูกสร้างแล้ว`, "success");
+      } catch (e) {
+        setSavePrProgress({ show: false, pct: 0, step: "" });
+        console.warn("[Contract PR] Save failed:", e);
+        try {
+          await addData("prs", prPayload);
+          setIsContractPrModalOpen(false);
+          setIsFullScreenModalOpen(false);
+          showAlert("บันทึก PR จ้าง/เหมา สำเร็จ", `PR No. ${contractHeaderData.prNo} ถูกสร้างแล้ว (ไม่มี PDF)`, "success");
+        } catch (e2) {
+          showAlert("บันทึกไม่สำเร็จ", e2?.message || "เกิดข้อผิดพลาด", "error");
+        }
+      }
+    };
+
     const handleAction = async (id, action) => {
       const pr = prs.find((p) => p.id === id);
       if (!pr) return;
@@ -547,11 +741,15 @@ const PRView = React.memo(() => {
         return;
       }
       let newStatus = pr.status;
-      const isCMApprove = pr.status === "Pending CM" && (userRole === "CM" || userRole === "Administrator");
-      const isPMApprove = pr.status === "Pending PM" && (userRole === "PM" || userRole === "Administrator");
+      const isCMApprove = pr.status === "Pending CM" && (userRoles.includes("CM") || userRoles.includes("Administrator"));
+      const isPMApprove = pr.status === "Pending PM" && (userRoles.includes("PM") || userRoles.includes("Administrator"));
+      const isGMApprove = pr.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator"));
+      const isMDApprove = pr.status === "Pending MD" && (userRoles.includes("MD") || userRoles.includes("Administrator"));
 
       if (isCMApprove) newStatus = "Pending PM";
       else if (isPMApprove) newStatus = "Approved";
+      else if (isGMApprove) newStatus = "Pending MD";
+      else if (isMDApprove) newStatus = "Approved";
 
       if (newStatus !== pr.status) {
         const emailField = isCMApprove ? "cmApproverEmail" : isPMApprove ? "pmApproverEmail" : null;
@@ -620,6 +818,180 @@ const PRView = React.memo(() => {
       }
     };
 
+    const groupPrsByPurchaseType = (list) =>
+      list.reduce((groups, pr) => {
+        const type = pr.purchaseType || "Uncategorized";
+        if (!groups[type]) groups[type] = [];
+        groups[type].push(pr);
+        return groups;
+      }, {});
+
+    const isContractType = (pr) => CONTRACT_PR_TYPES.includes(pr.purchaseType);
+    const matchesFilterMode = (pr) =>
+      filterMode === "contract" ? isContractType(pr) : !isContractType(pr);
+
+    /** ตารางบน C: ทุกสถานะยกเว้น Closed PR, Closed PR Auto และ PO Issued */
+    const groupedPrEntriesMain = useMemo(() => {
+      const list = prs.filter(
+        (pr) =>
+          pr.projectId === selectedProjectId &&
+          pr.status !== "Closed PR" &&
+          pr.status !== "Closed PR Auto" &&
+          pr.status !== "PO Issued" &&
+          matchesFilterMode(pr)
+      );
+      return Object.entries(groupPrsByPurchaseType(list));
+    }, [prs, selectedProjectId, filterMode]);
+
+    /** ตารางล่าง C: เฉพาะ PO Issued — รวมทุกประเภท เรียงตามเลข PR */
+    const flatPoIssuedPrs = useMemo(() => {
+      const list = prs.filter(
+        (pr) => pr.projectId === selectedProjectId && pr.status === "PO Issued" && matchesFilterMode(pr)
+      );
+      return [...list].sort((a, b) =>
+        String(a.prNo || a.id || "").localeCompare(String(b.prNo || b.id || ""), undefined, { numeric: true, sensitivity: "base" })
+      );
+    }, [prs, selectedProjectId, filterMode]);
+
+    const showPoIssuedPrTable = flatPoIssuedPrs.length > 0;
+
+    const dataRowClassForVariant = (variant) =>
+      variant === "poIssued"
+        ? "hover:bg-teal-50/60 border-b cursor-pointer transition-colors odd:bg-white even:bg-teal-50/25"
+        : "hover:bg-blue-50 border-b cursor-pointer transition-colors odd:bg-white even:bg-slate-50";
+
+    const renderPrDataRows = (groupPrs, variant) => {
+      const dataRowClass = dataRowClassForVariant(variant);
+      return groupPrs.map((pr) => (
+        <React.Fragment key={pr.id}>
+          <tr className={dataRowClass} onClick={() => setViewingPR(pr)}>
+            <td className="py-1 px-3 font-medium" title={pr.prNo}><span className="cell-text">{pr.prNo}</span></td>
+            <td className="py-1 px-3" title={pr.requestDate}><span className="cell-text">{pr.requestDate}</span></td>
+            <td className="py-1 px-3">
+              <span className="bg-gray-100 px-2 py-0.5 rounded text-xs border border-gray-200 cell-text" title={pr.costCode}>
+                {pr.costCode}
+              </span>
+            </td>
+            <td
+              className="py-1 px-3 text-xs text-slate-500"
+              title={(() => {
+                const itemDescs = pr.items && pr.items.length > 0
+                  ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
+                  : "-";
+                return pr.rejectReason ? `${itemDescs} | ปฏิเสธ: ${pr.rejectReason}` : itemDescs;
+              })()}
+            >
+              <span className="cell-text">
+                {pr.items && pr.items.length > 0
+                  ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
+                  : "-"}
+              </span>
+            </td>
+            <td className="py-1 px-3" title={pr.purchaseType}><span className="cell-text">{getPurchaseTypeDisplayLabel(pr.purchaseType)}</span></td>
+            <td className="py-1 px-3" title={pr.requestor}><span className="cell-text">{pr.requestor}</span></td>
+            <td className="py-1 px-3">
+              <span className="font-bold text-slate-700">
+                {pr.items?.length || 0} รายการ
+              </span>
+            </td>
+            <td className="py-1 px-3 text-right font-semibold">
+              {formatCurrency(pr.totalAmount || pr.amount)}
+            </td>
+            <td className="py-1 px-3 text-center">
+              <Badge status={pr.status} />
+            </td>
+            <td
+              className="py-1 px-3 text-right flex justify-end gap-1"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {canUseFunction("pr", "approve") && (userRoles.includes("CM") || userRoles.includes("Administrator")) && pr.status === "Pending CM" && (
+                <>
+                  <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>CM Approve</Button>
+                  <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>
+                </>
+              )}
+              {canUseFunction("pr", "approve") && (userRoles.includes("PM") || userRoles.includes("Administrator")) && pr.status === "Pending PM" && (
+                <>
+                  <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>PM Approve</Button>
+                  <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>
+                </>
+              )}
+              {canUseFunction("pr", "approve") && (userRoles.includes("GM") || userRoles.includes("Administrator")) && pr.status === "Pending GM" && (
+                <>
+                  <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>GM Approve</Button>
+                  <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>
+                </>
+              )}
+              {canUseFunction("pr", "approve") && (userRoles.includes("MD") || userRoles.includes("Administrator")) && pr.status === "Pending MD" && (
+                <>
+                  <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>MD Approve</Button>
+                  <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>
+                </>
+              )}
+              {canUseFunction("pr", "editBudget") && (userRoles.includes("Procurement") || userRoles.includes("PCM") || userRoles.includes("Administrator")) && pr.status === "Approved" && (
+                <button
+                  className="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition-colors whitespace-nowrap"
+                  title="ส่งคืนให้แก้ไข Budget"
+                  onClick={() => {
+                    setSelectedPrForEditBudget(pr);
+                    setEditBudgetReason("");
+                    setIsEditBudgetModalOpen(true);
+                  }}
+                >
+                  Edit Budget
+                </button>
+              )}
+              {canUseFunction("pr", "edit") && (pr.status === "Rejected" || pr.status === "Edit Budget") && (
+                <button
+                  className="text-blue-500 hover:bg-blue-50 p-1.5 rounded-full transition-colors"
+                  title="แก้ไข PR"
+                  onClick={() => handleEditClick(pr)}
+                >
+                  <Edit size={14} />
+                </button>
+              )}
+              {canUseFunction("pr", "delete") && (
+                <button
+                  className="text-red-500 hover:bg-red-50 p-1.5 rounded-full transition-colors"
+                  onClick={() => {
+                    openConfirm(
+                      "ยืนยันการลบ",
+                      "คุณต้องการลบรายการ PR นี้ใช่หรือไม่?",
+                      async () => {
+                        if (pr.pdfUrl) {
+                          const safePRNo = (pr.prNo || pr.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
+                          const safeProjId = pr.projectId || "unknown";
+                          await deleteGeneratedPdf(`generated/prs/${safeProjId}/${safePRNo}.pdf`);
+                        }
+                        await deleteData("prs", pr.id);
+                      },
+                      "danger"
+                    );
+                  }}
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
+            </td>
+          </tr>
+        </React.Fragment>
+      ));
+    };
+
+    const renderPrGroupedTableBody = (entries) => {
+      const groupRowClass = "bg-slate-100 border-b border-slate-200";
+      return entries.map(([type, groupPrs]) => (
+        <React.Fragment key={`main-${type}`}>
+          <tr className={groupRowClass}>
+            <td colSpan={10} className="py-2 px-3 font-bold text-slate-700">
+              {type} ({groupPrs.length})
+            </td>
+          </tr>
+          {renderPrDataRows(groupPrs, "main")}
+        </React.Fragment>
+      ));
+    };
+
     const groupedBudgets = useMemo(() => {
       const groups = {};
       const ALLOWED_CATS = ["001", "002", "003", "004", "005", "006", "007", "008", "009"];
@@ -650,6 +1022,39 @@ const PRView = React.memo(() => {
       });
       return out;
     }, [groupedBudgets, budgetSearchText]);
+
+    // ประเภทการขอซื้อสำหรับ PR จ้าง/เหมา
+    const CONTRACT_PURCHASE_TYPES = ["จ้างเหมา > DL", "ค่าแรง > DC"];
+
+    // งบประมาณสำหรับ Contract PR (หมวด 004 และ 006 เท่านั้น)
+    const groupedBudgetsContract = useMemo(() => {
+      const groups = {};
+      const CONTRACT_CATS = ["004", "006"];
+      availableBudgets.forEach((b) => {
+        const hasApprovedSubs = b.subItems && b.subItems.some(s => s.status === "Approved");
+        if (!hasApprovedSubs) return;
+        const cat = b.code.substring(0, 3);
+        if (!CONTRACT_CATS.includes(cat)) return;
+        if (!groups[cat]) groups[cat] = [];
+        groups[cat].push(b);
+      });
+      return groups;
+    }, [availableBudgets]);
+
+    const groupedBudgetsContractFiltered = useMemo(() => {
+      const q = (contractBudgetSearchText || "").trim().toLowerCase();
+      if (!q) return groupedBudgetsContract;
+      const out = {};
+      Object.keys(groupedBudgetsContract).forEach((cat) => {
+        const filtered = groupedBudgetsContract[cat].filter((b) => {
+          const subDesc = (b.subItems || []).map((s) => s.description || "").join(" ");
+          const haystack = [b.code, b.description || "", subDesc].join(" ").toLowerCase();
+          return haystack.includes(q);
+        });
+        if (filtered.length > 0) out[cat] = filtered;
+      });
+      return out;
+    }, [groupedBudgetsContract, contractBudgetSearchText]);
 
     return (
       <div className="space-y-4">
@@ -687,191 +1092,101 @@ const PRView = React.memo(() => {
           document.body
         )}
 
-        <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-          <h2 className="text-xl font-bold text-slate-800">
-            C. Purchase Request (PR)
+        <div className="w-full min-w-0 flex flex-col md:flex-row justify-between items-center gap-4">
+          <h2 className={`text-xl font-bold ${filterMode === "contract" ? "text-purple-800" : "text-slate-800"}`}>
+            {filterMode === "contract" ? "C. Purchase Request — จ้าง/เหมา" : "C. Purchase Request (PR)"}
           </h2>
-          <Button
-            onClick={() => {
-              setIsModalOpen(true);
-              setIsFullScreenModalOpen(true);
-              setEditingPRId(null);
-              setHeaderData({
-                prNo: "",
-                requestDate: new Date().toISOString().split("T")[0],
-                requestor: userData ? `${userData.firstName || ""} ${userData.lastName || ""}`.trim() : "",
-                requestorEmail: userData?.email || "",
-                costCode: "",
-                selectedBudgetId: "",
-                selectedSubItemId: "",
-                urgency: "Normal",
-                purchaseType: "",
-                deliveryLocation: "",
-                attachment: null,
-                attachmentUrl: "",
-                attachmentName: "",
-              });
-              setLineItems([]);
-            }}
-          >
-            <Plus size={14} /> สร้าง PR ใหม่
-          </Button>
+          {canUseFunction("pr", "create") && (
+            <Button
+              onClick={() => {
+                if (filterMode === "contract") {
+                  // เปิด Contract PR Modal โดยตรง
+                  setIsContractPrModalOpen(true);
+                  setIsFullScreenModalOpen(true);
+                  setContractEditingPRId(null);
+                  setContractHeaderData({
+                    prNo: "",
+                    subCode: "",
+                    requestDate: new Date().toISOString().split("T")[0],
+                    requestor: userData ? `${userData.firstName || ""} ${userData.lastName || ""}`.trim() : "",
+                    requestorEmail: userData?.email || "",
+                    costCode: "",
+                    selectedBudgetId: "",
+                    selectedSubItemId: "",
+                    urgency: "Normal",
+                    purchaseType: "",
+                    deliveryLocation: "",
+                    attachment: null,
+                    attachmentUrl: "",
+                    attachmentName: "",
+                  });
+                  setContractLineItems([]);
+                } else {
+                  setIsPrTypeModalOpen(true);
+                }
+              }}
+              className={filterMode === "contract" ? "bg-purple-600 hover:bg-purple-700 text-white" : ""}
+            >
+              <Plus size={14} /> {filterMode === "contract" ? "สร้าง PR จ้าง/เหมา" : "สร้าง PR ใหม่"}
+            </Button>
+          )}
         </div>
-        <Card>
-          <table className="w-full text-left text-xs text-slate-600">
+        <Card className="overflow-hidden w-full min-w-0">
+          <div ref={prTableRef} className="w-full min-w-0">
+          <table className="w-full text-left text-xs text-slate-600 table-fixed">
             <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
               <tr>
-                <ResizableTh tableId="pr" colKey="prNo" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.pr?.prNo}>PR No.</ResizableTh>
-                <ResizableTh tableId="pr" colKey="date" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.pr?.date}>Date</ResizableTh>
-                <ResizableTh tableId="pr" colKey="costCode" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.pr?.costCode}>Cost Code</ResizableTh>
-                <ResizableTh tableId="pr" colKey="description" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.pr?.description}>Description</ResizableTh>
-                <ResizableTh tableId="pr" colKey="type" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.pr?.type}>Type</ResizableTh>
-                <ResizableTh tableId="pr" colKey="requestor" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.pr?.requestor}>Requestor</ResizableTh>
-                <ResizableTh tableId="pr" colKey="items" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.pr?.items}>Items</ResizableTh>
-                <ResizableTh tableId="pr" colKey="amount" className="py-1 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.pr?.amount}>Amount</ResizableTh>
-                <ResizableTh tableId="pr" colKey="status" className="py-1 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.pr?.status}>Status</ResizableTh>
-                <th className="py-1 px-3 text-right">Actions</th>
+                <ResizableTh tableId="pr" colKey="prNo" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.prNo}>PR No.</ResizableTh>
+                <ResizableTh tableId="pr" colKey="date" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.date}>Date</ResizableTh>
+                <ResizableTh tableId="pr" colKey="costCode" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.costCode}>Cost Code</ResizableTh>
+                <ResizableTh tableId="pr" colKey="description" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.description}>Description</ResizableTh>
+                <ResizableTh tableId="pr" colKey="type" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.type}>Type</ResizableTh>
+                <ResizableTh tableId="pr" colKey="requestor" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.requestor}>Requestor</ResizableTh>
+                <ResizableTh tableId="pr" colKey="items" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.items}>Items</ResizableTh>
+                <ResizableTh tableId="pr" colKey="amount" className="py-1 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.amount}>Amount</ResizableTh>
+                <ResizableTh tableId="pr" colKey="status" className="py-1 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.status}>Status</ResizableTh>
+                <th className="py-1 px-3 text-right" style={{ width: prTableLayout.scaled.actions }}>Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {Object.entries(
-                prs
-                  .filter((pr) => pr.projectId === selectedProjectId)
-                  .reduce((groups, pr) => {
-                    const type = pr.purchaseType || "Uncategorized";
-                    if (!groups[type]) groups[type] = [];
-                    groups[type].push(pr);
-                    return groups;
-                  }, {})
-              ).map(([type, groupPrs]) => (
-                <React.Fragment key={type}>
-                  <tr className="bg-slate-100 border-b border-slate-200">
-                    <td colSpan={10} className="py-2 px-3 font-bold text-slate-700">
-                      {type} ({groupPrs.length})
-                    </td>
-                  </tr>
-                  {groupPrs.map((pr) => (
-                    <React.Fragment key={pr.id}>
-                      <tr
-                        className="hover:bg-blue-50 border-b cursor-pointer transition-colors odd:bg-white even:bg-slate-50"
-                        onClick={() => setViewingPR(pr)}
-                      >
-                        <td className="py-1 px-3 font-medium" title={pr.prNo}><span className="cell-text">{pr.prNo}</span></td>
-                        <td className="py-1 px-3" title={pr.requestDate}><span className="cell-text">{pr.requestDate}</span></td>
-                        <td className="py-1 px-3">
-                          <span className="bg-gray-100 px-2 py-0.5 rounded text-xs border border-gray-200 cell-text" title={pr.costCode}>
-                            {pr.costCode}
-                          </span>
-                        </td>
-                        <td
-                          className="py-1 px-3 text-xs text-slate-500"
-                          title={(() => {
-                            const itemDescs = pr.items && pr.items.length > 0
-                              ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
-                              : "-";
-                            return pr.rejectReason ? `${itemDescs} | ปฏิเสธ: ${pr.rejectReason}` : itemDescs;
-                          })()}
-                        >
-                          <span className="cell-text">
-                            {pr.items && pr.items.length > 0
-                              ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
-                              : "-"}
-                          </span>
-                        </td>
-                        <td className="py-1 px-3" title={pr.purchaseType}><span className="cell-text">{getPurchaseTypeDisplayLabel(pr.purchaseType)}</span></td>
-                        <td className="py-1 px-3" title={pr.requestor}><span className="cell-text">{pr.requestor}</span></td>
-                        <td className="py-1 px-3">
-                          <span className="font-bold text-slate-700">
-                            {pr.items?.length || 0} รายการ
-                          </span>
-                        </td>
-                        <td className="py-1 px-3 text-right font-semibold">
-                          {formatCurrency(pr.totalAmount || pr.amount)}
-                        </td>
-                        <td className="py-1 px-3 text-center">
-                          <Badge status={pr.status} />
-                        </td>
-                        <td
-                          className="py-1 px-3 text-right flex justify-end gap-1"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {(userRole === "CM" || userRole === "Administrator") && pr.status === "Pending CM" && (
-                            <>
-                              <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>CM Approve</Button>
-                              <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>
-                            </>
-                          )}
-                          {(userRole === "PM" || userRole === "Administrator") && pr.status === "Pending PM" && (
-                            <>
-                              <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>PM Approve</Button>
-                              <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>
-                            </>
-                          )}
-                          {(userRole === "GM" || userRole === "Administrator") && pr.status === "Pending GM" && (
-                            <>
-                              <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>GM Approve</Button>
-                              <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>
-                            </>
-                          )}
-                          {(userRole === "MD" || userRole === "Administrator") && pr.status === "Pending MD" && (
-                            <>
-                              <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>MD Approve</Button>
-                              <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>
-                            </>
-                          )}
-                          {/* ปุ่ม Edit Budget: เฉพาะ Procurement/PCM/Admin เมื่อ PR Approved */}
-                          {(userRole === "Procurement" || userRole === "PCM" || userRole === "Administrator") && pr.status === "Approved" && (
-                            <button
-                              className="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition-colors whitespace-nowrap"
-                              title="ส่งคืนให้แก้ไข Budget"
-                              onClick={() => {
-                                setSelectedPrForEditBudget(pr);
-                                setEditBudgetReason("");
-                                setIsEditBudgetModalOpen(true);
-                              }}
-                            >
-                              Edit Budget
-                            </button>
-                          )}
-                          {/* ปุ่มเปิดแก้ไข PR เมื่อสถานะ Rejected หรือ Edit Budget */}
-                          {(pr.status === "Rejected" || pr.status === "Edit Budget") && (
-                            <button
-                              className="text-blue-500 hover:bg-blue-50 p-1.5 rounded-full transition-colors"
-                              title="แก้ไข PR"
-                              onClick={() => handleEditClick(pr)}
-                            >
-                              <Edit size={14} />
-                            </button>
-                          )}
-                          <button
-                            className="text-red-500 hover:bg-red-50 p-1.5 rounded-full transition-colors"
-                            onClick={() => {
-                              openConfirm(
-                                "ยืนยันการลบ",
-                                "คุณต้องการลบรายการ PR นี้ใช่หรือไม่?",
-                                async () => {
-                                  if (pr.pdfUrl) {
-                                    const safePRNo = (pr.prNo || pr.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
-                                    const safeProjId = pr.projectId || "unknown";
-                                    await deleteGeneratedPdf(`generated/prs/${safeProjId}/${safePRNo}.pdf`);
-                                  }
-                                  await deleteData("prs", pr.id);
-                                },
-                                "danger"
-                              );
-                            }}
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </td>
-                      </tr>
-                    </React.Fragment>
-                  ))}
-                </React.Fragment>
-              ))}
+              {renderPrGroupedTableBody(groupedPrEntriesMain)}
             </tbody>
           </table>
+          </div>
         </Card>
+
+        {showPoIssuedPrTable && (
+          <Card className="overflow-hidden w-full min-w-0 border-t-4 border-t-teal-500">
+            <div className="px-3 py-2 bg-teal-50 border-b border-teal-200 flex items-center gap-2">
+              <ClipboardList size={15} className="text-teal-700" />
+              <h3 className="text-xs font-bold text-teal-900 uppercase tracking-wide">
+                PR — สถานะ PO Issued (เรียงตามเลข PR · ทุกประเภทรวมกัน)
+              </h3>
+            </div>
+            <div className="w-full min-w-0">
+              <table className="w-full text-left text-xs text-slate-600 table-fixed">
+                <thead className="bg-teal-100/60 text-slate-900 uppercase font-semibold">
+                  <tr>
+                    <ResizableTh tableId="pr" colKey="prNo" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.prNo}>PR No.</ResizableTh>
+                    <ResizableTh tableId="pr" colKey="date" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.date}>Date</ResizableTh>
+                    <ResizableTh tableId="pr" colKey="costCode" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.costCode}>Cost Code</ResizableTh>
+                    <ResizableTh tableId="pr" colKey="description" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.description}>Description</ResizableTh>
+                    <ResizableTh tableId="pr" colKey="type" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.type}>Type</ResizableTh>
+                    <ResizableTh tableId="pr" colKey="requestor" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.requestor}>Requestor</ResizableTh>
+                    <ResizableTh tableId="pr" colKey="items" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.items}>Items</ResizableTh>
+                    <ResizableTh tableId="pr" colKey="amount" className="py-1 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.amount}>Amount</ResizableTh>
+                    <ResizableTh tableId="pr" colKey="status" className="py-1 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.status}>Status</ResizableTh>
+                    <th className="py-1 px-3 text-right" style={{ width: prTableLayout.scaled.actions }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {renderPrDataRows(flatPoIssuedPrs, "poIssued")}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )}
+
         {/* PR View Modal — ดูข้อมูล + Approve/Reject */}
         {viewingPR && (() => {
           const prLive = prs.find((p: any) => p.id === viewingPR.id) || viewingPR;
@@ -1034,25 +1349,25 @@ const PRView = React.memo(() => {
                   <XCircle size={15} /> ปิด
                 </button>
                 <div className="flex items-center gap-2">
-                  {(userRole === "CM" || userRole === "Administrator") && prLive.status === "Pending CM" && (
+                  {(userRoles.includes("CM") || userRoles.includes("Administrator")) && prLive.status === "Pending CM" && (
                     <>
                       <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setViewingPR(null); handleAction(prLive.id, "reject"); }}>Reject</Button>
                       <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(prLive.id, "approve"); setViewingPR(null); }}>CM Approve</Button>
                     </>
                   )}
-                  {(userRole === "PM" || userRole === "Administrator") && prLive.status === "Pending PM" && (
+                  {(userRoles.includes("PM") || userRoles.includes("Administrator")) && prLive.status === "Pending PM" && (
                     <>
                       <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setViewingPR(null); handleAction(prLive.id, "reject"); }}>Reject</Button>
                       <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(prLive.id, "approve"); setViewingPR(null); }}>PM Approve</Button>
                     </>
                   )}
-                  {(userRole === "GM" || userRole === "Administrator") && prLive.status === "Pending GM" && (
+                  {(userRoles.includes("GM") || userRoles.includes("Administrator")) && prLive.status === "Pending GM" && (
                     <>
                       <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setViewingPR(null); handleAction(prLive.id, "reject"); }}>Reject</Button>
                       <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(prLive.id, "approve"); setViewingPR(null); }}>GM Approve</Button>
                     </>
                   )}
-                  {(userRole === "MD" || userRole === "Administrator") && prLive.status === "Pending MD" && (
+                  {(userRoles.includes("MD") || userRoles.includes("Administrator")) && prLive.status === "Pending MD" && (
                     <>
                       <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setViewingPR(null); handleAction(prLive.id, "reject"); }}>Reject</Button>
                       <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(prLive.id, "approve"); setViewingPR(null); }}>MD Approve</Button>
@@ -1450,6 +1765,35 @@ const PRView = React.memo(() => {
                             <a href={headerData.attachmentUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-600 hover:underline ml-1" onClick={(e) => e.stopPropagation()}>เปิด</a>
                           )}
                         </div>
+                        {(() => {
+                          const selBudget = availableBudgets.find(b => b.id === headerData.selectedBudgetId);
+                          const selSubItem = selBudget?.subItems?.find((si: any) => si.id === headerData.selectedSubItemId);
+                          const budgetAtts: { url: string; name: string }[] = selBudget?.attachments || [];
+                          const subItemAtts: { url: string; name: string }[] = selSubItem?.attachments || [];
+                          const allAtts = [...budgetAtts, ...subItemAtts];
+                          if (allAtts.length === 0) return null;
+                          return (
+                            <div className="mt-2">
+                              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                                <Paperclip size={10} /> ไฟล์แนบจากงบประมาณที่เลือก
+                              </p>
+                              <div className="flex flex-col gap-1">
+                                {allAtts.map((att, idx) => (
+                                  <a
+                                    key={idx}
+                                    href={att.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center gap-2 text-xs text-blue-600 hover:text-blue-800 hover:underline bg-blue-50 border border-blue-100 rounded px-3 py-1.5"
+                                  >
+                                    <Paperclip size={11} className="shrink-0 text-blue-400" />
+                                    <span className="truncate">{att.name || `ไฟล์แนบ ${idx + 1}`}</span>
+                                  </a>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   </div>
@@ -1515,7 +1859,7 @@ const PRView = React.memo(() => {
                                 .reduce((sum, p) => {
                                   const matchItem = p.items?.find(i =>
                                     (sub.id && i.subItemId === sub.id) ||
-                                    (!i.subItemId && i.description === sub.description)
+                                    (!i.subItemId && i.description?.trim() === sub.description?.trim())
                                   );
                                   return sum + (matchItem ? (matchItem.quantity * matchItem.price) : 0);
                                 }, 0);
@@ -1883,7 +2227,7 @@ const PRView = React.memo(() => {
                                       .reduce((sum, p) => {
                                         const matchItem = p.items?.find(i =>
                                           (sub.id && i.subItemId === sub.id) ||
-                                          (!i.subItemId && i.description === sub.description)
+                                          (!i.subItemId && i.description?.trim() === sub.description?.trim())
                                         );
                                         return sum + (matchItem ? (matchItem.quantity * matchItem.price) : 0);
                                       }, 0);
@@ -1943,6 +2287,701 @@ const PRView = React.memo(() => {
                   {selectedSubItemsForPR.length > 0 && (
                     <Button onClick={handleAddSelectedSubItems}>
                       ยืนยันการเลือก
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {/* ── PR Type Selection Modal ── */}
+        <AnimatePresence>
+          {isPrTypeModalOpen && (
+            <motion.div
+              className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[9999] p-4"
+              initial="hidden" animate="visible" exit="hidden"
+              variants={modalOverlayVariants} transition={overlayTransition}
+            >
+              <motion.div
+                className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-7"
+                initial="hidden" animate="visible" exit="hidden"
+                variants={modalContentVariants} transition={modalTransition}
+              >
+                <div className="flex justify-between items-start mb-5">
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-800">เลือกประเภท PR</h3>
+                    <p className="text-sm text-slate-500 mt-1">กรุณาเลือกประเภทใบขอซื้อที่ต้องการสร้าง</p>
+                  </div>
+                  <button onClick={() => setIsPrTypeModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+                    <XCircle size={22} />
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <button
+                    onClick={() => {
+                      setIsPrTypeModalOpen(false);
+                      setIsModalOpen(true);
+                      setIsFullScreenModalOpen(true);
+                      setEditingPRId(null);
+                      setHeaderData({
+                        prNo: "",
+                        requestDate: new Date().toISOString().split("T")[0],
+                        requestor: userData ? `${userData.firstName || ""} ${userData.lastName || ""}`.trim() : "",
+                        requestorEmail: userData?.email || "",
+                        costCode: "",
+                        selectedBudgetId: "",
+                        selectedSubItemId: "",
+                        urgency: "Normal",
+                        purchaseType: "",
+                        deliveryLocation: "",
+                        attachment: null,
+                        attachmentUrl: "",
+                        attachmentName: "",
+                      });
+                      setLineItems([]);
+                    }}
+                    className="flex flex-col items-center gap-3 p-6 rounded-xl border-2 border-slate-200 hover:border-slate-400 hover:bg-slate-50 transition-all duration-200 group"
+                  >
+                    <div className="w-14 h-14 bg-slate-100 group-hover:bg-slate-200 rounded-xl flex items-center justify-center transition-colors">
+                      <ClipboardList size={28} className="text-slate-600" />
+                    </div>
+                    <div className="text-center">
+                      <div className="text-sm font-bold text-slate-700">PR ปกติ</div>
+                      <div className="text-xs text-slate-500 mt-1">ใบขอซื้อทั่วไป</div>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setIsPrTypeModalOpen(false);
+                      setIsContractPrModalOpen(true);
+                      setIsFullScreenModalOpen(true);
+                      setContractEditingPRId(null);
+                      setContractHeaderData({
+                        prNo: "",
+                        subCode: "",
+                        requestDate: new Date().toISOString().split("T")[0],
+                        requestor: userData ? `${userData.firstName || ""} ${userData.lastName || ""}`.trim() : "",
+                        requestorEmail: userData?.email || "",
+                        costCode: "",
+                        selectedBudgetId: "",
+                        selectedSubItemId: "",
+                        urgency: "Normal",
+                        purchaseType: "",
+                        deliveryLocation: "",
+                        attachment: null,
+                        attachmentUrl: "",
+                        attachmentName: "",
+                      });
+                      setContractLineItems([]);
+                    }}
+                    className="flex flex-col items-center gap-3 p-6 rounded-xl border-2 border-purple-200 hover:border-purple-400 hover:bg-purple-50 transition-all duration-200 group"
+                  >
+                    <div className="w-14 h-14 bg-purple-100 group-hover:bg-purple-200 rounded-xl flex items-center justify-center transition-colors">
+                      <Briefcase size={28} className="text-purple-600" />
+                    </div>
+                    <div className="text-center">
+                      <div className="text-sm font-bold text-purple-700">PR จ้าง/เหมา</div>
+                      <div className="text-xs text-purple-500 mt-1">จ้างเหมา / ค่าแรง</div>
+                    </div>
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ── Contract PR Modal (จ้าง/เหมา) ── */}
+        {isContractPrModalOpen && (
+          <motion.div
+            className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[9999] p-4"
+            initial="hidden" animate="visible"
+            variants={modalOverlayVariants} transition={overlayTransition}
+          >
+            <motion.div
+              className="w-[92vw] max-w-[92vw] max-h-[94vh] flex flex-col overflow-hidden rounded-2xl border border-purple-200 bg-white shadow-2xl"
+              initial="hidden" animate="visible"
+              variants={modalContentVariants} transition={modalTransition}
+            >
+              {/* Header */}
+              <div className="px-6 py-4 border-b border-purple-300 bg-purple-700 shrink-0">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-purple-600 rounded-lg flex items-center justify-center">
+                      <Briefcase size={22} className="text-white" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold text-white tracking-wide">
+                        สร้างใบขอซื้อ (จ้าง/เหมา)
+                      </h3>
+                      <p className="text-purple-200 text-xs mt-0.5">กรอกข้อมูลสัญญาจ้างเหมา / ค่าแรง</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => { setIsContractPrModalOpen(false); setIsFullScreenModalOpen(false); }}
+                    className="text-purple-200 hover:text-white hover:bg-purple-600 p-2 rounded-lg transition-all"
+                  >
+                    <XCircle size={22} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Scrollable Content */}
+              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5 bg-slate-50/50">
+
+                {/* Section 1: ข้อมูลใบขอซื้อ */}
+                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                  <div className="flex items-center gap-2 px-4 py-2.5 bg-purple-50 border-b border-purple-200">
+                    <div className="w-6 h-6 bg-purple-600 rounded-md flex items-center justify-center">
+                      <FileText size={13} className="text-white" />
+                    </div>
+                    <span className="text-xs font-bold text-purple-700 tracking-wide uppercase">ข้อมูลใบขอซื้อ</span>
+                  </div>
+                  <div className="p-5">
+                    <div className="grid grid-cols-6 gap-x-4 gap-y-4">
+                      {/* PR No. */}
+                      <div className="col-span-2">
+                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
+                          <Hash size={11} /> PR No.
+                        </label>
+                        <input
+                          type="text"
+                          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-slate-50 text-slate-700 font-mono font-semibold"
+                          value={contractHeaderData.prNo}
+                          readOnly
+                          placeholder="(auto)"
+                        />
+                      </div>
+                      {/* ประเภทการขอซื้อ (เฉพาะ จ้างเหมา/ค่าแรง) */}
+                      <div className="col-span-2">
+                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
+                          <Tag size={11} /> ประเภทการขอซื้อ
+                        </label>
+                        <select
+                          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white hover:border-purple-300 focus:border-purple-400 focus:ring-1 focus:ring-purple-100 transition-all cursor-pointer"
+                          value={contractHeaderData.purchaseType}
+                          onChange={(e) => {
+                            const newType = e.target.value;
+                            const codes = PURCHASE_TYPE_CODES[newType] || [];
+                            const autoCode = codes.length === 1 ? codes[0] : "";
+                            const newSubCode = autoCode;
+                            const newPrNo = newSubCode ? generatePrNo(newSubCode, newType) : "";
+                            setContractHeaderData({
+                              ...contractHeaderData,
+                              purchaseType: newType,
+                              subCode: newSubCode,
+                              prNo: newPrNo,
+                            });
+                          }}
+                        >
+                          <option value="">-- เลือกประเภท --</option>
+                          {CONTRACT_PURCHASE_TYPES.map((t) => (
+                            <option key={t} value={t}>{getPurchaseTypeDisplayLabel(t)}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="col-span-2" />
+
+                      {/* ผู้ขอซื้อ */}
+                      <div className="col-span-2">
+                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
+                          <UserCircle size={11} /> ผู้ขอซื้อ
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            className="w-full border border-slate-200 rounded-lg px-3 py-2 pl-9 text-sm hover:border-slate-300 focus:border-purple-400 focus:ring-1 focus:ring-purple-100 transition-all"
+                            value={contractHeaderData.requestor}
+                            onChange={(e) => setContractHeaderData({ ...contractHeaderData, requestor: e.target.value })}
+                          />
+                          <UserCircle className="absolute left-3 top-2.5 text-slate-400" size={14} />
+                        </div>
+                      </div>
+                      {/* อีเมล */}
+                      <div className="col-span-2">
+                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
+                          <AtSign size={11} /> อีเมลผู้ขอซื้อ
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="email"
+                            className="w-full border border-slate-200 rounded-lg px-3 py-2 pl-9 text-sm hover:border-slate-300 focus:border-purple-400 focus:ring-1 focus:ring-purple-100 transition-all"
+                            value={contractHeaderData.requestorEmail}
+                            onChange={(e) => setContractHeaderData({ ...contractHeaderData, requestorEmail: e.target.value })}
+                            placeholder="example@cmg.co.th"
+                          />
+                          <Mail className="absolute left-3 top-2.5 text-slate-400" size={14} />
+                        </div>
+                      </div>
+                      {/* สถานที่จัดส่ง */}
+                      <div className="col-span-2">
+                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
+                          <Building2 size={11} /> สถานที่จัดส่ง
+                        </label>
+                        <div className="relative">
+                          <select
+                            className="w-full border border-slate-200 rounded-lg px-3 py-2 pl-9 text-sm bg-white hover:border-purple-300 focus:border-purple-400 focus:ring-1 focus:ring-purple-100 transition-all cursor-pointer"
+                            value={contractHeaderData.deliveryLocation}
+                            onChange={(e) => setContractHeaderData({ ...contractHeaderData, deliveryLocation: e.target.value })}
+                          >
+                            <option value="">-- เลือกสถานที่ --</option>
+                            {DELIVERY_LOCATIONS.map((l) => <option key={l} value={l}>{l}</option>)}
+                          </select>
+                          <MapPinned className="absolute left-3 top-2.5 text-slate-400 pointer-events-none" size={14} />
+                        </div>
+                      </div>
+
+                      {/* วันที่ขอซื้อ */}
+                      <div className="col-span-2">
+                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
+                          <Calendar size={11} /> วันที่ขอซื้อ
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="date"
+                            className="w-full border border-slate-200 rounded-lg px-3 py-2 pl-9 text-sm hover:border-slate-300 focus:border-purple-400 focus:ring-1 focus:ring-purple-100 transition-all"
+                            value={contractHeaderData.requestDate}
+                            onChange={(e) => setContractHeaderData({ ...contractHeaderData, requestDate: e.target.value })}
+                          />
+                          <Calendar className="absolute left-3 top-2.5 text-slate-400" size={14} />
+                        </div>
+                      </div>
+                      {/* ความเร่งด่วน */}
+                      <div className="col-span-2 flex items-end pb-1">
+                        <div>
+                          <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-2 uppercase tracking-wider">
+                            <Zap size={11} /> ความเร่งด่วน
+                          </label>
+                          <div className="flex gap-2">
+                            <label className={`flex items-center gap-2 cursor-pointer px-3 py-1.5 rounded-lg border transition-all ${contractHeaderData.urgency === "Normal" ? "border-slate-400 bg-slate-100" : "border-slate-200 bg-white hover:border-slate-300"}`}>
+                              <input type="radio" name="contractUrgency" value="Normal" checked={contractHeaderData.urgency === "Normal"} onChange={(e) => setContractHeaderData({ ...contractHeaderData, urgency: e.target.value })} className="hidden" />
+                              <CircleDot size={13} className={contractHeaderData.urgency === "Normal" ? "text-slate-600" : "text-slate-400"} />
+                              <span className={`text-xs font-medium ${contractHeaderData.urgency === "Normal" ? "text-slate-700" : "text-slate-500"}`}>ปกติ</span>
+                            </label>
+                            <label className={`flex items-center gap-2 cursor-pointer px-3 py-1.5 rounded-lg border transition-all ${contractHeaderData.urgency === "Urgent" ? "border-red-300 bg-red-50" : "border-slate-200 bg-white hover:border-slate-300"}`}>
+                              <input type="radio" name="contractUrgency" value="Urgent" checked={contractHeaderData.urgency === "Urgent"} onChange={(e) => setContractHeaderData({ ...contractHeaderData, urgency: e.target.value })} className="hidden" />
+                              <Flame size={13} className={contractHeaderData.urgency === "Urgent" ? "text-red-500" : "text-slate-400"} />
+                              <span className={`text-xs font-semibold ${contractHeaderData.urgency === "Urgent" ? "text-red-600" : "text-slate-500"}`}>ด่วน</span>
+                            </label>
+                          </div>
+                        </div>
+                      </div>
+                      {/* แนบไฟล์ */}
+                      <div className="col-span-2">
+                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
+                          <Paperclip size={11} /> แนบไฟล์
+                        </label>
+                        <div className="flex items-center gap-3 w-full border border-dashed border-slate-200 rounded-lg px-4 py-2 bg-slate-50 hover:border-purple-300 hover:bg-purple-50/30 transition-all cursor-pointer group">
+                          <div className="w-8 h-8 bg-slate-200 group-hover:bg-purple-100 rounded-md flex items-center justify-center transition-colors">
+                            <Upload size={14} className="text-slate-500 group-hover:text-purple-600 transition-colors" />
+                          </div>
+                          <input type="file" className="hidden" id="contract-pr-attachment"
+                            onChange={(e) => setContractHeaderData({ ...contractHeaderData, attachment: e.target.files?.[0] || null })} />
+                          <label htmlFor="contract-pr-attachment" className="flex-1 text-xs text-slate-600 cursor-pointer">
+                            {contractHeaderData.attachment
+                              ? (contractHeaderData.attachment as File).name
+                              : contractHeaderData.attachmentUrl
+                                ? (contractHeaderData.attachmentName || "ไฟล์แนบ") + " (บันทึกแล้ว)"
+                                : "คลิกเพื่อเลือกไฟล์แนบ (PDF, Image, Excel ฯลฯ)"}
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Section 2: เลือกรายการที่ Approve (เฉพาะ 004/006) */}
+                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                  <div className="flex items-center gap-2 px-4 py-2.5 bg-purple-50 border-b border-purple-200">
+                    <div className="w-6 h-6 bg-purple-600 rounded-md flex items-center justify-center">
+                      <Settings size={13} className="text-white" />
+                    </div>
+                    <span className="text-xs font-bold text-purple-700 tracking-wide uppercase">เลือกรายการที่ Approve (หมวด 004 ค่าแรง / 006 ผู้รับเหมาย่อย)</span>
+                  </div>
+                  <div className="p-5">
+                    <div className="flex items-center gap-4 flex-wrap">
+                      <div className="flex-1 min-w-[200px]">
+                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
+                          <DollarSign size={11} /> Cost Code
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            className="w-full border border-dashed border-purple-300 rounded-lg px-3 py-2 pr-9 text-sm bg-purple-50/30 cursor-pointer font-medium text-slate-700 hover:border-purple-400 transition-all"
+                            value={contractHeaderData.costCode || ""}
+                            placeholder="คลิกเพื่อเลือกรายการงบประมาณ"
+                            readOnly
+                            onClick={() => { setContractBudgetSearchText(""); setIsContractCostCodeModalOpen(true); }}
+                          />
+                          <ListFilter className="absolute right-3 top-2.5 text-purple-500" size={14} />
+                        </div>
+                      </div>
+                      {contractHeaderData.costCode && (() => {
+                        const selBudget = availableBudgets.find(b => b.id === contractHeaderData.selectedBudgetId || b.code === contractHeaderData.costCode);
+                        if (!selBudget) return null;
+                        return (
+                          <div className="bg-purple-50 border border-purple-200 rounded-lg px-4 py-2 text-xs">
+                            <span className="text-purple-600 font-semibold">{selBudget.code}</span>
+                            <span className="text-slate-500 ml-2">{selBudget.description}</span>
+                          </div>
+                        );
+                      })()}
+                      <Button
+                        onClick={() => { setContractBudgetSearchText(""); setIsContractCostCodeModalOpen(true); }}
+                        className="bg-purple-600 hover:bg-purple-700 text-white text-xs px-4 py-2 rounded-lg flex items-center gap-1.5"
+                      >
+                        <Search size={13} /> เลือก / เพิ่มรายการ
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Section 3: ตารางรายการสินค้า (แบบ Contract) */}
+                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                  <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-purple-50 border-b border-purple-200">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 bg-purple-600 rounded-md flex items-center justify-center">
+                        <ShoppingCart size={13} className="text-white" />
+                      </div>
+                      <span className="text-xs font-bold text-purple-700 tracking-wide uppercase">รายการสินค้า / งาน</span>
+                      <span className="text-[10px] text-purple-500 bg-purple-100 px-2 py-0.5 rounded-full">
+                        ช่องสีม่วง = กรอกข้อมูล
+                      </span>
+                    </div>
+                    <button
+                      onClick={addNewContractLineItem}
+                      className="flex items-center gap-1.5 text-xs font-semibold text-purple-600 hover:text-purple-800 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-3 py-1.5 rounded-lg transition-all"
+                    >
+                      <PlusCircle size={13} /> เพิ่มรายการ
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b-2 border-slate-300">
+                          <th className="px-3 py-2.5 text-center bg-slate-100 text-slate-600 font-bold w-12 border-r border-slate-200">
+                            ITEM<br /><span className="font-normal">ลำดับ</span>
+                          </th>
+                          <th className="px-3 py-2.5 text-center bg-slate-100 text-slate-600 font-bold border-r border-slate-200">
+                            DESCRIPTION<br /><span className="font-normal">รายละเอียด</span>
+                          </th>
+                          <th className="px-3 py-2.5 text-center bg-slate-100 text-slate-600 font-bold w-24 border-r border-slate-200">
+                            หน่วย<br /><span className="font-normal">Unit</span>
+                          </th>
+                          <th colSpan={3} className="px-3 py-2 text-center bg-purple-100 text-purple-700 font-bold border-r border-purple-200">
+                            ราคาตามสัญญา / ใบสั่งซื้อ<br />
+                            <span className="font-normal text-[10px]">CONTRACT / PO PRICE</span>
+                          </th>
+                          <th className="px-3 py-2.5 text-center bg-slate-100 text-slate-600 font-bold w-16">
+                            Actions
+                          </th>
+                        </tr>
+                        <tr className="border-b border-slate-200">
+                          <th className="bg-slate-50 border-r border-slate-200" />
+                          <th className="bg-slate-50 border-r border-slate-200" />
+                          <th className="bg-slate-50 border-r border-slate-200" />
+                          <th className="px-3 py-1.5 text-center bg-purple-50 text-purple-700 font-bold text-[10px] w-28 border-r border-purple-100">
+                            ปริมาณ<br />QUANTITY
+                          </th>
+                          <th className="px-3 py-1.5 text-center bg-purple-50 text-purple-700 font-bold text-[10px] w-32 border-r border-purple-100">
+                            ราคา<br />PRICE
+                          </th>
+                          <th className="px-3 py-1.5 text-center bg-slate-50 text-slate-600 font-bold text-[10px] w-32 border-r border-slate-200">
+                            จำนวนเงิน<br />AMOUNT
+                          </th>
+                          <th className="bg-slate-50" />
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {contractLineItems.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="py-10 text-center text-slate-400 text-sm">
+                              <div className="flex flex-col items-center gap-2">
+                                <ShoppingCart size={28} className="text-slate-300" />
+                                <span>ยังไม่มีรายการ — กดปุ่ม "เพิ่มรายการ" หรือ "เลือก/เพิ่มรายการ" ด้านบน</span>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : (
+                          contractLineItems.map((item, idx) => (
+                            <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
+                              <td className="px-3 py-2 text-center border-r border-slate-100">
+                                <span className="inline-flex items-center justify-center w-6 h-6 bg-slate-100 rounded-full text-[11px] font-bold text-slate-600">{idx + 1}</span>
+                              </td>
+                              <td className="px-2 py-1.5 border-r border-slate-100">
+                                <input
+                                  type="text"
+                                  value={item.description}
+                                  onChange={(e) => updateContractLineItem(item.id, "description", e.target.value)}
+                                  className="w-full border border-transparent hover:border-slate-200 focus:border-slate-300 focus:ring-1 focus:ring-slate-200 rounded px-2 py-1 text-xs text-slate-700 bg-transparent focus:bg-white transition-all min-w-[180px]"
+                                  placeholder="รายละเอียดงาน..."
+                                />
+                              </td>
+                              <td className="px-2 py-1.5 text-center border-r border-slate-100">
+                                <input
+                                  type="text"
+                                  value={item.unit}
+                                  onChange={(e) => updateContractLineItem(item.id, "unit", e.target.value)}
+                                  className="w-full border border-transparent hover:border-slate-200 focus:border-slate-300 focus:ring-1 focus:ring-slate-200 rounded px-2 py-1 text-xs text-center text-slate-600 bg-transparent focus:bg-white transition-all"
+                                  placeholder="หน่วย"
+                                />
+                              </td>
+                              <td className="px-2 py-1.5 border-r border-purple-100 bg-purple-50/40">
+                                <input
+                                  type="number"
+                                  value={item.quantity === 0 ? "" : item.quantity}
+                                  onChange={(e) => updateContractLineItem(item.id, "quantity", parseFloat(e.target.value) || 0)}
+                                  className="w-full border border-purple-200 hover:border-purple-300 focus:border-purple-400 focus:ring-1 focus:ring-purple-100 rounded px-2 py-1 text-xs text-right font-medium text-slate-700 bg-white transition-all"
+                                  placeholder="0.00"
+                                  min="0"
+                                  step="any"
+                                />
+                              </td>
+                              <td className="px-2 py-1.5 border-r border-purple-100 bg-purple-50/40">
+                                <input
+                                  type="number"
+                                  value={item.price === 0 ? "" : item.price}
+                                  onChange={(e) => updateContractLineItem(item.id, "price", parseFloat(e.target.value) || 0)}
+                                  className="w-full border border-purple-200 hover:border-purple-300 focus:border-purple-400 focus:ring-1 focus:ring-purple-100 rounded px-2 py-1 text-xs text-right font-medium text-slate-700 bg-white transition-all"
+                                  placeholder="0.00"
+                                  min="0"
+                                  step="any"
+                                />
+                              </td>
+                              <td className="px-3 py-2 text-right border-r border-slate-100 font-semibold text-slate-700">
+                                {formatCurrency((Number(item.quantity) || 0) * (Number(item.price) || 0))}
+                              </td>
+                              <td className="px-2 py-1.5 text-center">
+                                <button
+                                  onClick={() => removeContractLineItem(item.id)}
+                                  className="text-red-400 hover:text-red-600 p-1.5 hover:bg-red-50 rounded transition-all"
+                                  title="ลบรายการ"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                      {contractLineItems.length > 0 && (
+                        <tfoot>
+                          <tr className="bg-purple-800">
+                            <td colSpan={5} className="py-3 px-4 text-right text-xs text-purple-100 font-bold tracking-wide">
+                              ผลรวมทั้งสิ้น / GRAND TOTAL
+                            </td>
+                            <td className="py-3 px-4 text-right">
+                              <span className="text-sm font-bold text-white tracking-wide">
+                                {formatCurrency(contractLineItems.reduce((sum, i) => sum + (Number(i.quantity) || 0) * (Number(i.price) || 0), 0))}
+                              </span>
+                            </td>
+                            <td />
+                          </tr>
+                        </tfoot>
+                      )}
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="mt-0 shrink-0 flex justify-between items-center px-6 py-3.5 border-t border-purple-200 bg-purple-50 gap-4 flex-wrap">
+                <div className="flex items-center gap-4 flex-wrap">
+                  <div className="flex items-center gap-2 text-xs text-slate-500">
+                    <Info size={13} />
+                    <span>กรุณากรอกข้อมูลให้ครบถ้วนก่อนบันทึก</span>
+                  </div>
+                  {(() => {
+                    if (!contractHeaderData.costCode) return null;
+                    const selBudget = contractHeaderData.selectedBudgetId
+                      ? availableBudgets.find(b => b.id === contractHeaderData.selectedBudgetId)
+                      : availableBudgets.find(b => b.code === contractHeaderData.costCode);
+                    if (!selBudget) return null;
+
+                    // คำนวณยอดที่ใช้ไปจาก PR อื่น (ไม่นับ contractEditingPRId)
+                    const usedByOtherPRs = prs
+                      .filter(p => p.projectId === selectedProjectId && p.costCode === selBudget.code && p.status !== "Rejected" && p.id !== contractEditingPRId)
+                      .reduce((sum, p) => sum + (Number(p.totalAmount) || 0), 0);
+                    const budgetTotal = selBudget.subItems && selBudget.subItems.length > 0
+                      ? selBudget.subItems.reduce((sum, s) => sum + s.amount, 0)
+                      : selBudget.budgetAmount;
+                    const contractCurrentTotal = contractLineItems.reduce((sum, i) => sum + (Number(i.quantity) || 0) * (Number(i.price) || 0), 0);
+                    const remaining = budgetTotal - usedByOtherPRs - contractCurrentTotal;
+                    const isOver = remaining < 0;
+                    return (
+                      <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium ${isOver ? "bg-red-50 border-red-200 text-red-700" : "bg-purple-50 border-purple-200 text-purple-700"}`}>
+                        <Wallet size={13} className={isOver ? "text-red-500" : "text-purple-500"} />
+                        <span className="text-slate-500">งบ <span className="font-bold text-slate-700">{selBudget.code}</span>:</span>
+                        <span>วงเงิน {formatCurrency(budgetTotal)}</span>
+                        <span className="text-slate-400">|</span>
+                        <span className="text-orange-600">ใช้ไป {formatCurrency(usedByOtherPRs)}</span>
+                        <span className="text-slate-400">|</span>
+                        <span className={`font-bold ${isOver ? "text-red-600" : "text-green-600"}`}>
+                          คงเหลือ {formatCurrency(remaining)}
+                        </span>
+                        {isOver && <span className="text-red-500 font-bold">(เกินงบ!)</span>}
+                      </div>
+                    );
+                  })()}
+                </div>
+                <div className="flex gap-3">
+                  <Button
+                    variant="secondary"
+                    onClick={() => { setIsContractPrModalOpen(false); setIsFullScreenModalOpen(false); }}
+                    className="px-5 rounded-lg"
+                  >
+                    <XCircle size={15} /> ยกเลิก
+                  </Button>
+                  <Button
+                    onClick={handleSaveContractPR}
+                    className="px-8 rounded-lg bg-purple-600 hover:bg-purple-700 text-white transition-all"
+                  >
+                    <Save size={16} /> บันทึก PR จ้าง/เหมา
+                  </Button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {/* ── Contract Cost Code Modal (หมวด 004/006 เท่านั้น) ── */}
+        {isContractCostCodeModalOpen && (
+          <motion.div
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10050]"
+            initial="hidden" animate="visible"
+            variants={modalOverlayVariants} transition={overlayTransition}
+          >
+            <motion.div
+              className="w-full max-w-5xl p-6 max-h-[85vh] overflow-hidden flex flex-col rounded-xl border border-purple-200 bg-white shadow-2xl mx-4"
+              initial="hidden" animate="visible"
+              variants={modalContentVariants} transition={modalTransition}
+            >
+              <div className="flex justify-between items-center gap-3 mb-4 pb-2 border-b flex-wrap">
+                <h3 className="text-lg font-bold text-slate-800">
+                  เลือกรายการงบประมาณ (หมวด 004 ค่าแรง / 006 ผู้รับเหมาย่อย)
+                </h3>
+                <input
+                  type="text"
+                  placeholder="ค้นหา Cost Code, รายการ..."
+                  value={contractBudgetSearchText}
+                  onChange={(e) => setContractBudgetSearchText(e.target.value)}
+                  className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm w-56 focus:ring-2 focus:ring-purple-400/50 focus:border-purple-400"
+                />
+                <button onClick={() => setIsContractCostCodeModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                  <XCircle size={24} />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto pr-2">
+                {Object.keys(groupedBudgetsContract).length === 0 ? (
+                  <div className="text-center py-8 text-slate-400">
+                    ไม่พบรายการงบประมาณ (หมวด 004 / 006) ที่อนุมัติแล้ว
+                  </div>
+                ) : Object.keys(groupedBudgetsContractFiltered).length === 0 ? (
+                  <div className="text-center py-8 text-slate-500">ไม่พบรายการที่ตรงกับคำค้น</div>
+                ) : (
+                  Object.keys(groupedBudgetsContractFiltered).sort().map((cat, idx) => (
+                    <motion.div key={cat} className="mb-6"
+                      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: idx * 0.04, duration: 0.24 }}
+                    >
+                      <h4 className="text-xs font-bold text-white bg-purple-700 px-3 py-1 rounded-t-md sticky top-0 z-10 shadow-sm flex items-center justify-between">
+                        <span>หมวด {cat}: {COST_CATEGORIES[cat]}</span>
+                        <span className="bg-purple-600 text-xs px-2 py-0.5 rounded-full">
+                          {groupedBudgetsContractFiltered[cat].length} รายการ
+                        </span>
+                      </h4>
+                      <div className="border border-purple-200 border-t-0 rounded-b-md overflow-hidden">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-purple-50 text-slate-600 font-semibold border-b">
+                            <tr>
+                              <th className="py-1.5 px-3 w-8"></th>
+                              <th className="py-1.5 px-3">Cost Code</th>
+                              <th className="py-1.5 px-3">รายการ</th>
+                              <th className="py-1.5 px-3 text-right">Budget</th>
+                              <th className="py-1.5 px-3 text-right text-orange-600">Used</th>
+                              <th className="py-1.5 px-3 text-right text-green-600">Balance</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {groupedBudgetsContractFiltered[cat].map((b) => {
+                              const approvedSubItems = (b.subItems || []).filter(sub => sub.status === "Approved");
+                              if (approvedSubItems.length === 0) return null;
+                              const subItemsTotal = b.subItems ? b.subItems.reduce((sum, s) => sum + s.amount, 0) : 0;
+                              const mainBudgetBalance = b.budgetAmount - subItemsTotal;
+                              return (
+                                <React.Fragment key={b.id}>
+                                  <tr className="bg-slate-200/60 border-b border-slate-300 select-none">
+                                    <td className="py-1.5 px-3" />
+                                    <td className="py-1.5 px-3 font-semibold text-slate-600">
+                                      <div className="flex items-center gap-2">
+                                        <CornerDownRight size={13} className="text-slate-400 flex-shrink-0" />
+                                        {b.code}
+                                      </div>
+                                    </td>
+                                    <td className="py-1.5 px-3 text-slate-600 font-medium italic">{b.description}</td>
+                                    <td className="py-1.5 px-3 text-right text-slate-500">{formatCurrency(b.budgetAmount)}</td>
+                                    <td className="py-1.5 px-3 text-right text-orange-600">{formatCurrency(subItemsTotal)}</td>
+                                    <td className={`py-1.5 px-3 text-right font-bold ${mainBudgetBalance < 0 ? "text-red-600" : "text-green-600"}`}>{formatCurrency(mainBudgetBalance)}</td>
+                                  </tr>
+                                  {approvedSubItems.map((sub, sIdx) => {
+                                    const subUsed = prs
+                                      .filter(p => p.projectId === selectedProjectId && p.costCode === b.code && p.status !== "Rejected")
+                                      .reduce((sum, p) => {
+                                        const matchItem = p.items?.find(i =>
+                                          (sub.id && i.subItemId === sub.id) ||
+                                          (!i.subItemId && i.description?.trim() === sub.description?.trim())
+                                        );
+                                        return sum + (matchItem ? (matchItem.quantity * matchItem.price) : 0);
+                                      }, 0);
+                                    const subBalance = sub.amount - subUsed;
+                                    const isSelected = selectedSubItemsForContractPR.some(i => i.id === sub.id);
+                                    return (
+                                      <tr
+                                        key={`${b.id}-sub-${sIdx}`}
+                                        className={`cursor-pointer transition-colors ${isSelected ? "bg-purple-100 ring-1 ring-purple-300 ring-inset" : "bg-slate-50/50 hover:bg-purple-50"}`}
+                                        onClick={() => handleToggleSubItemContract(sub, b.code, b.id)}
+                                      >
+                                        <td className="py-1.5 px-3 text-center">
+                                          <span className={`inline-flex w-4 h-4 rounded border-2 flex-shrink-0 items-center justify-center transition-all ${isSelected ? "border-purple-600 bg-purple-600" : "border-slate-300 bg-white"}`}>
+                                            {isSelected && <span className="w-2 h-2 rounded-sm bg-white block" />}
+                                          </span>
+                                        </td>
+                                        <td className="py-1.5 px-3 pl-8 border-l-2 border-purple-200 text-slate-600">{b.code}</td>
+                                        <td className="py-1.5 px-3 text-slate-700">{sub.description}</td>
+                                        <td className="py-1.5 px-3 text-right text-slate-600 font-medium">{formatCurrency(sub.amount)}</td>
+                                        <td className="py-1.5 px-3 text-right text-orange-500">{formatCurrency(subUsed)}</td>
+                                        <td className={`py-1.5 px-3 text-right font-bold ${subBalance < 0 ? "text-red-600" : "text-green-600"}`}>{formatCurrency(subBalance)}</td>
+                                      </tr>
+                                    );
+                                  })}
+                                </React.Fragment>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </motion.div>
+                  ))
+                )}
+              </div>
+
+              <div className="pt-4 mt-2 border-t flex justify-between items-center">
+                <span className="text-sm text-slate-500">
+                  {selectedSubItemsForContractPR.length > 0
+                    ? <span className="text-purple-700 font-semibold">เลือกแล้ว: {selectedSubItemsForContractPR.length} รายการ</span>
+                    : <span className="text-slate-400">กรุณาเลือกรายการที่ต้องการ (เลือกได้หลายรายการ)</span>}
+                </span>
+                <div className="flex gap-2">
+                  <Button variant="secondary" onClick={() => { setIsContractCostCodeModalOpen(false); setSelectedSubItemsForContractPR([]); }}>
+                    ยกเลิก
+                  </Button>
+                  {selectedSubItemsForContractPR.length > 0 && (
+                    <Button
+                      onClick={handleAddSelectedSubItemsForContract}
+                      className="bg-purple-600 hover:bg-purple-700 text-white"
+                    >
+                      ยืนยันการเลือก ({selectedSubItemsForContractPR.length} รายการ)
                     </Button>
                   )}
                 </div>

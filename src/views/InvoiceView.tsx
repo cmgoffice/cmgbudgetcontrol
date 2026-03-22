@@ -9,9 +9,21 @@ import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "../components/ui";
 import ResizableTh from "../components/ResizableTh";
+import { useProportionalTableLayout } from "../hooks/useProportionalTableLayout";
+import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 const InvoiceView = React.memo(() => {
-  const { invoices, pos, addData, updateData, deleteData, showAlert, userRole, columnWidths, handleColumnResize, visibleProjects } = useAppData();
+  const { invoices, pos, addData, updateData, deleteData, showAlert, userRole, userRoles, columnWidths, handleColumnResize, visibleProjects, canUseFunction } = useAppData();
   const { selectedProjectId } = useUI();
+  const invoiceTableRef = useRef(null);
+  const invoiceTableLayout = useProportionalTableLayout({
+    tableId: "invoice",
+    defaultWeights: TABLE_LAYOUT_DEFAULTS.invoice,
+    savedWidths: columnWidths.invoice,
+    containerRef: invoiceTableRef,
+    enabled: true,
+    driftKey: "description",
+    handleColumnResize,
+  });
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState({
     invNo: "",
@@ -62,9 +74,9 @@ const InvoiceView = React.memo(() => {
     if (!inv) return;
 
     let newStatus = inv.status;
-    if (inv.status === "Pending PM" && userRole === "PM")
+    if (inv.status === "Pending PM" && (userRoles.includes("PM") || userRoles.includes("Administrator")))
       newStatus = "Pending GM";
-    if (inv.status === "Pending GM" && userRole === "GM") newStatus = "Paid";
+    if (inv.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator"))) newStatus = "Paid";
 
     if (newStatus !== inv.status) {
       await updateData("invoices", id, { status: newStatus });
@@ -76,20 +88,23 @@ const InvoiceView = React.memo(() => {
         <h2 className="text-xl font-bold text-slate-800">
           F. รับวางบิล (Invoice Receive)
         </h2>
-        <Button onClick={() => setIsModalOpen(true)}>
-          <Plus size={14} /> รับ Invoice
-        </Button>
+        {canUseFunction("invoice", "add") && (
+          <Button onClick={() => setIsModalOpen(true)}>
+            <Plus size={14} /> รับ Invoice
+          </Button>
+        )}
       </div>
-      <Card>
-        <table className="w-full text-left text-xs text-slate-600">
+      <Card className="overflow-hidden w-full min-w-0">
+        <div ref={invoiceTableRef} className="w-full min-w-0">
+        <table className="w-full text-left text-xs text-slate-600 table-fixed">
           <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
             <tr>
-              <ResizableTh tableId="invoice" colKey="invNo" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.invoice?.invNo}>INV No.</ResizableTh>
-              <ResizableTh tableId="invoice" colKey="poRef" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.invoice?.poRef}>Ref. PO</ResizableTh>
-              <ResizableTh tableId="invoice" colKey="description" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.invoice?.description}>รายละเอียด</ResizableTh>
-              <ResizableTh tableId="invoice" colKey="amount" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.invoice?.amount}>จำนวนเงิน</ResizableTh>
-              <ResizableTh tableId="invoice" colKey="status" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.invoice?.status}>สถานะ</ResizableTh>
-              <th className="py-2 px-3 text-right">Actions</th>
+              <ResizableTh tableId="invoice" colKey="invNo" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={invoiceTableLayout.handleResize} currentWidth={invoiceTableLayout.scaled.invNo}>INV No.</ResizableTh>
+              <ResizableTh tableId="invoice" colKey="poRef" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={invoiceTableLayout.handleResize} currentWidth={invoiceTableLayout.scaled.poRef}>Ref. PO</ResizableTh>
+              <ResizableTh tableId="invoice" colKey="description" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={invoiceTableLayout.handleResize} currentWidth={invoiceTableLayout.scaled.description}>รายละเอียด</ResizableTh>
+              <ResizableTh tableId="invoice" colKey="amount" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={invoiceTableLayout.handleResize} currentWidth={invoiceTableLayout.scaled.amount}>จำนวนเงิน</ResizableTh>
+              <ResizableTh tableId="invoice" colKey="status" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={invoiceTableLayout.handleResize} currentWidth={invoiceTableLayout.scaled.status}>สถานะ</ResizableTh>
+              <th className="py-2 px-3 text-right" style={{ width: invoiceTableLayout.scaled.actions }}>Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -107,7 +122,7 @@ const InvoiceView = React.memo(() => {
                     <Badge status={inv.status} />
                   </td>
                   <td className="py-2 px-3 text-right flex justify-end gap-1">
-                    {userRole === "PM" && inv.status === "Pending PM" && (
+                    {canUseFunction("invoice", "approve") && (userRoles.includes("PM") || userRoles.includes("Administrator")) && inv.status === "Pending PM" && (
                       <Button
                         variant="success"
                         size="sm"
@@ -117,7 +132,7 @@ const InvoiceView = React.memo(() => {
                         PM เห็นชอบ
                       </Button>
                     )}
-                    {userRole === "GM" && inv.status === "Pending GM" && (
+                    {canUseFunction("invoice", "approve") && (userRoles.includes("GM") || userRoles.includes("Administrator")) && inv.status === "Pending GM" && (
                       <Button
                         variant="success"
                         size="sm"
@@ -127,17 +142,20 @@ const InvoiceView = React.memo(() => {
                         GM อนุมัติจ่าย
                       </Button>
                     )}
-                    <button
-                      className="text-red-500 hover:text-red-700"
-                      onClick={() => deleteData("invoices", inv.id)}
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                    {canUseFunction("invoice", "delete") && (
+                      <button
+                        className="text-red-500 hover:text-red-700"
+                        onClick={() => deleteData("invoices", inv.id)}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
           </tbody>
         </table>
+        </div>
       </Card>
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-200">

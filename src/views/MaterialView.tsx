@@ -9,12 +9,24 @@ import { useAppData } from "../contexts/AppDataContext";
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { Card, Button, InputGroup, formatCurrency } from "../components/ui";
 import ResizableTh from "../components/ResizableTh";
+import { useProportionalTableLayout } from "../hooks/useProportionalTableLayout";
+import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 
 const PAGE_SIZE_OPTIONS = [100, 200, 500];
 const BATCH_SIZE = 500;
 
 const MaterialView = React.memo(() => {
-  const { materials, addData, updateData, deleteData, showAlert, openConfirm, userRole, columnWidths, handleColumnResize, db, appId, loadMaterials } = useAppData();
+  const { materials, addData, updateData, deleteData, showAlert, openConfirm, userRole, columnWidths, handleColumnResize, db, appId, loadMaterials, canUseFunction } = useAppData();
+  const materialTableRef = useRef(null);
+  const materialTableLayout = useProportionalTableLayout({
+    tableId: "material",
+    defaultWeights: TABLE_LAYOUT_DEFAULTS.material,
+    savedWidths: columnWidths.material,
+    containerRef: materialTableRef,
+    enabled: true,
+    driftKey: "name",
+    handleColumnResize,
+  });
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [searchText, setSearchText] = useState("");
@@ -266,11 +278,13 @@ const MaterialView = React.memo(() => {
           <Button variant="outline" className="text-xs h-8" onClick={handleDownloadTemplate}>
             <Download size={13} /> Template
           </Button>
-          <label className="flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium text-xs shadow-sm bg-green-600 text-white hover:bg-green-700 cursor-pointer h-8 transition-colors">
-            <FileSpreadsheet size={13} /> Import CSV
-            <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
-          </label>
-          {someSelected && (
+          {canUseFunction("material", "import") && (
+            <label className="flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium text-xs shadow-sm bg-green-600 text-white hover:bg-green-700 cursor-pointer h-8 transition-colors">
+              <FileSpreadsheet size={13} /> Import CSV
+              <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
+            </label>
+          )}
+          {someSelected && canUseFunction("material", "delete") && (
             <div className="relative" ref={actionDropdownRef}>
               <Button
                 variant="secondary"
@@ -292,9 +306,11 @@ const MaterialView = React.memo(() => {
               )}
             </div>
           )}
-          <Button onClick={handleOpenAdd} className="h-8 text-xs">
-            <Plus size={13} /> New Material
-          </Button>
+          {canUseFunction("material", "add") && (
+            <Button onClick={handleOpenAdd} className="h-8 text-xs">
+              <Plus size={13} /> New Material
+            </Button>
+          )}
         </div>
       </div>
 
@@ -386,10 +402,11 @@ const MaterialView = React.memo(() => {
             </span>
           </div>
         )}
-        <table className="w-full text-left text-xs text-slate-600">
+        <div ref={materialTableRef} className="w-full min-w-0">
+        <table className="w-full text-left text-xs text-slate-600 table-fixed">
           <thead className="bg-slate-50 text-slate-800 font-semibold border-b border-slate-200">
             <tr>
-              <th className="py-2 px-2 w-10 text-center">
+              <th className="py-2 px-2 text-center" style={{ width: materialTableLayout.scaled.select }}>
                 <button
                   type="button"
                   className="p-0.5 rounded hover:bg-slate-200"
@@ -399,12 +416,12 @@ const MaterialView = React.memo(() => {
                   {allOnPageSelected ? <CheckSquare size={16} className="text-blue-600" /> : <Square size={16} className="text-slate-400" />}
                 </button>
               </th>
-              <th className="py-2 px-3 w-12 text-center">No.</th>
-              <ResizableTh tableId="material" colKey="materialNo" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.material?.materialNo ?? 128}>รหัสสินค้า</ResizableTh>
-              <ResizableTh tableId="material" colKey="name" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.material?.name}>ชื่อสินค้า</ResizableTh>
-              <ResizableTh tableId="material" colKey="price" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.material?.price ?? 112}>ราคาต่อหน่วย</ResizableTh>
-              <ResizableTh tableId="material" colKey="unit" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.material?.unit ?? 80}>หน่วย</ResizableTh>
-              <th className="py-2 px-3 w-20 text-right">Actions</th>
+              <th className="py-2 px-3 text-center" style={{ width: materialTableLayout.scaled.rowNo }}>No.</th>
+              <ResizableTh tableId="material" colKey="materialNo" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={materialTableLayout.handleResize} currentWidth={materialTableLayout.scaled.materialNo}>รหัสสินค้า</ResizableTh>
+              <ResizableTh tableId="material" colKey="name" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={materialTableLayout.handleResize} currentWidth={materialTableLayout.scaled.name}>ชื่อสินค้า</ResizableTh>
+              <ResizableTh tableId="material" colKey="price" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={materialTableLayout.handleResize} currentWidth={materialTableLayout.scaled.price}>ราคาต่อหน่วย</ResizableTh>
+              <ResizableTh tableId="material" colKey="unit" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={materialTableLayout.handleResize} currentWidth={materialTableLayout.scaled.unit}>หน่วย</ResizableTh>
+              <th className="py-2 px-3 text-right" style={{ width: materialTableLayout.scaled.actions }}>Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -434,12 +451,16 @@ const MaterialView = React.memo(() => {
                   <td className="py-1.5 px-3 text-center text-slate-500" title={m.unit}><span className="cell-text">{m.unit || "-"}</span></td>
                   <td className="py-1.5 px-3 text-right">
                     <div className="flex justify-end gap-1">
-                      <button className="text-blue-500 hover:text-blue-700 p-1 hover:bg-blue-50 rounded" onClick={() => handleOpenEdit(m)} title="แก้ไข">
-                        <Edit size={13} />
-                      </button>
-                      <button className="text-red-500 hover:text-red-700 p-1 hover:bg-red-50 rounded" onClick={() => handleDelete(m.id)} title="ลบ">
-                        <Trash2 size={13} />
-                      </button>
+                      {canUseFunction("material", "edit") && (
+                        <button className="text-blue-500 hover:text-blue-700 p-1 hover:bg-blue-50 rounded" onClick={() => handleOpenEdit(m)} title="แก้ไข">
+                          <Edit size={13} />
+                        </button>
+                      )}
+                      {canUseFunction("material", "delete") && (
+                        <button className="text-red-500 hover:text-red-700 p-1 hover:bg-red-50 rounded" onClick={() => handleDelete(m.id)} title="ลบ">
+                          <Trash2 size={13} />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -447,6 +468,7 @@ const MaterialView = React.memo(() => {
             )}
           </tbody>
         </table>
+        </div>
       </Card>
 
       {/* Add/Edit Modal */}

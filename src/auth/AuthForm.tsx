@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useState, useCallback, useContext } from "react";
+import React, { useState, useCallback, useContext, useEffect, useRef } from "react";
 import {
   LogOut, Shield, User, Settings, Key, Lock, Unlock, RefreshCw,
   UserCheck, Users, AtSign, Mail, CheckCircle, CheckSquare, Square,
@@ -18,6 +18,10 @@ import { auth, db, appId } from "../lib/firebase";
 import { AuthContext } from "./AuthContext";
 import { Card, Button, InputGroup, Badge } from "../components/ui";
 import { USER_ROLES } from "../lib/constants";
+import { useAppData } from "../contexts/AppDataContext";
+import ResizableTh from "../components/ResizableTh";
+import { useProportionalTableLayout } from "../hooks/useProportionalTableLayout";
+import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 const AuthForm = () => {
   const { login, loginWithGoogle, register, showAlert } =
     useContext(AuthContext);
@@ -363,8 +367,20 @@ const UserProfile = () => {
 };
 
 const AdminDashboard = () => {
-  const { showAlert, logAction } = useContext(AuthContext);
+  const { showAlert, logAction, userData } = useContext(AuthContext);
+  const { columnWidths, handleColumnResize } = useAppData();
+  const userRole = userData?.role || "Staff";
+  const adminUsersTableRef = useRef(null);
   const [activeTab, setActiveTab] = useState("users"); // 'users' or 'logs'
+  const adminUsersTableLayout = useProportionalTableLayout({
+    tableId: "users",
+    defaultWeights: TABLE_LAYOUT_DEFAULTS.users,
+    savedWidths: columnWidths?.users,
+    containerRef: adminUsersTableRef,
+    enabled: activeTab === "users",
+    driftKey: "name",
+    handleColumnResize,
+  });
   const [users, setUsers] = useState([]);
   const [logs, setLogs] = useState([]); // V.16 Logs State
   const [projects, setProjects] = useState([]);
@@ -567,15 +583,16 @@ const AdminDashboard = () => {
       </div>
 
       {activeTab === "users" && (
-        <Card className="overflow-hidden animate-in fade-in slide-in-from-bottom-2">
-          <table className="w-full text-left text-sm">
+        <Card className="overflow-hidden animate-in fade-in slide-in-from-bottom-2 w-full min-w-0">
+          <div ref={adminUsersTableRef} className="w-full min-w-0">
+          <table className="w-full text-left text-sm table-fixed">
             <thead className="bg-slate-50 text-slate-700 font-semibold border-b">
               <tr>
-                <ResizableTh tableId="users" colKey="name" className="p-4" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.users?.name}>Name</ResizableTh>
-                <ResizableTh tableId="users" colKey="role" className="p-4" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.users?.role}>Role</ResizableTh>
-                <ResizableTh tableId="users" colKey="status" className="p-4" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.users?.status}>Status</ResizableTh>
-                <ResizableTh tableId="users" colKey="projects" className="p-4" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.users?.projects}>Projects</ResizableTh>
-                <th className="p-4 text-right">Actions</th>
+                <ResizableTh tableId="users" colKey="name" className="p-4" isAdmin={userRole==="Administrator"} onResize={adminUsersTableLayout.handleResize} currentWidth={adminUsersTableLayout.scaled.name}>Name</ResizableTh>
+                <ResizableTh tableId="users" colKey="role" className="p-4" isAdmin={userRole==="Administrator"} onResize={adminUsersTableLayout.handleResize} currentWidth={adminUsersTableLayout.scaled.role}>Role</ResizableTh>
+                <ResizableTh tableId="users" colKey="status" className="p-4" isAdmin={userRole==="Administrator"} onResize={adminUsersTableLayout.handleResize} currentWidth={adminUsersTableLayout.scaled.status}>Status</ResizableTh>
+                <ResizableTh tableId="users" colKey="projects" className="p-4" isAdmin={userRole==="Administrator"} onResize={adminUsersTableLayout.handleResize} currentWidth={adminUsersTableLayout.scaled.projects}>Projects</ResizableTh>
+                <th className="p-4 text-right" style={{ width: adminUsersTableLayout.scaled.actions }}>Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -639,6 +656,7 @@ const AdminDashboard = () => {
               ))}
             </tbody>
           </table>
+          </div>
         </Card>
       )}
 

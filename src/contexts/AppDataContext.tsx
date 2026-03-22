@@ -9,10 +9,20 @@ import React, {
 } from "react";
 import {
   collection, query, onSnapshot, doc, setDoc,
-  addDoc, updateDoc, deleteDoc, getDocs,
+  addDoc, updateDoc, deleteDoc, getDocs, deleteField,
 } from "firebase/firestore";
 import { db, appId } from "../lib/firebase";
-import { MODULE_ACCESS } from "../lib/constants";
+import {
+  MODULE_ACCESS,
+  mergeFunctionPermissionsWithDefaults,
+  PO_REVISION_PENDING_PCM,
+  PO_REVISION_PENDING_GM,
+  PR_PENDING_ACTIVE,
+} from "../lib/constants";
+
+// Firestore document paths for dynamic permissions
+const ROLE_PERMISSIONS_DOC = ["artifacts", appId, "public", "data", "settings", "rolePermissions"];
+const FUNC_PERMISSIONS_DOC = ["artifacts", appId, "public", "data", "settings", "functionPermissions"];
 
 // ─── Context Shape ────────────────────────────────────────────────────────────
 const AppDataContext = createContext(null);
@@ -38,6 +48,14 @@ export const AppDataProvider = ({
   const [prs,       setPrs]       = useState([]);
   const [pos,       setPos]       = useState([]);
   const [invoices,  setInvoices]  = useState([]);
+
+  // ── Role permissions (admin-controlled, synced to Firestore) ─────────────
+  const [rolePermissions, setRolePermissions] = useState<Record<string, string[]>>(MODULE_ACCESS);
+  // functionPermissions: { moduleKey: { functionKey: [allowedRoles] } }
+  const [functionPermissions, setFunctionPermissions] = useState<Record<string, Record<string, string[]>>>(() =>
+    mergeFunctionPermissionsWithDefaults({})
+  );
+  const [rolePermissionsReady, setRolePermissionsReady] = useState(false);
 
   // ── Column widths (admin-controlled, synced to Firestore) ─────────────────
   const [columnWidths, setColumnWidths] = useState({});
@@ -95,6 +113,22 @@ export const AppDataProvider = ({
       if (snap.exists()) setColumnWidths(snap.data());
     });
 
+    const rolePermRef = doc(db, ...ROLE_PERMISSIONS_DOC);
+    const unsubRolePerms = onSnapshot(rolePermRef, (snap) => {
+      if (snap.exists()) {
+        setRolePermissions({ ...MODULE_ACCESS, ...snap.data() });
+      } else {
+        setRolePermissions(MODULE_ACCESS);
+      }
+      setRolePermissionsReady(true);
+    });
+
+    const funcPermRef = doc(db, ...FUNC_PERMISSIONS_DOC);
+    const unsubFuncPerms = onSnapshot(funcPermRef, (snap) => {
+      const raw = snap.exists() ? (snap.data() as Record<string, Record<string, string[]>>) : {};
+      setFunctionPermissions(mergeFunctionPermissionsWithDefaults(raw));
+    });
+
     // ไม่ sync vendors, materials ที่นี่ — ใช้ loadVendors() / loadMaterials() เมื่อเข้าหน้า Vendor / Material / PO
     const unsubs = [
       syncCollection("projects",  setProjects),
@@ -107,6 +141,8 @@ export const AppDataProvider = ({
     return () => {
       unsubs.forEach((u) => u());
       unsubColWidths();
+      unsubRolePerms();
+      unsubFuncPerms();
       if (colSaveTimer.current) clearTimeout(colSaveTimer.current);
     };
   }, []);
@@ -186,11 +222,42 @@ export const AppDataProvider = ({
   }, [logAction, showAlert]);
 
   const canAccessModule = useCallback((menuId) => {
-    const allowed = MODULE_ACCESS[menuId];
+    const allowed = rolePermissions[menuId];
     if (!allowed) return true;
     if (roles.includes("Administrator")) return true;
     return roles.some((r) => allowed.includes(r));
-  }, [roles]);
+  }, [roles, rolePermissions]);
+
+  const saveRolePermissions = useCallback(async (newPermissions: Record<string, string[]>) => {
+    try {
+      await setDoc(doc(db, ...ROLE_PERMISSIONS_DOC), newPermissions);
+      return true;
+    } catch (e) {
+      console.error("Error saving role permissions:", e);
+      return false;
+    }
+  }, []);
+
+  // canUseFunction: เห็นปุ่ม/icon action เฉพาะเมื่อ Role อยู่ในรายชื่อสิทธิ์ฟังก์ชันนั้น (หลัง merge แล้ว)
+  // Administrator เห็นทุกอย่าง
+  const canUseFunction = useCallback((moduleKey: string, functionKey: string): boolean => {
+    if (roles.includes("Administrator")) return true;
+    const modFuncs = functionPermissions[moduleKey];
+    if (modFuncs == null || typeof modFuncs !== "object") return false;
+    const allowedRoles = modFuncs[functionKey];
+    if (!Array.isArray(allowedRoles)) return false;
+    return roles.some((r) => allowedRoles.includes(r));
+  }, [roles, functionPermissions]);
+
+  const saveFunctionPermissions = useCallback(async (newFuncPerms: Record<string, Record<string, string[]>>) => {
+    try {
+      await setDoc(doc(db, ...FUNC_PERMISSIONS_DOC), newFuncPerms);
+      return true;
+    } catch (e) {
+      console.error("Error saving function permissions:", e);
+      return false;
+    }
+  }, []);
 
   // ── Visible projects (role-filtered) ──────────────────────────────────────
   const visibleProjects = useMemo(() => {
@@ -221,7 +288,9 @@ export const AppDataProvider = ({
   }, [budgets, roles]);
 
   const pendingPRsGlobal = useMemo(() => prs.filter((pr) => {
-    if (roles.includes("Administrator") && pr.status?.startsWith("Pending")) return true;
+    if (roles.includes("Administrator") && (
+      pr.status?.startsWith("Pending") || pr.status === PR_PENDING_ACTIVE
+    )) return true;
     if (roles.includes("CM")  && pr.status === "Pending CM")  return true;
     if (roles.includes("PM")  && pr.status === "Pending PM")  return true;
     if (roles.includes("GM")  && pr.status === "Pending GM")  return true;
@@ -232,13 +301,19 @@ export const AppDataProvider = ({
       roles.includes("Procurement") || roles.includes("PCM") ||
       roles.includes("Administrator")
     )) return true;
+    // PCM รับแจ้งเตือนเมื่อมีคำขอ Active PR
+    if (pr.status === PR_PENDING_ACTIVE && (roles.includes("PCM") || roles.includes("Administrator"))) return true;
     return false;
   }), [prs, roles]);
 
   const pendingPOsGlobal = useMemo(() => pos.filter((po) => {
-    if (roles.includes("Administrator") && po.status?.startsWith("Pending")) return true;
-    if (roles.includes("PCM") && po.status === "Pending PCM") return true;
-    if (roles.includes("GM")  && po.status === "Pending GM")  return true;
+    if (roles.includes("Administrator") && (
+      po.status?.startsWith("Pending") ||
+      po.status === PO_REVISION_PENDING_PCM ||
+      po.status === PO_REVISION_PENDING_GM
+    )) return true;
+    if (roles.includes("PCM") && (po.status === "Pending PCM" || po.status === PO_REVISION_PENDING_PCM)) return true;
+    if (roles.includes("GM") && (po.status === "Pending GM" || po.status === PO_REVISION_PENDING_GM)) return true;
     return false;
   }), [pos, roles]);
 
@@ -279,6 +354,8 @@ export const AppDataProvider = ({
     if (action === "approve") {
       if (pr.status === "Pending CM" && (roles.includes("CM") || roles.includes("Administrator"))) newStatus = "Pending PM";
       else if (pr.status === "Pending PM" && (roles.includes("PM") || roles.includes("Administrator"))) newStatus = "Approved";
+      else if (pr.status === "Pending GM" && (roles.includes("GM") || roles.includes("Administrator"))) newStatus = "Pending MD";
+      else if (pr.status === "Pending MD" && (roles.includes("MD") || roles.includes("Administrator"))) newStatus = "Approved";
     } else if (action === "reject") {
       newStatus = "Rejected";
     }
@@ -292,6 +369,7 @@ export const AppDataProvider = ({
   const handlePOAction = useCallback(async (id, action) => {
     const po = pos.find((p) => p.id === id);
     if (!po) return;
+    if (po.status === PO_REVISION_PENDING_PCM || po.status === PO_REVISION_PENDING_GM) return;
     let newStatus = po.status;
     if (action === "approve") {
       if (po.status === "Pending PCM" && (roles.includes("PCM") || roles.includes("Administrator"))) newStatus = "Pending GM";
@@ -305,6 +383,78 @@ export const AppDataProvider = ({
       await updateData("pos", id, payload);
     }
   }, [pos, roles, updateData]);
+
+  /** อนุญาตแก้ไข PO หลังขอแก้ — ลบ PDF + สถานะเป็น Draft */
+  const handlePORevisionAllow = useCallback(async (id) => {
+    const po = pos.find((p) => p.id === id);
+    if (!po) return;
+    const isPcm = po.status === PO_REVISION_PENDING_PCM;
+    const isGm = po.status === PO_REVISION_PENDING_GM;
+    if (!isPcm && !isGm) return;
+    const allowed =
+      roles.includes("Administrator") ||
+      (isPcm && roles.includes("PCM")) ||
+      (isGm && roles.includes("GM"));
+    if (!allowed) {
+      showAlert?.("ไม่มีสิทธิ์", "คุณไม่ใช่ผู้อนุญาตในขั้นนี้", "warning");
+      return;
+    }
+    try {
+      // ลบ PDF เดิมออก
+      if (po.pdfPath) {
+        try {
+          const { deleteGeneratedPdf } = await import("../lib/pdfForms");
+          await deleteGeneratedPdf(po.pdfPath);
+        } catch (_) {}
+      }
+      // เก็บยอด pre-VAT (subtotal หลังหักส่วนลด) เพราะ PR allocation ไม่รวม VAT
+      const poItemsSubtotal = (po.items || []).reduce((s: number, i: any) => s + Number(i.amount || 0), 0);
+      const poOriginalSubtotal = Math.max(0, poItemsSubtotal - (Number(po.discount) || 0));
+      await updateDoc(doc(db, "artifacts", appId, "public", "data", "pos", id), {
+        status: "Draft",
+        originalPoAmount: poOriginalSubtotal,
+        pdfUrl: deleteField(),
+        pdfPath: deleteField(),
+        poEditRevisionResumeStatus: deleteField(),
+        poEditRevisionReason: deleteField(),
+        updatedAt: new Date().toISOString(),
+      });
+      await logAction("PO Revision Allowed", `อนุญาตแก้ไข PO ${po.poNo || id} → Draft (ยอด pre-VAT เดิม ${poOriginalSubtotal})`);
+      showAlert?.("อนุญาตแก้ไข", "สามารถแก้ไข PO ได้แล้ว (สถานะ Draft)", "success");
+    } catch (e) {
+      showAlert?.("Error", String(e?.message || e), "error");
+    }
+  }, [pos, roles, showAlert, logAction]);
+
+  /** ไม่อนุญาตแก้ไข PO — คืนสถานะเดิม */
+  const handlePORevisionDeny = useCallback(async (id) => {
+    const po = pos.find((p) => p.id === id);
+    if (!po) return;
+    const isPcm = po.status === PO_REVISION_PENDING_PCM;
+    const isGm = po.status === PO_REVISION_PENDING_GM;
+    if (!isPcm && !isGm) return;
+    const allowed =
+      roles.includes("Administrator") ||
+      (isPcm && roles.includes("PCM")) ||
+      (isGm && roles.includes("GM"));
+    if (!allowed) {
+      showAlert?.("ไม่มีสิทธิ์", "คุณไม่ใช่ผู้อนุญาตในขั้นนี้", "warning");
+      return;
+    }
+    const resume = po.poEditRevisionResumeStatus || (isPcm ? "Pending PCM" : "Pending GM");
+    try {
+      await updateDoc(doc(db, "artifacts", appId, "public", "data", "pos", id), {
+        status: resume,
+        poEditRevisionResumeStatus: deleteField(),
+        poEditRevisionReason: deleteField(),
+        updatedAt: new Date().toISOString(),
+      });
+      await logAction("PO Revision Denied", `ไม่อนุญาตแก้ไข PO ${po.poNo || id} — คืนสถานะ ${resume}`);
+      showAlert?.("ไม่อนุญาต", "คืนสถานะ PO ตามเดิมแล้ว", "info");
+    } catch (e) {
+      showAlert?.("Error", String(e?.message || e), "error");
+    }
+  }, [pos, roles, showAlert, logAction]);
 
   // ── Context value ──────────────────────────────────────────────────────────
   const value = useMemo(() => ({
@@ -325,10 +475,13 @@ export const AppDataProvider = ({
     columnWidths, handleColumnResize,
     // approval actions
     handlePRAction, handlePOAction,
+    handlePORevisionAllow, handlePORevisionDeny,
     // passthrough from AuthContext
     showAlert, openConfirm, logAction,
     userRole, userRoles: roles, userData, user,
     canAccessModule,
+    rolePermissions, rolePermissionsReady, saveRolePermissions,
+    functionPermissions, canUseFunction, saveFunctionPermissions,
     // raw Firebase (for views that need direct Firestore access)
     db, appId,
   }), [
@@ -341,10 +494,11 @@ export const AppDataProvider = ({
     loadVendors, loadMaterials,
     vendorsLoading, materialsLoading,
     columnWidths, handleColumnResize,
-    handlePRAction, handlePOAction,
+    handlePRAction, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,
     showAlert, openConfirm, logAction,
     userRole, roles, userData, user,
-    canAccessModule,
+    canAccessModule, rolePermissions, rolePermissionsReady, saveRolePermissions,
+    functionPermissions, canUseFunction, saveFunctionPermissions,
   ]);
 
   return (

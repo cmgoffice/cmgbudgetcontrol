@@ -14,12 +14,19 @@ import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "../components/ui";
 import ResizableTh from "../components/ResizableTh";
-import { COST_CATEGORIES, PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, getPurchaseTypeDisplayLabel } from "../lib/constants";
+import {
+  COST_CATEGORIES, PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, getPurchaseTypeDisplayLabel,
+  PO_REVISION_PENDING_PCM, PO_REVISION_PENDING_GM, PR_PENDING_ACTIVE,
+} from "../lib/constants";
 import { uploadAttachment } from "../lib/uploadAttachment";
+import { useProportionalTableLayout, chainTableResizeHandlers } from "../hooks/useProportionalTableLayout";
+import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
+
 const BudgetView = React.memo(() => {
   const { budgets, projects, prs, pos, invoices, addData, updateData, deleteData,
-          showAlert, openConfirm, logAction, userRole, userData, columnWidths, handleColumnResize,
-          visibleProjects, handlePRAction, handlePOAction, db, appId } = useAppData();
+          showAlert, openConfirm, logAction, userRole, userRoles, userData, columnWidths, handleColumnResize,
+          visibleProjects, handlePRAction, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,
+          db, appId, canUseFunction } = useAppData();
   const { selectedProjectId,
           budgetCategory, setBudgetCategory,
           expandedBudgetRows, setExpandedBudgetRows,
@@ -39,8 +46,14 @@ const BudgetView = React.memo(() => {
     const [clearConfirmText, setClearConfirmText] = useState("");
     const fileInputRef = useRef<HTMLInputElement>(null);
     const attachmentInputRef = useRef<HTMLInputElement>(null);
+    const modalMainPendingFileRef = useRef<HTMLInputElement>(null);
+    const modalSubPendingFileRef = useRef<HTMLInputElement>(null);
     const [attachmentTarget, setAttachmentTarget] = useState<{ budgetId: string; subItemId?: string | null } | null>(null);
     const [attachmentUploadingKey, setAttachmentUploadingKey] = useState<string | null>(null);
+    /** ไฟล์ที่เลือกในโมดัล — จะอัปโหลดหลังสร้าง Budget ใหม่ (ยังไม่มี budgetId) */
+    const [pendingMainAttachments, setPendingMainAttachments] = useState<File[]>([]);
+    /** ไฟล์ที่เลือกในโมดัล — จะอัปโหลดหลังบันทึก Sub-Item ใหม่ */
+    const [pendingSubAttachments, setPendingSubAttachments] = useState<File[]>([]);
     const [sortConfig, setSortConfig] = useState({
       key: null,
       direction: "ascending",
@@ -80,6 +93,79 @@ const BudgetView = React.memo(() => {
     const [unitInputText, setUnitInputText] = useState("");
     const [unitDropdownOpen, setUnitDropdownOpen] = useState(false);
     const unitInputRef = useRef<HTMLInputElement>(null);
+    const budgetTableContainerRef = useRef<HTMLDivElement>(null);
+    const dashBudgetTableRef = useRef<HTMLDivElement>(null);
+    const dashSubitemTableRef = useRef<HTMLDivElement>(null);
+    const dashPrTableRef = useRef<HTMLDivElement>(null);
+    const dashPoTableRef = useRef<HTMLDivElement>(null);
+
+    const budgetMainLayout = useProportionalTableLayout({
+      tableId: "budget",
+      defaultWeights: TABLE_LAYOUT_DEFAULTS.budget,
+      savedWidths: columnWidths.budget,
+      containerRef: budgetTableContainerRef,
+      enabled: budgetCategory !== "OVERVIEW",
+      driftKey: "description",
+      handleColumnResize,
+    });
+
+    const dashBudgetLayout = useProportionalTableLayout({
+      tableId: "dash-budget",
+      defaultWeights: TABLE_LAYOUT_DEFAULTS["dash-budget"],
+      savedWidths: columnWidths["dash-budget"],
+      containerRef: dashBudgetTableRef,
+      enabled: budgetCategory === "OVERVIEW",
+      driftKey: "description",
+      handleColumnResize,
+    });
+
+    const dashSubitemLayout = useProportionalTableLayout({
+      tableId: "dash-subitem",
+      defaultWeights: TABLE_LAYOUT_DEFAULTS["dash-subitem"],
+      savedWidths: columnWidths["dash-subitem"],
+      containerRef: dashSubitemTableRef,
+      enabled: budgetCategory === "OVERVIEW",
+      driftKey: "description",
+      handleColumnResize,
+    });
+
+    const dashPrLayout = useProportionalTableLayout({
+      tableId: "dash-pr",
+      defaultWeights: TABLE_LAYOUT_DEFAULTS["dash-pr"],
+      savedWidths: columnWidths["dash-pr"],
+      containerRef: dashPrTableRef,
+      enabled: budgetCategory === "OVERVIEW",
+      driftKey: "description",
+      handleColumnResize,
+    });
+
+    const dashPoLayout = useProportionalTableLayout({
+      tableId: "dash-po",
+      defaultWeights: TABLE_LAYOUT_DEFAULTS["dash-po"],
+      savedWidths: columnWidths["dash-po"],
+      containerRef: dashPoTableRef,
+      enabled: budgetCategory === "OVERVIEW",
+      driftKey: "costCode",
+      handleColumnResize,
+    });
+
+    const onBudgetViewColumnResize = useMemo(
+      () =>
+        chainTableResizeHandlers(
+          budgetMainLayout.handleResize,
+          dashBudgetLayout.handleResize,
+          dashSubitemLayout.handleResize,
+          dashPrLayout.handleResize,
+          dashPoLayout.handleResize
+        ),
+      [
+        budgetMainLayout.handleResize,
+        dashBudgetLayout.handleResize,
+        dashSubitemLayout.handleResize,
+        dashPrLayout.handleResize,
+        dashPoLayout.handleResize,
+      ]
+    );
 
     const saveUnitOptions = (opts: string[]) => {
       setUnitOptions(opts);
@@ -117,19 +203,17 @@ const BudgetView = React.memo(() => {
         if (pr.projectId !== selectedProjectId) return false;
         if (pr.status === "Rejected" || pr.status === "Approved" || pr.status === "PO Issued") return false;
 
-        // Admin sees all pending
-        if (userRole === "Administrator") return true;
-
-        // Role-based visibility
-        if (userRole === "CM" && pr.status === "Pending CM") return true;
-        if (userRole === "PM" && pr.status === "Pending PM") return true;
-        // Legacy or Extended
-        if (userRole === "GM" && pr.status === "Pending GM") return true;
-        if (userRole === "MD" && pr.status === "Pending MD") return true;
+        if (userRoles.includes("Administrator")) return true;
+        if (userRoles.includes("CM") && pr.status === "Pending CM") return true;
+        if (userRoles.includes("PM") && pr.status === "Pending PM") return true;
+        if (userRoles.includes("GM") && pr.status === "Pending GM") return true;
+        if (userRoles.includes("MD") && pr.status === "Pending MD") return true;
+        // PCM เห็น PR ที่ขอ Active
+        if (userRoles.includes("PCM") && pr.status === PR_PENDING_ACTIVE) return true;
 
         return false;
       });
-    }, [prs, selectedProjectId, userRole]);
+    }, [prs, selectedProjectId, userRoles]);
 
     const pendingSubItemsForProject = useMemo(() => {
       if (!selectedProjectId) return [];
@@ -148,11 +232,15 @@ const BudgetView = React.memo(() => {
 
     const pendingPOsForProject = useMemo(() => pos.filter((po) => {
       if (po.projectId !== selectedProjectId) return false;
-      if (userRole === "Administrator" && po.status?.startsWith("Pending")) return true;
-      if (userRole === "PCM" && po.status === "Pending PCM") return true;
-      if (userRole === "GM" && po.status === "Pending GM") return true;
+      if (userRoles.includes("Administrator") && (
+        po.status?.startsWith("Pending") ||
+        po.status === PO_REVISION_PENDING_PCM ||
+        po.status === PO_REVISION_PENDING_GM
+      )) return true;
+      if (userRoles.includes("PCM") && (po.status === "Pending PCM" || po.status === PO_REVISION_PENDING_PCM)) return true;
+      if (userRoles.includes("GM") && (po.status === "Pending GM" || po.status === PO_REVISION_PENDING_GM)) return true;
       return false;
-    }), [pos, selectedProjectId, userRole]);
+    }), [pos, selectedProjectId, userRoles]);
 
     const sortedBudgets = useMemo(() => {
       let sortableItems = [...currentBudgets];
@@ -195,6 +283,125 @@ const BudgetView = React.memo(() => {
       return okMime.has(t);
     };
 
+    /** แนบไฟล์ที่ระดับ Budget หลัก (Firestore: budget.attachments) */
+    const appendMainBudgetAttachments = async (budgetId: string, files: File[]) => {
+      if (!selectedProjectId) throw new Error("กรุณาเลือกโครงการก่อนแนบไฟล์");
+      if (!files?.length) return;
+      const budget = budgets.find((b) => b.id === budgetId);
+      const existing = [...(budget?.attachments || [])];
+      const uploaded = [];
+      for (const f of files) {
+        const up = await uploadAttachment(f, {
+          type: "budget",
+          projectId: selectedProjectId,
+          docId: budgetId,
+          subPath: "mainItem",
+        });
+        uploaded.push({
+          ...up,
+          uploadedAt: new Date().toISOString(),
+          uploadedBy: userData?.email || userData?.displayName || userRole || "unknown",
+        });
+      }
+      await updateDoc(
+        doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
+        { attachments: [...existing, ...uploaded] }
+      );
+      await logAction?.(
+        "Update",
+        `[Budget Attachments] ${budgetId} | main | +${files.length} files`
+      );
+    };
+
+    /**
+     * แนบไฟล์ที่ Sub-Item
+     * @param subItemsHint ถ้ามี (เช่น หลังเพิ่ง updateDoc) ใช้แทน state เพื่อกันช้าของ onSnapshot
+     */
+    const appendSubItemAttachments = async (
+      budgetId: string,
+      subItemId: string,
+      files: File[],
+      subItemsHint: any[] | null
+    ) => {
+      if (!selectedProjectId) throw new Error("กรุณาเลือกโครงการก่อนแนบไฟล์");
+      if (!files?.length) return;
+      const uploaded = [];
+      for (const f of files) {
+        const up = await uploadAttachment(f, {
+          type: "budget",
+          projectId: selectedProjectId,
+          docId: budgetId,
+          subPath: `subItem_${subItemId}`,
+        });
+        uploaded.push({
+          ...up,
+          uploadedAt: new Date().toISOString(),
+          uploadedBy: userData?.email || userData?.displayName || userRole || "unknown",
+        });
+      }
+      const budget = budgets.find((b) => b.id === budgetId);
+      const baseSubs = Array.isArray(subItemsHint)
+        ? [...subItemsHint]
+        : Array.isArray(budget?.subItems)
+          ? [...budget.subItems]
+          : [];
+      const nextSubs = baseSubs.map((s) =>
+        s.id !== subItemId
+          ? s
+          : { ...s, attachments: [...(s.attachments || []), ...uploaded] }
+      );
+      await updateDoc(
+        doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
+        { subItems: nextSubs }
+      );
+      await logAction?.(
+        "Update",
+        `[Budget Attachments] ${budgetId} / SubItem ${subItemId} | +${files.length} files`
+      );
+    };
+
+    const closeBudgetModal = () => {
+      setIsModalOpen(false);
+      setPendingMainAttachments([]);
+    };
+
+    const closeSubItemModal = () => {
+      setIsSubItemModalOpen(false);
+      setPendingSubAttachments([]);
+    };
+
+    const onModalMainPendingFilesSelected = (e: any) => {
+      const files: File[] = Array.from(e?.target?.files || []);
+      if (e?.target) e.target.value = "";
+      if (!files.length) return;
+      const invalid = files.filter((f) => !isAllowedAttachmentFile(f));
+      if (invalid.length > 0) {
+        showAlert(
+          "ไฟล์ไม่รองรับ",
+          `รองรับเฉพาะ PDF/EXCEL/WORD/JPG/JPEG/PNG\nไฟล์ที่ไม่รองรับ: ${invalid.map((f) => f.name).join(", ")}`,
+          "warning"
+        );
+        return;
+      }
+      setPendingMainAttachments((prev) => [...prev, ...files]);
+    };
+
+    const onModalSubPendingFilesSelected = (e: any) => {
+      const files: File[] = Array.from(e?.target?.files || []);
+      if (e?.target) e.target.value = "";
+      if (!files.length) return;
+      const invalid = files.filter((f) => !isAllowedAttachmentFile(f));
+      if (invalid.length > 0) {
+        showAlert(
+          "ไฟล์ไม่รองรับ",
+          `รองรับเฉพาะ PDF/EXCEL/WORD/JPG/JPEG/PNG\nไฟล์ที่ไม่รองรับ: ${invalid.map((f) => f.name).join(", ")}`,
+          "warning"
+        );
+        return;
+      }
+      setPendingSubAttachments((prev) => [...prev, ...files]);
+    };
+
     const openAttachmentPicker = (budgetId: string, subItemId?: string | null) => {
       if (!selectedProjectId) {
         showAlert("แจ้งเตือน", "กรุณาเลือกโครงการก่อนแนบไฟล์", "warning");
@@ -230,40 +437,13 @@ const BudgetView = React.memo(() => {
         const budget = budgets.find((b) => b.id === target.budgetId);
         if (!budget) throw new Error("ไม่พบรายการ Budget");
 
-        const uploaded = [];
-        for (const f of files) {
-          const up = await uploadAttachment(f, {
-            type: "budget",
-            projectId: selectedProjectId,
-            docId: target.budgetId,
-            subPath: target.subItemId ? `subItem_${target.subItemId}` : "mainItem",
-          });
-          uploaded.push({ ...up, uploadedAt: new Date().toISOString(), uploadedBy: userData?.email || userData?.displayName || userRole || "unknown" });
-        }
-
         if (!target.subItemId) {
-          const next = [...(budget.attachments || []), ...uploaded];
-          await updateDoc(
-            doc(db, "artifacts", appId, "public", "data", "budgets", target.budgetId),
-            { attachments: next }
-          );
+          await appendMainBudgetAttachments(target.budgetId, files);
         } else {
-          const subs = Array.isArray(budget.subItems) ? budget.subItems : [];
-          const nextSubs = subs.map((s: any) => {
-            if (s.id !== target.subItemId) return s;
-            return { ...s, attachments: [...(s.attachments || []), ...uploaded] };
-          });
-          await updateDoc(
-            doc(db, "artifacts", appId, "public", "data", "budgets", target.budgetId),
-            { subItems: nextSubs }
-          );
+          await appendSubItemAttachments(target.budgetId, target.subItemId, files, null);
         }
 
         showAlert("อัปโหลดสำเร็จ", `แนบไฟล์เรียบร้อย (${files.length} ไฟล์)`, "success");
-        await logAction?.(
-          "Update",
-          `[Budget Attachments] ${target.budgetId}${target.subItemId ? ` / SubItem ${target.subItemId}` : ""} | +${files.length} files`
-        );
       } catch (err: any) {
         console.error("[Budget Attachments] upload error:", err);
         showAlert("อัปโหลดไม่สำเร็จ", err?.message || "เกิดข้อผิดพลาด", "error");
@@ -758,34 +938,40 @@ const BudgetView = React.memo(() => {
       return { prTotal, poTotal, invoiceTotal, relatedPRs, relatedPOs };
     };
 
-    const getNowStatus = (budget, stats, filterMode = "ALL", targetSubDesc = null) => {
+    const getNowStatus = (budget, stats, filterMode = "ALL", targetSubId = null) => {
       const budgetCode = budget.code;
       const hasSubItems = budget.subItems && budget.subItems.length > 0;
 
-      // Shared helper: Does this PR/PO item pass the current filter?
+      const resolveSubItemId = (item) => {
+        if (item.subItemId) return item.subItemId;
+        if (item.prId != null && item.prItemIndex != null) {
+          const pr = prs.find(p => p.id === item.prId);
+          return pr?.items?.[item.prItemIndex]?.subItemId || null;
+        }
+        return null;
+      };
+
       const matchesFilter = (item, itemCostCode, parentDoc = null) => {
         if (itemCostCode !== budgetCode) return false;
         const iDesc = (item.description || "").trim();
+        const effectiveSubItemId = resolveSubItemId(item);
 
-        if (filterMode === "SUB_ITEM" && targetSubDesc) {
-          const targetSub = hasSubItems ? budget.subItems.find(s => s.description === targetSubDesc) : null;
-          // 1. Try item-level subItemId match (most reliable)
-          if (item.subItemId && targetSub && item.subItemId === targetSub.id) return true;
-          // 2. Try parent PR/PO selectedSubItemId (for manually added items without subItemId)
-          if (!item.subItemId && parentDoc?.selectedSubItemId && targetSub && parentDoc.selectedSubItemId === targetSub.id) return true;
-          // 3. Fallback: description match
-          return iDesc === targetSubDesc.trim();
+        if (filterMode === "SUB_ITEM" && targetSubId) {
+          const targetSub = hasSubItems ? budget.subItems.find(s => s.id === targetSubId) : null;
+          if (!targetSub) return false;
+          const targetDesc = (targetSub.description || "").trim();
+          if (effectiveSubItemId) return effectiveSubItemId === targetSub.id;
+          if (parentDoc?.selectedSubItemId && parentDoc.selectedSubItemId === targetSub.id) return true;
+          return iDesc === targetDesc;
         }
 
         if (filterMode === "MAIN_ONLY") {
           if (hasSubItems) {
-            // Budget HAS sub-items → exclude items that belong to sub-items
-            if (item.subItemId) {
-              return !budget.subItems.some(sub => sub.id === item.subItemId);
+            if (effectiveSubItemId) {
+              return !budget.subItems.some(sub => sub.id === effectiveSubItemId);
             }
             return !budget.subItems.some(sub => sub.description.trim() === iDesc);
           } else {
-            // Budget has NO sub-items → match description to prevent spill
             return iDesc === (budget.description || "").trim();
           }
         }
@@ -965,6 +1151,10 @@ const BudgetView = React.memo(() => {
     };
 
     const handleSaveBudget = async (newStatus = null) => {
+      if (newStatus === "Wait MD Approve" && !canUseFunction("budget", "submit")) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
+        return;
+      }
       let success = false;
       try {
         if (editingBudgetId) {
@@ -1004,7 +1194,20 @@ const BudgetView = React.memo(() => {
             budgetData
           );
           await logAction("Create", `[Budget] ${formData.code} - ${formData.description} | โครงการ: ${projects.find(p => p.id === selectedProjectId)?.name || selectedProjectId}`);
+          if (pendingMainAttachments.length > 0) {
+            try {
+              await appendMainBudgetAttachments(budgetDocId, pendingMainAttachments);
+            } catch (attErr) {
+              console.error("[Budget] post-create attachments:", attErr);
+              showAlert(
+                "บันทึกงบแล้ว แต่แนบไฟล์ไม่สำเร็จ",
+                attErr?.message || "เกิดข้อผิดพลาด",
+                "warning"
+              );
+            }
+          }
         }
+        setPendingMainAttachments([]);
         setIsModalOpen(false);
         setEditingBudgetId(null);
         setFormData({ code: "", description: "", amount: 0 });
@@ -1066,6 +1269,7 @@ const BudgetView = React.memo(() => {
         description: item.description,
         amount: item.amount,
       });
+      setPendingMainAttachments([]);
       setEditingBudgetId(item.id);
       setSelectedBudget(item);
       setIsModalOpen(true);
@@ -1081,6 +1285,10 @@ const BudgetView = React.memo(() => {
     };
 
     const handleSubmitBudget = async (id) => {
+      if (!canUseFunction("budget", "submit")) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
+        return;
+      }
       openConfirm(
         "ยืนยันการส่ง",
         "คุณต้องการส่งขออนุมัติรายการนี้ใช่หรือไม่?",
@@ -1105,6 +1313,10 @@ const BudgetView = React.memo(() => {
     }, [budgetCategory]);
 
     const handleBulkSubmitBudgets = () => {
+      if (!canUseFunction("budget", "submit")) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
+        return;
+      }
       setActionDropdownOpen(false);
       if (selectedBudgetIds.length === 0) {
         showAlert("กรุณาเลือกรายการ", "กรุณาเลือกรายการที่ต้องการส่งอนุมัติก่อน (ติ๊กถูกหน้าบรรทัด)", "warning");
@@ -1243,6 +1455,10 @@ const BudgetView = React.memo(() => {
     };
 
     const handleRequestRevision = async () => {
+      if (!canUseFunction("budget", "requestRevision")) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ขอแก้ไขงบประมาณ", "warning");
+        return;
+      }
       if (!selectedBudget || !revisionReason) return;
       await updateDoc(
         doc(
@@ -1317,6 +1533,10 @@ const BudgetView = React.memo(() => {
     };
 
     const handleRequestRevisionSubItem = async (budgetId, subItemId, reason) => {
+      if (!canUseFunction("budget", "requestRevision")) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ขอแก้ไขงบประมาณ", "warning");
+        return;
+      }
       const budget = budgets.find(b => b.id === budgetId);
       if (!budget) return;
       const newSubItems = budget.subItems.map(sub =>
@@ -1369,6 +1589,10 @@ const BudgetView = React.memo(() => {
       const { budgetId, subItemId } = reasonModalContext;
       if (!reasonModalValue.trim()) return;
       if (reasonModalType === "revision") {
+        if (!canUseFunction("budget", "requestRevision")) {
+          showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ขอแก้ไขงบประมาณ", "warning");
+          return;
+        }
         handleRequestRevisionSubItem(budgetId, subItemId, reasonModalValue.trim());
       } else {
         handleRejectSubItem(budgetId, subItemId, reasonModalValue.trim());
@@ -1378,8 +1602,16 @@ const BudgetView = React.memo(() => {
     };
 
     const handleSubmitSubItem = async (budgetId, subItemId) => {
+      if (!canUseFunction("budget", "submit")) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
+        return;
+      }
       const budget = budgets.find(b => b.id === budgetId);
       if (!budget) return;
+      if (budget.status !== "Approved") {
+        showAlert("ไม่สามารถส่งคำขออนุมัติได้", "Main item ยังไม่ได้รับการอนุมัติ กรุณาส่งขออนุมัติ Main item ก่อน", "warning");
+        return;
+      }
       const newSubItems = budget.subItems.map(sub =>
         sub.id === subItemId ? { ...sub, status: "Wait MD Approve", rejectReason: "" } : sub
       );
@@ -1413,6 +1645,7 @@ const BudgetView = React.memo(() => {
     const openSubItemModal = (item) => {
       setSelectedBudget(item);
       setEditingSubItem(null);
+      setPendingSubAttachments([]);
       setSubItemData({ description: "", quantity: 1, unit: "งาน", unitPrice: 0, amount: 0 });
       setUnitInputText("งาน");
       setUnitDropdownOpen(false);
@@ -1421,6 +1654,7 @@ const BudgetView = React.memo(() => {
 
     const openEditSubItemModal = (mainItem, subItem) => {
       setSelectedBudget(mainItem);
+      setPendingSubAttachments([]);
       setEditingSubItem(subItem);
       setSubItemData({
         description: subItem.description,
@@ -1435,7 +1669,15 @@ const BudgetView = React.memo(() => {
     };
 
     const handleResubmitSubItemFromModal = async () => {
+      if (!canUseFunction("budget", "submit")) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
+        return;
+      }
       if (!selectedBudget || !editingSubItem) return;
+      if (selectedBudget.status !== "Approved") {
+        showAlert("ไม่สามารถส่งคำขออนุมัติได้", "Main item ยังไม่ได้รับการอนุมัติ กรุณาส่งขออนุมัติ Main item ก่อน", "warning");
+        return;
+      }
       const amountToAdd = Number(subItemData.quantity) * Number(subItemData.unitPrice);
       const updatedSub = {
         ...editingSubItem,
@@ -1454,6 +1696,7 @@ const BudgetView = React.memo(() => {
         doc(db, "artifacts", appId, "public", "data", "budgets", selectedBudget.id),
         { subItems: updatedSubItems }
       );
+      setPendingSubAttachments([]);
       setIsSubItemModalOpen(false);
       setEditingSubItem(null);
       setExpandedBudgetRows((prev) => ({ ...prev, [selectedBudget.id]: true }));
@@ -1464,6 +1707,7 @@ const BudgetView = React.memo(() => {
       if (!subItemData.description.trim()) return showAlert("ข้อมูลไม่ครบ", "กรุณากรอกชื่อรายการ", "warning");
       const amountToAdd = Number(subItemData.quantity) * Number(subItemData.unitPrice);
       const newSubItem = {
+        ...(editingSubItem || {}),
         id: editingSubItem ? editingSubItem.id : crypto.randomUUID(),
         description: subItemData.description,
         quantity: Number(subItemData.quantity),
@@ -1496,7 +1740,7 @@ const BudgetView = React.memo(() => {
       }
 
       // Rule 4: Do NOT update main budget amount.
-      const success = await updateDoc(
+      await updateDoc(
         doc(
           db,
           "artifacts",
@@ -1508,6 +1752,24 @@ const BudgetView = React.memo(() => {
         ),
         { subItems: updatedSubItems }
       );
+      if (pendingSubAttachments.length > 0 && !editingSubItem) {
+        try {
+          await appendSubItemAttachments(
+            selectedBudget.id,
+            newSubItem.id,
+            pendingSubAttachments,
+            updatedSubItems
+          );
+        } catch (attErr) {
+          console.error("[Sub-Item] post-save attachments:", attErr);
+          showAlert(
+            "บันทึก Sub แล้ว แต่แนบไฟล์ไม่สำเร็จ",
+            attErr?.message || "เกิดข้อผิดพลาด",
+            "warning"
+          );
+        }
+      }
+      setPendingSubAttachments([]);
       setIsSubItemModalOpen(false);
       setExpandedBudgetRows((prev) => ({ ...prev, [selectedBudget.id]: true }));
     };
@@ -1532,7 +1794,7 @@ const BudgetView = React.memo(() => {
     };
 
     return (
-      <div className="space-y-4">
+      <div className="space-y-4 w-full min-w-0">
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
           <h2 className="text-xl font-bold text-slate-800">
             B. Project Budget
@@ -1563,30 +1825,39 @@ const BudgetView = React.memo(() => {
         </div>
         {budgetCategory === "OVERVIEW" ? (
           <>
-            <Card className="overflow-x-auto">
+            <Card className="overflow-hidden w-full min-w-0">
               <div className="p-3 bg-slate-50 border-b">
                 <h3 className="font-bold text-sm text-slate-800">
                   สรุปภาพรวมงบประมาณโครงการ (Project Budget Summary)
                 </h3>
               </div>
-              <table className="w-full text-left text-sm text-slate-600 whitespace-nowrap">
+              <table className="w-full text-left text-sm text-slate-600 table-fixed">
+                <colgroup>
+                  <col style={{ width: "7%" }} />
+                  <col style={{ width: "28%" }} />
+                  <col style={{ width: "14%" }} />
+                  <col style={{ width: "13%" }} />
+                  <col style={{ width: "14%" }} />
+                  <col style={{ width: "12%" }} />
+                  <col style={{ width: "12%" }} />
+                </colgroup>
                 <thead className="bg-slate-200 text-slate-900 uppercase font-bold border-b text-sm">
                   <tr>
-                    <th className="py-3 px-4 border-r w-20">Code</th>
-                    <th className="py-3 px-4 border-r min-w-[280px]">หมวดงาน</th>
-                    <th className="py-3 px-4 text-right bg-blue-100 min-w-[120px]">
+                    <th className="py-3 px-4 border-r">Code</th>
+                    <th className="py-3 px-4 border-r min-w-0">หมวดงาน</th>
+                    <th className="py-3 px-4 text-right bg-blue-100">
                       Budget Total
                     </th>
-                    <th className="py-3 px-4 text-right text-orange-700 min-w-[100px]">
+                    <th className="py-3 px-4 text-right text-orange-700">
                       Spent (Inv)
                     </th>
-                    <th className="py-3 px-4 text-right border-r font-bold text-green-800 min-w-[120px]">
+                    <th className="py-3 px-4 text-right border-r font-bold text-green-800">
                       Balance
                     </th>
-                    <th className="py-3 px-4 text-right text-slate-600 min-w-[100px]">
+                    <th className="py-3 px-4 text-right text-slate-600">
                       PR Total
                     </th>
-                    <th className="py-3 px-4 text-right text-slate-600 border-r-0 min-w-[100px]">
+                    <th className="py-3 px-4 text-right text-slate-600 border-r-0">
                       PO Total
                     </th>
                   </tr>
@@ -1597,7 +1868,7 @@ const BudgetView = React.memo(() => {
                       <td className="py-2 px-4 border-r font-bold text-center bg-slate-50">
                         {cat.code}
                       </td>
-                      <td className="py-2 px-4 border-r font-medium min-w-[280px]">
+                      <td className="py-2 px-4 border-r font-medium min-w-0 truncate" title={cat.name}>
                         {cat.name}
                       </td>
                       <td className="py-2 px-4 text-right bg-blue-50/50 font-semibold text-slate-900">
@@ -1677,7 +1948,7 @@ const BudgetView = React.memo(() => {
 
                 {/* ----- Budget Approval Table (MD only) ----- */}
                 {pendingBudgetsForProject.length > 0 && (
-                  <Card className="overflow-x-auto border-l-4 border-l-blue-500">
+                  <Card className="overflow-hidden border-l-4 border-l-blue-500 w-full min-w-0">
                     <div className="p-3 bg-blue-50 border-b flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <CheckCircle size={15} className="text-blue-600" />
@@ -1697,29 +1968,34 @@ const BudgetView = React.memo(() => {
                           </button>
                           {pendingActionDropdownOpen && (
                             <div className="absolute right-0 top-full mt-1 z-20 py-1 bg-white border border-slate-200 rounded-lg shadow-lg min-w-[220px]">
-                              <button
-                                type="button"
-                                className="w-full text-left px-3 py-2 text-xs hover:bg-green-50 text-green-700 flex items-center gap-2"
-                                onClick={handleBulkApprovePendingBudgets}
-                              >
-                                Approve ({pendingSelectedBudgetIds.length} รายการ)
-                              </button>
-                              <button
-                                type="button"
-                                className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 text-red-700 flex items-center gap-2"
-                                onClick={handleBulkRejectPendingBudgets}
-                              >
-                                Reject ({pendingSelectedBudgetIds.length} รายการ)
-                              </button>
+                              {canUseFunction("budget", "approve") && (
+                                <button
+                                  type="button"
+                                  className="w-full text-left px-3 py-2 text-xs hover:bg-green-50 text-green-700 flex items-center gap-2"
+                                  onClick={handleBulkApprovePendingBudgets}
+                                >
+                                  Approve ({pendingSelectedBudgetIds.length} รายการ)
+                                </button>
+                              )}
+                              {canUseFunction("budget", "approve") && (
+                                <button
+                                  type="button"
+                                  className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 text-red-700 flex items-center gap-2"
+                                  onClick={handleBulkRejectPendingBudgets}
+                                >
+                                  Reject ({pendingSelectedBudgetIds.length} รายการ)
+                                </button>
+                              )}
                             </div>
                           )}
                         </div>
                       </div>
                     </div>
-                    <table className="w-full text-left text-xs text-slate-600 whitespace-nowrap">
+                    <div ref={dashBudgetTableRef} className="w-full min-w-0">
+                    <table className="w-full text-left text-xs text-slate-600 table-fixed">
                       <thead className="bg-slate-200 text-slate-800 uppercase font-bold border-b text-sm">
                         <tr>
-                          <th className="py-2.5 px-3 text-center">
+                          <th className="py-2.5 px-3 text-center" style={{ width: dashBudgetLayout.scaled.checkbox }}>
                             <input
                               type="checkbox"
                               className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
@@ -1730,11 +2006,11 @@ const BudgetView = React.memo(() => {
                               }}
                             />
                           </th>
-                          <ResizableTh tableId="dash-budget" colKey="costCode" className="py-2.5 px-4" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-budget"]?.costCode}>Cost Code</ResizableTh>
-                          <ResizableTh tableId="dash-budget" colKey="description" className="py-2.5 px-4" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-budget"]?.description}>รายการ</ResizableTh>
-                          <ResizableTh tableId="dash-budget" colKey="amount" className="py-2.5 px-4 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-budget"]?.amount}>จำนวนเงิน</ResizableTh>
-                          <ResizableTh tableId="dash-budget" colKey="status" className="py-2.5 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-budget"]?.status}>สถานะ</ResizableTh>
-                          <th className="py-2.5 px-4 text-center">Actions</th>
+                          <ResizableTh tableId="dash-budget" colKey="costCode" className="py-2.5 px-4" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashBudgetLayout.scaled.costCode}>Cost Code</ResizableTh>
+                          <ResizableTh tableId="dash-budget" colKey="description" className="py-2.5 px-4" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashBudgetLayout.scaled.description}>รายการ</ResizableTh>
+                          <ResizableTh tableId="dash-budget" colKey="amount" className="py-2.5 px-4 text-right" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashBudgetLayout.scaled.amount}>จำนวนเงิน</ResizableTh>
+                          <ResizableTh tableId="dash-budget" colKey="status" className="py-2.5 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashBudgetLayout.scaled.status}>สถานะ</ResizableTh>
+                          <th className="py-2.5 px-4 text-center" style={{ width: dashBudgetLayout.scaled.actions }}>Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -1772,7 +2048,7 @@ const BudgetView = React.memo(() => {
                               </td>
                               <td className="py-2 px-3 text-center">
                                 <div className="flex justify-center gap-1">
-                                  {!isRevisionPending && (
+                                  {canUseFunction("budget", "approve") && !isRevisionPending && (
                                     <>
                                       <Button
                                         variant="success"
@@ -1790,7 +2066,7 @@ const BudgetView = React.memo(() => {
                                       </Button>
                                     </>
                                   )}
-                                  {isRevisionPending && (
+                                  {canUseFunction("budget", "approve") && isRevisionPending && (
                                     <>
                                       <Button
                                         variant="warning"
@@ -1815,26 +2091,28 @@ const BudgetView = React.memo(() => {
                         })}
                       </tbody>
                     </table>
+                    </div>
                   </Card>
                 )}
 
                 {/* ----- Sub-Item Approval Table (MD only) ----- */}
                 {pendingSubItemsForProject.length > 0 && (
-                  <Card className="overflow-x-auto border-l-4 border-l-purple-500">
+                  <Card className="overflow-hidden border-l-4 border-l-purple-500 w-full min-w-0">
                     <div className="p-3 bg-purple-50 border-b flex items-center gap-2">
                       <CheckCircle size={15} className="text-purple-600" />
                       <h4 className="font-bold text-xs text-purple-800 uppercase tracking-wide">
                         Project Budget (Sub-Items) — รออนุมัติ ({pendingSubItemsForProject.length} รายการ)
                       </h4>
                     </div>
-                    <table className="w-full text-left text-xs text-slate-600 whitespace-nowrap">
+                    <div ref={dashSubitemTableRef} className="w-full min-w-0">
+                    <table className="w-full text-left text-xs text-slate-600 table-fixed">
                       <thead className="bg-slate-200 text-slate-800 uppercase font-bold border-b text-sm">
                         <tr>
-                          <ResizableTh tableId="dash-subitem" colKey="costCode" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-subitem"]?.costCode}>Cost Code</ResizableTh>
-                          <ResizableTh tableId="dash-subitem" colKey="description" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-subitem"]?.description}>รายการ</ResizableTh>
-                          <ResizableTh tableId="dash-subitem" colKey="amount" className="py-1.5 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-subitem"]?.amount}>จำนวนเงินรวม</ResizableTh>
-                          <ResizableTh tableId="dash-subitem" colKey="status" className="py-1.5 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-subitem"]?.status}>สถานะ</ResizableTh>
-                          <th className="py-1.5 px-3 text-center">Actions</th>
+                          <ResizableTh tableId="dash-subitem" colKey="costCode" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashSubitemLayout.scaled.costCode}>Cost Code</ResizableTh>
+                          <ResizableTh tableId="dash-subitem" colKey="description" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashSubitemLayout.scaled.description}>รายการ</ResizableTh>
+                          <ResizableTh tableId="dash-subitem" colKey="amount" className="py-1.5 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashSubitemLayout.scaled.amount}>จำนวนเงินรวม</ResizableTh>
+                          <ResizableTh tableId="dash-subitem" colKey="status" className="py-1.5 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashSubitemLayout.scaled.status}>สถานะ</ResizableTh>
+                          <th className="py-1.5 px-3 text-center" style={{ width: dashSubitemLayout.scaled.actions }}>Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -1895,7 +2173,7 @@ const BudgetView = React.memo(() => {
                                     </td>
                                     <td className="py-1 px-3 text-center border-b border-slate-100">
                                       <div className="flex justify-center gap-1">
-                                        {sub.status === "Revision Pending" ? (
+                                        {canUseFunction("budget", "approve") && sub.status === "Revision Pending" ? (
                                           <>
                                             <Button variant="warning" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAllowEditSubItem(b.id, sub.id)}>
                                               อนุญาตแก้ไข
@@ -1904,7 +2182,7 @@ const BudgetView = React.memo(() => {
                                               ไม่อนุญาตแก้ไข
                                             </Button>
                                           </>
-                                        ) : (
+                                        ) : canUseFunction("budget", "approve") ? (
                                           <>
                                             <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleApproveSubItem(b.id, sub.id)}>
                                               <CheckCircle size={11} /> Approve
@@ -1913,7 +2191,7 @@ const BudgetView = React.memo(() => {
                                               <XCircle size={11} /> Reject
                                             </Button>
                                           </>
-                                        )}
+                                        ) : null}
                                       </div>
                                     </td>
                                   </tr>
@@ -1924,57 +2202,58 @@ const BudgetView = React.memo(() => {
                         })()}
                       </tbody>
                     </table>
+                    </div>
                   </Card>
                 )}
 
                 {/* ----- PR Approval Table (PM / GM / MD by role) ----- */}
                 {pendingPRsForProject.length > 0 && (
-                  <Card className="overflow-x-auto border-l-4 border-l-green-500">
+                  <Card className="overflow-hidden border-l-4 border-l-green-500 w-full min-w-0">
                     <div className="p-3 bg-green-50 border-b flex items-center gap-2">
                       <FileText size={15} className="text-green-600" />
                       <h4 className="font-bold text-xs text-green-800 uppercase tracking-wide">
                         Purchase Request (PR) — รออนุมัติ ({pendingPRsForProject.length} รายการ)
                       </h4>
                     </div>
-                    <table className="w-full text-left text-xs text-slate-600 whitespace-nowrap">
+                    <div ref={dashPrTableRef} className="w-full min-w-0">
+                    <table className="w-full text-left text-xs text-slate-600 table-fixed">
                       <thead className="bg-slate-200 text-slate-800 uppercase font-bold border-b text-sm">
                         <tr>
-                          <ResizableTh tableId="dash-pr" colKey="prNo" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-pr"]?.prNo}>PR No.</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="date" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-pr"]?.date}>วันที่</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="costCode" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-pr"]?.costCode}>Cost Code</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="type" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-pr"]?.type}>ประเภท</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="requestor" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-pr"]?.requestor}>ผู้ขอซื้อ</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="amount" className="py-1.5 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-pr"]?.amount}>จำนวนเงิน</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="status" className="py-1.5 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-pr"]?.status}>สถานะ</ResizableTh>
-                          <th className="py-1.5 px-3 text-center">Actions</th>
+                          <ResizableTh tableId="dash-pr" colKey="prNo" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.prNo}>PR No.</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="date" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.date}>วันที่</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="costCode" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.costCode}>Cost Code</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="type" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.type}>ประเภท</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="requestor" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.requestor}>ผู้ขอซื้อ</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="amount" className="py-1.5 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.amount}>จำนวนเงิน</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="status" className="py-1.5 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.status}>สถานะ</ResizableTh>
+                          <th className="py-1.5 px-3 text-center" style={{ width: dashPrLayout.scaled.actions }}>Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {pendingPRsForProject.map((pr) => {
                           const approveLabel =
-                            userRole === "PM"
-                              ? "PM Approve"
-                              : userRole === "GM"
-                                ? "GM Approve"
-                                : userRole === "MD"
-                                  ? "MD Approve"
-                                  : "Approve"; // Default/Admin
+                            pr.status === "Pending CM"
+                              ? "CM Approve"
+                              : pr.status === "Pending PM"
+                                ? "PM Approve"
+                                : pr.status === "Pending GM"
+                                  ? "GM Approve"
+                                  : pr.status === "Pending MD"
+                                    ? "MD Approve"
+                                    : "Approve";
 
-                          // Admin sees all buttons? Or relies on current status?
-                          // Logic: Show button if status matches role OR if Admin
+                          const isActivePr = pr.status === PR_PENDING_ACTIVE;
                           const canApprove =
-                            (pr.status === "Pending CM" && (userRole === "CM" || userRole === "Administrator")) ||
-                            (pr.status === "Pending PM" && (userRole === "PM" || userRole === "Administrator")) ||
-                            (pr.status === "Pending GM" && (userRole === "GM" || userRole === "Administrator")) ||
-                            (pr.status === "Pending MD" && (userRole === "MD" || userRole === "Administrator"));
+                            (pr.status === "Pending CM" && (userRoles.includes("CM") || userRoles.includes("Administrator"))) ||
+                            (pr.status === "Pending PM" && (userRoles.includes("PM") || userRoles.includes("Administrator"))) ||
+                            (pr.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator"))) ||
+                            (pr.status === "Pending MD" && (userRoles.includes("MD") || userRoles.includes("Administrator"))) ||
+                            (isActivePr && (userRoles.includes("PCM") || userRoles.includes("Administrator")));
 
-                          if (!canApprove) return null; // Don't render row in "Pending Approval" table if can't approve? 
-                          // Wait, this loop is inside "Pending Approval Tasks". 
-                          // If Admin, they should see ALL pending tasks.
-                          // The 'pendingPRsForProject' filter needs to be checked too.
+                          if (!canApprove) return null;
 
                           return (
-                            <tr key={pr.id} className="hover:bg-green-50/40">
+                            <tr key={pr.id} className={`hover:bg-green-50/40 ${isActivePr ? "bg-teal-50/30" : ""}`}>
                               <td className="py-2 px-3 font-medium text-slate-800" title={pr.prNo}><span className="cell-text">{pr.prNo}</span></td>
                               <td className="py-2 px-3 text-slate-500" title={pr.requestDate}><span className="cell-text">{pr.requestDate}</span></td>
                               <td className="py-2 px-3">
@@ -1992,20 +2271,36 @@ const BudgetView = React.memo(() => {
                               </td>
                               <td className="py-2 px-3 text-center">
                                 <div className="flex justify-center gap-1">
-                                  <Button
-                                    variant="success"
-                                    className="px-2 py-0.5 text-[10px] whitespace-nowrap"
-                                    onClick={() => handlePRAction(pr.id, "approve")}
-                                  >
-                                    <CheckCircle size={11} /> {approveLabel}
-                                  </Button>
-                                  <Button
-                                    variant="danger"
-                                    className="px-2 py-0.5 text-[10px] whitespace-nowrap"
-                                    onClick={() => handlePRAction(pr.id, "reject")}
-                                  >
-                                    <XCircle size={11} /> Reject
-                                  </Button>
+                                  {isActivePr ? (
+                                    <Button
+                                      variant="success"
+                                      className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                                      onClick={async () => {
+                                        const resume = pr.preCloseStatus || "Approved";
+                                        await updateData("prs", pr.id, { status: resume, preCloseStatus: null, activeRequestedAt: null });
+                                        logAction("Approved Active PR", `อนุมัติ Active PR ${pr.prNo || pr.id} → ${resume}`);
+                                      }}
+                                    >
+                                      <CheckCircle size={11} /> Active PR
+                                    </Button>
+                                  ) : (
+                                    <>
+                                      <Button
+                                        variant="success"
+                                        className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                                        onClick={() => handlePRAction(pr.id, "approve")}
+                                      >
+                                        <CheckCircle size={11} /> {approveLabel}
+                                      </Button>
+                                      <Button
+                                        variant="danger"
+                                        className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                                        onClick={() => handlePRAction(pr.id, "reject")}
+                                      >
+                                        <XCircle size={11} /> Reject
+                                      </Button>
+                                    </>
+                                  )}
                                 </div>
                               </td>
                             </tr>
@@ -2013,41 +2308,49 @@ const BudgetView = React.memo(() => {
                         })}
                       </tbody>
                     </table>
+                    </div>
                   </Card>
                 )}
 
                 {/* ----- PO Approval Table (PCM / GM by role) ----- */}
                 {pendingPOsForProject.length > 0 && (
-                  <Card className="overflow-x-auto border-l-4 border-l-orange-500">
+                  <Card className="overflow-hidden border-l-4 border-l-orange-500 w-full min-w-0">
                     <div className="p-3 bg-orange-50 border-b flex items-center gap-2">
                       <FileText size={15} className="text-orange-600" />
                       <h4 className="font-bold text-xs text-orange-800 uppercase tracking-wide">
                         Purchase Order (PO) — รออนุมัติ ({pendingPOsForProject.length} รายการ)
                       </h4>
                     </div>
-                    <table className="w-full text-left text-xs text-slate-600 whitespace-nowrap">
+                    <div ref={dashPoTableRef} className="w-full min-w-0">
+                    <table className="w-full text-left text-xs text-slate-600 table-fixed">
                       <thead className="bg-slate-200 text-slate-800 uppercase font-bold border-b text-sm">
                         <tr>
-                          <ResizableTh tableId="dash-po" colKey="poNo" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-po"]?.poNo}>PO No.</ResizableTh>
-                          <ResizableTh tableId="dash-po" colKey="date" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-po"]?.date}>วันที่</ResizableTh>
-                          <ResizableTh tableId="dash-po" colKey="costCode" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-po"]?.costCode}>Cost Code</ResizableTh>
-                          <ResizableTh tableId="dash-po" colKey="amount" className="py-1.5 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-po"]?.amount}>จำนวนเงิน</ResizableTh>
-                          <ResizableTh tableId="dash-po" colKey="status" className="py-1.5 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths["dash-po"]?.status}>สถานะ</ResizableTh>
-                          <th className="py-1.5 px-3 text-center">Actions</th>
+                          <ResizableTh tableId="dash-po" colKey="poNo" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.poNo}>PO No.</ResizableTh>
+                          <ResizableTh tableId="dash-po" colKey="date" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.date}>วันที่</ResizableTh>
+                          <ResizableTh tableId="dash-po" colKey="costCode" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.costCode}>Cost Code</ResizableTh>
+                          <ResizableTh tableId="dash-po" colKey="amount" className="py-1.5 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.amount}>จำนวนเงิน</ResizableTh>
+                          <ResizableTh tableId="dash-po" colKey="status" className="py-1.5 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.status}>สถานะ</ResizableTh>
+                          <th className="py-1.5 px-3 text-center" style={{ width: dashPoLayout.scaled.actions }}>Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {pendingPOsForProject.map((po) => {
+                          const isPoRevPcm = po.status === PO_REVISION_PENDING_PCM;
+                          const isPoRevGm = po.status === PO_REVISION_PENDING_GM;
                           const approveLabel =
-                            userRole === "PCM"
-                              ? "PCM Approve"
-                              : userRole === "GM"
-                                ? "GM Approve"
-                                : "Approve"; // Default/Admin
+                            isPoRevPcm || isPoRevGm
+                              ? "—"
+                              : po.status === "Pending PCM"
+                                ? "PCM Approve"
+                                : po.status === "Pending GM"
+                                  ? "GM Approve"
+                                  : "Approve";
 
                           const canApprove =
-                            (po.status === "Pending PCM" && (userRole === "PCM" || userRole === "Administrator")) ||
-                            (po.status === "Pending GM" && (userRole === "GM" || userRole === "Administrator"));
+                            (po.status === "Pending PCM" && (userRoles.includes("PCM") || userRoles.includes("Administrator"))) ||
+                            (po.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator"))) ||
+                            (isPoRevPcm && (userRoles.includes("PCM") || userRoles.includes("Administrator"))) ||
+                            (isPoRevGm && (userRoles.includes("GM") || userRoles.includes("Administrator")));
 
                           if (!canApprove) return null;
 
@@ -2064,24 +2367,52 @@ const BudgetView = React.memo(() => {
                                 {formatCurrency(po.amount || po.totalAmount || po.grandTotal)}
                               </td>
                               <td className="py-2 px-3 text-center">
-                                <Badge status={po.status} />
+                                <div className="flex flex-col items-center gap-0.5">
+                                  <Badge status={po.status} />
+                                  {po.poEditRevisionReason ? (
+                                    <span className="text-[9px] text-amber-700 max-w-[120px] truncate" title={po.poEditRevisionReason}>
+                                      เหตุผล: {po.poEditRevisionReason}
+                                    </span>
+                                  ) : null}
+                                </div>
                               </td>
                               <td className="py-2 px-3 text-center">
-                                <div className="flex justify-center gap-1">
-                                  <Button
-                                    variant="success"
-                                    className="px-2 py-0.5 text-[10px] whitespace-nowrap"
-                                    onClick={() => handlePOAction(po.id, "approve")}
-                                  >
-                                    <CheckCircle size={11} /> {approveLabel}
-                                  </Button>
-                                  <Button
-                                    variant="danger"
-                                    className="px-2 py-0.5 text-[10px] whitespace-nowrap"
-                                    onClick={() => handlePOAction(po.id, "reject")}
-                                  >
-                                    <XCircle size={11} /> Reject
-                                  </Button>
+                                <div className="flex justify-center gap-1 flex-wrap">
+                                  {canUseFunction("po", "approve") && (isPoRevPcm || isPoRevGm) ? (
+                                    <>
+                                      <Button
+                                        variant="success"
+                                        className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                                        onClick={() => handlePORevisionAllow(po.id)}
+                                      >
+                                        <CheckCircle size={11} /> อนุญาตแก้ไข
+                                      </Button>
+                                      <Button
+                                        variant="danger"
+                                        className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                                        onClick={() => handlePORevisionDeny(po.id)}
+                                      >
+                                        <XCircle size={11} /> ไม่อนุญาต
+                                      </Button>
+                                    </>
+                                  ) : canUseFunction("po", "approve") ? (
+                                    <>
+                                      <Button
+                                        variant="success"
+                                        className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                                        onClick={() => handlePOAction(po.id, "approve")}
+                                      >
+                                        <CheckCircle size={11} /> {approveLabel}
+                                      </Button>
+                                      <Button
+                                        variant="danger"
+                                        className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                                        onClick={() => handlePOAction(po.id, "reject")}
+                                      >
+                                        <XCircle size={11} /> Reject
+                                      </Button>
+                                    </>
+                                  ) : null}
                                 </div>
                               </td>
                             </tr>
@@ -2089,6 +2420,7 @@ const BudgetView = React.memo(() => {
                         })}
                       </tbody>
                     </table>
+                    </div>
                   </Card>
                 )}
               </div>
@@ -2108,38 +2440,44 @@ const BudgetView = React.memo(() => {
                       Action
                       <ChevronDown size={12} className={actionDropdownOpen ? "rotate-180" : ""} />
                     </button>
-                    {actionDropdownOpen && (
+                      {actionDropdownOpen && (
                       <div
                         className="absolute left-0 top-full mt-1 z-[20] py-1 bg-white border border-slate-200 rounded-lg shadow-lg min-w-[220px]"
                       >
-                        <button
-                          type="button"
-                          className="w-full text-left px-3 py-2 text-xs hover:bg-green-50 text-green-700 flex items-center gap-2"
-                          onClick={handleBulkSubmitBudgets}
-                        >
-                          ส่งไปยัง MD Approve ({selectedBudgetIds.length} รายการ)
-                        </button>
-                        <button
-                          type="button"
-                          className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 text-red-700 flex items-center gap-2"
-                          onClick={handleBulkDeleteBudgets}
-                        >
-                          ลบหลายรายการที่เลือก ({selectedBudgetIds.length})
-                        </button>
+                        {canUseFunction("budget", "submit") && (
+                          <button
+                            type="button"
+                            className="w-full text-left px-3 py-2 text-xs hover:bg-green-50 text-green-700 flex items-center gap-2"
+                            onClick={handleBulkSubmitBudgets}
+                          >
+                            ส่งไปยัง MD Approve ({selectedBudgetIds.length} รายการ)
+                          </button>
+                        )}
+                        {canUseFunction("budget", "delete") && (
+                          <button
+                            type="button"
+                            className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 text-red-700 flex items-center gap-2"
+                            onClick={handleBulkDeleteBudgets}
+                          >
+                            ลบหลายรายการที่เลือก ({selectedBudgetIds.length})
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
                 )}
               </div>
               <div className="flex gap-2 flex-wrap">
-              <Button
-                variant="outline"
-                onClick={handleClearAllBudgets}
-                className="text-xs h-8 border-red-400 text-red-600 hover:bg-red-50"
-                disabled={currentBudgets.length === 0}
-              >
-                <Trash2 size={14} /> ล้างข้อมูลทั้งหมด
-              </Button>
+              {canUseFunction("budget", "delete") && (
+                <Button
+                  variant="outline"
+                  onClick={handleClearAllBudgets}
+                  className="text-xs h-8 border-red-400 text-red-600 hover:bg-red-50"
+                  disabled={currentBudgets.length === 0}
+                >
+                  <Trash2 size={14} /> ล้างข้อมูลทั้งหมด
+                </Button>
+              )}
               <Button
                 variant="outline"
                 onClick={handleDownloadTemplate}
@@ -2147,35 +2485,44 @@ const BudgetView = React.memo(() => {
               >
                 <Download size={14} /> Template
               </Button>
-              <label className="flex items-center gap-2 px-3 py-1.5 rounded-md font-medium transition-all text-xs shadow-sm bg-green-600 text-white hover:bg-green-700 cursor-pointer h-8">
-                <FileSpreadsheet size={14} /> Import CSV
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".csv"
-                  className="hidden"
-                  onChange={handleFileUpload}
-                />
-              </label>
+              {canUseFunction("budget", "import") && (
+                <label className="flex items-center gap-2 px-3 py-1.5 rounded-md font-medium transition-all text-xs shadow-sm bg-green-600 text-white hover:bg-green-700 cursor-pointer h-8">
+                  <FileSpreadsheet size={14} /> Import CSV
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".csv"
+                    className="hidden"
+                    onChange={handleFileUpload}
+                  />
+                </label>
+              )}
               <div className="w-4"></div>
-              <Button
-                onClick={() => {
-                  setEditingBudgetId(null);
-                  setSelectedBudget(null);
-                  setFormData({ code: "", description: "", amount: 0 });
-                  setIsModalOpen(true);
-                }}
-              >
-                <Plus size={14} /> ตั้งงบประมาณ (Budget)
-              </Button>
+              {canUseFunction("budget", "add") && (
+                <Button
+                  onClick={() => {
+                    setEditingBudgetId(null);
+                    setSelectedBudget(null);
+                    setFormData({ code: "", description: "", amount: 0 });
+                    setPendingMainAttachments([]);
+                    setIsModalOpen(true);
+                  }}
+                >
+                  <Plus size={14} /> ตั้งงบประมาณ (Budget)
+                </Button>
+              )}
               </div>
             </div>
-            <Card className="overflow-hidden">
+            <Card className="overflow-hidden w-full min-w-0">
+              <div ref={budgetTableContainerRef} className="w-full min-w-0">
               <table className="w-full text-left text-xs text-slate-600 table-fixed">
                 <thead className="bg-slate-200 text-slate-900 uppercase font-bold border-b text-sm">
                   <tr>
                     {budgetCategory !== "OVERVIEW" && (
-                      <th className="py-3 px-2 border-r w-12 text-center align-middle">
+                      <th
+                        className="py-3 px-2 border-r text-center align-middle"
+                        style={{ width: budgetMainLayout.scaled.checkbox }}
+                      >
                         <input
                           type="checkbox"
                           className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
@@ -2189,7 +2536,8 @@ const BudgetView = React.memo(() => {
                       </th>
                     )}
                     <th
-                      className="py-3 px-4 border-r w-36 cursor-pointer hover:bg-slate-300 transition-colors"
+                      className="py-3 px-4 border-r cursor-pointer hover:bg-slate-300 transition-colors"
+                      style={{ width: budgetMainLayout.scaled.code }}
                       onClick={() => requestSort("code")}
                     >
                       <div className="flex items-center justify-between">
@@ -2202,15 +2550,15 @@ const BudgetView = React.memo(() => {
                           ))}
                       </div>
                     </th>
-                    <ResizableTh tableId="budget" colKey="description" className="py-3 px-4 border-r" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.budget?.description ?? 220}>รายการ</ResizableTh>
-                    <ResizableTh tableId="budget" colKey="budget" className="py-3 px-4 text-right bg-blue-100" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.budget?.budget}>Budget</ResizableTh>
-                    <ResizableTh tableId="budget" colKey="status" className="py-3 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.budget?.status}>สถานะ</ResizableTh>
-                    <ResizableTh tableId="budget" colKey="attachment" className="py-3 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.budget?.attachment ?? 180}>Attachment</ResizableTh>
-                    <ResizableTh tableId="budget" colKey="balance" className="py-3 px-4 text-right text-green-800 font-bold border-r" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.budget?.balance}>Balance</ResizableTh>
-                    <ResizableTh tableId="budget" colKey="prTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.budget?.prTotal}>PR Total</ResizableTh>
-                    <ResizableTh tableId="budget" colKey="poTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.budget?.poTotal}>PO Total</ResizableTh>
-                    <ResizableTh tableId="budget" colKey="nowStatus" className="py-3 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={handleColumnResize} currentWidth={columnWidths.budget?.nowStatus ?? 220}>Now Status</ResizableTh>
-                    <th className="py-3 px-4 text-right">Actions</th>
+                    <ResizableTh tableId="budget" colKey="description" className="py-3 px-4 border-r" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.description}>รายการ</ResizableTh>
+                    <ResizableTh tableId="budget" colKey="budget" className="py-3 px-4 text-right bg-blue-100" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.budget}>Budget</ResizableTh>
+                    <ResizableTh tableId="budget" colKey="status" className="py-3 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.status}>สถานะ</ResizableTh>
+                    <ResizableTh tableId="budget" colKey="attachment" className="py-3 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.attachment}>Attachment</ResizableTh>
+                    <ResizableTh tableId="budget" colKey="balance" className="py-3 px-4 text-right text-green-800 font-bold border-r" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.balance}>Balance</ResizableTh>
+                    <ResizableTh tableId="budget" colKey="prTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.prTotal}>PR Total</ResizableTh>
+                    <ResizableTh tableId="budget" colKey="poTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.poTotal}>PO Total</ResizableTh>
+                    <ResizableTh tableId="budget" colKey="nowStatus" className="py-3 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.nowStatus}>Now Status</ResizableTh>
+                    <th className="py-3 px-4 text-right" style={{ width: budgetMainLayout.scaled.actions }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -2222,10 +2570,10 @@ const BudgetView = React.memo(() => {
                     const budgetBalance = hasSubItems ? totalBudget - sumSubItems : totalBudget - stats.prTotal;
                     const isLocked =
                       b.status === "Approved" || b.status === "Wait MD Approve";
-                    const canDelete = userRole === "MD" || b.status === "Draft";
+                    const canDelete = (userRole === "MD" || b.status === "Draft") && canUseFunction("budget", "delete");
                     const isExpanded = expandedBudgetRows[b.id];
                     const canEdit =
-                      !isLocked && b.status !== "Revision Pending";
+                      !isLocked && b.status !== "Revision Pending" && canUseFunction("budget", "edit");
                     const isRevisionPending = b.status === "Revision Pending";
                     return (
                       <React.Fragment key={b.id}>
@@ -2234,7 +2582,10 @@ const BudgetView = React.memo(() => {
                           onClick={() => toggleRow(b.id)}
                         >
                           {budgetCategory !== "OVERVIEW" && (
-                            <td className="py-1 px-2 border-r w-12 text-center align-middle" onClick={(e) => e.stopPropagation()}>
+                            <td
+                              className="py-1 px-2 border-r text-center align-middle"
+                              onClick={(e) => e.stopPropagation()}
+                            >
                               <input
                                 type="checkbox"
                                 className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
@@ -2265,7 +2616,7 @@ const BudgetView = React.memo(() => {
                               {b.code}
                             </div>
                           </td>
-                          <td className="py-1 px-3 border-r w-[220px] max-w-[220px] overflow-hidden" title={b.description}>
+                          <td className="py-1 px-3 border-r min-w-0 overflow-hidden" title={b.description}>
                             <div className="flex items-center justify-between group min-w-0">
                               <div className="flex flex-col min-w-0 flex-1">
                                 <span className="truncate block" title={b.description}>{b.description}</span>
@@ -2280,7 +2631,7 @@ const BudgetView = React.memo(() => {
                                   </span>
                                 )}
                               </div>
-                              {b.status === "Approved" && (
+                              {b.status === "Approved" && canUseFunction("budget", "add") && (
                                 <button
                                   onClick={() => openSubItemModal(b)}
                                   className="text-slate-300 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-all ml-2"
@@ -2353,10 +2704,10 @@ const BudgetView = React.memo(() => {
                           <td className="py-1 px-3 text-right text-slate-400">
                             {formatCurrency(stats.poTotal)}
                           </td>
-                          <td className="py-1 px-3 min-w-[220px]"></td>
+                          <td className="py-1 px-3 min-w-0 overflow-hidden"></td>
                           <td className="py-1 px-3 text-right">
                             <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              {(userRole === "MD" || userRole === "Administrator") &&
+                              {canUseFunction("budget", "approve") && (userRole === "MD" || userRole === "Administrator") &&
                                 b.status === "Wait MD Approve" && (
                                   <>
                                     <Button
@@ -2375,7 +2726,7 @@ const BudgetView = React.memo(() => {
                                     </Button>
                                   </>
                                 )}
-                              {(isRevisionPending && (userRole === "MD" || userRole === "Administrator")) && (
+                              {canUseFunction("budget", "approve") && isRevisionPending && (userRole === "MD" || userRole === "Administrator") && (
                                 <>
                                   <Button
                                     variant="warning"
@@ -2413,7 +2764,7 @@ const BudgetView = React.memo(() => {
                                   )}
                                 </>
                               )}
-                              {b.status === "Approved" && (
+                              {canUseFunction("budget", "requestRevision") && b.status === "Approved" && (
                                 <button
                                   className="text-orange-500 hover:text-orange-700 p-1 hover:bg-orange-50 rounded"
                                   title="ขอแก้ไข (Revise)"
@@ -2425,7 +2776,7 @@ const BudgetView = React.memo(() => {
                                   <RefreshCw size={14} />
                                 </button>
                               )}
-                              {b.status === "Draft" && (
+                              {canUseFunction("budget", "submit") && b.status === "Draft" && (
                                 <button
                                   className="text-green-500 hover:text-green-700 p-1 hover:bg-green-50 rounded"
                                   title="ส่งขออนุมัติ"
@@ -2446,7 +2797,7 @@ const BudgetView = React.memo(() => {
                                 className="bg-slate-50/50 text-xs group"
                               >
                                 {budgetCategory !== "OVERVIEW" && (
-                                  <td className="py-0.5 px-2 border-r bg-slate-50/50 w-12" />
+                                  <td className="py-0.5 px-2 border-r bg-slate-50/50" />
                                 )}
                                 <td className="py-0.5 px-3 border-r text-right text-slate-500 pr-4 font-mono relative">
                                   <span className="text-[9px] font-bold text-slate-400 absolute left-2 top-1.5">
@@ -2454,7 +2805,7 @@ const BudgetView = React.memo(() => {
                                   </span>
                                   {sub.quantity}
                                 </td>
-                                <td className="py-0.5 px-3 border-r pl-8 w-[220px] max-w-[220px] overflow-hidden text-slate-600" title={sub.description}>
+                                <td className="py-0.5 px-3 border-r pl-8 min-w-0 overflow-hidden text-slate-600" title={sub.description}>
                                   <div className="flex items-center justify-between min-w-0 gap-1">
                                     <div className="flex items-center gap-2 min-w-0 flex-1">
                                       <span className="text-slate-400 w-4 text-center shrink-0">{index + 1}</span>
@@ -2521,9 +2872,9 @@ const BudgetView = React.memo(() => {
                                   colSpan="3"
                                   className="border-b border-slate-100"
                                 ></td>
-                                <td className="py-0.5 px-3 text-center min-w-[220px] border-b border-slate-100">
+                                <td className="py-0.5 px-3 text-center min-w-0 border-b border-slate-100">
                                   {(() => {
-                                    const subStatuses = getNowStatus(b, stats, "SUB_ITEM", sub.description);
+                                    const subStatuses = getNowStatus(b, stats, "SUB_ITEM", sub.id);
                                     const colorMap = {
                                       green: "bg-green-50 text-green-700 border-green-200",
                                       blue: "bg-blue-50 text-blue-700 border-blue-200",
@@ -2560,30 +2911,36 @@ const BudgetView = React.memo(() => {
                                     )}
                                     {sub.status === "Draft" && (
                                       <>
-                                        <button
-                                          className="text-blue-500 hover:text-blue-700 p-1 hover:bg-blue-50 rounded"
-                                          title="แก้ไข"
-                                          onClick={(e) => { e.stopPropagation(); openEditSubItemModal(b, sub); }}
-                                        >
-                                          <Edit size={14} />
-                                        </button>
-                                        <button
-                                          className="text-red-500 hover:text-red-700 p-1 hover:bg-red-50 rounded"
-                                          title="ลบ"
-                                          onClick={() => handleDeleteSubItem(b.id, sub.id)}
-                                        >
-                                          <Trash2 size={14} />
-                                        </button>
-                                        <button
-                                          className="text-green-500 hover:text-green-700 p-1 hover:bg-green-50 rounded"
-                                          title="ส่งขออนุมัติ"
-                                          onClick={() => handleSubmitSubItem(b.id, sub.id)}
-                                        >
-                                          <Play size={14} fill="currentColor" />
-                                        </button>
+                                        {canUseFunction("budget", "edit") && (
+                                          <button
+                                            className="text-blue-500 hover:text-blue-700 p-1 hover:bg-blue-50 rounded"
+                                            title="แก้ไข"
+                                            onClick={(e) => { e.stopPropagation(); openEditSubItemModal(b, sub); }}
+                                          >
+                                            <Edit size={14} />
+                                          </button>
+                                        )}
+                                        {canUseFunction("budget", "delete") && (
+                                          <button
+                                            className="text-red-500 hover:text-red-700 p-1 hover:bg-red-50 rounded"
+                                            title="ลบ"
+                                            onClick={() => handleDeleteSubItem(b.id, sub.id)}
+                                          >
+                                            <Trash2 size={14} />
+                                          </button>
+                                        )}
+                                        {canUseFunction("budget", "submit") && b.status === "Approved" && (
+                                          <button
+                                            className="text-green-500 hover:text-green-700 p-1 hover:bg-green-50 rounded"
+                                            title="ส่งขออนุมัติ"
+                                            onClick={() => handleSubmitSubItem(b.id, sub.id)}
+                                          >
+                                            <Play size={14} fill="currentColor" />
+                                          </button>
+                                        )}
                                       </>
                                     )}
-                                    {sub.status === "Approved" && (
+                                    {canUseFunction("budget", "requestRevision") && sub.status === "Approved" && (
                                       <button
                                         className="text-orange-500 hover:text-orange-700 p-1 hover:bg-orange-50 rounded"
                                         title="ขอแก้ไข (Revise)"
@@ -2592,7 +2949,7 @@ const BudgetView = React.memo(() => {
                                         <RefreshCw size={14} />
                                       </button>
                                     )}
-                                    {(userRole === "MD" || userRole === "Administrator") && sub.status === "Revision Pending" && (
+                                    {canUseFunction("budget", "approve") && (userRole === "MD" || userRole === "Administrator") && sub.status === "Revision Pending" && (
                                       <>
                                         <Button
                                           variant="warning"
@@ -2610,7 +2967,7 @@ const BudgetView = React.memo(() => {
                                         </Button>
                                       </>
                                     )}
-                                    {(userRole === "MD" || userRole === "Administrator") && sub.status === "Wait MD Approve" && (
+                                    {canUseFunction("budget", "approve") && (userRole === "MD" || userRole === "Administrator") && sub.status === "Wait MD Approve" && (
                                       <>
                                         <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleApproveSubItem(b.id, sub.id)}>Approve</Button>
                                         <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={(e) => { e.stopPropagation(); openReasonModal("reject", b.id, sub.id); }}>Reject</Button>
@@ -2631,6 +2988,7 @@ const BudgetView = React.memo(() => {
                   })}
                 </tbody>
               </table>
+              </div>
             </Card>
           </>
         )}
@@ -2750,7 +3108,7 @@ const BudgetView = React.memo(() => {
           </div>
         )}
         {isModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[300] animate-in fade-in duration-200" onClick={() => setIsModalOpen(false)}>
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[300] animate-in fade-in duration-200" onClick={closeBudgetModal}>
             <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md mx-4" onClick={(e) => e.stopPropagation()}>
               {/* Header */}
               <div className="px-6 py-4 bg-slate-700 rounded-t-2xl flex items-center justify-between">
@@ -2767,7 +3125,7 @@ const BudgetView = React.memo(() => {
                     </p>
                   </div>
                 </div>
-                <button onClick={() => setIsModalOpen(false)} className="text-white/60 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-all">
+                <button type="button" onClick={closeBudgetModal} className="text-white/60 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-all">
                   <XCircle size={18} />
                 </button>
               </div>
@@ -2843,19 +3201,107 @@ const BudgetView = React.memo(() => {
                     </div>
                   </div>
                 </div>
+
+                {/* แนบไฟล์ — แก้ไข: ดูไฟล์เดิม + อัปโหลดเพิ่ม | เพิ่มใหม่: เลือกไฟล์ค้าง แล้วอัปโหลดหลัง Save */}
+                <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/90 space-y-2">
+                  <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                    <Paperclip size={12} className="text-slate-400" />
+                    แนบไฟล์ (PDF / Office / รูป)
+                  </div>
+                  {editingBudgetId ? (
+                    <>
+                      <div className="space-y-1 max-h-28 overflow-y-auto">
+                        {((budgets.find((b) => b.id === editingBudgetId)?.attachments) || []).length === 0 ? (
+                          <p className="text-xs text-slate-400">ยังไม่มีไฟล์แนบ</p>
+                        ) : (
+                          (budgets.find((b) => b.id === editingBudgetId)?.attachments || []).map((att, i) => (
+                            <a
+                              key={`${att.url || att.name || i}`}
+                              href={att.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block text-xs text-blue-600 hover:underline truncate"
+                              title={att.name}
+                            >
+                              {att.name || "เปิดไฟล์"}
+                            </a>
+                          ))
+                        )}
+                      </div>
+                      {selectedProjectId ? (
+                        <button
+                          type="button"
+                          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                          disabled={attachmentUploadingKey === `${editingBudgetId}:main`}
+                          onClick={() => openAttachmentPicker(editingBudgetId, null)}
+                        >
+                          {attachmentUploadingKey === `${editingBudgetId}:main` ? (
+                            <RefreshCw size={14} className="animate-spin" />
+                          ) : (
+                            <Upload size={14} />
+                          )}
+                          แนบไฟล์เพิ่ม
+                        </button>
+                      ) : (
+                        <p className="text-[10px] text-amber-600">เลือกโครงการก่อนเพื่อแนบไฟล์</p>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <input
+                        ref={modalMainPendingFileRef}
+                        type="file"
+                        multiple
+                        className="hidden"
+                        accept=".pdf,.xls,.xlsx,.doc,.docx,.jpg,.jpeg,.png,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/jpeg,image/png"
+                        onChange={onModalMainPendingFilesSelected}
+                      />
+                      <button
+                        type="button"
+                        className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        onClick={() => modalMainPendingFileRef.current?.click()}
+                      >
+                        <Upload size={14} />
+                        เลือกไฟล์แนบ
+                      </button>
+                      {pendingMainAttachments.length > 0 && (
+                        <ul className="space-y-1 max-h-24 overflow-y-auto">
+                          {pendingMainAttachments.map((f, idx) => (
+                            <li key={`${f.name}-${idx}`} className="flex items-center justify-between gap-2 text-xs bg-white border border-slate-100 rounded-lg px-2 py-1">
+                              <span className="truncate min-w-0" title={f.name}>{f.name}</span>
+                              <button
+                                type="button"
+                                className="text-red-500 hover:text-red-700 shrink-0 p-0.5"
+                                onClick={() => setPendingMainAttachments((prev) => prev.filter((_, j) => j !== idx))}
+                                title="เอาออก"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      <p className="text-[10px] text-slate-500 leading-relaxed">
+                        หลังกด Save ระบบจะอัปโหลดและบันทึกเป็น Attachment ของรายการนี้
+                      </p>
+                    </>
+                  )}
+                </div>
               </div>
 
               {/* Footer */}
               <div className="px-6 py-4 bg-slate-50 rounded-b-2xl border-t border-slate-100 flex justify-end gap-2">
                 {editingBudgetId && budgets.find(b => b.id === editingBudgetId)?.status === "Rejected" ? (
                   <>
-                    <Button variant="secondary" onClick={() => setIsModalOpen(false)}>ยกเลิก (Cancel)</Button>
+                    <Button variant="secondary" onClick={closeBudgetModal}>ยกเลิก (Cancel)</Button>
                     <Button variant="warning" onClick={() => handleSaveBudget("Draft")}>บันทึก (Draft)</Button>
-                    <Button variant="primary" onClick={() => handleSaveBudget("Wait MD Approve")}>ส่งขออนุมัติ (Resubmit)</Button>
+                    {canUseFunction("budget", "submit") && (
+                      <Button variant="primary" onClick={() => handleSaveBudget("Wait MD Approve")}>ส่งขออนุมัติ (Resubmit)</Button>
+                    )}
                   </>
                 ) : (
                   <>
-                    <Button variant="secondary" onClick={() => setIsModalOpen(false)}>Cancel</Button>
+                    <Button variant="secondary" onClick={closeBudgetModal}>Cancel</Button>
                     <Button onClick={() => handleSaveBudget()}>Save</Button>
                   </>
                 )}
@@ -2879,7 +3325,7 @@ const BudgetView = React.memo(() => {
                     {selectedBudget && <p className="text-slate-300 text-xs mt-0.5">{selectedBudget.code} — {selectedBudget.description}</p>}
                   </div>
                 </div>
-                <button onClick={() => setIsSubItemModalOpen(false)} className="text-white/60 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-all">
+                <button type="button" onClick={closeSubItemModal} className="text-white/60 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-all">
                   <XCircle size={18} />
                 </button>
               </div>
@@ -2993,19 +3439,114 @@ const BudgetView = React.memo(() => {
                   <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">ยอดรวม</span>
                   <span className="text-base font-bold text-slate-800">{formatCurrency(Number(subItemData.quantity) * Number(subItemData.unitPrice))}</span>
                 </div>
+
+                {/* แนบไฟล์ Sub-Item */}
+                <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/90 space-y-2">
+                  <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                    <Paperclip size={12} className="text-slate-400" />
+                    แนบไฟล์ (PDF / Office / รูป)
+                  </div>
+                  {editingSubItem ? (
+                    <>
+                      <div className="space-y-1 max-h-28 overflow-y-auto">
+                        {(() => {
+                          const liveSub = selectedBudget
+                            ? (budgets.find((b) => b.id === selectedBudget.id)?.subItems || []).find(
+                                (s) => s.id === editingSubItem.id
+                              )
+                            : null;
+                          const attList = liveSub?.attachments || editingSubItem.attachments || [];
+                          if (attList.length === 0) {
+                            return <p className="text-xs text-slate-400">ยังไม่มีไฟล์แนบ</p>;
+                          }
+                          return attList.map((att, i) => (
+                            <a
+                              key={`${att.url || att.name || i}`}
+                              href={att.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block text-xs text-blue-600 hover:underline truncate"
+                              title={att.name}
+                            >
+                              {att.name || "เปิดไฟล์"}
+                            </a>
+                          ));
+                        })()}
+                      </div>
+                      {selectedBudget && selectedProjectId ? (
+                        <button
+                          type="button"
+                          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                          disabled={attachmentUploadingKey === `${selectedBudget.id}:${editingSubItem.id}`}
+                          onClick={() => openAttachmentPicker(selectedBudget.id, editingSubItem.id)}
+                        >
+                          {attachmentUploadingKey === `${selectedBudget.id}:${editingSubItem.id}` ? (
+                            <RefreshCw size={14} className="animate-spin" />
+                          ) : (
+                            <Upload size={14} />
+                          )}
+                          แนบไฟล์เพิ่ม
+                        </button>
+                      ) : (
+                        <p className="text-[10px] text-amber-600">เลือกโครงการก่อนเพื่อแนบไฟล์</p>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <input
+                        ref={modalSubPendingFileRef}
+                        type="file"
+                        multiple
+                        className="hidden"
+                        accept=".pdf,.xls,.xlsx,.doc,.docx,.jpg,.jpeg,.png,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/jpeg,image/png"
+                        onChange={onModalSubPendingFilesSelected}
+                      />
+                      <button
+                        type="button"
+                        className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        onClick={() => modalSubPendingFileRef.current?.click()}
+                      >
+                        <Upload size={14} />
+                        เลือกไฟล์แนบ
+                      </button>
+                      {pendingSubAttachments.length > 0 && (
+                        <ul className="space-y-1 max-h-24 overflow-y-auto">
+                          {pendingSubAttachments.map((f, idx) => (
+                            <li key={`${f.name}-${idx}`} className="flex items-center justify-between gap-2 text-xs bg-white border border-slate-100 rounded-lg px-2 py-1">
+                              <span className="truncate min-w-0" title={f.name}>{f.name}</span>
+                              <button
+                                type="button"
+                                className="text-red-500 hover:text-red-700 shrink-0 p-0.5"
+                                onClick={() => setPendingSubAttachments((prev) => prev.filter((_, j) => j !== idx))}
+                                title="เอาออก"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      <p className="text-[10px] text-slate-500 leading-relaxed">
+                        หลังกดบันทึก ระบบจะสร้าง Sub-Item แล้วอัปโหลดแนบให้อัตโนมัติ
+                      </p>
+                    </>
+                  )}
+                </div>
               </div>
 
               {/* Footer */}
               <div className="px-6 pb-5 flex justify-end gap-2">
                 {editingSubItem?.status === "Rejected" ? (
                   <>
-                    <Button variant="secondary" onClick={() => { setIsSubItemModalOpen(false); setEditingSubItem(null); }}>ยกเลิก</Button>
+                    <Button variant="secondary" onClick={() => { setEditingSubItem(null); closeSubItemModal(); }}>ยกเลิก</Button>
                     <Button variant="secondary" onClick={handleSaveSubItem}>บันทึก</Button>
-                    <Button onClick={handleResubmitSubItemFromModal}>ขออนุมัติ</Button>
+                    {canUseFunction("budget", "submit") && (
+                      <Button onClick={handleResubmitSubItemFromModal}>ขออนุมัติ</Button>
+                    )}
                   </>
                 ) : (
                   <>
-                    <Button variant="secondary" onClick={() => setIsSubItemModalOpen(false)}>ยกเลิก</Button>
+                    <Button variant="secondary" onClick={closeSubItemModal}>ยกเลิก</Button>
                     <Button onClick={handleSaveSubItem}><Save size={14} /> บันทึก</Button>
                   </>
                 )}

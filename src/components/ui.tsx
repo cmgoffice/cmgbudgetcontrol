@@ -62,6 +62,9 @@ export const Badge = ({ status }: any) => {
     "Pending PM": "bg-yellow-50 text-yellow-700 border border-yellow-200",
     "Pending PCM": "bg-orange-50 text-orange-700 border border-orange-200",
     "Pending GM": "bg-blue-50 text-blue-700 border border-blue-200",
+    "PO Edit Pending PCM": "bg-amber-50 text-amber-900 border border-amber-300",
+    "PO Edit Pending GM": "bg-violet-50 text-violet-800 border border-violet-300",
+    "Pending Active PR": "bg-teal-50 text-teal-800 border border-teal-300",
     "Pending MD": "bg-purple-50 text-purple-700 border border-purple-200",
     "PO Issued": "bg-indigo-50 text-indigo-700 border border-indigo-200",
     "Edit Budget": "bg-red-100 text-red-800 border border-red-300",
@@ -79,6 +82,9 @@ export const Badge = ({ status }: any) => {
   };
   let displayText = status;
   if (status === "Revision Pending") displayText = "รออนุมัติแก้ไข";
+  if (status === "PO Edit Pending PCM") displayText = "ขอแก้ไข — รอ PCM";
+  if (status === "PO Edit Pending GM") displayText = "ขอแก้ไข — รอ GM";
+  if (status === "Pending Active PR") displayText = "ขอ Active — รอ PCM";
   if (status === "Approved User") displayText = "Active";
   return (
     <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold whitespace-nowrap ${styles[status] || "bg-gray-100"}`}>
