@@ -24,7 +24,7 @@ import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 
 const BudgetView = React.memo(() => {
-  const { budgets, projects, prs, pos, invoices, addData, updateData, deleteData,
+  const { budgets, projects, prs, pos, payments, invoices, addData, updateData, deleteData,
           showAlert, openConfirm, logAction, userRole, userRoles, userData, columnWidths, handleColumnResize,
           visibleProjects, handlePRAction, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,
           db, appId, canUseFunction, isColumnVisible } = useAppData();
@@ -310,7 +310,8 @@ const BudgetView = React.memo(() => {
       );
       await logAction?.(
         "Update",
-        `[Budget Attachments] ${budgetId} | main | +${files.length} files`
+        `[Budget Attachments] ${budgetId} | main | +${files.length} files`,
+        selectedProjectId
       );
     };
 
@@ -357,7 +358,8 @@ const BudgetView = React.memo(() => {
       );
       await logAction?.(
         "Update",
-        `[Budget Attachments] ${budgetId} / SubItem ${subItemId} | +${files.length} files`
+        `[Budget Attachments] ${budgetId} / SubItem ${subItemId} | +${files.length} files`,
+        selectedProjectId
       );
     };
 
@@ -839,7 +841,7 @@ const BudgetView = React.memo(() => {
       }
 
       await Promise.all(batchPromises);
-      await logAction("Import", `Imported ${importCount} budget items`);
+      await logAction("Import", `Imported ${importCount} budget items`, selectedProjectId);
       setIsImportModalOpen(false);
       setImportData({});
       setImportFile(null);
@@ -859,53 +861,50 @@ const BudgetView = React.memo(() => {
     };
 
     const getBudgetStats = (budget) => {
-      // Step 1: Find ALL related PRs/POs by Cost Code only.
-      // Granular filtering (Main vs Sub-Item) is handled in getNowStatus.
       const budgetCode = budget.code;
+      const budgetDocId = budget.id;
 
       const relatedPRs = prs.filter((pr) => {
         if (pr.projectId !== selectedProjectId) return false;
-        // Match by PR-level cost code (legacy)
+        // Match by budgetId (direct link)
+        if (pr.budgetId === budgetDocId) return true;
+        // Match by item-level budgetId
+        if (pr.items?.some(i => i.budgetId === budgetDocId)) return true;
+        // Fallback: match by cost code (legacy data without budgetId)
         if (pr.costCode === budgetCode) return true;
-        // Match by item-level cost code
-        if (pr.items && pr.items.length > 0) {
-          return pr.items.some(i => (i.costCode || pr.costCode) === budgetCode);
-        }
+        if (pr.items?.some(i => (i.costCode || pr.costCode) === budgetCode)) return true;
         return false;
       });
 
       const relatedPOs = pos.filter((po) => {
         if (po.projectId !== selectedProjectId) return false;
-        if (po.items && po.items.length > 0) {
-          return po.items.some(i => i.costCode === budgetCode);
-        }
+        if (po.items?.some(i => i.budgetId === budgetDocId)) return true;
+        // Fallback: match by cost code
+        if (po.items?.some(i => i.costCode === budgetCode)) return true;
         return false;
       });
 
       const hasSubItems = budget.subItems && budget.subItems.length > 0;
       const budgetDesc = (budget.description || "").trim();
 
-      // Helper: does this item belong to THIS specific budget?
-      const itemBelongsToBudget = (item) => {
-        if (hasSubItems) {
-          // Budget with sub-items: any item with matching code belongs
-          return true;
-        }
-        // Budget without sub-items: must also match description
+      const itemBelongsToBudget = (item, parentDoc = null) => {
+        // Prefer direct budgetId match
+        if (item.budgetId) return item.budgetId === budgetDocId;
+        // Fallback for legacy: PR-level budgetId
+        if (parentDoc?.budgetId) return parentDoc.budgetId === budgetDocId;
+        if (hasSubItems) return true;
         const iDesc = (item.description || "").trim();
         return iDesc === budgetDesc;
       };
 
-      // Calculate Totals based on matching logic
       const prTotal = relatedPRs.reduce((sum, pr) => {
         if (pr.status === "Rejected") return sum;
-
         let prAmount = 0;
         if (pr.items && pr.items.length > 0) {
           prAmount = pr.items.reduce((iSum, i) => {
             const itemCode = i.costCode || pr.costCode;
-            if (itemCode !== budgetCode) return iSum;
-            if (!itemBelongsToBudget(i)) return iSum;
+            if (!i.budgetId && itemCode !== budgetCode) return iSum;
+            if (!itemBelongsToBudget(i, pr)) return iSum;
             return iSum + (Number(i.amount) || (Number(i.quantity) * Number(i.price)));
           }, 0);
         } else {
@@ -919,7 +918,7 @@ const BudgetView = React.memo(() => {
         let poAmount = 0;
         if (po.items && po.items.length > 0) {
           poAmount = po.items.reduce((iSum, i) => {
-            if (i.costCode !== budgetCode) return iSum;
+            if (!i.budgetId && i.costCode !== budgetCode) return iSum;
             if (!itemBelongsToBudget(i)) return iSum;
             return iSum + (Number(i.amount) || (Number(i.quantity) * Number(i.price)));
           }, 0);
@@ -943,26 +942,39 @@ const BudgetView = React.memo(() => {
       const budgetCode = budget.code;
       const hasSubItems = budget.subItems && budget.subItems.length > 0;
 
+      const budgetDocId = budget.id;
+
+      // Resolve the sub-item link: prefer budgetSubItemId (new), fallback to subItemId / PR chain (legacy)
       const resolveSubItemId = (item) => {
+        if (item.budgetSubItemId) return item.budgetSubItemId;
         if (item.subItemId) return item.subItemId;
         if (item.prId != null && item.prItemIndex != null) {
           const pr = prs.find(p => p.id === item.prId);
-          return pr?.items?.[item.prItemIndex]?.subItemId || null;
+          return pr?.items?.[item.prItemIndex]?.budgetSubItemId
+            || pr?.items?.[item.prItemIndex]?.subItemId
+            || pr?.subItemId || null;
         }
         return null;
       };
 
       const matchesFilter = (item, itemCostCode, parentDoc = null) => {
-        if (itemCostCode !== budgetCode) return false;
+        // New items with budgetId: direct match (skip costCode check)
+        if (item.budgetId) {
+          if (item.budgetId !== budgetDocId) return false;
+        } else {
+          if (itemCostCode !== budgetCode) return false;
+        }
+
         const iDesc = (item.description || "").trim();
         const effectiveSubItemId = resolveSubItemId(item);
 
         if (filterMode === "SUB_ITEM" && targetSubId) {
           const targetSub = hasSubItems ? budget.subItems.find(s => s.id === targetSubId) : null;
           if (!targetSub) return false;
-          const targetDesc = (targetSub.description || "").trim();
           if (effectiveSubItemId) return effectiveSubItemId === targetSub.id;
-          if (parentDoc?.selectedSubItemId && parentDoc.selectedSubItemId === targetSub.id) return true;
+          const docSubId = parentDoc?.selectedSubItemId || parentDoc?.subItemId;
+          if (docSubId && docSubId === targetSub.id) return true;
+          const targetDesc = (targetSub.description || "").trim();
           return iDesc === targetDesc;
         }
 
@@ -988,7 +1000,22 @@ const BudgetView = React.memo(() => {
 
       let statusesToReturn = [];
 
-      // 1. Check PO Statuses
+      // Build a set of PO-item keys that are covered by a Payment (not Rejected)
+      const poItemInPayment = new Set<string>();
+      const relatedPoIds = new Set((stats.relatedPOs || []).map((po: any) => po.id));
+      if (payments && payments.length > 0 && relatedPoIds.size > 0) {
+        payments
+          .filter((pay: any) => pay.projectId === budget.projectId && pay.status !== "Rejected")
+          .forEach((pay: any) => {
+            (pay.items || []).forEach((pi: any) => {
+              if (relatedPoIds.has(pi.prId)) {
+                poItemInPayment.add(`${pi.prId}:${pi.prItemIndex}`);
+              }
+            });
+          });
+      }
+
+      // 1. Check PO Statuses (only items NOT covered by a Payment)
       if (stats.relatedPOs && stats.relatedPOs.length > 0) {
         const poGroups = stats.relatedPOs.reduce((acc, po) => {
           const s = po.status || "Pending PCM";
@@ -996,7 +1023,10 @@ const BudgetView = React.memo(() => {
           let amount = 0;
           if (po.items && Array.isArray(po.items)) {
             amount = po.items
-              .filter(i => matchesFilter(i, i.costCode || prs.find(p => p.id === i.prId)?.costCode, po))
+              .filter((i, idx) => {
+                if (poItemInPayment.has(`${po.id}:${idx}`)) return false;
+                return matchesFilter(i, i.costCode || prs.find(p => p.id === i.prId)?.costCode, po);
+              })
               .reduce((sum, i) => sum + Number(i.amount), 0);
           } else if (po.costCode === budgetCode) {
             if (filterMode === "SUB_ITEM") amount = 0;
@@ -1012,7 +1042,48 @@ const BudgetView = React.memo(() => {
         if (poGroups["Approved"] > 0) statusesToReturn.push({ label: "PO Approved", amount: poGroups["Approved"], color: "green" });
       }
 
-      // 2. Check PR Statuses
+      // 2. Check Payment Statuses (PO items that are covered by Payment)
+      if (payments && payments.length > 0 && relatedPoIds.size > 0) {
+        const payGroups: Record<string, number> = {};
+        payments
+          .filter((pay: any) => pay.projectId === budget.projectId && pay.status !== "Rejected")
+          .forEach((pay: any) => {
+            let matchedAmt = 0;
+            (pay.items || []).forEach((pi: any) => {
+              if (!relatedPoIds.has(pi.prId)) return;
+              const po = stats.relatedPOs.find((p: any) => p.id === pi.prId);
+              const poItem = po?.items?.[pi.prItemIndex];
+              if (!poItem) return;
+              const itemCode = poItem.costCode || prs.find(p => p.id === poItem.prId)?.costCode;
+              if (!matchesFilter(poItem, itemCode, po)) return;
+              matchedAmt += Number(poItem.amount) || ((Number(poItem.quantity) || 0) * (Number(poItem.price) || 0));
+            });
+            if (matchedAmt > 0) {
+              const s = pay.status || "Draft";
+              payGroups[s] = (payGroups[s] || 0) + matchedAmt;
+            }
+          });
+
+        const payColorMap: Record<string, string> = {
+          "Draft": "slate", "Pending CM": "yellow", "Pending PM": "blue",
+          "Pending MD": "purple", "Pending Procurement": "blue", "Active": "green",
+          "งวดงาน Pending CM": "yellow", "งวดงาน Pending PM": "orange",
+          "Wait Pay": "orange", "Hold": "yellow", "Paid": "emerald",
+          "Revision Requested": "red",
+        };
+        const payOrder = [
+          "Draft", "Pending CM", "Pending PM", "Pending MD", "Pending Procurement",
+          "Active", "งวดงาน Pending CM", "งวดงาน Pending PM", "Wait Pay", "Hold", "Paid",
+          "Revision Requested",
+        ];
+        payOrder.forEach((s) => {
+          if ((payGroups[s] || 0) > 0) {
+            statusesToReturn.push({ label: `PAY ${s}`, amount: payGroups[s], color: payColorMap[s] || "slate" });
+          }
+        });
+      }
+
+      // 3. Check PR Statuses (only PRs not yet issued as PO)
       if (stats.relatedPRs && stats.relatedPRs.length > 0) {
         const prGroups = stats.relatedPRs.reduce((acc, pr) => {
           if (pr.status === "PO Issued") return acc;
@@ -1178,7 +1249,7 @@ const BudgetView = React.memo(() => {
             ),
             updatePayload
           );
-          await logAction("Update", `[Budget] ${formData.code} - ${formData.description} | โครงการ: ${projects.find(p => p.id === selectedProjectId)?.name || selectedProjectId}${newStatus ? ` | Status: ${newStatus}` : ''}`);
+          await logAction("Update", `[Budget] ${formData.code} - ${formData.description} | โครงการ: ${projects.find(p => p.id === selectedProjectId)?.name || selectedProjectId}${newStatus ? ` | Status: ${newStatus}` : ''}`, selectedProjectId);
         } else {
           const budgetData = {
             ...formData,
@@ -1194,7 +1265,7 @@ const BudgetView = React.memo(() => {
             doc(db, "artifacts", appId, "public", "data", "budgets", budgetDocId),
             budgetData
           );
-          await logAction("Create", `[Budget] ${formData.code} - ${formData.description} | โครงการ: ${projects.find(p => p.id === selectedProjectId)?.name || selectedProjectId}`);
+          await logAction("Create", `[Budget] ${formData.code} - ${formData.description} | โครงการ: ${projects.find(p => p.id === selectedProjectId)?.name || selectedProjectId}`, selectedProjectId);
           if (pendingMainAttachments.length > 0) {
             try {
               await appendMainBudgetAttachments(budgetDocId, pendingMainAttachments);
@@ -1235,7 +1306,8 @@ const BudgetView = React.memo(() => {
               "Delete",
               b
                 ? `Deleted Budget ${b.code}${desc ? ` — ${desc}` : ""}`
-                : `Deleted Budget ID: ${id}`
+                : `Deleted Budget ID: ${id}`,
+              selectedProjectId
             );
           } catch (e) {
             showAlert("Error", e.message, "error");
@@ -1265,7 +1337,7 @@ const BudgetView = React.memo(() => {
             deleteDoc(doc(db, "artifacts", appId, "public", "data", "budgets", b.id))
           )
         );
-        await logAction("Delete", `Cleared all ${currentBudgets.length} budget items in category ${budgetCategory}`);
+        await logAction("Delete", `Cleared all ${currentBudgets.length} budget items in category ${budgetCategory}`, selectedProjectId);
         setIsClearConfirmOpen(false);
         setClearConfirmText("");
       } catch (e) {
@@ -1300,7 +1372,8 @@ const BudgetView = React.memo(() => {
         "Approve",
         b
           ? `Approved Budget ${b.code}${desc ? ` — ${desc}` : ""}`
-          : `Approved Budget ID: ${budgetId}`
+          : `Approved Budget ID: ${budgetId}`,
+        selectedProjectId
       );
       // ไม่แสดง Modal แจ้งเตือนเมื่อ Approve สำเร็จ เพื่อลด pop-up ตามคำขอ
     };
@@ -1327,7 +1400,8 @@ const BudgetView = React.memo(() => {
             "Submit Budget",
             b
               ? `ส่ง Budget ${b.code}${desc ? ` — ${desc}` : ""} เพื่ออนุมัติ MD`
-              : `ส่ง Budget ID ${id} เพื่ออนุมัติ MD`
+              : `ส่ง Budget ID ${id} เพื่ออนุมัติ MD`,
+            selectedProjectId
           );
           showAlert(
             "ส่งคำขอสำเร็จ",
@@ -1373,7 +1447,7 @@ const BudgetView = React.memo(() => {
                     { status: "Wait MD Approve" }
                   );
                 }
-                await logAction("Bulk", `Sent ${toSubmit.length} budgets to Wait MD Approve`);
+                await logAction("Bulk", `Sent ${toSubmit.length} budgets to Wait MD Approve`, selectedProjectId);
                 setSelectedBudgetIds([]);
                 setActionDropdownOpen(false);
               } catch (e) {
@@ -1407,7 +1481,7 @@ const BudgetView = React.memo(() => {
                 doc(db, "artifacts", appId, "public", "data", "budgets", id)
               );
             }
-            await logAction("Bulk", `Deleted ${toDelete.length} budgets`);
+            await logAction("Bulk", `Deleted ${toDelete.length} budgets`, selectedProjectId);
             setSelectedBudgetIds([]);
             setActionDropdownOpen(false);
             showAlert("สำเร็จ", `ลบ ${toDelete.length} รายการเรียบร้อย`, "success");
@@ -1440,7 +1514,7 @@ const BudgetView = React.memo(() => {
             { status: "Approved", revisionReason: "", rejectReason: "" }
           );
         }
-        await logAction("Bulk", `Approved ${toApprove.length} pending budgets from dashboard`);
+        await logAction("Bulk", `Approved ${toApprove.length} pending budgets from dashboard`, selectedProjectId);
         setPendingSelectedBudgetIds([]);
         setPendingActionDropdownOpen(false);
         // ไม่แสดง Modal แจ้งเตือนเมื่อ Approve สำเร็จ เพื่อลด pop-up ตามคำขอ
@@ -1474,7 +1548,7 @@ const BudgetView = React.memo(() => {
                 { status: "Rejected" }
               );
             }
-            await logAction("Bulk", `Rejected ${toReject.length} pending budgets from dashboard`);
+            await logAction("Bulk", `Rejected ${toReject.length} pending budgets from dashboard`, selectedProjectId);
             setPendingSelectedBudgetIds([]);
             setPendingActionDropdownOpen(false);
             showAlert("สำเร็จ", `Reject งบประมาณ ${toReject.length} รายการเรียบร้อย`, "success");
@@ -1506,7 +1580,8 @@ const BudgetView = React.memo(() => {
       );
       await logAction(
         "Request",
-        `Requested Revision for Budget: ${selectedBudget.code}`
+        `Requested Revision for Budget: ${selectedBudget.code}`,
+        selectedProjectId
       );
       setIsRevisionModalOpen(false);
       setRevisionReason("");
@@ -1527,7 +1602,8 @@ const BudgetView = React.memo(() => {
         "Approve",
         b
           ? `Allowed Edit for Budget ${b.code}${desc ? ` — ${desc}` : ""}`
-          : `Allowed Edit for Budget ID: ${budgetId}`
+          : `Allowed Edit for Budget ID: ${budgetId}`,
+        selectedProjectId
       );
     };
 
@@ -1545,7 +1621,8 @@ const BudgetView = React.memo(() => {
         "Reject Revision",
         b
           ? `Rejected revision request for Budget ${b.code}${desc ? ` — ${desc}` : ""} — สถานะกลับเป็น Approved`
-          : `Rejected revision request for Budget ID: ${budgetId} — สถานะกลับเป็น Approved`
+          : `Rejected revision request for Budget ID: ${budgetId} — สถานะกลับเป็น Approved`,
+        selectedProjectId
       );
     };
 
@@ -1561,7 +1638,7 @@ const BudgetView = React.memo(() => {
         doc(db, "artifacts", appId, "public", "data", "budgets", selectedBudget.id),
         { status: "Rejected", rejectReason: rejectReason }
       );
-      await logAction("Reject", `Rejected Budget: ${selectedBudget.code} - ${rejectReason}`);
+      await logAction("Reject", `Rejected Budget: ${selectedBudget.code} - ${rejectReason}`, selectedProjectId);
       setIsRejectModalOpen(false);
       setRejectReason("");
       setSelectedBudget(null);
@@ -1586,7 +1663,7 @@ const BudgetView = React.memo(() => {
         doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
         { subItems: newSubItems }
       );
-      await logAction("Approve Sub-Item", `Approved Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code})`);
+      await logAction("Approve Sub-Item", `Approved Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code})`, budget.projectId || selectedProjectId);
       // ไม่แสดง Modal แจ้งเตือนเมื่อ Approve รายการย่อยสำเร็จ เพื่อลด pop-up ตามคำขอ
     };
 
@@ -1604,7 +1681,7 @@ const BudgetView = React.memo(() => {
         doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
         { subItems: newSubItems }
       );
-      await logAction("Request Revision Sub-Item", `Requested Revision for Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code})`);
+      await logAction("Request Revision Sub-Item", `Requested Revision for Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code})`, budget.projectId || selectedProjectId);
       showAlert("ส่งคำขอแก้ไข", "ส่งเรื่องรอ MD อนุมัติการแก้ไขรายการย่อยแล้ว", "info");
     };
 
@@ -1618,7 +1695,7 @@ const BudgetView = React.memo(() => {
         doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
         { subItems: newSubItems }
       );
-      await logAction("Allow Edit Sub-Item", `Allowed Edit for Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code})`);
+      await logAction("Allow Edit Sub-Item", `Allowed Edit for Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code})`, budget.projectId || selectedProjectId);
       showAlert("อนุญาตแล้ว", "ปลดล็อครายการย่อยให้แก้ไขได้ (สถานะ Draft)", "success");
     };
 
@@ -1632,7 +1709,7 @@ const BudgetView = React.memo(() => {
         doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
         { subItems: newSubItems }
       );
-      await logAction("Reject Revision Sub-Item", `Rejected revision for Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code}) — สถานะกลับเป็น Approved`);
+      await logAction("Reject Revision Sub-Item", `Rejected revision for Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code}) — สถานะกลับเป็น Approved`, budget.projectId || selectedProjectId);
       showAlert("ไม่อนุญาตแก้ไข", "สถานะรายการย่อยกลับเป็น Approved ตามเดิม", "info");
     };
 
@@ -1677,7 +1754,7 @@ const BudgetView = React.memo(() => {
         doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
         { subItems: newSubItems }
       );
-      await logAction("Submit Sub-Item", `Submitted Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code}) for approval`);
+      await logAction("Submit Sub-Item", `Submitted Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code}) for approval`, budget.projectId || selectedProjectId);
     };
 
     const handleRejectSubItem = async (budgetId, subItemId, reason) => {
@@ -1692,7 +1769,7 @@ const BudgetView = React.memo(() => {
         doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
         { subItems: newSubItems }
       );
-      await logAction("Reject Sub-Item", `Rejected Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code})`);
+      await logAction("Reject Sub-Item", `Rejected Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code})`, budget.projectId || selectedProjectId);
       showAlert("ปฏิเสธแล้ว", "ปฏิเสธรายการย่อย (Sub-Item) เรียบร้อย", "error");
     };
 
@@ -2339,7 +2416,7 @@ const BudgetView = React.memo(() => {
                                       onClick={async () => {
                                         const resume = pr.preCloseStatus || "Approved";
                                         await updateData("prs", pr.id, { status: resume, preCloseStatus: null, activeRequestedAt: null });
-                                        logAction("Approved Active PR", `อนุมัติ Active PR ${pr.prNo || pr.id} → ${resume}`);
+                                        logAction("Approved Active PR", `อนุมัติ Active PR ${pr.prNo || pr.id} → ${resume}`, selectedProjectId);
                                       }}
                                     >
                                       <CheckCircle size={11} /> Active PR
@@ -2958,6 +3035,7 @@ const BudgetView = React.memo(() => {
                                       indigo: "bg-indigo-50 text-indigo-700 border-indigo-200",
                                       purple: "bg-purple-50 text-purple-700 border-purple-200",
                                       emerald: "bg-emerald-50 text-emerald-700 border-emerald-200",
+                                      cyan: "bg-cyan-50 text-cyan-700 border-cyan-200",
                                       slate: "bg-slate-50 text-slate-600 border-slate-200",
                                     };
                                     if (subStatuses.length === 0) return null;
@@ -3076,7 +3154,7 @@ const BudgetView = React.memo(() => {
         />
         {/* Modals - Same as previous version, condensed for brevity */}
         {isImportModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-200">
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
             <Card className="w-full max-w-2xl p-6">
               <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
                 <FileSpreadsheet size={20} /> นำเข้าข้อมูลงบประมาณ
@@ -3140,7 +3218,7 @@ const BudgetView = React.memo(() => {
           </div>
         )}
         {isClearConfirmOpen && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-200">
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
             <Card className="w-full max-w-sm p-6 border-red-200">
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
@@ -3182,7 +3260,7 @@ const BudgetView = React.memo(() => {
           </div>
         )}
         {isModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[300] animate-in fade-in duration-200" onClick={closeBudgetModal}>
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200" onClick={closeBudgetModal}>
             <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md mx-4" onClick={(e) => e.stopPropagation()}>
               {/* Header */}
               <div className="px-6 py-4 bg-slate-700 rounded-t-2xl flex items-center justify-between">
@@ -3384,7 +3462,7 @@ const BudgetView = React.memo(() => {
           </div>
         )}
         {isSubItemModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[300] animate-in fade-in duration-200" onClick={() => setUnitDropdownOpen(false)}>
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200" onClick={() => setUnitDropdownOpen(false)}>
             <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md mx-4" onClick={(e) => e.stopPropagation()}>
               {/* Header */}
               <div className="px-6 py-4 bg-slate-700 rounded-t-2xl flex items-center justify-between">
@@ -3629,7 +3707,7 @@ const BudgetView = React.memo(() => {
           </div>
         )}
         {isRevisionModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-200">
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
             <Card className="w-full max-w-md p-6">
               <h3 className="text-lg font-bold mb-4 text-orange-600">
                 ขอแก้ไขงบประมาณ
@@ -3656,7 +3734,7 @@ const BudgetView = React.memo(() => {
           </div>
         )}
         {isRejectModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-200">
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
             <Card className="w-full max-w-md p-6">
               <h3 className="text-lg font-bold mb-4 text-red-600">
                 ปฏิเสธงบประมาณ (Reject Budget)
@@ -3692,7 +3770,7 @@ const BudgetView = React.memo(() => {
         )}
         {/* Modal กรอกเหตุผล (แทน window.prompt) — ขอแก้ไข / ปฏิเสธ รายการย่อย */}
         {reasonModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-200 p-4">
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200 p-4">
             <Card className="w-full max-w-md p-6">
               <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
                 {reasonModalType === "revision" ? (

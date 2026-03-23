@@ -87,9 +87,13 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
     { key: "delete",  label: "ลบ Invoice" },
   ],
   "payment-subcontract": [
-    { key: "create", label: "สร้าง Payment" },
-    { key: "edit",   label: "แก้ไข Payment" },
-    { key: "delete", label: "ลบ Payment" },
+    { key: "create",          label: "สร้าง Payment" },
+    { key: "edit",            label: "แก้ไข Payment" },
+    { key: "delete",          label: "ลบ Payment" },
+    { key: "submit",          label: "ส่งให้ CM ตรวจสอบ" },
+    { key: "approveFlow",     label: "อนุมัติ / ปฏิเสธ (CM/PM)" },
+    { key: "pay",             label: "จ่ายเงิน (Pay / Hold)" },
+    { key: "requestRevision", label: "ขอแก้ไข (ส่งกลับ)" },
   ],
   profile: [],
 };

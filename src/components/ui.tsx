@@ -115,7 +115,7 @@ export const ProjectSelect = ({ projects, selectedId, onChange }: any) => (
   </div>
 );
 
-export const SidebarItem = ({ icon, label, active, onClick, collapsed }: any) => (
+export const SidebarItem = ({ icon, label, active, onClick, collapsed, badge }: any) => (
   <motion.button
     onClick={onClick}
     title={collapsed ? label : undefined}
@@ -132,9 +132,26 @@ export const SidebarItem = ({ icon, label, active, onClick, collapsed }: any) =>
         transition={{ type: "spring", stiffness: 350, damping: 30 }}
       />
     )}
-    <span className={`relative z-10 flex items-center ${collapsed ? "justify-center" : "gap-3"}`}>
-      <span className="flex-shrink-0">{icon}</span>
-      {!collapsed && <span className="font-medium text-sm">{label}</span>}
+    <span className={`relative z-10 flex items-center ${collapsed ? "justify-center" : "gap-3"} w-full`}>
+      <span className="flex-shrink-0 relative">
+        {icon}
+        {/* badge บน icon เมื่อ collapsed */}
+        {badge > 0 && collapsed && (
+          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[8px] font-bold rounded-full min-w-[14px] h-3.5 flex items-center justify-center px-0.5 shadow animate-pulse">
+            {badge > 99 ? "99+" : badge}
+          </span>
+        )}
+      </span>
+      {!collapsed && (
+        <span className="font-medium text-sm flex-1 flex items-center justify-between">
+          {label}
+          {badge > 0 && (
+            <span className="ml-2 bg-red-500 text-white text-[9px] font-bold rounded-full min-w-[16px] h-4 flex items-center justify-center px-1 shadow animate-pulse">
+              {badge > 99 ? "99+" : badge}
+            </span>
+          )}
+        </span>
+      )}
     </span>
   </motion.button>
 );

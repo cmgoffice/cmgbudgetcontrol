@@ -6,7 +6,7 @@ import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTra
 
 export const CustomAlert = ({ isOpen, onClose, title, message, type = "info" }: any) => {
   if (!isOpen) return null;
-  const overlayClasses = "fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[200]";
+  const overlayClasses = "fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[10020]";
   const modalClasses = "bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm border border-slate-100";
   const typeConfig: Record<string, any> = {
     success: { icon: CheckCircle, color: "text-green-500", bg: "bg-green-50", btn: "bg-green-600 hover:bg-green-700" },
@@ -43,7 +43,7 @@ export const CustomConfirmModal = ({
   confirmText = "ยืนยัน", cancelText = "ยกเลิก", variant = "primary",
 }: any) => {
   if (!isOpen) return null;
-  const overlayClasses = "fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[210]";
+  const overlayClasses = "fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[10020]";
   const modalClasses = "bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm border border-slate-100";
   return (
     <motion.div className={overlayClasses} initial="hidden" animate="visible" variants={modalOverlayVariants} transition={overlayTransition}>

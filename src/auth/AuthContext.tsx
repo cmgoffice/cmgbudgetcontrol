@@ -60,21 +60,23 @@ export const AuthProvider = ({ children }) => {
 
   // System Log Function
   const logAction = useCallback(
-    async (action, details) => {
+    async (action, details, projectId = null) => {
       if (!user) return;
       try {
+        const logData: Record<string, any> = {
+          timestamp: new Date().toISOString(),
+          action: action,
+          details: details,
+          user: userData
+            ? `${userData.firstName} ${userData.lastName}`
+            : user.email,
+          role: userData ? userData.role : "Unknown",
+          uid: user.uid,
+        };
+        if (projectId) logData.projectId = projectId;
         await addDoc(
           collection(db, "artifacts", appId, "public", "data", "logs"),
-          {
-            timestamp: new Date().toISOString(),
-            action: action,
-            details: details,
-            user: userData
-              ? `${userData.firstName} ${userData.lastName}`
-              : user.email,
-            role: userData ? userData.role : "Unknown",
-            uid: user.uid,
-          }
+          logData
         );
       } catch (error) {
         console.error("Failed to write log:", error);

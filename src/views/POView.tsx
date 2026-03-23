@@ -106,6 +106,10 @@ const POView = React.memo(() => {
       { code: "WF", label: "WF — รายจ่ายประจำ" },
     ];
 
+    // Contract PR types ที่ต้องให้แสดงในขั้น Select PRs สำหรับ Create PO
+    // (จ้างเหมา / ค่าแรง)
+    const DLDC_CONTRACT_PURCHASE_TYPES = ["จ้างเหมา > DL", "ค่าแรง > DC"];
+
     const RECEIVE_TYPES = [
       { value: "Material", label: "Material" },
       { value: "Subcontractor", label: "Subcontractor" },
@@ -363,7 +367,13 @@ const POView = React.memo(() => {
 
         // กรณีปกติ
         if (pr.status === "Closed PR" || pr.status === "Closed PR Auto") return false;
-        if (pr.status !== "Approved" && pr.status !== "PO Issued") return false;
+        const isDLDCContractPR = DLDC_CONTRACT_PURCHASE_TYPES.includes(pr.purchaseType);
+        // สำหรับ PR จ้าง/เหมา DL/DC ให้แสดงเพิ่มแม้ยังอยู่ในบางสถานะที่ระบบใช้ทำ PO
+        // เพื่อไม่ให้ตกหล่นจากกฎสถานะ Approved/PO Issued
+        const allowedStatuses = isDLDCContractPR
+          ? ["Approved", "PO Issued", "Pending PM"]
+          : ["Approved", "PO Issued"];
+        if (!allowedStatuses.includes(pr.status)) return false;
 
         const prTotal = Number(pr.totalAmount) || 0;
         const usedAmount = getUsedAmountByPR(pr.id, editingPoId);
@@ -376,6 +386,9 @@ const POView = React.memo(() => {
     // Handle toggling a PR selection
     const handlePrToggle = (prId) => {
       const currentIds = formData.selectedPrIds;
+      const lockedCostCode = currentIds.length > 0 ? (prs.find((p) => p.id === currentIds[0])?.costCode ?? null) : null;
+      const pr = prs.find((p) => p.id === prId);
+      if (!pr) return;
       if (currentIds.includes(prId)) {
         // Deselect: Remove PR and its items
         setFormData(prev => ({
@@ -384,12 +397,37 @@ const POView = React.memo(() => {
           items: prev.items.filter(item => item.prId !== prId)
         }));
       } else {
+        // Enforce "CostCode lock": after first selection, only allow same costCode
+        if (lockedCostCode && pr.costCode !== lockedCostCode) {
+          showAlert("เลือกไม่ได้", "เมื่อเลือก PR ตัวแรกแล้ว ระบบจะแสดง/เลือกได้เฉพาะ Cost Code เดียวกันเท่านั้น", "warning");
+          return;
+        }
         // Select: Add PR
         setFormData(prev => ({
           ...prev,
           selectedPrIds: [...currentIds, prId]
         }));
       }
+    };
+
+    // Select PRs modal: toggle temp selection with CostCode lock
+    const toggleTempPrSelection = (prId) => {
+      setTempSelectedPrIds((prev) => {
+        const pr = prs.find((p) => p.id === prId);
+        if (!pr) return prev;
+
+        if (prev.includes(prId)) {
+          return prev.filter((id) => id !== prId);
+        }
+
+        const lockedCostCode = prev.length > 0 ? (prs.find((p) => p.id === prev[0])?.costCode ?? null) : null;
+        if (lockedCostCode && pr.costCode !== lockedCostCode) {
+          showAlert("เลือกไม่ได้", "เมื่อเลือก PR ตัวแรกแล้ว ระบบจะแสดง/เลือกได้เฉพาะ Cost Code เดียวกันเท่านั้น", "warning");
+          return prev;
+        }
+
+        return [...prev, prId];
+      });
     };
 
     // รายการจาก PR ที่เลือก — แสดงทุกรายการ (รวมที่เปิด PO ไปแล้ว) เพื่อให้กดเพิ่มได้แบบอิสระ
@@ -421,6 +459,8 @@ const POView = React.memo(() => {
               price,
               amount: orderQtyDefault * price,
               subItemId: item.subItemId || null,
+              budgetId: item.budgetId || pr.budgetId || null,
+              budgetSubItemId: item.budgetSubItemId || item.subItemId || null,
             });
           });
         }
@@ -471,14 +511,16 @@ const POView = React.memo(() => {
     // PR list filtered by content (PR No., Cost Code, รายการงบ) สำหรับ Modal เลือกใบขอซื้อ
     const approvedPRsFiltered = useMemo(() => {
       const q = (prSelectFilterText || "").trim().toLowerCase();
-      if (!q) return approvedPRs;
-      return approvedPRs.filter((pr) => {
+      const lockedCostCode = tempSelectedPrIds.length > 0 ? (prs.find((p) => p.id === tempSelectedPrIds[0])?.costCode ?? null) : null;
+      const base = lockedCostCode ? approvedPRs.filter((pr) => pr.costCode === lockedCostCode) : approvedPRs;
+      if (!q) return base;
+      return base.filter((pr) => {
         const budgetDesc = budgets.find(b => b.code === pr.costCode && b.projectId === pr.projectId)?.description || "";
         const prItemsDesc = (pr.items || []).map((i: any) => i.description).filter(Boolean).join(" ");
         const haystack = [pr.prNo, pr.costCode, budgetDesc, prItemsDesc].join(" ").toLowerCase();
         return haystack.includes(q);
       });
-    }, [approvedPRs, prSelectFilterText, budgets]);
+    }, [approvedPRs, prSelectFilterText, budgets, tempSelectedPrIds, prs]);
 
     const addItemToForm = (itemData) => {
       setFormData(prev => ({
@@ -495,7 +537,8 @@ const POView = React.memo(() => {
           remainingQty: itemData.remainingQty,
           costCode: itemData.costCode,
           subItemId: itemData.subItemId || null,
-          // Dis PR must be explicitly selected by user; no auto-assign
+          budgetId: itemData.budgetId || null,
+          budgetSubItemId: itemData.budgetSubItemId || null,
           disPrPlan: [],
           disPrAllocations: []
         }]
@@ -1049,7 +1092,7 @@ const POView = React.memo(() => {
         poEditRevisionReason: reason,
       });
       if (ok) {
-        await logAction(`Request ${L.docName} Revision`, `ขอแก้ไข ${L.docName} ${po.poNo || po.id} → ${flow.pendingStatus}: ${reason}`);
+        await logAction(`Request ${L.docName} Revision`, `ขอแก้ไข ${L.docName} ${po.poNo || po.id} → ${flow.pendingStatus}: ${reason}`, selectedProjectId);
         showAlert("ส่งคำขอแล้ว", "รอผู้อนุมัติขั้นที่เกี่ยวข้องพิจารณา", "success");
         setIsPoRevisionModalOpen(false);
         setPoRevisionReason("");
@@ -1594,7 +1637,7 @@ const POView = React.memo(() => {
           const poPrNos = poPrIds.map((id: string) => prs.find((p: any) => p.id === id)?.prNo || "-").join(", ");
           const subtotal = (viewingPO.items || []).reduce((s: number, i: any) => s + Number(i.quantity) * Number(i.price), 0);
           return (
-            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9000] p-4">
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10010] p-4">
               <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-[90vh] flex flex-col">
                 {/* Header */}
                 <div className="px-6 py-4 bg-gradient-to-r from-red-700 to-red-900 rounded-t-2xl flex items-center justify-between shrink-0">
@@ -1767,7 +1810,7 @@ const POView = React.memo(() => {
         })()}
 
         {isPoRevisionModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[9100] p-4">
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] p-4">
             <Card className="w-full max-w-md p-6">
               <h3 className="text-lg font-bold text-slate-800 mb-1 flex items-center gap-2">
                 <RefreshCw size={20} className="text-orange-600" /> {L.revisionTitle}
@@ -1800,7 +1843,7 @@ const POView = React.memo(() => {
         {/* Create PO Modal — ทับ Header, เต็มความสูง, Footer เลื่อนตามเนื้อหา */}
         {isModalOpen && (
           <motion.div
-            className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[9999] p-4"
+            className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[10010] p-4"
             initial="hidden"
             animate="visible"
             variants={modalOverlayVariants}
@@ -1998,7 +2041,16 @@ const POView = React.memo(() => {
                         <button
                           type="button"
                           className="flex items-center gap-1 px-3 py-1 rounded-lg bg-slate-800 text-white text-xs font-semibold hover:bg-slate-700 transition-all shadow-sm"
-                          onClick={() => { setTempSelectedPrIds([...formData.selectedPrIds]); setPrSelectFilterText(""); setIsPrSelectModalOpen(true); }}
+                          onClick={() => {
+                            const firstId = formData.selectedPrIds[0];
+                            const lockedCostCode = firstId ? (prs.find((p) => p.id === firstId)?.costCode ?? null) : null;
+                            const normalized = lockedCostCode
+                              ? formData.selectedPrIds.filter((id) => (prs.find((p) => p.id === id)?.costCode ?? null) === lockedCostCode)
+                              : [...formData.selectedPrIds];
+                            setTempSelectedPrIds(normalized);
+                            setPrSelectFilterText("");
+                            setIsPrSelectModalOpen(true);
+                          }}
                         >
                           <ListFilter size={11} /> เลือก PR
                         </button>
@@ -2028,7 +2080,15 @@ const POView = React.memo(() => {
                             <button
                               type="button"
                               className="flex items-center gap-1 px-2.5 py-1 border border-dashed border-slate-300 rounded-lg text-xs text-slate-500 hover:border-slate-400 hover:text-slate-700 transition-all"
-                              onClick={() => { setTempSelectedPrIds([...formData.selectedPrIds]); setIsPrSelectModalOpen(true); }}
+                            onClick={() => {
+                              const firstId = formData.selectedPrIds[0];
+                              const lockedCostCode = firstId ? (prs.find((p) => p.id === firstId)?.costCode ?? null) : null;
+                              const normalized = lockedCostCode
+                                ? formData.selectedPrIds.filter((id) => (prs.find((p) => p.id === id)?.costCode ?? null) === lockedCostCode)
+                                : [...formData.selectedPrIds];
+                              setTempSelectedPrIds(normalized);
+                              setIsPrSelectModalOpen(true);
+                            }}
                             >
                               <Plus size={10} /> เพิ่ม/แก้ไข
                             </button>
@@ -2408,7 +2468,7 @@ const POView = React.memo(() => {
         {/* PR Selection Modal */}
         {isPrSelectModalOpen && (
           <motion.div
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[80] p-4"
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10010] p-4"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -2468,7 +2528,16 @@ const POView = React.memo(() => {
                             className="rounded border-slate-300 cursor-pointer"
                             checked={tempSelectedPrIds.length === approvedPRsFiltered.length && approvedPRsFiltered.length > 0}
                             onChange={(e) => {
-                              setTempSelectedPrIds(e.target.checked ? approvedPRsFiltered.map(p => p.id) : []);
+                              if (!e.target.checked) {
+                                setTempSelectedPrIds([]);
+                                return;
+                              }
+                              const first = approvedPRsFiltered[0];
+                              const lockedCostCode = tempSelectedPrIds.length > 0 ? (prs.find((p) => p.id === tempSelectedPrIds[0])?.costCode ?? null) : (first?.costCode ?? null);
+                              const next = lockedCostCode
+                                ? approvedPRsFiltered.filter((pr) => pr.costCode === lockedCostCode).map((p) => p.id)
+                                : approvedPRsFiltered.map((p) => p.id);
+                              setTempSelectedPrIds(next);
                             }}
                             title="เลือกทั้งหมด"
                           />
@@ -2495,9 +2564,7 @@ const POView = React.memo(() => {
                             key={pr.id}
                             className={`cursor-pointer select-none transition-colors ${isSelected ? "bg-slate-700/10 hover:bg-slate-700/15" : "hover:bg-slate-50"}`}
                             onClick={() => {
-                              setTempSelectedPrIds(prev =>
-                                prev.includes(pr.id) ? prev.filter(id => id !== pr.id) : [...prev, pr.id]
-                              );
+                              toggleTempPrSelection(pr.id);
                             }}
                           >
                             <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
@@ -2505,11 +2572,7 @@ const POView = React.memo(() => {
                                 type="checkbox"
                                 className="rounded border-slate-300 cursor-pointer"
                                 checked={isSelected}
-                                onChange={() => {
-                                  setTempSelectedPrIds(prev =>
-                                    prev.includes(pr.id) ? prev.filter(id => id !== pr.id) : [...prev, pr.id]
-                                  );
-                                }}
+                                onChange={() => toggleTempPrSelection(pr.id)}
                               />
                             </td>
                             <td className="px-4 py-3 font-bold text-slate-800">{pr.prNo}</td>
@@ -2572,7 +2635,7 @@ const POView = React.memo(() => {
 
         {/* เพิ่มรายการ Modal */}
         {isAddItemModalOpen && formData.selectedPrIds.length > 0 && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[80] p-4" onClick={() => setIsAddItemModalOpen(false)}>
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10010] p-4" onClick={() => setIsAddItemModalOpen(false)}>
             <motion.div
               className="w-full max-w-3xl max-h-[80vh] flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
               initial={{ opacity: 0, scale: 0.98 }}
@@ -2643,7 +2706,7 @@ const POView = React.memo(() => {
 
         {/* Quick Add Vendor Modal */}
         {isVendorModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[60]">
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010]">
             <Card className="w-full max-w-lg p-6">
               <h3 className="font-bold mb-4 flex items-center gap-2">
                 <Building2 size={18} /> เพิ่ม Vendor ด่วน
@@ -2679,7 +2742,7 @@ const POView = React.memo(() => {
 
         {/* Reject Modal */}
         {rejectPoId && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[60]">
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010]">
             <Card className="w-full max-w-sm p-6">
               <h3 className="font-bold text-red-600 mb-4">ระบุเหตุผลการปฏิเสธ</h3>
               <textarea className="w-full border p-2 rounded h-24 text-sm" placeholder="เหตุผล..." value={rejectReason} onChange={e => setRejectReason(e.target.value)}></textarea>

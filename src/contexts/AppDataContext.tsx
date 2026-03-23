@@ -532,15 +532,36 @@ export const AppDataProvider = ({
     return false;
   }), [pos, roles]);
 
+  const pendingPaymentsGlobal = useMemo(() => payments.filter((p: any) => {
+    const s = p.status || "";
+    if (roles.includes("Administrator")) return s.startsWith("Pending") || s === "Wait Pay" || s.startsWith("งวดงาน Pending");
+    if (roles.includes("CM")  && (s === "Pending CM"  || s === "งวดงาน Pending CM"))  return true;
+    if (roles.includes("PM")  && (s === "Pending PM"  || s === "งวดงาน Pending PM"))  return true;
+    if (roles.includes("PCM") && (s === "Pending PM"  || s === "งวดงาน Pending PM"))  return true;
+    if ((roles.includes("MD") || roles.includes("GM")) && s === "Pending MD") return true;
+    if (roles.includes("Procurement") && (s === "Pending Procurement" || s === "Wait Pay")) return true;
+    return false;
+  }), [payments, roles]);
+
   const totalPendingCount = useMemo(() =>
     pendingBudgetsGlobal.length + pendingSubItemsGlobal.length +
     pendingPRsGlobal.length    + pendingPOsGlobal.length,
   [pendingBudgetsGlobal, pendingSubItemsGlobal, pendingPRsGlobal, pendingPOsGlobal]);
 
+  const pendingCountByMenu = useMemo(() => ({
+    budget:               pendingBudgetsGlobal.length + pendingSubItemsGlobal.length,
+    pr:                   pendingPRsGlobal.length,
+    "pr-table":           pendingPRsGlobal.length,
+    po:                   pendingPOsGlobal.length,
+    "po-table":           pendingPOsGlobal.length,
+    "payment-subcontract": pendingPaymentsGlobal.length,
+  }), [pendingBudgetsGlobal, pendingSubItemsGlobal, pendingPRsGlobal, pendingPOsGlobal, pendingPaymentsGlobal]);
+
   const pendingByProject = useMemo(() => {
     const map = {};
     const inc = (pid, key) => {
-      if (!map[pid]) map[pid] = { budgets: 0, prs: 0, pos: 0, subItems: 0 };
+      if (!pid) return;
+      if (!map[pid]) map[pid] = { budgets: 0, prs: 0, pos: 0, subItems: 0, payments: 0 };
       map[pid][key]++;
     };
     pendingBudgetsGlobal.forEach((b) => inc(b.projectId, "budgets"));
@@ -550,16 +571,17 @@ export const AppDataProvider = ({
     });
     pendingPRsGlobal.forEach((pr) => inc(pr.projectId, "prs"));
     pendingPOsGlobal.forEach((po) => inc(po.projectId, "pos"));
+    pendingPaymentsGlobal.forEach((p: any) => inc(p.projectId, "payments"));
     return Object.entries(map).map(([projectId, counts]) => {
       const proj = projects.find((p) => p.id === projectId);
       return {
         projectId,
         projectName: proj ? `${proj.jobNo} - ${proj.name}` : projectId,
         ...counts,
-        total: counts.budgets + counts.prs + counts.pos + counts.subItems,
+        total: counts.budgets + counts.prs + counts.pos + counts.subItems + counts.payments,
       };
     });
-  }, [pendingBudgetsGlobal, pendingSubItemsGlobal, pendingPRsGlobal, pendingPOsGlobal, projects, budgets]);
+  }, [pendingBudgetsGlobal, pendingSubItemsGlobal, pendingPRsGlobal, pendingPOsGlobal, pendingPaymentsGlobal, projects, budgets]);
 
   // ── PR / PO approval handlers ──────────────────────────────────────────────
   const handlePRAction = useCallback(async (id, action) => {
@@ -677,10 +699,10 @@ export const AppDataProvider = ({
     projects, budgets, vendors, materials, prs, pos, invoices, payments,
     // derived
     visibleProjects,
-    // pending (global, for bell)
+    // pending (global, for bell + sidebar badges)
     pendingBudgetsGlobal, pendingSubItemsGlobal,
-    pendingPRsGlobal, pendingPOsGlobal,
-    totalPendingCount, pendingByProject,
+    pendingPRsGlobal, pendingPOsGlobal, pendingPaymentsGlobal,
+    totalPendingCount, pendingByProject, pendingCountByMenu,
     // CRUD
     addData, updateData, deleteData,
     // lazy load (ลดโควต้า — โหลดเมื่อเข้าหน้าที่ใช้)
@@ -705,8 +727,8 @@ export const AppDataProvider = ({
     projects, budgets, vendors, materials, prs, pos, invoices, payments,
     visibleProjects,
     pendingBudgetsGlobal, pendingSubItemsGlobal,
-    pendingPRsGlobal, pendingPOsGlobal,
-    totalPendingCount, pendingByProject,
+    pendingPRsGlobal, pendingPOsGlobal, pendingPaymentsGlobal,
+    totalPendingCount, pendingByProject, pendingCountByMenu,
     addData, updateData, deleteData,
     loadVendors, loadMaterials,
     vendorsLoading, materialsLoading,

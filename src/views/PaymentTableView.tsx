@@ -279,7 +279,7 @@ const PaymentTableView = React.memo(() => {
         const contractor = vendors?.find((v: any) => v.id === viewingPayment.contractorId);
         const project = projects.find((proj: any) => proj.id === viewingPayment.projectId);
         return (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9000] p-4">
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10010] p-4">
             <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-[90vh] flex flex-col">
               {/* Header */}
               <div className="px-6 py-4 bg-gradient-to-r from-orange-600 to-orange-800 rounded-t-2xl flex items-center justify-between shrink-0">

@@ -65,7 +65,7 @@ const AppShell = () => {
     visibleProjects, columnWidths, handleColumnResize,
     addData, updateData, deleteData,
     loadVendors, loadMaterials,
-    totalPendingCount, pendingByProject,
+    totalPendingCount, pendingByProject, pendingCountByMenu,
     handlePRAction, handlePOAction,
     showAlert, openConfirm,
     canAccessModule,
@@ -109,7 +109,7 @@ const AppShell = () => {
     pendingSectionRef,
   } = useUI();
 
-  const [prTab, setPrTab] = useState<"system" | "contract" | "table">("system");
+  const [prTab, setPrTab] = useState<"system" | "table">("system");
   const [poTab, setPoTab] = useState<"system" | "table">("system");
   const [paymentSubTab, setPaymentSubTab] = useState<"system" | "table">("system");
 
@@ -199,42 +199,59 @@ const AppShell = () => {
               collapsed={sidebarCollapsed}
             />
           )}
-          {canAccessModule("budget") && (
-            <SidebarItem
-              icon={<Wallet size={20} className="text-emerald-300" />}
-              label="Project Budget"
-              active={activeMenu === "budget"}
-              onClick={() => handleMenuChange("budget")}
-              collapsed={sidebarCollapsed}
-            />
-          )}
-          {(canAccessModule("pr") || canAccessModule("pr-table")) && (
-            <SidebarItem
-              icon={<FileText size={20} className="text-sky-300" />}
-              label="Purchase Request (PR)"
-              active={activeMenu === "pr"}
-              onClick={() => handleMenuChange("pr")}
-              collapsed={sidebarCollapsed}
-            />
-          )}
-          {(canAccessModule("po") || canAccessModule("po-table")) && (
-            <SidebarItem
-              icon={<ShoppingCart size={20} className="text-rose-300" />}
-              label="Purchase Order (PO)"
-              active={activeMenu === "po"}
-              onClick={() => handleMenuChange("po")}
-              collapsed={sidebarCollapsed}
-            />
-          )}
-          {canAccessModule("payment-subcontract") && (
-            <SidebarItem
-              icon={<CreditCard size={20} className="text-orange-300" />}
-              label="Payment Subcontract"
-              active={activeMenu === "payment-subcontract"}
-              onClick={() => handleMenuChange("payment-subcontract")}
-              collapsed={sidebarCollapsed}
-            />
-          )}
+          {(() => {
+            const proj = pendingByProject?.find((x: any) => x.projectId === selectedProjectId);
+            const projBadge = {
+              budget: (proj?.budgets || 0) + (proj?.subItems || 0),
+              pr: proj?.prs || 0,
+              po: proj?.pos || 0,
+              "payment-subcontract": proj?.payments || 0,
+            };
+            return (
+              <>
+                {canAccessModule("budget") && (
+                  <SidebarItem
+                    icon={<Wallet size={20} className="text-emerald-300" />}
+                    label="Project Budget"
+                    active={activeMenu === "budget"}
+                    onClick={() => handleMenuChange("budget")}
+                    collapsed={sidebarCollapsed}
+                    badge={projBadge.budget}
+                  />
+                )}
+                {(canAccessModule("pr") || canAccessModule("pr-table")) && (
+                  <SidebarItem
+                    icon={<FileText size={20} className="text-sky-300" />}
+                    label="Purchase Request (PR)"
+                    active={activeMenu === "pr"}
+                    onClick={() => handleMenuChange("pr")}
+                    collapsed={sidebarCollapsed}
+                    badge={projBadge.pr}
+                  />
+                )}
+                {(canAccessModule("po") || canAccessModule("po-table")) && (
+                  <SidebarItem
+                    icon={<ShoppingCart size={20} className="text-rose-300" />}
+                    label="Purchase Order (PO)"
+                    active={activeMenu === "po"}
+                    onClick={() => handleMenuChange("po")}
+                    collapsed={sidebarCollapsed}
+                    badge={projBadge.po}
+                  />
+                )}
+                {canAccessModule("payment-subcontract") && (
+                  <SidebarItem
+                    icon={<CreditCard size={20} className="text-orange-300" />}
+                    label="Payment Subcontract"
+                    active={activeMenu === "payment-subcontract"}
+                    onClick={() => handleMenuChange("payment-subcontract")}
+                    collapsed={sidebarCollapsed}
+                    badge={projBadge["payment-subcontract"]}
+                  />
+                )}
+              </>
+            );
+          })()}
           {canAccessModule("invoice") && (
             <SidebarItem
               icon={<FileInput size={20} />}
@@ -341,21 +358,30 @@ const AppShell = () => {
           {/* Project Cards — อยู่ขวา ก่อนกระดิ่ง ขยายออกซ้ายเมื่อมีโครงการเพิ่ม */}
           {["budget","pr","po","payment-subcontract","invoice"].includes(activeMenu) && visibleProjects.length > 0 && (
             <div className="flex items-center gap-1.5 shrink-0">
-              {visibleProjects.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => setSelectedProjectId(p.id)}
-                  title={p.name}
-                  className={`flex-shrink-0 w-10 h-10 rounded-lg text-[10px] font-extrabold transition-all text-center flex items-center justify-center px-0.5 break-all ${
-                    selectedProjectId === p.id
-                      ? "bg-orange-500 text-white shadow-md scale-105"
-                      : "bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200"
-                  }`}
-                >
-                  {p.jobNo || (p.name || "?").slice(0, 4)}
-                </button>
-              ))}
+              {visibleProjects.map((p) => {
+                const projPending = pendingByProject?.find((x) => x.projectId === p.id);
+                const pendingTotal = projPending?.total || 0;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setSelectedProjectId(p.id)}
+                    title={p.name}
+                    className={`relative flex-shrink-0 w-10 h-10 rounded-lg text-[10px] font-extrabold transition-all text-center flex items-center justify-center px-0.5 break-all ${
+                      selectedProjectId === p.id
+                        ? "bg-orange-500 text-white shadow-md scale-105"
+                        : "bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200"
+                    }`}
+                  >
+                    {p.jobNo || (p.name || "?").slice(0, 4)}
+                    {pendingTotal > 0 && (
+                      <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[8px] font-bold rounded-full min-w-[14px] h-3.5 flex items-center justify-center px-0.5 shadow animate-pulse">
+                        {pendingTotal > 99 ? "99+" : pendingTotal}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           )}
 
@@ -493,7 +519,7 @@ const AppShell = () => {
         )}
         <div
           className={
-            ["projects", "budget", "pr", "po", "vendor", "material", "invoice", "admin"].includes(
+            ["projects", "budget", "pr", "po", "payment-subcontract", "vendor", "material", "invoice", "admin"].includes(
               activeMenu
             )
               ? "p-4 md:p-6 w-full max-w-none min-w-0"
@@ -539,17 +565,6 @@ const AppShell = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setPrTab("contract")}
-                  className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
-                    prTab === "contract"
-                      ? "bg-purple-600 text-white shadow"
-                      : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-                  }`}
-                >
-                  <span className="flex items-center gap-2"><Briefcase size={16} /> PR จ้าง/เหมา</span>
-                </button>
-                <button
-                  type="button"
                   onClick={() => setPrTab("table")}
                   className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
                     prTab === "table"
@@ -560,8 +575,7 @@ const AppShell = () => {
                   <span className="flex items-center gap-2"><FileSpreadsheet size={16} /> ตารางข้อมูล PR</span>
                 </button>
               </div>
-              {prTab === "system" && <PRView filterMode="regular" />}
-              {prTab === "contract" && <PRView filterMode="contract" />}
+              {prTab === "system" && <PRView />}
               {prTab === "table" && (
                 <PRPOTableView
                   mode="pr"
@@ -1298,7 +1312,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
       {/* Email modal for PR/PO PDF */}
       {emailModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setEmailModal(null)}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[10010] p-4" onClick={() => setEmailModal(null)}>
           <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-4" onClick={e => e.stopPropagation()}>
             <h3 className="text-sm font-bold text-slate-800 mb-2">ส่งไฟล์ PDF ทางเมล</h3>
             <p className="text-xs text-slate-500 mb-2">
@@ -1317,7 +1331,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
       {/* PDF Preview Modal (PO) */}
       {pdfPreviewUrl && (
-        <div className="fixed inset-0 bg-black/70 flex flex-col items-center justify-center z-[9999] p-4" onClick={() => setPdfPreviewUrl(null)}>
+        <div className="fixed inset-0 bg-black/70 flex flex-col items-center justify-center z-[10010] p-4" onClick={() => setPdfPreviewUrl(null)}>
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl flex flex-col" style={{ height: "88vh" }} onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-100">
               <span className="text-sm font-semibold text-slate-700">ดูตัวอย่าง PDF</span>
@@ -1906,13 +1920,29 @@ const AdminDashboard = () => {
     }
   };
 
+  // Replace old-style "ID: <uuid>" patterns in legacy log details with readable label
+  const cleanLogDetails = (details: string): string => {
+    if (!details) return "";
+    return details
+      .replace(/Sub-Item ID:\s*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "Sub-Item")
+      .replace(/\bID:\s*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "")
+      .replace(/\bin Budget:\s*([^\s]+)/gi, "(Budget $1)")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+  };
+
+  const getLogProjectName = (log: any): string => {
+    if (!log.projectId) return "";
+    const proj = projects.find((p) => p.id === log.projectId);
+    return proj ? `${proj.jobNo} — ${proj.name}` : log.projectId;
+  };
+
   const handleExportLogs = () => {
-    const headers = "Timestamp,Action,User,Role,Details\n";
+    const headers = "Timestamp,Action,User,Role,Project,Details\n";
     const rows = logs
       .map(
         (log) =>
-          `"${new Date(log.timestamp).toLocaleString("th-TH")}",${log.action},${log.user
-          },${log.role},"${log.details.replace(/"/g, '""')}"`
+          `"${new Date(log.timestamp).toLocaleString("th-TH")}",${log.action},${log.user},${log.role},"${getLogProjectName(log)}","${cleanLogDetails(log.details || "").replace(/"/g, '""')}"`
       )
       .join("\n");
     const bom = "\uFEFF";
@@ -2125,37 +2155,50 @@ const AdminDashboard = () => {
               <thead className="bg-slate-100 text-slate-700 font-semibold sticky top-0 z-10 shadow-sm">
                 <tr>
                   <th className="p-3 w-40">Timestamp</th>
-                  <th className="p-3 w-48">User</th>
-                  <th className="p-3 w-24">Action</th>
+                  <th className="p-3 w-44">User</th>
+                  <th className="p-3 w-28">Action</th>
+                  <th className="p-3 w-52">โครงการ</th>
                   <th className="p-3">Details</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {logs.map((log) => (
-                  <tr
-                    key={log.id}
-                    className="hover:bg-slate-50 transition-colors"
-                  >
-                    <td className="p-3 text-xs text-slate-500 font-mono whitespace-nowrap">
-                      {new Date(log.timestamp).toLocaleString("th-TH")}
-                    </td>
-                    <td className="p-3">
-                      <div className="text-xs font-bold text-slate-700">
-                        {log.user}
-                      </div>
-                      <div className="text-[10px] text-slate-400">
-                        {log.role}
-                      </div>
-                    </td>
-                    <td className="p-3">{getActionBadge(log.action)}</td>
-                    <td className="p-3 text-xs text-slate-600 break-words max-w-lg">
-                      {log.details}
-                    </td>
-                  </tr>
-                ))}
+                {logs.map((log) => {
+                  const projectName = getLogProjectName(log);
+                  return (
+                    <tr
+                      key={log.id}
+                      className="hover:bg-slate-50 transition-colors"
+                    >
+                      <td className="p-3 text-xs text-slate-500 font-mono whitespace-nowrap">
+                        {new Date(log.timestamp).toLocaleString("th-TH")}
+                      </td>
+                      <td className="p-3">
+                        <div className="text-xs font-bold text-slate-700">
+                          {log.user}
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          {log.role}
+                        </div>
+                      </td>
+                      <td className="p-3">{getActionBadge(log.action)}</td>
+                      <td className="p-3">
+                        {projectName ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-cyan-700 bg-cyan-50 border border-cyan-200 rounded px-2 py-0.5 break-words max-w-[200px]">
+                            {projectName}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-slate-300">—</span>
+                        )}
+                      </td>
+                      <td className="p-3 text-xs text-slate-600 break-words max-w-xs">
+                        {cleanLogDetails(log.details || "")}
+                      </td>
+                    </tr>
+                  );
+                })}
                 {logs.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="p-8 text-center text-slate-400">
+                    <td colSpan={5} className="p-8 text-center text-slate-400">
                       No logs available
                     </td>
                   </tr>
@@ -2329,7 +2372,7 @@ const AdminDashboard = () => {
 
       {/* Edit User Modal */}
       {isEditModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
           <Card className="w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6 pb-2 border-b">
               <h3 className="text-lg font-bold text-slate-800">

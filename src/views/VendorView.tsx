@@ -447,7 +447,7 @@ const VendorView = React.memo(() => {
       </Card>
 
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
           <Card className="w-full max-w-lg p-6">
             <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
               <Building2 size={18} /> {editingId ? "แก้ไข Vendor" : "เพิ่ม Vendor"}
@@ -482,7 +482,7 @@ const VendorView = React.memo(() => {
       )}
 
       {isImportOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
           <Card className="w-full max-w-2xl p-6">
             <h3 className="text-lg font-bold mb-3 flex items-center gap-2">
               <FileSpreadsheet size={18} /> ตรวจสอบข้อมูลก่อน Import ({importPreview.length} รายการ)

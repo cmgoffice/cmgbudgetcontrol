@@ -216,7 +216,7 @@ const ProjectsView = React.memo(() => {
         </div>
       </Card>
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[10010] animate-in fade-in duration-200">
           <Card className="w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-bold mb-4">
               {editingProjectId ? "แก้ไขข้อมูลโครงการ" : "เพิ่มโครงการใหม่"}
