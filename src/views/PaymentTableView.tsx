@@ -68,7 +68,7 @@ const PaymentTableView = React.memo(() => {
       "ยืนยันการลบ",
       `ต้องการลบ Payment ${p.paymentNo} ใช่หรือไม่?`,
       async () => {
-        await deleteData("payments", p.id);
+        await deleteData("payments", p.id, { skipLog: true });
         await logAction?.("Delete Payment", `ลบ Payment ${p.paymentNo}`);
         showAlert?.("สำเร็จ", "ลบ Payment เรียบร้อย", "success");
       },

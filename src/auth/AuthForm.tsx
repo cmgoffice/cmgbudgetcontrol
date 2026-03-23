@@ -411,7 +411,7 @@ const AdminDashboard = () => {
     const qLogs = query(
       collection(db, "artifacts", appId, "public", "data", "logs"),
       orderBy("timestamp", "desc"),
-      limit(100)
+      limit(250)
     );
     const unsubLogs = onSnapshot(qLogs, (snapshot) => {
       setLogs(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
@@ -664,7 +664,7 @@ const AdminDashboard = () => {
         <Card className="overflow-hidden animate-in fade-in slide-in-from-bottom-2">
           <div className="p-4 border-b flex justify-between items-center bg-slate-50">
             <h3 className="font-bold text-slate-700 text-sm">
-              System Logs (Last 100 activities)
+              System Logs (Last 250 activities)
             </h3>
             <Button
               variant="outline"

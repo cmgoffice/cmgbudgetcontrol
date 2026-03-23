@@ -301,12 +301,12 @@ const PaymentView = React.memo(() => {
       };
 
       if (editingId) {
-        await updateData("payments", editingId, payload);
+        await updateData("payments", editingId, payload, { skipLog: true });
         await logAction("Update Payment", `แก้ไข Payment ${form.paymentNo}`);
         showAlert("สำเร็จ", "แก้ไข Payment เรียบร้อย", "success");
       } else {
         payload.createdAt = new Date().toISOString();
-        await addData("payments", payload);
+        await addData("payments", payload, null, { skipLog: true });
         await logAction("Create Payment", `สร้าง Payment ${form.paymentNo}`);
         showAlert("สำเร็จ", "บันทึก Payment เรียบร้อย", "success");
       }
@@ -322,7 +322,7 @@ const PaymentView = React.memo(() => {
   // ─── Delete ──────────────────────────────────────────────────────────────────
   const handleDelete = (p: any) => {
     openConfirm("ยืนยันการลบ", `ต้องการลบ Payment ${p.paymentNo} ใช่หรือไม่?`, async () => {
-      await deleteData("payments", p.id);
+      await deleteData("payments", p.id, { skipLog: true });
       await logAction("Delete Payment", `ลบ Payment ${p.paymentNo}`);
     }, "danger");
   };
@@ -338,7 +338,7 @@ const PaymentView = React.memo(() => {
         submittedBy: userData?.name || user?.email || "",
         submittedAt: new Date().toISOString(),
         revisionRequested: false,
-      });
+      }, { skipLog: true });
       await logAction("Submit Payment", `ส่ง Payment ${p.paymentNo} เพื่ออนุมัติ → ${firstStatus}`);
       showAlert("ส่งสำเร็จ", `Payment ถูกส่งเพื่ออนุมัติแล้ว (${firstStatus})`, "success");
       setViewingPayment(null);
@@ -356,7 +356,7 @@ const PaymentView = React.memo(() => {
         [`approvedBy.${p.status.replace("Pending ", "")}`]: userData?.name || user?.email || "",
         [`approvedAt.${p.status.replace("Pending ", "")}`]: new Date().toISOString(),
         revisionRequested: false,
-      });
+      }, { skipLog: true });
       await logAction("Approve Payment", `อนุมัติ Payment ${p.paymentNo} → ${label}`);
       showAlert("อนุมัติสำเร็จ", `Payment ถูกเปลี่ยนสถานะเป็น ${label}`, "success");
       setViewingPayment(null);
@@ -374,7 +374,7 @@ const PaymentView = React.memo(() => {
         rejectedBy: userData?.name || user?.email || "",
         rejectedAt: new Date().toISOString(),
         revisionRequested: false,
-      });
+      }, { skipLog: true });
       await logAction("Reject Payment", `ปฏิเสธ Payment ${rejectModalPayment.paymentNo}`);
       showAlert("ปฏิเสธแล้ว", "Payment ถูกตีกลับ สามารถแก้ไขและส่งใหม่ได้", "warning");
       setRejectModalPayment(null);
@@ -397,7 +397,7 @@ const PaymentView = React.memo(() => {
         revisionNote: revisionNote.trim(),
         revisionTargetRole: targetRole,
         revisionFromStatus: p.status,
-      });
+      }, { skipLog: true });
       await logAction("Request Revision", `ขอแก้ไข Payment ${p.paymentNo} → ${targetRole}`);
       showAlert("ส่งขอแก้ไขแล้ว", `คำขอแก้ไขถูกส่งไปยัง ${targetRole}`, "success");
       setRevisionModalPayment(null);
@@ -415,7 +415,7 @@ const PaymentView = React.memo(() => {
         revisionRequested: false,
         revisionApprovedBy: userData?.name || user?.email || "",
         revisionApprovedAt: new Date().toISOString(),
-      });
+      }, { skipLog: true });
       await logAction("Approve Revision", `อนุมัติขอแก้ไข Payment ${p.paymentNo} → Draft`);
       showAlert("อนุมัติแก้ไขแล้ว", "Payment กลับเป็น Draft สามารถแก้ไขได้แล้ว", "success");
       setViewingPayment(null);
@@ -428,7 +428,7 @@ const PaymentView = React.memo(() => {
     try {
       await updateData("payments", p.id, {
         revisionRequested: false,
-      });
+      }, { skipLog: true });
       await logAction("Reject Revision", `ปฏิเสธขอแก้ไข Payment ${p.paymentNo}`);
       showAlert("ปฏิเสธคำขอแก้ไข", "Payment ยังคงสถานะเดิม", "info");
       setViewingPayment(null);
@@ -490,7 +490,7 @@ const PaymentView = React.memo(() => {
         extraFields.periodApprovedBy = null;
         extraFields.periodApprovedAt = null;
       }
-      await updateData("payments", p.id, { items: updatedItems, amount: totalAmt, ...extraFields });
+      await updateData("payments", p.id, { items: updatedItems, amount: totalAmt, ...extraFields }, { skipLog: true });
       await logAction(
         finalize ? "Submit งวดงาน" : "Save Draft งวดงาน",
         `${finalize ? "บันทึกงวดงาน" : "Save Draft"} Payment ${p.paymentNo}`
@@ -520,7 +520,7 @@ const PaymentView = React.memo(() => {
         status: nextStatus,
         [sigField]: userData?.name || user?.email || "",
         [dateField]: new Date().toISOString(),
-      });
+      }, { skipLog: true });
       await logAction("Approve งวดงาน", `${isCheckStep ? "CM Check" : "PM Approve"} Payment ${p.paymentNo} → ${nextStatus}`);
       showAlert("อนุมัติสำเร็จ",
         isCheckStep ? "CM ตรวจสอบแล้ว ส่งให้ PM อนุมัติ" : "PM อนุมัติแล้ว สถานะเปลี่ยนเป็น Wait Pay",

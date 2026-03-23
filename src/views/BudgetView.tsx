@@ -1223,10 +1223,20 @@ const BudgetView = React.memo(() => {
         "คุณต้องการลบรายการงบประมาณนี้ใช่หรือไม่?",
         async () => {
           try {
+            const b = budgets.find((x) => x.id === id);
             await deleteDoc(
               doc(db, "artifacts", appId, "public", "data", "budgets", id)
             );
-            await logAction("Delete", `Deleted Budget ID: ${id}`);
+            const desc =
+              b?.description && String(b.description).length > 80
+                ? `${String(b.description).slice(0, 77)}…`
+                : b?.description || "";
+            await logAction(
+              "Delete",
+              b
+                ? `Deleted Budget ${b.code}${desc ? ` — ${desc}` : ""}`
+                : `Deleted Budget ID: ${id}`
+            );
           } catch (e) {
             showAlert("Error", e.message, "error");
           }
@@ -1277,11 +1287,21 @@ const BudgetView = React.memo(() => {
     };
 
     const handleApproveBudget = async (budgetId) => {
+      const b = budgets.find((x) => x.id === budgetId);
       await updateDoc(
         doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
         { status: "Approved", revisionReason: "", rejectReason: "" }
       );
-      await logAction("Approve", `Approved Budget ID: ${budgetId}`);
+      const desc =
+        b?.description && String(b.description).length > 80
+          ? `${String(b.description).slice(0, 77)}…`
+          : b?.description || "";
+      await logAction(
+        "Approve",
+        b
+          ? `Approved Budget ${b.code}${desc ? ` — ${desc}` : ""}`
+          : `Approved Budget ID: ${budgetId}`
+      );
       // ไม่แสดง Modal แจ้งเตือนเมื่อ Approve สำเร็จ เพื่อลด pop-up ตามคำขอ
     };
 
@@ -1294,9 +1314,20 @@ const BudgetView = React.memo(() => {
         "ยืนยันการส่ง",
         "คุณต้องการส่งขออนุมัติรายการนี้ใช่หรือไม่?",
         async () => {
+          const b = budgets.find((x) => x.id === id);
           await updateDoc(
             doc(db, "artifacts", appId, "public", "data", "budgets", id),
             { status: "Wait MD Approve" }
+          );
+          const desc =
+            b?.description && String(b.description).length > 80
+              ? `${String(b.description).slice(0, 77)}…`
+              : b?.description || "";
+          await logAction(
+            "Submit Budget",
+            b
+              ? `ส่ง Budget ${b.code}${desc ? ` — ${desc}` : ""} เพื่ออนุมัติ MD`
+              : `ส่ง Budget ID ${id} เพื่ออนุมัติ MD`
           );
           showAlert(
             "ส่งคำขอสำเร็จ",
@@ -1483,19 +1514,39 @@ const BudgetView = React.memo(() => {
     };
 
     const handleAllowEdit = async (budgetId) => {
+      const b = budgets.find((x) => x.id === budgetId);
       await updateDoc(
         doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
         { status: "Draft", revisionReason: "", rejectReason: "" }
       );
-      await logAction("Approve", `Allowed Edit for Budget ID: ${budgetId}`);
+      const desc =
+        b?.description && String(b.description).length > 80
+          ? `${String(b.description).slice(0, 77)}…`
+          : b?.description || "";
+      await logAction(
+        "Approve",
+        b
+          ? `Allowed Edit for Budget ${b.code}${desc ? ` — ${desc}` : ""}`
+          : `Allowed Edit for Budget ID: ${budgetId}`
+      );
     };
 
     const handleRejectRevision = async (budgetId) => {
+      const b = budgets.find((x) => x.id === budgetId);
       await updateDoc(
         doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
         { status: "Approved", revisionReason: "" }
       );
-      await logAction("Reject Revision", `Rejected revision request for Budget ID: ${budgetId} — สถานะกลับเป็น Approved`);
+      const desc =
+        b?.description && String(b.description).length > 80
+          ? `${String(b.description).slice(0, 77)}…`
+          : b?.description || "";
+      await logAction(
+        "Reject Revision",
+        b
+          ? `Rejected revision request for Budget ${b.code}${desc ? ` — ${desc}` : ""} — สถานะกลับเป็น Approved`
+          : `Rejected revision request for Budget ID: ${budgetId} — สถานะกลับเป็น Approved`
+      );
     };
 
     const openRejectModal = (budget) => {
@@ -1517,6 +1568,12 @@ const BudgetView = React.memo(() => {
       showAlert("ปฏิเสธแล้ว", "รายการ Budget ถูกปฏิเสธเรียบร้อย", "error");
     };
 
+    const subItemLogDescription = (budget, subItemId) => {
+      const sub = budget?.subItems?.find((s) => s.id === subItemId);
+      const raw = (sub?.description ?? "").trim() || "(no description)";
+      return raw.length > 120 ? `${raw.slice(0, 117)}…` : raw;
+    };
+
     const handleApproveSubItem = async (budgetId, subItemId) => {
       const budget = budgets.find(b => b.id === budgetId);
       if (!budget) return;
@@ -1529,7 +1586,7 @@ const BudgetView = React.memo(() => {
         doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
         { subItems: newSubItems }
       );
-      await logAction("Approve Sub-Item", `Approved Sub-Item ID: ${subItemId} in Budget: ${budget.code}`);
+      await logAction("Approve Sub-Item", `Approved Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code})`);
       // ไม่แสดง Modal แจ้งเตือนเมื่อ Approve รายการย่อยสำเร็จ เพื่อลด pop-up ตามคำขอ
     };
 
@@ -1547,7 +1604,7 @@ const BudgetView = React.memo(() => {
         doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
         { subItems: newSubItems }
       );
-      await logAction("Request Revision Sub-Item", `Requested Revision for Sub-Item ID: ${subItemId} in Budget: ${budget.code}`);
+      await logAction("Request Revision Sub-Item", `Requested Revision for Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code})`);
       showAlert("ส่งคำขอแก้ไข", "ส่งเรื่องรอ MD อนุมัติการแก้ไขรายการย่อยแล้ว", "info");
     };
 
@@ -1561,7 +1618,7 @@ const BudgetView = React.memo(() => {
         doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
         { subItems: newSubItems }
       );
-      await logAction("Allow Edit Sub-Item", `Allowed Edit for Sub-Item ID: ${subItemId} in Budget: ${budget.code}`);
+      await logAction("Allow Edit Sub-Item", `Allowed Edit for Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code})`);
       showAlert("อนุญาตแล้ว", "ปลดล็อครายการย่อยให้แก้ไขได้ (สถานะ Draft)", "success");
     };
 
@@ -1575,7 +1632,7 @@ const BudgetView = React.memo(() => {
         doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
         { subItems: newSubItems }
       );
-      await logAction("Reject Revision Sub-Item", `Rejected revision for Sub-Item ID: ${subItemId} in Budget: ${budget.code} — สถานะกลับเป็น Approved`);
+      await logAction("Reject Revision Sub-Item", `Rejected revision for Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code}) — สถานะกลับเป็น Approved`);
       showAlert("ไม่อนุญาตแก้ไข", "สถานะรายการย่อยกลับเป็น Approved ตามเดิม", "info");
     };
 
@@ -1620,7 +1677,7 @@ const BudgetView = React.memo(() => {
         doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
         { subItems: newSubItems }
       );
-      await logAction("Submit Sub-Item", `Submitted Sub-Item ID: ${subItemId} in Budget: ${budget.code} for approval`);
+      await logAction("Submit Sub-Item", `Submitted Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code}) for approval`);
     };
 
     const handleRejectSubItem = async (budgetId, subItemId, reason) => {
@@ -1635,7 +1692,7 @@ const BudgetView = React.memo(() => {
         doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
         { subItems: newSubItems }
       );
-      await logAction("Reject Sub-Item", `Rejected Sub-Item ID: ${subItemId} in Budget: ${budget.code}`);
+      await logAction("Reject Sub-Item", `Rejected Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code})`);
       showAlert("ปฏิเสธแล้ว", "ปฏิเสธรายการย่อย (Sub-Item) เรียบร้อย", "error");
     };
 

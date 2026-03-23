@@ -24,6 +24,159 @@ import {
 const ROLE_PERMISSIONS_DOC = ["artifacts", appId, "public", "data", "settings", "rolePermissions"];
 const FUNC_PERMISSIONS_DOC = ["artifacts", appId, "public", "data", "settings", "functionPermissions"];
 
+function truncateLogDetail(s, max = 100) {
+  if (s == null || s === "") return "";
+  const t = String(s).trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max - 1)}…`;
+}
+
+/** รายละเอียด log หลังอัปเดต — ใช้เลขที่ PO/PR, ชื่อ vendor, paymentNo แทนแค่ Firestore ID */
+function buildUpdateLogDetails(collectionName, id, data, lists) {
+  const { projects, budgets, prs, pos, payments, invoices, vendors, materials } = lists;
+  const merge = (existing) =>
+    existing && typeof existing === "object" ? { ...existing, ...data } : { ...data };
+
+  if (collectionName === "pos") {
+    const po = pos.find((p) => p.id === id);
+    const m = merge(po);
+    const label = m.poNo || id;
+    const vendor = m.vendorName ? truncateLogDetail(m.vendorName, 80) : "";
+    return vendor ? `Updated PO ${label} — ${vendor}` : `Updated PO ${label}`;
+  }
+  if (collectionName === "prs") {
+    const pr = prs.find((p) => p.id === id);
+    const m = merge(pr);
+    const label = m.prNo || id;
+    let extra = "";
+    if (data.status != null && pr && data.status !== pr.status) extra = ` → ${data.status}`;
+    else if (data.status != null && !pr) extra = ` → ${data.status}`;
+    return `Updated PR ${label}${extra}`;
+  }
+  if (collectionName === "payments") {
+    const pay = payments.find((p) => p.id === id);
+    const m = merge(pay);
+    const no = m.paymentNo || id;
+    let extra = "";
+    if (data.status != null && pay && data.status !== pay.status) extra = ` → ${data.status}`;
+    return `Updated Payment ${no}${extra}`;
+  }
+  if (collectionName === "budgets") {
+    const b = budgets.find((x) => x.id === id);
+    if (b) {
+      const desc = truncateLogDetail(b.description, 80);
+      return desc ? `Updated Budget ${b.code} — ${desc}` : `Updated Budget ${b.code}`;
+    }
+    return `Updated Budget ID: ${id}`;
+  }
+  if (collectionName === "projects") {
+    const p = projects.find((x) => x.id === id);
+    const m = merge(p);
+    const job = m.jobNo || id;
+    const name = m.name ? truncateLogDetail(m.name, 80) : "";
+    return name ? `Updated Project ${job} — ${name}` : `Updated Project ${job}`;
+  }
+  if (collectionName === "invoices") {
+    const inv = invoices.find((x) => x.id === id);
+    const m = merge(inv);
+    const no = m.invNo || id;
+    let extra = "";
+    if (data.status != null && inv && data.status !== inv.status) extra = ` → ${data.status}`;
+    return `Updated Invoice ${no}${extra}`;
+  }
+  if (collectionName === "vendors") {
+    const v = vendors.find((x) => x.id === id);
+    const m = merge(v);
+    const name = m.name || m.vendorName || m.code || id;
+    return `Updated Vendor ${truncateLogDetail(name, 100)}`;
+  }
+  if (collectionName === "materials") {
+    const mat = materials.find((x) => x.id === id);
+    const m = merge(mat);
+    const name = m.name || m.code || m.materialName || id;
+    return `Updated Material ${truncateLogDetail(name, 100)}`;
+  }
+  const singular = collectionName.endsWith("s") ? collectionName.slice(0, -1) : collectionName;
+  return `Updated ${singular} ID: ${id}`;
+}
+
+function buildCreateLogDetails(collectionName, data, newId) {
+  if (collectionName === "vendors") {
+    const name = data.name || data.code || newId;
+    return `Added vendor ${truncateLogDetail(name, 100)}`;
+  }
+  if (collectionName === "materials") {
+    const name = data.name || data.code || newId;
+    return `Added material ${truncateLogDetail(name, 100)}`;
+  }
+  if (collectionName === "prs") {
+    return `Added PR ${data.prNo || newId}`;
+  }
+  if (collectionName === "pos") {
+    return `Added PO ${data.poNo || newId}`;
+  }
+  if (collectionName === "budgets") {
+    if (data.code) {
+      const desc = data.description ? truncateLogDetail(data.description, 60) : "";
+      return desc ? `Added Budget ${data.code} — ${desc}` : `Added Budget ${data.code}`;
+    }
+    return `Added budget ID: ${newId}`;
+  }
+  if (collectionName === "payments") {
+    return `Added Payment ${data.paymentNo || newId}`;
+  }
+  if (collectionName === "invoices") {
+    const po = data.poRef ? ` (PO ${data.poRef})` : "";
+    return `Added Invoice ${data.invNo || newId}${po}`;
+  }
+  const singular = collectionName.endsWith("s") ? collectionName.slice(0, -1) : collectionName;
+  return `Added new ${singular}`;
+}
+
+function buildDeleteLogDetails(collectionName, id, lists) {
+  const { projects, budgets, prs, pos, payments, invoices, vendors, materials } = lists;
+  if (collectionName === "pos") {
+    const po = pos.find((p) => p.id === id);
+    if (po) {
+      const vendor = po.vendorName ? truncateLogDetail(po.vendorName, 80) : "";
+      return vendor
+        ? `Deleted PO ${po.poNo || id} — ${vendor}`
+        : `Deleted PO ${po.poNo || id}`;
+    }
+    return `Deleted PO ID: ${id}`;
+  }
+  if (collectionName === "prs") {
+    const pr = prs.find((p) => p.id === id);
+    return pr ? `Deleted PR ${pr.prNo || id}` : `Deleted PR ID: ${id}`;
+  }
+  if (collectionName === "payments") {
+    const pay = payments.find((p) => p.id === id);
+    return pay ? `Deleted Payment ${pay.paymentNo || id}` : `Deleted Payment ID: ${id}`;
+  }
+  if (collectionName === "budgets") {
+    const b = budgets.find((x) => x.id === id);
+    return b ? `Deleted Budget ${b.code}` : `Deleted Budget ID: ${id}`;
+  }
+  if (collectionName === "projects") {
+    const p = projects.find((x) => x.id === id);
+    return p ? `Deleted Project ${p.jobNo}` : `Deleted Project ID: ${id}`;
+  }
+  if (collectionName === "invoices") {
+    const inv = invoices.find((x) => x.id === id);
+    return inv ? `Deleted Invoice ${inv.invNo || id}` : `Deleted Invoice ID: ${id}`;
+  }
+  if (collectionName === "vendors") {
+    const v = vendors.find((x) => x.id === id);
+    return v ? `Deleted Vendor ${truncateLogDetail(v.name || v.code || id, 100)}` : `Deleted Vendor ID: ${id}`;
+  }
+  if (collectionName === "materials") {
+    const m = materials.find((x) => x.id === id);
+    return m ? `Deleted Material ${truncateLogDetail(m.name || m.code || id, 100)}` : `Deleted Material ID: ${id}`;
+  }
+  const singular = collectionName.endsWith("s") ? collectionName.slice(0, -1) : collectionName;
+  return `Deleted ${singular} ID: ${id}`;
+}
+
 // ─── Context Shape ────────────────────────────────────────────────────────────
 const AppDataContext = createContext(null);
 export const useAppData = () => useContext(AppDataContext);
@@ -210,8 +363,10 @@ export const AppDataProvider = ({
   const pendingUpdatesRef = useRef(new Set());
 
   // ── CRUD helpers (อัปเดต cache vendors/materials หลัง write เพื่อไม่ต้องโหลดใหม่) ─
-  const addData = useCallback(async (collectionName, data, customId = null) => {
+  const addData = useCallback(async (collectionName, data, customId = null, options = {}) => {
+    const { skipLog = false } = options || {};
     try {
+      let newId = customId;
       if (customId) {
         await setDoc(doc(db, "artifacts", appId, "public", "data", collectionName, customId), data);
         if (collectionName === "vendors") setVendors((prev) => [...prev, { id: customId, ...data }]);
@@ -219,10 +374,13 @@ export const AppDataProvider = ({
       } else {
         const colRef = collection(db, "artifacts", appId, "public", "data", collectionName);
         const docRef = await addDoc(colRef, data);
+        newId = docRef.id;
         if (collectionName === "vendors") setVendors((prev) => [...prev, { id: docRef.id, ...data }]);
         if (collectionName === "materials") setMaterials((prev) => [...prev, { id: docRef.id, ...data }]);
       }
-      await logAction("Create", `Added new ${collectionName.slice(0, -1)}`);
+      if (!skipLog) {
+        await logAction("Create", buildCreateLogDetails(collectionName, data, newId));
+      }
       return true;
     } catch (e) {
       showAlert("Error", "เกิดข้อผิดพลาดในการบันทึกข้อมูล: " + e.message, "error");
@@ -230,7 +388,8 @@ export const AppDataProvider = ({
     }
   }, [logAction, showAlert]);
 
-  const updateData = useCallback(async (collectionName, id, data) => {
+  const updateData = useCallback(async (collectionName, id, data, options = {}) => {
+    const { skipLog = false } = options || {};
     const key = `${collectionName}:${id}`;
     if (pendingUpdatesRef.current.has(key)) {
       showAlert("กรุณารอสักครู่", "กำลังบันทึกข้อมูลอยู่ ไม่สามารถบันทึกซ้ำได้", "warning");
@@ -238,11 +397,17 @@ export const AppDataProvider = ({
     }
     pendingUpdatesRef.current.add(key);
     const payload = { ...data, updatedAt: new Date().toISOString() };
+    const listBundle = {
+      projects, budgets, prs, pos, payments, invoices, vendors, materials,
+    };
     try {
       await updateDoc(doc(db, "artifacts", appId, "public", "data", collectionName, id), payload);
       if (collectionName === "vendors") setVendors((prev) => prev.map((v) => (v.id === id ? { ...v, ...payload } : v)));
       if (collectionName === "materials") setMaterials((prev) => prev.map((m) => (m.id === id ? { ...m, ...payload } : m)));
-      await logAction("Update", `Updated ${collectionName.slice(0, -1)} ID: ${id}`);
+      if (!skipLog) {
+        const details = buildUpdateLogDetails(collectionName, id, payload, listBundle);
+        await logAction("Update", details);
+      }
       return true;
     } catch (e) {
       showAlert("Error", "เกิดข้อผิดพลาดในการแก้ไขข้อมูล: " + e.message, "error");
@@ -250,20 +415,26 @@ export const AppDataProvider = ({
     } finally {
       pendingUpdatesRef.current.delete(key);
     }
-  }, [logAction, showAlert]);
+  }, [logAction, showAlert, projects, budgets, prs, pos, payments, invoices, vendors, materials]);
 
-  const deleteData = useCallback(async (collectionName, id) => {
+  const deleteData = useCallback(async (collectionName, id, options = {}) => {
+    const { skipLog = false } = options || {};
+    const listBundle = {
+      projects, budgets, prs, pos, payments, invoices, vendors, materials,
+    };
     try {
       await deleteDoc(doc(db, "artifacts", appId, "public", "data", collectionName, id));
       if (collectionName === "vendors") setVendors((prev) => prev.filter((v) => v.id !== id));
       if (collectionName === "materials") setMaterials((prev) => prev.filter((m) => m.id !== id));
-      await logAction("Delete", `Deleted ${collectionName.slice(0, -1)} ID: ${id}`);
+      if (!skipLog) {
+        await logAction("Delete", buildDeleteLogDetails(collectionName, id, listBundle));
+      }
       return true;
     } catch (e) {
       showAlert("Error", "เกิดข้อผิดพลาดในการลบข้อมูล: " + e.message, "error");
       return false;
     }
-  }, [logAction, showAlert]);
+  }, [logAction, showAlert, projects, budgets, prs, pos, payments, invoices, vendors, materials]);
 
   const canAccessModule = useCallback((menuId) => {
     const allowed = rolePermissions[menuId];

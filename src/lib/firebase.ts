@@ -11,20 +11,48 @@ import { getStorage } from "firebase/storage";
 // ถ้าสร้าง bucket ชื่ออื่น ให้ใส่ URL bucket ตรง STORAGE_BUCKET_OVERRIDE (เช่น "cmg-budget-control.appspot.com")
 const STORAGE_BUCKET_OVERRIDE = ""; // เช่น "cmg-budget-control.appspot.com" ถ้า bucket ใหม่คนละชื่อ
 
-const USER_FIREBASE_CONFIG = {
-  apiKey: "AIzaSyDOqRqNW06Lu5fIQ_2Whr02tg6sn8zltw8",
-  authDomain: "cmg-budget-control.firebaseapp.com",
-  projectId: "cmg-budget-control",
-  storageBucket: "cmg-budget-control.firebasestorage.app",
-  messagingSenderId: "106345631455",
-  appId: "1:106345631455:web:f96f15b024e8c65334e36a",
-  measurementId: "G-YSPY0MTZG1",
-};
+function firebaseConfigFromEnv() {
+  const apiKey = process.env.REACT_APP_FIREBASE_API_KEY;
+  const authDomain = process.env.REACT_APP_FIREBASE_AUTH_DOMAIN;
+  const projectId = process.env.REACT_APP_FIREBASE_PROJECT_ID;
+  const storageBucket = process.env.REACT_APP_FIREBASE_STORAGE_BUCKET;
+  const messagingSenderId = process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID;
+  const appId = process.env.REACT_APP_FIREBASE_APP_ID;
+  const measurementId = process.env.REACT_APP_FIREBASE_MEASUREMENT_ID;
+
+  if (
+    !apiKey ||
+    !authDomain ||
+    !projectId ||
+    !storageBucket ||
+    !messagingSenderId ||
+    !appId
+  ) {
+    return null;
+  }
+
+  const cfg: Record<string, string> = {
+    apiKey,
+    authDomain,
+    projectId,
+    storageBucket,
+    messagingSenderId,
+    appId,
+  };
+  if (measurementId) cfg.measurementId = measurementId;
+  return cfg;
+}
 
 const firebaseConfig =
   typeof __firebase_config !== "undefined"
     ? JSON.parse(__firebase_config)
-    : USER_FIREBASE_CONFIG;
+    : firebaseConfigFromEnv();
+
+if (!firebaseConfig) {
+  throw new Error(
+    "Firebase: ตั้งค่า REACT_APP_FIREBASE_* ในไฟล์ .env หรือใช้ __firebase_config"
+  );
+}
 
 // Guard: only initialise once (HMR safe)
 const firebaseApp =
