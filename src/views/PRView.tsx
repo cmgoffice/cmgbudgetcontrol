@@ -21,8 +21,9 @@ import { PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, PURCHA
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
 import { motion, AnimatePresence } from "framer-motion";
+import { doc, runTransaction } from "firebase/firestore";
 import { ref, getDownloadURL } from "firebase/storage";
-import { storage } from "../lib/firebase";
+import { appId, db, storage } from "../lib/firebase";
 const PRView = React.memo(() => {
   const { prs, pos, projects, budgets, vendors, materials, addData, updateData, deleteData,
           showAlert, openConfirm, userRole, userRoles, userData, user, columnWidths, handleColumnResize,
@@ -129,13 +130,12 @@ const PRView = React.memo(() => {
       attachmentName: "" as string | undefined,
     });
 
-    // Generate PR No. automatically (อุปกรณ์ใหม่ = EQM; ขอเช่า = RE; อื่นๆ = subCode)
-    const generatePrNo = (subCode, purchaseType) => {
+    const buildPrPrefix = useCallback((subCode, purchaseType) => {
       if (!selectedProjectId) return "";
       const currentProject = projects.find((p) => p.id === selectedProjectId);
       if (!currentProject) return "";
       const jobNoClean = (currentProject.jobNo || "").replace(/-/g, "");
-      let prefix;
+      let prefix = "";
       if (purchaseType === PURCHASE_TYPE_EQUIPMENT) {
         prefix = `${jobNoClean}-EQM-`;
       } else if (purchaseType === PURCHASE_TYPE_RENTAL_LABEL) {
@@ -144,12 +144,71 @@ const PRView = React.memo(() => {
         if (!subCode) return "";
         prefix = `${jobNoClean}-${subCode}-`;
       }
-      const existingCount = prs.filter(
-        (pr) => pr.projectId === selectedProjectId && pr.prNo && pr.prNo.startsWith(prefix)
-      ).length;
-      const nextNo = String(existingCount + 1).padStart(3, "0");
+      return prefix;
+    }, [selectedProjectId, projects]);
+
+    // Generate PR No. for UI preview only (เลขจริงจะจองด้วย transaction ตอนบันทึก)
+    const generatePrNo = (subCode, purchaseType) => {
+      const prefix = buildPrPrefix(subCode, purchaseType);
+      if (!prefix) return "";
+      const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const existingMaxSeq = prs.reduce((max, pr) => {
+        if (typeof pr?.prNo !== "string") return max;
+        const m = pr.prNo.match(new RegExp(`^${escapedPrefix}(\\d+)$`));
+        if (!m) return max;
+        const n = Number(m[1]);
+        return Number.isFinite(n) ? Math.max(max, n) : max;
+      }, 0);
+      const nextNo = String(existingMaxSeq + 1).padStart(3, "0");
       return `${prefix}${nextNo}`;
     };
+
+    const reserveNextPrNo = useCallback(async (subCode, purchaseType) => {
+      if (!selectedProjectId) throw new Error("กรุณาเลือกโครงการก่อนสร้าง PR");
+      const prefix = buildPrPrefix(subCode, purchaseType);
+      if (!prefix) throw new Error("ไม่สามารถสร้างเลข PR ได้: prefix ไม่ถูกต้อง");
+      const existingMaxSeq = prs
+        .filter((pr) => typeof pr.prNo === "string" && pr.prNo.startsWith(prefix))
+        .reduce((max, pr) => {
+          const m = pr.prNo.match(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\d+)$`));
+          if (!m) return max;
+          const n = Number(m[1]);
+          return Number.isFinite(n) ? Math.max(max, n) : max;
+        }, 0);
+      const counterId = `${selectedProjectId}__${prefix.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+      const counterRef = doc(
+        db,
+        "artifacts",
+        appId,
+        "public",
+        "data",
+        "settings",
+        "prRunningNo",
+        "prCountersByPrefix",
+        counterId
+      );
+      const nextPrNo = await runTransaction(db, async (tx) => {
+        const snap = await tx.get(counterRef);
+        const current = Number(
+          snap.exists()
+            ? snap.data()?.lastSeq || 0
+            : existingMaxSeq
+        );
+        const next = current + 1;
+        tx.set(
+          counterRef,
+          {
+            projectId: selectedProjectId,
+            prefix,
+            lastSeq: next,
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+        return `${prefix}${String(next).padStart(3, "0")}`;
+      });
+      return nextPrNo;
+    }, [selectedProjectId, buildPrPrefix]);
     const [newItem, setNewItem] = useState({
       description: "",
       quantity: 1,
@@ -306,8 +365,18 @@ const PRView = React.memo(() => {
     };
 
     const handleSavePR = async () => {
+      let resolvedPrNo = headerData.prNo;
+      const isNewPR = !editingPRId;
+      if (isNewPR) {
+        try {
+          resolvedPrNo = await reserveNextPrNo(headerData.subCode, headerData.purchaseType);
+          setHeaderData((prev) => ({ ...prev, prNo: resolvedPrNo }));
+        } catch (e) {
+          return showAlert("สร้างเลข PR ไม่สำเร็จ", e?.message || "ไม่สามารถจองเลข PR ใหม่ได้", "error");
+        }
+      }
       if (
-        !headerData.prNo ||
+        !resolvedPrNo ||
         !headerData.costCode ||
         !headerData.requestDate ||
         !headerData.purchaseType ||
@@ -426,7 +495,7 @@ const PRView = React.memo(() => {
           const res = await uploadAttachment(file, {
             type: "pr",
             projectId: selectedProjectId || undefined,
-            prNo: headerData.prNo || undefined,
+            prNo: resolvedPrNo || undefined,
           });
           attachmentUrl = res.url;
           attachmentName = res.name;
@@ -439,6 +508,7 @@ const PRView = React.memo(() => {
       const { attachment: _omitFile, ...headerWithoutFile } = headerData;
       const prPayload = {
         ...headerWithoutFile,
+        prNo: resolvedPrNo,
         attachmentUrl: attachmentUrl || null,
         attachmentName: attachmentName || null,
         budgetId: headerData.selectedBudgetId || null,
@@ -454,7 +524,7 @@ const PRView = React.memo(() => {
       let pdfError: string | null = null;
       try {
         const project = projects.find((p: any) => p.id === selectedProjectId) || null;
-        const safePRNo = (headerData.prNo || "unknown").replace(/[^a-zA-Z0-9\-_]/g, "_");
+        const safePRNo = (resolvedPrNo || "unknown").replace(/[^a-zA-Z0-9\-_]/g, "_");
         const safeProjId = selectedProjectId || "unknown";
         // Prefer dataURL to avoid CORS on Storage URL
         const creatorSignatureUrl = userData?.signatureDataUrl || userData?.signatureUrl || null;
@@ -491,7 +561,7 @@ const PRView = React.memo(() => {
       setProgress(85, "บันทึกข้อมูล PR...");
       if (pdfUrl) {
         prPayload.pdfUrl = pdfUrl;
-        prPayload.pdfPath = `generated/prs/${(selectedProjectId || "unknown")}/${(headerData.prNo || "unknown").replace(/[^a-zA-Z0-9\-_]/g, "_")}.pdf`;
+        prPayload.pdfPath = `generated/prs/${(selectedProjectId || "unknown")}/${(resolvedPrNo || "unknown").replace(/[^a-zA-Z0-9\-_]/g, "_")}.pdf`;
         prPayload.pdfUpdatedAt = new Date().toISOString();
       }
 
@@ -645,8 +715,15 @@ const PRView = React.memo(() => {
     };
 
     const handleSaveContractPR = async () => {
+      let resolvedPrNo = contractHeaderData.prNo;
+      try {
+        resolvedPrNo = await reserveNextPrNo(contractHeaderData.subCode, contractHeaderData.purchaseType);
+        setContractHeaderData((prev) => ({ ...prev, prNo: resolvedPrNo }));
+      } catch (e) {
+        return showAlert("สร้างเลข PR ไม่สำเร็จ", e?.message || "ไม่สามารถจองเลข PR ใหม่ได้", "error");
+      }
       if (
-        !contractHeaderData.prNo ||
+        !resolvedPrNo ||
         !contractHeaderData.costCode ||
         !contractHeaderData.requestDate ||
         !contractHeaderData.purchaseType ||
@@ -676,7 +753,7 @@ const PRView = React.memo(() => {
           const res = await uploadAttachment(file, {
             type: "pr",
             projectId: selectedProjectId || undefined,
-            prNo: contractHeaderData.prNo || undefined,
+            prNo: resolvedPrNo || undefined,
           });
           attachmentUrl = res.url;
           attachmentName = res.name;
@@ -689,6 +766,7 @@ const PRView = React.memo(() => {
       const { attachment: _omitFile, ...headerWithoutFile } = contractHeaderData;
       const prPayload = {
         ...headerWithoutFile,
+        prNo: resolvedPrNo,
         attachmentUrl: attachmentUrl || null,
         attachmentName: attachmentName || null,
         budgetId: contractHeaderData.selectedBudgetId || null,
@@ -702,7 +780,7 @@ const PRView = React.memo(() => {
       let pdfUrl: string | undefined;
       try {
         const project = projects.find((p: any) => p.id === selectedProjectId) || null;
-        const safePRNo = (contractHeaderData.prNo || "unknown").replace(/[^a-zA-Z0-9\-_]/g, "_");
+        const safePRNo = (resolvedPrNo || "unknown").replace(/[^a-zA-Z0-9\-_]/g, "_");
         const safeProjId = selectedProjectId || "unknown";
         setProgress(20, "กำลังสร้าง PDF...");
         let bytes = await generatePRPdfBytes(prPayload, { projectName: project?.name || "", budgetDesc: "" });
@@ -724,7 +802,7 @@ const PRView = React.memo(() => {
           setIsContractPrModalOpen(false);
           setIsFullScreenModalOpen(false);
         }, 600);
-        showAlert("บันทึก PR จ้าง/เหมา สำเร็จ", `PR No. ${contractHeaderData.prNo} ถูกสร้างแล้ว`, "success");
+        showAlert("บันทึก PR จ้าง/เหมา สำเร็จ", `PR No. ${resolvedPrNo} ถูกสร้างแล้ว`, "success");
       } catch (e) {
         setSavePrProgress({ show: false, pct: 0, step: "" });
         console.warn("[Contract PR] Save failed:", e);
@@ -732,7 +810,7 @@ const PRView = React.memo(() => {
           await addData("prs", prPayload);
           setIsContractPrModalOpen(false);
           setIsFullScreenModalOpen(false);
-          showAlert("บันทึก PR จ้าง/เหมา สำเร็จ", `PR No. ${contractHeaderData.prNo} ถูกสร้างแล้ว (ไม่มี PDF)`, "success");
+          showAlert("บันทึก PR จ้าง/เหมา สำเร็จ", `PR No. ${resolvedPrNo} ถูกสร้างแล้ว (ไม่มี PDF)`, "success");
         } catch (e2) {
           showAlert("บันทึกไม่สำเร็จ", e2?.message || "เกิดข้อผิดพลาด", "error");
         }
@@ -749,7 +827,7 @@ const PRView = React.memo(() => {
         return;
       }
       let newStatus = pr.status;
-      const isCMApprove = pr.status === "Pending CM" && (userRoles.includes("CM") || userRoles.includes("Administrator"));
+      const isCMApprove = pr.status === "Pending CM" && (userRoles.includes("CM") || userRoles.includes("PM") || userRoles.includes("Administrator"));
       const isPMApprove = pr.status === "Pending PM" && (userRoles.includes("PM") || userRoles.includes("Administrator"));
       const isGMApprove = pr.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator"));
       const isMDApprove = pr.status === "Pending MD" && (userRoles.includes("MD") || userRoles.includes("Administrator"));
@@ -907,7 +985,7 @@ const PRView = React.memo(() => {
               className="py-1 px-3 text-right flex justify-end gap-1"
               onClick={(e) => e.stopPropagation()}
             >
-              {canUseFunction("pr", "approve") && (userRoles.includes("CM") || userRoles.includes("Administrator")) && pr.status === "Pending CM" && (
+              {canUseFunction("pr", "approve") && (userRoles.includes("CM") || userRoles.includes("PM") || userRoles.includes("Administrator")) && pr.status === "Pending CM" && (
                 <>
                   <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>CM Approve</Button>
                   <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>
@@ -1346,7 +1424,7 @@ const PRView = React.memo(() => {
                   <XCircle size={15} /> ปิด
                 </button>
                 <div className="flex items-center gap-2">
-                  {(userRoles.includes("CM") || userRoles.includes("Administrator")) && prLive.status === "Pending CM" && (
+                  {(userRoles.includes("CM") || userRoles.includes("PM") || userRoles.includes("Administrator")) && prLive.status === "Pending CM" && (
                     <>
                       <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setViewingPR(null); handleAction(prLive.id, "reject"); }}>Reject</Button>
                       <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(prLive.id, "approve"); setViewingPR(null); }}>CM Approve</Button>
