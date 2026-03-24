@@ -62,6 +62,7 @@ export const TABLE_COLUMN_DEFS: Record<string, ColumnDef[]> = {
     { key: "items",       label: "Items",        defaultVisible: true },
     { key: "amount",      label: "Amount",       defaultVisible: true },
     { key: "status",      label: "Status",       defaultVisible: true },
+    { key: "refDoc",      label: "Ref Doc",      defaultVisible: true },
     { key: "actions",     label: "Actions",      defaultVisible: true, locked: true },
   ],
   po: [

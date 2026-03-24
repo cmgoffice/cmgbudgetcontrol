@@ -57,6 +57,7 @@ export const TABLE_LAYOUT_DEFAULTS: Record<string, Record<string, number>> = {
     items: 72,
     amount: 96,
     status: 100,
+    refDoc: 80,
     actions: 140,
   },
   po: {

@@ -274,9 +274,9 @@ export const AppDataProvider = ({
     const rolePermRef = doc(db, ...ROLE_PERMISSIONS_DOC);
     const unsubRolePerms = onSnapshot(rolePermRef, (snap) => {
       if (snap.exists()) {
-        setRolePermissions({ ...MODULE_ACCESS, ...snap.data() });
+        setRolePermissions(snap.data());
       } else {
-        setRolePermissions(MODULE_ACCESS);
+        setRolePermissions({});
       }
       setRolePermissionsReady(true);
     });
@@ -438,8 +438,8 @@ export const AppDataProvider = ({
 
   const canAccessModule = useCallback((menuId) => {
     const allowed = rolePermissions[menuId];
-    if (!allowed) return true;
     if (roles.includes("Administrator")) return true;
+    if (!allowed || allowed.length === 0) return false;
     return roles.some((r) => allowed.includes(r));
   }, [roles, rolePermissions]);
 

@@ -28,6 +28,52 @@ const PRView = React.memo(() => {
   const { prs, pos, projects, budgets, vendors, materials, addData, updateData, deleteData,
           showAlert, openConfirm, userRole, userRoles, userData, user, columnWidths, handleColumnResize,
           visibleProjects, handlePRAction, canUseFunction, isColumnVisible } = useAppData();
+
+  // Helper function to get reference document info based on PR status
+  const getRefDocInfo = (pr) => {
+    if (!pr) return { docNo: "-", pdfUrl: null, docType: "PR" };
+    
+    const status = pr.status;
+    let docType = "PR";
+    let docNo = pr.prNo || "-";
+    let pdfUrl = pr.pdfUrl;
+
+    // Determine document type based on status
+    if (status === "PO Issued") {
+      // Show PO document for PO Issued status
+      // Find PO that contains this PR (either through items.prId or prRefId)
+      const associatedPO = pos.find(po => {
+        if (po.prRefId === pr.id) return true;
+        if (po.items && Array.isArray(po.items)) {
+          return po.items.some(item => item.prId === pr.id);
+        }
+        return false;
+      });
+      if (associatedPO) {
+        docType = "PO";
+        docNo = associatedPO.poNo;
+        pdfUrl = associatedPO.pdfUrl;
+      }
+    } else if (status === "Payment" || status === "Paid") {
+      // Show Payment document for Payment/Paid status (future implementation)
+      docType = "Payment";
+      // Would need to implement payment document lookup here
+      // For now, fallback to PR document
+    }
+    // For all other PR statuses (Draft, Pending CM, Pending PM, etc.), show PR document
+
+    return { docNo, pdfUrl, docType };
+  };
+
+  // Handle clicking on ref doc to open PDF
+  const handleRefDocClick = (pdfUrl, docNo, e) => {
+    e.stopPropagation();
+    if (pdfUrl) {
+      window.open(pdfUrl, '_blank');
+    } else {
+      showAlert("ไม่พบเอกสาร", `ไม่พบ PDF สำหรับเอกสาร ${docNo}`, "warning");
+    }
+  };
   const { selectedProjectId,
           isFullScreenModalOpen, setIsFullScreenModalOpen,
           expandedPrRows, setExpandedPrRows, togglePrRow } = useUI();
@@ -981,6 +1027,24 @@ const PRView = React.memo(() => {
             {isColumnVisible("pr", "status") && <td className="py-1 px-3 text-center">
               <Badge status={pr.status} />
             </td>}
+            {isColumnVisible("pr", "refDoc") && <td className="py-1 px-3 text-center">
+              {(() => {
+                const { docNo, pdfUrl, docType } = getRefDocInfo(pr);
+                return pdfUrl ? (
+                  <button
+                    className="text-blue-600 hover:text-blue-800 hover:underline text-xs font-medium transition-colors"
+                    onClick={(e) => handleRefDocClick(pdfUrl, docNo, e)}
+                    title={`เปิด ${docType} - ${docNo}`}
+                  >
+                    {docNo}
+                  </button>
+                ) : (
+                  <span className="text-gray-400 text-xs">
+                    {docNo}
+                  </span>
+                );
+              })()}
+            </td>}
             {isColumnVisible("pr", "actions") && <td
               className="py-1 px-3 text-right flex justify-end gap-1"
               onClick={(e) => e.stopPropagation()}
@@ -1220,6 +1284,7 @@ const PRView = React.memo(() => {
                 {isColumnVisible("pr", "items") && <ResizableTh tableId="pr" colKey="items" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.items}>Items</ResizableTh>}
                 {isColumnVisible("pr", "amount") && <ResizableTh tableId="pr" colKey="amount" className="py-1 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.amount}>Amount</ResizableTh>}
                 {isColumnVisible("pr", "status") && <ResizableTh tableId="pr" colKey="status" className="py-1 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.status}>Status</ResizableTh>}
+                {isColumnVisible("pr", "refDoc") && <ResizableTh tableId="pr" colKey="refDoc" className="py-1 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.refDoc}>Ref Doc</ResizableTh>}
                 {isColumnVisible("pr", "actions") && <th className="py-1 px-3 text-right" style={{ width: prTableLayout.scaled.actions }}>Actions</th>}
               </tr>
             </thead>
@@ -1251,6 +1316,7 @@ const PRView = React.memo(() => {
                     {isColumnVisible("pr", "items") && <ResizableTh tableId="pr" colKey="items" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.items}>Items</ResizableTh>}
                     {isColumnVisible("pr", "amount") && <ResizableTh tableId="pr" colKey="amount" className="py-1 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.amount}>Amount</ResizableTh>}
                     {isColumnVisible("pr", "status") && <ResizableTh tableId="pr" colKey="status" className="py-1 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.status}>Status</ResizableTh>}
+                    {isColumnVisible("pr", "refDoc") && <ResizableTh tableId="pr" colKey="refDoc" className="py-1 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.refDoc}>Ref Doc</ResizableTh>}
                     {isColumnVisible("pr", "actions") && <th className="py-1 px-3 text-right" style={{ width: prTableLayout.scaled.actions }}>Actions</th>}
                   </tr>
                 </thead>

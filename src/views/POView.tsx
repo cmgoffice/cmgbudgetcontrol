@@ -62,7 +62,7 @@ const POView = React.memo(() => {
   const { prs, pos, projects, budgets, vendors, materials, addData, updateData, deleteData, loadVendors, loadMaterials,
           showAlert, openConfirm, logAction, userRole, userRoles, columnWidths, handleColumnResize,
           visibleProjects, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,
-          userData, user, canUseFunction, isColumnVisible } = useAppData();
+          userData, user, canUseFunction, canAccessModule, isColumnVisible } = useAppData();
   const { selectedProjectId,
           isFullScreenModalOpen, setIsFullScreenModalOpen,
           expandedPrRows } = useUI();
@@ -1395,6 +1395,20 @@ const POView = React.memo(() => {
           document.body
         )}
 
+        {/* Access Control Check */}
+        {!canAccessModule("po") && !canAccessModule("po-table") ? (
+          <div className="flex items-center justify-center min-h-[50vh] bg-white rounded-lg border border-slate-200">
+            <div className="text-center">
+              <div className="w-16 h-16 mx-auto mb-4 bg-red-100 rounded-full flex items-center justify-center">
+                <ShoppingCart size={32} className="text-red-500" />
+              </div>
+              <h3 className="text-lg font-semibold text-slate-800 mb-2">ไม่มีสิทธิ์เข้าถึง</h3>
+              <p className="text-slate-600 text-sm mb-4">คุณไม่มีสิทธิ์เข้าถึงระบบ Purchase Order (PO)</p>
+              <p className="text-xs text-slate-500">กรุณาติดต่อ Administrator เพื่อขอสิทธิ์การใช้งาน</p>
+            </div>
+          </div>
+        ) : (
+        <>
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-2">
             <h2 className="text-xl font-bold text-slate-800">
@@ -2752,6 +2766,8 @@ const POView = React.memo(() => {
               </div>
             </Card>
           </div>
+        )}
+        </>
         )}
       </div>
     );
