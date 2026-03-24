@@ -145,7 +145,11 @@ const POView = React.memo(() => {
       reason: "",
       note: "",
       discount: 0,
+      location: "", // สถานที่ส่งสินค้า
     });
+    const [locationOptions, setLocationOptions] = useState<string[]>([...DELIVERY_LOCATIONS]);
+    const [locationAddMode, setLocationAddMode] = useState(false);
+    const [locationAddText, setLocationAddText] = useState("");
     const [manualVatOverride, setManualVatOverride] = useState<number | null>(null);
     const [vatEditOpen, setVatEditOpen] = useState(false);
     const [vatEditValue, setVatEditValue] = useState("");
@@ -358,12 +362,14 @@ const POView = React.memo(() => {
     const approvedPRs = useMemo(() => {
       const editingPo = editingPoId ? pos.find((p) => p.id === editingPoId) : null;
       const isRevisionEdit = editingPo?.status === "Draft" && editingPo?.originalPoAmount != null;
+      const isRejectedEdit = editingPo?.status === "Rejected";
 
       return prs.filter((pr) => {
         if (pr.projectId !== selectedProjectId) return false;
 
-        // กรณีแก้ไข PO จากการขอแก้ไข (revision) — แสดง PR ที่ผูกไว้เดิมเสมอ
-        if (isRevisionEdit && editingPoLinkedPrIds.has(pr.id)) return true;
+        // กรณีแก้ไข PO จากการขอแก้ไข (revision) หรือแก้ไข PO ที่ถูก Reject
+        // — แสดง PR ที่ผูกไว้เดิมเสมอ แม้ PR จะถูก Closed PR Auto ไปแล้ว
+        if ((isRevisionEdit || isRejectedEdit) && editingPoLinkedPrIds.has(pr.id)) return true;
 
         // กรณีปกติ
         if (pr.status === "Closed PR" || pr.status === "Closed PR Auto") return false;
@@ -847,6 +853,7 @@ const POView = React.memo(() => {
           items: itemsWithAllocations, amount: totals.total,
           discount: formData.discount || 0,
           reason: formData.reason || "",
+          location: formData.location || "",
           poDate: formData.poOpenDate
             ? new Date(formData.poOpenDate + "T00:00:00").toISOString()
             : new Date().toISOString(),
@@ -911,6 +918,7 @@ const POView = React.memo(() => {
         status: "Pending PCM",
         createdDate: new Date().toISOString(),
         poDate: formData.poOpenDate ? new Date(formData.poOpenDate + "T00:00:00").toISOString() : new Date().toISOString(),
+        location: formData.location || "",
         rejectReason: "",
       };
 
@@ -923,7 +931,7 @@ const POView = React.memo(() => {
         setIsFullScreenModalOpen(false);
         setEditingPoId(null);
         setFormData({
-          poNo: "", poType: "", receiveType: "", vendorId: "", requiredDate: "", poOpenDate: new Date().toISOString().split("T")[0], vatType: "ex-vat", selectedPrIds: [], items: [], reason: "", note: "", discount: 0
+          poNo: "", poType: "", receiveType: "", vendorId: "", requiredDate: "", poOpenDate: new Date().toISOString().split("T")[0], vatType: "ex-vat", selectedPrIds: [], items: [], reason: "", note: "", discount: 0, location: "",
         });
         setManualVatOverride(null);
         setVatEditOpen(false);
@@ -1139,7 +1147,8 @@ const POView = React.memo(() => {
       if (isPCMApprove) {
         newStatus = "Pending GM";
       } else if (isGMApprove) {
-        newStatus = "Approved";
+        // Auto-receive PO: after final approval, skip "Approved" and go directly to "Received"
+        newStatus = po.receiveType === "Receive Auto" ? "Received" : "Approved";
       }
 
       if (newStatus !== po.status) {
@@ -1207,6 +1216,7 @@ const POView = React.memo(() => {
 
         await updateData("pos", poId, {
           status: newStatus,
+          ...(newStatus === "Received" ? { statusNow: "Received" } : {}),
           rejectReason: "",
           ...(isPCMApprove ? { pcmApprovedAt: nowIso } : {}),
           ...(isGMApprove  ? { gmApprovedAt:  nowIso } : {}),
@@ -1433,6 +1443,7 @@ const POView = React.memo(() => {
                   reason: "",
                   note: "",
                   discount: 0,
+                  location: "",
                 });
                 setManualVatOverride(null);
                 setVatEditOpen(false);
@@ -1465,7 +1476,7 @@ const POView = React.memo(() => {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {pos
-                .filter((po) => po.projectId === selectedProjectId && po.status !== "Closed PO")
+                .filter((po) => po.projectId === selectedProjectId && po.status !== "Closed PO" && po.status !== "Received")
                 .map((po) => {
                   const vendor = vendors.find((v) => v.id === po.vendorId);
                   // Count PRs and get details
@@ -1580,7 +1591,11 @@ const POView = React.memo(() => {
                                   reason: po.reason || "",
                                   note: po.note || "",
                                   discount: po.discount ?? 0,
+                                  location: po.location || "",
                                 });
+                                if (po.location && !DELIVERY_LOCATIONS.includes(po.location)) {
+                                  setLocationOptions(prev => prev.includes(po.location) ? prev : [...prev, po.location]);
+                                }
                                 setManualVatOverride(po.manualVat != null ? Number(po.manualVat) : null);
                                 setVatEditOpen(false);
                                 setVatEditValue("");
@@ -1722,6 +1737,7 @@ const POView = React.memo(() => {
                       { label: "Ref PR No.", value: poPrNos || "-" },
                       { label: "Vendor", value: poVendor?.name || "-" },
                       { label: L.dateLabel, value: viewingPO.poDate ? viewingPO.poDate.split("T")[0] : "-" },
+                      { label: "สถานที่ส่งสินค้า", value: viewingPO.location || "-" },
                       { label: "กำหนดส่งของ", value: viewingPO.requiredDate || "-" },
                       { label: "ประเภทรับของ", value: viewingPO.receiveType || "-" },
                       { label: "VAT", value: viewingPO.vatType || "-" },
@@ -1948,20 +1964,89 @@ const POView = React.memo(() => {
                             value={formData.poNo}
                           />
                       </div>
-                      {/* วันที่เปิด */}
-                      <div className="min-w-0">
-                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1 uppercase tracking-wider">
-                          <Calendar size={11} className="text-amber-500 shrink-0" /> วันที่เปิด
-                        </label>
-                        <div className="relative cursor-pointer" onClick={() => { if (typeof poOpenDateInputRef.current?.showPicker === "function") poOpenDateInputRef.current.showPicker(); else poOpenDateInputRef.current?.click(); }}>
-                          <input
-                            ref={poOpenDateInputRef}
-                            type="date"
-                            className="w-full border border-slate-200 rounded-lg px-3 py-1.5 pl-9 text-sm cursor-pointer"
-                            value={formData.poOpenDate}
-                            onChange={e => setFormData({ ...formData, poOpenDate: e.target.value })}
-                          />
-                          <Calendar className="absolute left-3 top-2 text-amber-400 pointer-events-none" size={14} />
+                      {/* วันที่เปิด + สถานที่ส่งสินค้า */}
+                      <div className="min-w-0 flex gap-2">
+                        {/* วันที่เปิด — ย่อครึ่งหนึ่ง */}
+                        <div className="flex-1 min-w-0">
+                          <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1 uppercase tracking-wider">
+                            <Calendar size={11} className="text-amber-500 shrink-0" /> วันที่เปิด
+                          </label>
+                          <div className="relative cursor-pointer" onClick={() => { if (typeof poOpenDateInputRef.current?.showPicker === "function") poOpenDateInputRef.current.showPicker(); else poOpenDateInputRef.current?.click(); }}>
+                            <input
+                              ref={poOpenDateInputRef}
+                              type="date"
+                              className="w-full border border-slate-200 rounded-lg px-3 py-1.5 pl-9 text-sm cursor-pointer"
+                              value={formData.poOpenDate}
+                              onChange={e => setFormData({ ...formData, poOpenDate: e.target.value })}
+                            />
+                            <Calendar className="absolute left-3 top-2 text-amber-400 pointer-events-none" size={14} />
+                          </div>
+                        </div>
+                        {/* สถานที่ส่งสินค้า */}
+                        <div className="flex-1 min-w-0">
+                          <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1 uppercase tracking-wider">
+                            <MapPin size={11} className="text-blue-500 shrink-0" /> สถานที่ส่งสินค้า
+                          </label>
+                          {locationAddMode ? (
+                            <div className="flex gap-1">
+                              <input
+                                autoFocus
+                                type="text"
+                                className="flex-1 min-w-0 border border-blue-300 rounded-lg px-2 py-1.5 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100 text-slate-900"
+                                placeholder="ระบุสถานที่..."
+                                value={locationAddText}
+                                onChange={e => setLocationAddText(e.target.value)}
+                                onKeyDown={e => {
+                                  if (e.key === "Enter" && locationAddText.trim()) {
+                                    const newLoc = locationAddText.trim();
+                                    if (!locationOptions.includes(newLoc)) setLocationOptions(prev => [...prev, newLoc]);
+                                    setFormData(f => ({ ...f, location: newLoc }));
+                                    setLocationAddMode(false);
+                                    setLocationAddText("");
+                                  } else if (e.key === "Escape") {
+                                    setLocationAddMode(false);
+                                    setLocationAddText("");
+                                  }
+                                }}
+                              />
+                              <button
+                                type="button"
+                                className="px-2 py-1 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700 shrink-0"
+                                onClick={() => {
+                                  const newLoc = locationAddText.trim();
+                                  if (newLoc) {
+                                    if (!locationOptions.includes(newLoc)) setLocationOptions(prev => [...prev, newLoc]);
+                                    setFormData(f => ({ ...f, location: newLoc }));
+                                  }
+                                  setLocationAddMode(false);
+                                  setLocationAddText("");
+                                }}
+                              >+</button>
+                              <button
+                                type="button"
+                                className="px-2 py-1 border border-slate-200 rounded-lg text-xs text-slate-500 hover:bg-slate-50 shrink-0"
+                                onClick={() => { setLocationAddMode(false); setLocationAddText(""); }}
+                              >✕</button>
+                            </div>
+                          ) : (
+                            <select
+                              className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-sm bg-white hover:border-blue-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 cursor-pointer text-slate-900"
+                              value={formData.location}
+                              onChange={e => {
+                                if (e.target.value === "__add__") {
+                                  setLocationAddMode(true);
+                                } else {
+                                  setFormData(f => ({ ...f, location: e.target.value }));
+                                }
+                              }}
+                            >
+                              <option value="">-- เลือก --</option>
+                              {locationOptions.map(opt => (
+                                <option key={opt} value={opt}>{opt}</option>
+                              ))}
+                              <option value="__add__">+ เพิ่มรายการ...</option>
+                            </select>
+                          )}
                         </div>
                       </div>
                       {/* กำหนดส่ง / รอบวางบิล */}

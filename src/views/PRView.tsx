@@ -29,6 +29,29 @@ const PRView = React.memo(() => {
           showAlert, openConfirm, userRole, userRoles, userData, user, columnWidths, handleColumnResize,
           visibleProjects, handlePRAction, canUseFunction, isColumnVisible } = useAppData();
 
+  /**
+   * คำนวณยอดใช้งานทั้งหมดของ budget จาก PRs ที่ตรงกันทั้ง budgetId หรือ costCode
+   * จากนั้น save ค่า usedAmount ลงบน budget document (คล้าย statusNow บน PO)
+   * เรียกหลัง PR save / reject / edit เพื่อให้ยอดคงเหลือใน dropdown ตรงเสมอ
+   */
+  const recomputeBudgetUsed = useCallback(async (budgetId: string, costCode: string, projectId: string) => {
+    if (!budgetId && !costCode) return;
+    const seen = new Set<string>();
+    let total = 0;
+    for (const p of prs) {
+      if (p.projectId !== projectId || p.status === "Rejected") continue;
+      const matchById = budgetId && p.budgetId === budgetId;
+      const matchByCode = costCode && p.costCode === costCode;
+      if ((matchById || matchByCode) && !seen.has(p.id)) {
+        seen.add(p.id);
+        total += Number(p.totalAmount) || 0;
+      }
+    }
+    if (budgetId) {
+      await updateData("budgets", budgetId, { usedAmount: total });
+    }
+  }, [prs, updateData]);
+
   // Helper function to get reference document info based on PR status
   const getRefDocInfo = (pr) => {
     if (!pr) return { docNo: "-", pdfUrl: null, docType: "PR" };
@@ -110,6 +133,14 @@ const PRView = React.memo(() => {
         status: "Rejected",
         rejectReason: prRejectReason,
       });
+      // Rejected PR ไม่นับงบ → recompute และ save กลับ budget document
+      setTimeout(() => {
+        recomputeBudgetUsed(
+          selectedPrForReject.budgetId || "",
+          selectedPrForReject.costCode || "",
+          selectedPrForReject.projectId || ""
+        );
+      }, 1500);
       setIsPrRejectModalOpen(false);
       setPrRejectReason("");
       setSelectedPrForReject(null);
@@ -303,24 +334,32 @@ const PRView = React.memo(() => {
     const calculateTotal = () =>
       lineItems.reduce((sum, item) => sum + item.quantity * item.price, 0);
 
-    const availableBudgets = useMemo(() => {
+      const availableBudgets = useMemo(() => {
       const approved = budgets.filter(
         (b) => b.projectId === selectedProjectId && b.status === "Approved"
       );
       return approved
         .map((b) => {
-          const relatedPRs = prs.filter(
-            (p) => {
-              if (p.projectId !== selectedProjectId || p.status === "Rejected") return false;
-              if (p.budgetId) return p.budgetId === b.id;
-              return p.costCode === b.code;
-            }
-          );
-          const usedAmount = relatedPRs.reduce(
-            (sum, p) => sum + (Number(p.totalAmount) || 0),
-            0
-          );
-          const budgetAmount = Number(b.amount); // Always use the actual total budget amount
+          // ถ้า budget document มี usedAmount ที่ recompute ไว้แล้ว (เหมือน statusNow บน PO) ให้ใช้ค่านั้นก่อน
+          // หากยังไม่มี ให้ compute จาก PRs โดยจับคู่ทั้ง budgetId และ costCode (deduped) เพื่อไม่ให้หล่น
+          let usedAmount: number;
+          if (b.usedAmount != null && !isNaN(Number(b.usedAmount))) {
+            usedAmount = Number(b.usedAmount);
+          } else {
+            const seen = new Set<string>();
+            usedAmount = prs
+              .filter((p) => {
+                if (p.projectId !== selectedProjectId || p.status === "Rejected") return false;
+                const matchById = b.id && p.budgetId === b.id;
+                const matchByCode = b.code && p.costCode === b.code;
+                if (!(matchById || matchByCode)) return false;
+                if (seen.has(p.id)) return false;
+                seen.add(p.id);
+                return true;
+              })
+              .reduce((sum, p) => sum + (Number(p.totalAmount) || 0), 0);
+          }
+          const budgetAmount = Number(b.amount);
           return {
             ...b,
             budgetAmount,
@@ -354,6 +393,7 @@ const PRView = React.memo(() => {
         setLineItems([...lineItems, {
           ...newItem,
           id: crypto.randomUUID(),
+          subItemId: headerData.selectedSubItemId || null,
           budgetId: headerData.selectedBudgetId || null,
           budgetSubItemId: headerData.selectedSubItemId || null,
         }]);
@@ -479,11 +519,11 @@ const PRView = React.memo(() => {
           const subUsed = prs
             .filter(p => p.projectId === selectedProjectId && p.costCode === budgetItem.code && p.status !== "Rejected" && p.id !== editingPRId)
             .reduce((sum, p) => {
-              const matchItem = p.items?.find(i =>
-                (selectedSub.id && i.subItemId === selectedSub.id) ||
-                (!i.subItemId && i.description?.trim() === selectedSub.description?.trim())
+              const matchItems = (p.items || []).filter(i =>
+                (selectedSub.id && (i.subItemId === selectedSub.id || i.budgetSubItemId === selectedSub.id)) ||
+                (!i.subItemId && !i.budgetSubItemId && i.description?.trim() === selectedSub.description?.trim())
               );
-              return sum + (matchItem ? (matchItem.quantity * matchItem.price) : 0);
+              return sum + matchItems.reduce((s, i) => s + (i.quantity * i.price), 0);
             }, 0);
           const subBalance = selectedSub.amount - subUsed;
           const thisPrTotalCheck = calculateTotal();
@@ -500,7 +540,7 @@ const PRView = React.memo(() => {
       const currentPrTotal = prs
         .filter((pr) => {
           if (pr.projectId !== selectedProjectId || pr.status === "Rejected" || pr.id === editingPRId) return false;
-          if (headerData.selectedBudgetId && pr.budgetId) return pr.budgetId === headerData.selectedBudgetId;
+          // ใช้ costCode เสมอ (สอดคล้องกับ BudgetView)
           return pr.costCode === headerData.costCode;
         })
         .reduce((sum, pr) => sum + Number(pr.totalAmount), 0);
@@ -618,6 +658,16 @@ const PRView = React.memo(() => {
       }
 
       if (success) {
+        // อัปเดต usedAmount บน budget document (เหมือน statusNow บน PO) ให้ยอดคงเหลือ dropdown ตรงเสมอ
+        // ต้องรอ Firestore listener อัปเดต prs ก่อนถึงจะ count รายการใหม่ถูก
+        setTimeout(() => {
+          recomputeBudgetUsed(
+            headerData.selectedBudgetId || prPayload.budgetId || "",
+            headerData.costCode || prPayload.costCode || "",
+            selectedProjectId
+          );
+        }, 1500);
+
         setProgress(100, "เสร็จสิ้น!");
         await new Promise(r => setTimeout(r, 600));
         setSavePrProgress({ show: false, pct: 0, step: "" });
@@ -992,15 +1042,15 @@ const PRView = React.memo(() => {
       return groupPrs.map((pr) => (
         <React.Fragment key={pr.id}>
           <tr className={dataRowClass} onClick={() => setViewingPR(pr)}>
-            {isColumnVisible("pr", "prNo") && <td className="py-1 px-3 font-medium" title={pr.prNo}><span className="cell-text">{pr.prNo}</span></td>}
-            {isColumnVisible("pr", "date") && <td className="py-1 px-3" title={pr.requestDate}><span className="cell-text">{pr.requestDate}</span></td>}
-            {isColumnVisible("pr", "costCode") && <td className="py-1 px-3">
-              <span className="bg-gray-100 px-2 py-0.5 rounded text-xs border border-gray-200 cell-text" title={pr.costCode}>
+            {isColumnVisible("pr", "prNo") && <td className="py-0.5 px-2 font-medium" title={pr.prNo}><span className="cell-text">{pr.prNo}</span></td>}
+            {isColumnVisible("pr", "date") && <td className="py-0.5 px-2" title={pr.requestDate}><span className="cell-text">{pr.requestDate}</span></td>}
+            {isColumnVisible("pr", "costCode") && <td className="py-0.5 px-2">
+              <span className="bg-gray-100 px-1.5 py-0 rounded text-xs border border-gray-200 cell-text" title={pr.costCode}>
                 {pr.costCode}
               </span>
             </td>}
             {isColumnVisible("pr", "description") && <td
-              className="py-1 px-3 text-xs text-slate-500"
+              className="py-0.5 px-2 text-xs text-slate-500"
               title={(() => {
                 const itemDescs = pr.items && pr.items.length > 0
                   ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
@@ -1014,20 +1064,20 @@ const PRView = React.memo(() => {
                   : "-"}
               </span>
             </td>}
-            {isColumnVisible("pr", "type") && <td className="py-1 px-3" title={pr.purchaseType}><span className="cell-text">{getPurchaseTypeDisplayLabel(pr.purchaseType)}</span></td>}
-            {isColumnVisible("pr", "requestor") && <td className="py-1 px-3" title={pr.requestor}><span className="cell-text">{pr.requestor}</span></td>}
-            {isColumnVisible("pr", "items") && <td className="py-1 px-3">
+            {isColumnVisible("pr", "type") && <td className="py-0.5 px-2" title={pr.purchaseType}><span className="cell-text">{getPurchaseTypeDisplayLabel(pr.purchaseType)}</span></td>}
+            {isColumnVisible("pr", "requestor") && <td className="py-0.5 px-2" title={pr.requestor}><span className="cell-text">{pr.requestor}</span></td>}
+            {isColumnVisible("pr", "items") && <td className="py-0.5 px-2">
               <span className="font-bold text-slate-700">
                 {pr.items?.length || 0} รายการ
               </span>
             </td>}
-            {isColumnVisible("pr", "amount") && <td className="py-1 px-3 text-right font-semibold">
+            {isColumnVisible("pr", "amount") && <td className="py-0.5 px-2 text-right font-semibold">
               {formatCurrency(pr.totalAmount || pr.amount)}
             </td>}
-            {isColumnVisible("pr", "status") && <td className="py-1 px-3 text-center">
+            {isColumnVisible("pr", "status") && <td className="py-0.5 px-2 text-center">
               <Badge status={pr.status} />
             </td>}
-            {isColumnVisible("pr", "refDoc") && <td className="py-1 px-3 text-center">
+            {isColumnVisible("pr", "refDoc") && <td className="py-0.5 px-2 text-center">
               {(() => {
                 const { docNo, pdfUrl, docType } = getRefDocInfo(pr);
                 return pdfUrl ? (
@@ -1046,7 +1096,7 @@ const PRView = React.memo(() => {
               })()}
             </td>}
             {isColumnVisible("pr", "actions") && <td
-              className="py-1 px-3 text-right flex justify-end gap-1"
+              className="py-0.5 px-2 text-right flex justify-end gap-1"
               onClick={(e) => e.stopPropagation()}
             >
               {canUseFunction("pr", "approve") && (userRoles.includes("CM") || userRoles.includes("PM") || userRoles.includes("Administrator")) && pr.status === "Pending CM" && (
@@ -1088,16 +1138,16 @@ const PRView = React.memo(() => {
               )}
               {canUseFunction("pr", "edit") && (pr.status === "Rejected" || pr.status === "Edit Budget") && (
                 <button
-                  className="text-blue-500 hover:bg-blue-50 p-1.5 rounded-full transition-colors"
+                  className="text-blue-500 hover:bg-blue-50 p-1 rounded-full transition-colors"
                   title="แก้ไข PR"
                   onClick={() => handleEditClick(pr)}
                 >
-                  <Edit size={14} />
+                  <Edit size={13} />
                 </button>
               )}
               {canUseFunction("pr", "delete") && (
                 <button
-                  className="text-red-500 hover:bg-red-50 p-1.5 rounded-full transition-colors"
+                  className="text-red-500 hover:bg-red-50 p-1 rounded-full transition-colors"
                   onClick={() => {
                     openConfirm(
                       "ยืนยันการลบ",
@@ -1114,7 +1164,7 @@ const PRView = React.memo(() => {
                     );
                   }}
                 >
-                  <Trash2 size={14} />
+                  <Trash2 size={13} />
                 </button>
               )}
             </td>}
@@ -1128,7 +1178,7 @@ const PRView = React.memo(() => {
       return entries.map(([type, groupPrs]) => (
         <React.Fragment key={`main-${type}`}>
           <tr className={groupRowClass}>
-            <td colSpan={["prNo","date","costCode","description","type","requestor","items","amount","status","actions"].filter(k => isColumnVisible("pr", k)).length} className="py-2 px-3 font-bold text-slate-700">
+            <td colSpan={["prNo","date","costCode","description","type","requestor","items","amount","status","actions"].filter(k => isColumnVisible("pr", k)).length} className="py-1 px-2 font-bold text-slate-700">
               {type} ({groupPrs.length})
             </td>
           </tr>
@@ -1275,17 +1325,17 @@ const PRView = React.memo(() => {
           <table className="w-full text-left text-xs text-slate-600 table-fixed">
             <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
               <tr>
-                {isColumnVisible("pr", "prNo") && <ResizableTh tableId="pr" colKey="prNo" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.prNo}>PR No.</ResizableTh>}
-                {isColumnVisible("pr", "date") && <ResizableTh tableId="pr" colKey="date" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.date}>Date</ResizableTh>}
-                {isColumnVisible("pr", "costCode") && <ResizableTh tableId="pr" colKey="costCode" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.costCode}>Cost Code</ResizableTh>}
-                {isColumnVisible("pr", "description") && <ResizableTh tableId="pr" colKey="description" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.description}>Description</ResizableTh>}
-                {isColumnVisible("pr", "type") && <ResizableTh tableId="pr" colKey="type" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.type}>Type</ResizableTh>}
-                {isColumnVisible("pr", "requestor") && <ResizableTh tableId="pr" colKey="requestor" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.requestor}>Requestor</ResizableTh>}
-                {isColumnVisible("pr", "items") && <ResizableTh tableId="pr" colKey="items" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.items}>Items</ResizableTh>}
-                {isColumnVisible("pr", "amount") && <ResizableTh tableId="pr" colKey="amount" className="py-1 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.amount}>Amount</ResizableTh>}
-                {isColumnVisible("pr", "status") && <ResizableTh tableId="pr" colKey="status" className="py-1 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.status}>Status</ResizableTh>}
-                {isColumnVisible("pr", "refDoc") && <ResizableTh tableId="pr" colKey="refDoc" className="py-1 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.refDoc}>Ref Doc</ResizableTh>}
-                {isColumnVisible("pr", "actions") && <th className="py-1 px-3 text-right" style={{ width: prTableLayout.scaled.actions }}>Actions</th>}
+                {isColumnVisible("pr", "prNo") && <ResizableTh tableId="pr" colKey="prNo" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.prNo}>PR No.</ResizableTh>}
+                {isColumnVisible("pr", "date") && <ResizableTh tableId="pr" colKey="date" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.date}>Date</ResizableTh>}
+                {isColumnVisible("pr", "costCode") && <ResizableTh tableId="pr" colKey="costCode" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.costCode}>Cost Code</ResizableTh>}
+                {isColumnVisible("pr", "description") && <ResizableTh tableId="pr" colKey="description" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.description}>Description</ResizableTh>}
+                {isColumnVisible("pr", "type") && <ResizableTh tableId="pr" colKey="type" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.type}>Type</ResizableTh>}
+                {isColumnVisible("pr", "requestor") && <ResizableTh tableId="pr" colKey="requestor" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.requestor}>Requestor</ResizableTh>}
+                {isColumnVisible("pr", "items") && <ResizableTh tableId="pr" colKey="items" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.items}>Items</ResizableTh>}
+                {isColumnVisible("pr", "amount") && <ResizableTh tableId="pr" colKey="amount" className="py-0.5 px-2 text-right" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.amount}>Amount</ResizableTh>}
+                {isColumnVisible("pr", "status") && <ResizableTh tableId="pr" colKey="status" className="py-0.5 px-2 text-center" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.status}>Status</ResizableTh>}
+                {isColumnVisible("pr", "refDoc") && <ResizableTh tableId="pr" colKey="refDoc" className="py-0.5 px-2 text-center" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.refDoc}>Ref Doc</ResizableTh>}
+                {isColumnVisible("pr", "actions") && <th className="py-0.5 px-2 text-right" style={{ width: prTableLayout.scaled.actions }}>Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -1307,17 +1357,17 @@ const PRView = React.memo(() => {
               <table className="w-full text-left text-xs text-slate-600 table-fixed">
                 <thead className="bg-teal-100/60 text-slate-900 uppercase font-semibold">
                   <tr>
-                    {isColumnVisible("pr", "prNo") && <ResizableTh tableId="pr" colKey="prNo" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.prNo}>PR No.</ResizableTh>}
-                    {isColumnVisible("pr", "date") && <ResizableTh tableId="pr" colKey="date" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.date}>Date</ResizableTh>}
-                    {isColumnVisible("pr", "costCode") && <ResizableTh tableId="pr" colKey="costCode" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.costCode}>Cost Code</ResizableTh>}
-                    {isColumnVisible("pr", "description") && <ResizableTh tableId="pr" colKey="description" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.description}>Description</ResizableTh>}
-                    {isColumnVisible("pr", "type") && <ResizableTh tableId="pr" colKey="type" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.type}>Type</ResizableTh>}
-                    {isColumnVisible("pr", "requestor") && <ResizableTh tableId="pr" colKey="requestor" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.requestor}>Requestor</ResizableTh>}
-                    {isColumnVisible("pr", "items") && <ResizableTh tableId="pr" colKey="items" className="py-1 px-3" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.items}>Items</ResizableTh>}
-                    {isColumnVisible("pr", "amount") && <ResizableTh tableId="pr" colKey="amount" className="py-1 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.amount}>Amount</ResizableTh>}
-                    {isColumnVisible("pr", "status") && <ResizableTh tableId="pr" colKey="status" className="py-1 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.status}>Status</ResizableTh>}
-                    {isColumnVisible("pr", "refDoc") && <ResizableTh tableId="pr" colKey="refDoc" className="py-1 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.refDoc}>Ref Doc</ResizableTh>}
-                    {isColumnVisible("pr", "actions") && <th className="py-1 px-3 text-right" style={{ width: prTableLayout.scaled.actions }}>Actions</th>}
+                    {isColumnVisible("pr", "prNo") && <ResizableTh tableId="pr" colKey="prNo" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.prNo}>PR No.</ResizableTh>}
+                    {isColumnVisible("pr", "date") && <ResizableTh tableId="pr" colKey="date" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.date}>Date</ResizableTh>}
+                    {isColumnVisible("pr", "costCode") && <ResizableTh tableId="pr" colKey="costCode" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.costCode}>Cost Code</ResizableTh>}
+                    {isColumnVisible("pr", "description") && <ResizableTh tableId="pr" colKey="description" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.description}>Description</ResizableTh>}
+                    {isColumnVisible("pr", "type") && <ResizableTh tableId="pr" colKey="type" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.type}>Type</ResizableTh>}
+                    {isColumnVisible("pr", "requestor") && <ResizableTh tableId="pr" colKey="requestor" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.requestor}>Requestor</ResizableTh>}
+                    {isColumnVisible("pr", "items") && <ResizableTh tableId="pr" colKey="items" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.items}>Items</ResizableTh>}
+                    {isColumnVisible("pr", "amount") && <ResizableTh tableId="pr" colKey="amount" className="py-0.5 px-2 text-right" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.amount}>Amount</ResizableTh>}
+                    {isColumnVisible("pr", "status") && <ResizableTh tableId="pr" colKey="status" className="py-0.5 px-2 text-center" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.status}>Status</ResizableTh>}
+                    {isColumnVisible("pr", "refDoc") && <ResizableTh tableId="pr" colKey="refDoc" className="py-0.5 px-2 text-center" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.refDoc}>Ref Doc</ResizableTh>}
+                    {isColumnVisible("pr", "actions") && <th className="py-0.5 px-2 text-right" style={{ width: prTableLayout.scaled.actions }}>Actions</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -1998,13 +2048,16 @@ const PRView = React.memo(() => {
                               const subUsed = prs
                                 .filter(p => p.projectId === selectedProjectId && p.costCode === selectedBudget.code && p.status !== 'Rejected' && p.id !== editingPRId)
                                 .reduce((sum, p) => {
-                                  const matchItem = p.items?.find(i =>
-                                    (sub.id && i.subItemId === sub.id) ||
-                                    (!i.subItemId && i.description?.trim() === sub.description?.trim())
+                                  const matchItems = (p.items || []).filter(i =>
+                                    (sub.id && (i.subItemId === sub.id || i.budgetSubItemId === sub.id)) ||
+                                    (!i.subItemId && !i.budgetSubItemId && i.description?.trim() === sub.description?.trim())
                                   );
-                                  return sum + (matchItem ? (matchItem.quantity * matchItem.price) : 0);
+                                  return sum + matchItems.reduce((s, i) => s + (i.quantity * i.price), 0);
                                 }, 0);
-                              balance = sub.amount - subUsed;
+                              const currentFormUsed = lineItems
+                                .filter(i => i.subItemId === sub.id || i.budgetSubItemId === sub.id)
+                                .reduce((s, i) => s + (i.quantity * i.price), 0);
+                              balance = sub.amount - subUsed - currentFormUsed;
                               label = `คงเหลือ (${sub.description})`;
                             }
                           }
@@ -2366,11 +2419,11 @@ const PRView = React.memo(() => {
                                     const subUsed = prs
                                       .filter(p => p.projectId === selectedProjectId && p.costCode === b.code && p.status !== 'Rejected')
                                       .reduce((sum, p) => {
-                                        const matchItem = p.items?.find(i =>
-                                          (sub.id && i.subItemId === sub.id) ||
-                                          (!i.subItemId && i.description?.trim() === sub.description?.trim())
+                                        const matchItems = (p.items || []).filter(i =>
+                                          (sub.id && (i.subItemId === sub.id || i.budgetSubItemId === sub.id)) ||
+                                          (!i.subItemId && !i.budgetSubItemId && i.description?.trim() === sub.description?.trim())
                                         );
-                                        return sum + (matchItem ? (matchItem.quantity * matchItem.price) : 0);
+                                        return sum + matchItems.reduce((s, i) => s + (i.quantity * i.price), 0);
                                       }, 0);
 
                                     const subBalance = sub.amount - subUsed;

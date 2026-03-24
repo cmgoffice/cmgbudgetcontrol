@@ -24,7 +24,7 @@ import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 
 const BudgetView = React.memo(() => {
-  const { budgets, projects, prs, pos, payments, invoices, addData, updateData, deleteData,
+  const { budgets, projects, prs, pos, payments, invoices, receives, addData, updateData, deleteData,
           showAlert, openConfirm, logAction, userRole, userRoles, userData, columnWidths, handleColumnResize,
           visibleProjects, handlePRAction, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,
           db, appId, canUseFunction, isColumnVisible } = useAppData();
@@ -1018,7 +1018,7 @@ const BudgetView = React.memo(() => {
       // 1. Check PO Statuses (only items NOT covered by a Payment)
       if (stats.relatedPOs && stats.relatedPOs.length > 0) {
         const poGroups = stats.relatedPOs.reduce((acc, po) => {
-          const s = po.status || "Pending PCM";
+          const s = po.statusNow || po.status || "Pending PCM";
           if (!acc[s]) acc[s] = 0;
           let amount = 0;
           if (po.items && Array.isArray(po.items)) {
@@ -1040,6 +1040,23 @@ const BudgetView = React.memo(() => {
         if (poGroups["Pending PCM"] > 0) statusesToReturn.push({ label: "PO Pending PCM", amount: poGroups["Pending PCM"], color: "orange" });
         if (poGroups["Pending GM"] > 0) statusesToReturn.push({ label: "PO Pending GM", amount: poGroups["Pending GM"], color: "blue" });
         if (poGroups["Approved"] > 0) statusesToReturn.push({ label: "PO Approved", amount: poGroups["Approved"], color: "green" });
+        if (poGroups["Partial Receive"] > 0) {
+          let totalOrdered = 0;
+          let totalReceived = 0;
+          stats.relatedPOs
+            .filter((po) => (po.statusNow || po.status) === "Partial Receive")
+            .forEach((po) => {
+              (po.items || []).forEach((item) => { totalOrdered += Number(item.quantity || 0); });
+              receives
+                .filter((r) => r.poId === po.id)
+                .forEach((rcv) => {
+                  (rcv.items || []).forEach((rItem) => { totalReceived += Number(rItem.receivedQty || 0); });
+                });
+            });
+          const receivePercent = totalOrdered > 0 ? Math.min(100, Math.round((totalReceived / totalOrdered) * 100)) : 0;
+          statusesToReturn.push({ label: "PO Partial Receive", amount: null, color: "cyan", receivePercent });
+        }
+        if (poGroups["Received"] > 0) statusesToReturn.push({ label: "PO Received", amount: null, color: "emerald", receivePercent: 100 });
       }
 
       // 2. Check Payment Statuses (PO items that are covered by Payment)
@@ -2357,14 +2374,14 @@ const BudgetView = React.memo(() => {
                     <table className="w-full text-left text-xs text-slate-600 table-fixed">
                       <thead className="bg-slate-200 text-slate-800 uppercase font-bold border-b text-sm">
                         <tr>
-                          <ResizableTh tableId="dash-pr" colKey="prNo" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.prNo}>PR No.</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="date" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.date}>วันที่</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="costCode" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.costCode}>Cost Code</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="type" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.type}>ประเภท</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="requestor" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.requestor}>ผู้ขอซื้อ</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="amount" className="py-1.5 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.amount}>จำนวนเงิน</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="status" className="py-1.5 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.status}>สถานะ</ResizableTh>
-                          <th className="py-1.5 px-3 text-center" style={{ width: dashPrLayout.scaled.actions }}>Actions</th>
+                          <ResizableTh tableId="dash-pr" colKey="prNo" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.prNo}>PR No.</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="date" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.date}>วันที่</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="costCode" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.costCode}>Cost Code</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="type" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.type}>ประเภท</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="requestor" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.requestor}>ผู้ขอซื้อ</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="amount" className="py-0.5 px-2 text-right" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.amount}>จำนวนเงิน</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="status" className="py-0.5 px-2 text-center" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.status}>สถานะ</ResizableTh>
+                          <th className="py-0.5 px-2 text-center" style={{ width: dashPrLayout.scaled.actions }}>Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -2392,22 +2409,22 @@ const BudgetView = React.memo(() => {
 
                           return (
                             <tr key={pr.id} className={`hover:bg-green-50/40 ${isActivePr ? "bg-teal-50/30" : ""}`}>
-                              <td className="py-2 px-3 font-medium text-slate-800" title={pr.prNo}><span className="cell-text">{pr.prNo}</span></td>
-                              <td className="py-2 px-3 text-slate-500" title={pr.requestDate}><span className="cell-text">{pr.requestDate}</span></td>
-                              <td className="py-2 px-3">
-                                <span className="bg-gray-100 px-2 py-0.5 rounded text-xs border border-gray-200 cell-text" title={pr.costCode}>
+                              <td className="py-0.5 px-2 font-medium text-slate-800" title={pr.prNo}><span className="cell-text">{pr.prNo}</span></td>
+                              <td className="py-0.5 px-2 text-slate-500" title={pr.requestDate}><span className="cell-text">{pr.requestDate}</span></td>
+                              <td className="py-0.5 px-2">
+                                <span className="bg-gray-100 px-1.5 py-0 rounded text-xs border border-gray-200 cell-text" title={pr.costCode}>
                                   {pr.costCode}
                                 </span>
                               </td>
-                              <td className="py-2 px-3" title={pr.purchaseType}><span className="cell-text">{getPurchaseTypeDisplayLabel(pr.purchaseType)}</span></td>
-                              <td className="py-2 px-3" title={pr.requestor}><span className="cell-text">{pr.requestor}</span></td>
-                              <td className="py-2 px-3 text-right font-semibold text-green-700">
+                              <td className="py-0.5 px-2" title={pr.purchaseType}><span className="cell-text">{getPurchaseTypeDisplayLabel(pr.purchaseType)}</span></td>
+                              <td className="py-0.5 px-2" title={pr.requestor}><span className="cell-text">{pr.requestor}</span></td>
+                              <td className="py-0.5 px-2 text-right font-semibold text-green-700">
                                 {formatCurrency(pr.totalAmount || pr.amount)}
                               </td>
-                              <td className="py-2 px-3 text-center">
+                              <td className="py-0.5 px-2 text-center">
                                 <Badge status={pr.status} />
                               </td>
-                              <td className="py-2 px-3 text-center">
+                              <td className="py-0.5 px-2 text-center">
                                 <div className="flex justify-center gap-1">
                                   {isActivePr ? (
                                     <Button
@@ -3041,11 +3058,32 @@ const BudgetView = React.memo(() => {
                                     if (subStatuses.length === 0) return null;
                                     return (
                                       <div className="flex flex-wrap items-center justify-center gap-0.5">
-                                        {subStatuses.map((s, idx) => (
-                                          <span key={idx} className={`text-[9px] font-semibold px-1.5 py-0 rounded border ${colorMap[s.color] || colorMap.slate} whitespace-nowrap`}>
-                                            {s.label}{s.amount !== null ? ` ${formatCurrency(s.amount)}` : ""}
-                                          </span>
-                                        ))}
+                                        {subStatuses.map((s, idx) => {
+                                          if (s.label === "PO Partial Receive") {
+                                            return (
+                                              <span key={idx} className="flex flex-col items-center gap-0.5 min-w-[56px]">
+                                                <span className={`text-[9px] font-semibold px-1.5 py-0 rounded border ${colorMap[s.color] || colorMap.slate} whitespace-nowrap w-full text-center`}>
+                                                  Receive {s.receivePercent}%
+                                                </span>
+                                                <div className="w-full h-1 bg-cyan-100 rounded-full overflow-hidden">
+                                                  <div className="h-full bg-cyan-500 rounded-full transition-all" style={{ width: `${s.receivePercent}%` }} />
+                                                </div>
+                                              </span>
+                                            );
+                                          }
+                                          if (s.label === "PO Received") {
+                                            return (
+                                              <span key={idx} className={`text-[9px] font-semibold px-1.5 py-0 rounded border ${colorMap[s.color] || colorMap.slate} whitespace-nowrap`}>
+                                                Receive
+                                              </span>
+                                            );
+                                          }
+                                          return (
+                                            <span key={idx} className={`text-[9px] font-semibold px-1.5 py-0 rounded border ${colorMap[s.color] || colorMap.slate} whitespace-nowrap`}>
+                                              {s.label}{s.amount !== null ? ` ${formatCurrency(s.amount)}` : ""}
+                                            </span>
+                                          );
+                                        })}
                                       </div>
                                     );
                                   })()}
@@ -3260,8 +3298,8 @@ const BudgetView = React.memo(() => {
           </div>
         )}
         {isModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200" onClick={closeBudgetModal}>
-            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md mx-4" onClick={(e) => e.stopPropagation()}>
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
+            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md mx-4">
               {/* Header */}
               <div className="px-6 py-4 bg-slate-700 rounded-t-2xl flex items-center justify-between">
                 <div className="flex items-center gap-3">

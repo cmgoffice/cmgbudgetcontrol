@@ -9,7 +9,7 @@ import {
   Clock, Package, Tag, ClipboardList, CheckSquare, Square,
   Paperclip, Mail, Flame, MapPinned, CircleDot, Zap, Building2, MapPin,
   DollarSign, Calendar, PlusCircle, ChevronRight, ChevronLeft, ChevronUp, Play, BarChart3,
-  FileSpreadsheet, Download, Upload, Database, CreditCard
+  FileSpreadsheet, Download, Upload, CreditCard
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -18,7 +18,7 @@ import {
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL, uploadBytesResumable, getBytes } from "firebase/storage";
 import { db, appId, storage, FORM_TEMPLATE_PATHS } from "./lib/firebase";
-import { generatePRPdfBytes, generatePOPdfBytes, downloadBytes, uploadGeneratedPdf } from "./lib/pdfForms";
+import { generatePRPdfBytes, generatePOPdfBytes, downloadBytes, uploadGeneratedPdf, deleteGeneratedPdf } from "./lib/pdfForms";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "./components/ui";
 import ResizableTh from "./components/ResizableTh";
 import { useProportionalTableLayout, chainTableResizeHandlers } from "./hooks/useProportionalTableLayout";
@@ -600,6 +600,7 @@ const AppShell = () => {
                   handleColumnResize={handleColumnResize}
                   userRole={userRole}
                   updateData={updateData}
+                  deleteData={deleteData}
                   showAlert={showAlert}
                   openConfirm={openConfirm}
                   selectedProjectId={selectedProjectId}
@@ -644,6 +645,7 @@ const AppShell = () => {
                   handleColumnResize={handleColumnResize}
                   userRole={userRole}
                   updateData={updateData}
+                  deleteData={deleteData}
                   showAlert={showAlert}
                   openConfirm={openConfirm}
                   selectedProjectId={selectedProjectId}
@@ -855,7 +857,7 @@ const SidebarSubItem = ({ label, active, onClick }) => (
 );
 
 // --- PR / PO Combined Table View ---
-const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidths, handleColumnResize, userRole, updateData, showAlert, openConfirm, selectedProjectId }: {
+const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidths, handleColumnResize, userRole, updateData, deleteData, showAlert, openConfirm, selectedProjectId }: {
   mode: "pr" | "po";
   prs: any[];
   pos: any[];
@@ -866,6 +868,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   handleColumnResize?: (tableId: string, colKey: string, width: number) => void;
   userRole?: string;
   updateData?: (collection: string, id: string, data: any) => Promise<boolean>;
+  deleteData?: (collection: string, id: string) => Promise<boolean>;
   showAlert?: (title: string, message: string, type: string) => void;
   openConfirm?: (title: string, message: string, onConfirm: () => void | Promise<void>, variant?: string) => void;
   selectedProjectId?: string | null;
@@ -929,6 +932,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     "Closed PR": "bg-slate-100 text-slate-600 border-slate-300",
     "Closed PR Auto": "bg-emerald-100 text-emerald-800 border-emerald-300",
     "Pending Close PO": "bg-amber-50 text-amber-700 border-amber-200",
+    "Received": "bg-emerald-100 text-emerald-800 border-emerald-300",
     "Closed PO": "bg-slate-100 text-slate-600 border-slate-300",
     "Edit Budget": "bg-red-100 text-red-800 border-red-300",
     "Pending MD": "bg-purple-50 text-purple-700 border-purple-200",
@@ -953,7 +957,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
   const allStatuses = isPR
     ? ["Approved", "PO Issued", "Edit Budget", "Pending Close", "Closed PR", "Closed PR Auto", "Pending Active PR", "Pending MD", "Pending GM", "Pending PM", "Pending CM", "Rejected"]
-    : ["Approved", "Pending PCM", "Pending GM", "PO Edit Pending PCM", "PO Edit Pending GM", "Rejected", "Paid", "Partial", "Draft", "Pending Close PO", "Closed PO"];
+    : ["Approved", "Pending PCM", "Pending GM", "PO Edit Pending PCM", "PO Edit Pending GM", "Rejected", "Paid", "Partial", "Draft", "Pending Close PO", "Received", "Closed PO"];
 
   const handlePRDownloadPDF = (pr: any) => {
     const docId = pr.id || pr.prNo || "pr";
@@ -1112,21 +1116,21 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
           <table className="w-full text-left text-xs table-fixed">
             <thead>
               <tr className="bg-slate-800 text-white">
-                {isColumnVisible(tblId, "rowNum") && <th className="px-3 py-3 font-semibold" style={{ width: prPoScaled.rowNum }}>#</th>}
-                {isColumnVisible(tblId, "no") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="no" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.no}>{isPR ? "PR No." : "PO No."}</ResizableTh>}
-                {isColumnVisible(tblId, "project") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="project" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.project}>โครงการ</ResizableTh>}
-                {isPR && isColumnVisible("pr-table", "costCode") && <ResizableTh tableId="pr-table" colKey="costCode" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.costCode}>Cost Code</ResizableTh>}
-                {isPR && isColumnVisible("pr-table", "description") && <ResizableTh tableId="pr-table" colKey="description" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.description}>รายการงบ</ResizableTh>}
-                {!isPR && isColumnVisible("po-table", "vendor") && <ResizableTh tableId="po-table" colKey="vendor" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.vendor}>Vendor</ResizableTh>}
-                {!isPR && isColumnVisible("po-table", "prRef") && <ResizableTh tableId="po-table" colKey="prRef" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.prRef}>PR อ้างอิง</ResizableTh>}
-                {isColumnVisible(tblId, "date") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="date" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.date}>วันที่</ResizableTh>}
-                {isPR && isColumnVisible("pr-table", "requestor") && <ResizableTh tableId="pr-table" colKey="requestor" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.requestor}>ผู้ขอ</ResizableTh>}
-                {isPR && isColumnVisible("pr-table", "type") && <ResizableTh tableId="pr-table" colKey="type" className="px-3 py-3 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.type}>ประเภท</ResizableTh>}
-                {isColumnVisible(tblId, "items") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="items" className="px-3 py-3 font-semibold text-right" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.items}>จำนวนรายการ</ResizableTh>}
-                {isColumnVisible(tblId, "amount") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="amount" className="px-3 py-3 font-semibold text-right" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.amount}>ยอดรวม</ResizableTh>}
-                {isColumnVisible(tblId, "status") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="status" className="px-3 py-3 font-semibold text-center" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.status}>สถานะ</ResizableTh>}
-                {isPR && isColumnVisible("pr-table", "poRef") && <ResizableTh tableId="pr-table" colKey="poRef" className="px-3 py-3 font-semibold text-center" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.poRef}>Ref PO</ResizableTh>}
-                {isColumnVisible(tblId, "action") && <th className="px-3 py-3 font-semibold text-center" style={{ width: prPoScaled.action }}>Action</th>}
+                {isColumnVisible(tblId, "rowNum") && <th className="px-2 py-0.5 font-semibold" style={{ width: prPoScaled.rowNum }}>#</th>}
+                {isColumnVisible(tblId, "no") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="no" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.no}>{isPR ? "PR No." : "PO No."}</ResizableTh>}
+                {isColumnVisible(tblId, "project") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="project" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.project}>โครงการ</ResizableTh>}
+                {isPR && isColumnVisible("pr-table", "costCode") && <ResizableTh tableId="pr-table" colKey="costCode" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.costCode}>Cost Code</ResizableTh>}
+                {isPR && isColumnVisible("pr-table", "description") && <ResizableTh tableId="pr-table" colKey="description" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.description}>รายการงบ</ResizableTh>}
+                {!isPR && isColumnVisible("po-table", "vendor") && <ResizableTh tableId="po-table" colKey="vendor" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.vendor}>Vendor</ResizableTh>}
+                {!isPR && isColumnVisible("po-table", "prRef") && <ResizableTh tableId="po-table" colKey="prRef" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.prRef}>PR อ้างอิง</ResizableTh>}
+                {isColumnVisible(tblId, "date") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="date" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.date}>วันที่</ResizableTh>}
+                {isPR && isColumnVisible("pr-table", "requestor") && <ResizableTh tableId="pr-table" colKey="requestor" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.requestor}>ผู้ขอ</ResizableTh>}
+                {isPR && isColumnVisible("pr-table", "type") && <ResizableTh tableId="pr-table" colKey="type" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.type}>ประเภท</ResizableTh>}
+                {isColumnVisible(tblId, "items") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="items" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.items}>จำนวนรายการ</ResizableTh>}
+                {isColumnVisible(tblId, "amount") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="amount" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.amount}>ยอดรวม</ResizableTh>}
+                {isColumnVisible(tblId, "status") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="status" className="px-2 py-0.5 font-semibold text-center" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.status}>สถานะ</ResizableTh>}
+                {isPR && isColumnVisible("pr-table", "poRef") && <ResizableTh tableId="pr-table" colKey="poRef" className="px-2 py-0.5 font-semibold text-center" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.poRef}>Ref PO</ResizableTh>}
+                {isColumnVisible(tblId, "action") && <th className="px-2 py-0.5 font-semibold text-center" style={{ width: prPoScaled.action }}>Action</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -1166,9 +1170,9 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
                   return (
                     <tr key={r.id} className={`hover:bg-blue-50/40 transition-colors cursor-pointer ${isEven ? "bg-white" : "bg-slate-50/40"}`} onClick={() => { if (!isPR && r.pdfUrl) setPdfPreviewUrl(r.pdfUrl); }}>
-                      {isColumnVisible(tblId, "rowNum") && <td className="px-3 py-2.5 text-slate-400 font-mono">{idx + 1}</td>}
+                      {isColumnVisible(tblId, "rowNum") && <td className="px-2 py-0.5 text-slate-400 font-mono">{idx + 1}</td>}
                       {isColumnVisible(tblId, "no") && (
-                      <td className="px-3 py-2.5 font-bold text-slate-800 whitespace-nowrap">
+                      <td className="px-2 py-0.5 font-bold text-slate-800 whitespace-nowrap">
                         <div className="flex items-center gap-1">
                           <Hash size={10} className={isPR ? "text-slate-500" : "text-red-500"} />
                           {noField || "-"}
@@ -1179,15 +1183,15 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                       </td>
                       )}
                       {isColumnVisible(tblId, "project") && (
-                      <td className="px-3 py-2.5 text-slate-600 max-w-[140px] truncate" title={getProjectName(r.projectId)}>
+                      <td className="px-2 py-0.5 text-slate-600 max-w-[140px] truncate" title={getProjectName(r.projectId)}>
                         {getProjectName(r.projectId)}
                       </td>
                       )}
                       {isPR && isColumnVisible("pr-table", "costCode") && (
-                        <td className="px-3 py-2.5 font-mono text-slate-700">{r.costCode || "-"}</td>
+                        <td className="px-2 py-0.5 font-mono text-slate-700">{r.costCode || "-"}</td>
                       )}
                       {isPR && isColumnVisible("pr-table", "description") && (
-                        <td className="px-3 py-2.5 text-slate-600 max-w-[180px] truncate"
+                        <td className="px-2 py-0.5 text-slate-600 max-w-[180px] truncate"
                           title={r.items && r.items.length > 0
                             ? r.items.map((it: any) => it.description).filter(Boolean).join(", ")
                             : getBudgetDesc(r.costCode, r.projectId)}>
@@ -1197,17 +1201,17 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                         </td>
                       )}
                       {!isPR && isColumnVisible("po-table", "vendor") && (
-                        <td className="px-3 py-2.5 text-slate-700 font-medium">{vendorName}</td>
+                        <td className="px-2 py-0.5 text-slate-700 font-medium">{vendorName}</td>
                       )}
                       {!isPR && isColumnVisible("po-table", "prRef") && (
-                        <td className="px-3 py-2.5 text-slate-500 text-[11px]">
+                        <td className="px-2 py-0.5 text-slate-500 text-[11px]">
                           {(r.selectedPrIds || []).length > 0
                             ? prs.filter((p: any) => (r.selectedPrIds || []).includes(p.id)).map((p: any) => p.prNo).join(", ")
                             : "-"}
                         </td>
                       )}
                       {isColumnVisible(tblId, "date") && (
-                      <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">
+                      <td className="px-2 py-0.5 text-slate-500 whitespace-nowrap">
                         {dateField
                           ? (dateField.includes("T")
                               ? new Date(dateField).toLocaleDateString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric" })
@@ -1215,58 +1219,58 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                           : "-"}
                       </td>
                       )}
-                      {isPR && isColumnVisible("pr-table", "requestor") && <td className="px-3 py-2.5 text-slate-600">{r.requestor || "-"}</td>}
+                      {isPR && isColumnVisible("pr-table", "requestor") && <td className="px-2 py-0.5 text-slate-600">{r.requestor || "-"}</td>}
                       {isPR && isColumnVisible("pr-table", "type") && (
-                        <td className="px-3 py-2.5">
+                        <td className="px-2 py-0.5">
                           {r.purchaseType ? (
-                            <span className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded text-[10px]">{r.purchaseType}</span>
+                            <span className="bg-slate-100 text-slate-600 px-1.5 py-0 rounded text-[10px]">{r.purchaseType}</span>
                           ) : "-"}
                         </td>
                       )}
-                      {isColumnVisible(tblId, "items") && <td className="px-3 py-2.5 text-right text-slate-600">{itemCount} รายการ</td>}
+                      {isColumnVisible(tblId, "items") && <td className="px-2 py-0.5 text-right text-slate-600">{itemCount} รายการ</td>}
                       {isColumnVisible(tblId, "amount") && (
-                      <td className="px-3 py-2.5 text-right font-bold text-slate-800">
+                      <td className="px-2 py-0.5 text-right font-bold text-slate-800">
                         ฿{Number(amount || 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
                       </td>
                       )}
                       {isColumnVisible(tblId, "status") && (
-                      <td className="px-3 py-2.5 text-center">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-semibold whitespace-nowrap ${statusClass}`}>
+                      <td className="px-2 py-0.5 text-center">
+                        <span className={`inline-flex items-center px-2 py-0 rounded-full border text-[10px] font-semibold whitespace-nowrap ${statusClass}`}>
                           {r.status || "Draft"}
                         </span>
                       </td>
                       )}
                       {isPR && isColumnVisible("pr-table", "poRef") && (
-                        <td className="px-3 py-2.5 text-slate-500 text-[11px] text-center">
+                        <td className="px-2 py-0.5 text-slate-500 text-[11px] text-center">
                           {poRefNos || "-"}
                         </td>
                       )}
-                      {isColumnVisible(tblId, "action") && <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
+                      {isColumnVisible(tblId, "action") && <td className="px-2 py-0.5" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-center gap-1">
                           {canUseFunction(tableModule, "email") && (
-                            <button type="button" disabled={pdfLoadingId === r.id} className="p-1.5 rounded hover:bg-slate-200 text-slate-600 hover:text-slate-800 disabled:opacity-40" title="ส่งไฟล์ PDF ทางเมล" onClick={() => { setEmailModal({ doc: r, kind: isPR ? "pr" : "po" }); setEmailTo(""); }}>
-                              <Mail size={14} />
+                            <button type="button" disabled={pdfLoadingId === r.id} className="p-1 rounded hover:bg-slate-200 text-slate-600 hover:text-slate-800 disabled:opacity-40" title="ส่งไฟล์ PDF ทางเมล" onClick={() => { setEmailModal({ doc: r, kind: isPR ? "pr" : "po" }); setEmailTo(""); }}>
+                              <Mail size={13} />
                             </button>
                           )}
                           {canUseFunction(tableModule, "download") && (
-                            <button type="button" disabled={pdfLoadingId === r.id} className="p-1.5 rounded hover:bg-slate-200 text-slate-600 hover:text-slate-800 disabled:opacity-40" title="Download PDF" onClick={() => isPR ? handlePRDownloadPDF(r) : handlePODownloadPDF(r)}>
+                            <button type="button" disabled={pdfLoadingId === r.id} className="p-1 rounded hover:bg-slate-200 text-slate-600 hover:text-slate-800 disabled:opacity-40" title="Download PDF" onClick={() => isPR ? handlePRDownloadPDF(r) : handlePODownloadPDF(r)}>
                               {pdfLoadingId === r.id ? (
-                                <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" strokeOpacity=".25"/><path d="M12 2a10 10 0 0 1 10 10" /></svg>
+                                <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" strokeOpacity=".25"/><path d="M12 2a10 10 0 0 1 10 10" /></svg>
                               ) : (
-                                <Download size={14} />
+                                <Download size={13} />
                               )}
                             </button>
                           )}
                           {canUseFunction(tableModule, "closePR") && isPR && r.status !== "Closed PR" && r.status !== "Closed PR Auto" && r.status !== "Pending Close" && r.status !== "Pending Active PR" && (
-                            <button type="button" className="p-1.5 rounded hover:bg-amber-100 text-amber-700" title="ขอปิด PR (รอ PCM ยืนยัน)" onClick={() => openConfirm?.("ขอปิด PR", "เมื่อ PCM ยืนยันแล้ว สถานะจะเป็น Closed PR", async () => {
+                            <button type="button" className="p-1 rounded hover:bg-amber-100 text-amber-700" title="ขอปิด PR (รอ PCM ยืนยัน)" onClick={() => openConfirm?.("ขอปิด PR", "เมื่อ PCM ยืนยันแล้ว สถานะจะเป็น Closed PR", async () => {
                               await updateData?.("prs", r.id, { status: "Pending Close", preCloseStatus: r.status, closeRequestedAt: new Date().toISOString() });
                               showAlert?.("ส่งคำขอแล้ว", "รอ PCM ยืนยันการปิด PR", "info");
                             })}>
-                              <XCircle size={14} />
+                              <XCircle size={13} />
                             </button>
                           )}
                           {canUseFunction(tableModule, "closePR") && isPR && r.status === "Pending Close" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
-                            <button type="button" className="p-1.5 rounded hover:bg-emerald-100 text-emerald-700 text-[10px] font-medium" title="ยืนยันปิด PR" onClick={() => openConfirm?.("ยืนยันปิด PR", "สถานะจะเปลี่ยนเป็น Closed PR", async () => {
+                            <button type="button" className="p-1 rounded hover:bg-emerald-100 text-emerald-700 text-[10px] font-medium" title="ยืนยันปิด PR" onClick={() => openConfirm?.("ยืนยันปิด PR", "สถานะจะเปลี่ยนเป็น Closed PR", async () => {
                               await updateData?.("prs", r.id, { status: "Closed PR", preCloseStatus: r.preCloseStatus || r.status });
                               showAlert?.("สำเร็จ", "ปิด PR เรียบร้อย", "success");
                             })}>
@@ -1294,7 +1298,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                               Active PR
                             </button>
                           )}
-                          {canUseFunction(tableModule, "closePO") && !isPR && r.status !== "Closed PO" && r.status !== "Pending Close PO" && (
+                          {canUseFunction(tableModule, "closePO") && !isPR && r.status !== "Closed PO" && r.status !== "Pending Close PO" && r.status !== "Received" && (
                             <button type="button" className="p-1.5 rounded hover:bg-amber-100 text-amber-700" title="ขอปิด PO (รอ PCM ยืนยัน)" onClick={() => openConfirm?.("ขอปิด PO", "เมื่อ PCM ยืนยันแล้ว สถานะจะเป็น Closed PO", async () => { await updateData?.("pos", r.id, { status: "Pending Close PO", closeRequestedAt: new Date().toISOString() }); showAlert?.("ส่งคำขอแล้ว", "รอ PCM ยืนยันการปิด PO", "info"); })}>
                               <XCircle size={14} />
                             </button>
@@ -1302,6 +1306,34 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                           {canUseFunction(tableModule, "closePO") && !isPR && r.status === "Pending Close PO" && (userRole === "PCM" || userRole === "Administrator") && (
                             <button type="button" className="p-1.5 rounded hover:bg-emerald-100 text-emerald-700 text-[10px] font-medium" title="ยืนยันปิด PO" onClick={() => openConfirm?.("ยืนยันปิด PO", "สถานะจะเปลี่ยนเป็น Closed PO", async () => { await updateData?.("pos", r.id, { status: "Closed PO" }); showAlert?.("สำเร็จ", "ปิด PO เรียบร้อย", "success"); })}>
                               ยืนยันปิด
+                            </button>
+                          )}
+                          {canUseFunction(tableModule, "delete") && !isPR && (
+                            <button
+                              type="button"
+                              className="p-1.5 rounded hover:bg-red-100 text-red-600"
+                              title="ลบ PO"
+                              onClick={() => openConfirm?.("ยืนยันการลบ", `คุณต้องการลบ PO ${r.poNo || r.id} ใช่หรือไม่?`, async () => {
+                                const prIds = r.items
+                                  ? [...new Set(r.items.map((i: any) => i.prId).filter(Boolean))]
+                                  : (r.prRefId ? [r.prRefId] : []);
+                                if (r.pdfUrl) {
+                                  const safePONo = (r.poNo || r.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
+                                  const safeProjId = r.projectId || "unknown";
+                                  await deleteGeneratedPdf(`generated/pos/${safeProjId}/${safePONo}.pdf`);
+                                }
+                                const deleted = await deleteData?.("pos", r.id);
+                                if (deleted && prIds.length > 0) {
+                                  for (const prId of prIds) {
+                                    const stillUsedByOtherPO = pos.some((p: any) => p.id !== r.id && p.items?.some((i: any) => i.prId === prId));
+                                    if (!stillUsedByOtherPO) {
+                                      await updateData?.("prs", prId, { status: "Approved" });
+                                    }
+                                  }
+                                }
+                              }, "danger")}
+                            >
+                              <Trash2 size={14} />
                             </button>
                           )}
                         </div>

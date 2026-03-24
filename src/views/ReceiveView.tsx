@@ -1,8 +1,8 @@
 // @ts-nocheck
-import React, { useState, useMemo, useCallback, useRef, useContext } from "react";
+import React, { useState, useMemo, useCallback, useContext, useEffect } from "react";
 import {
   ChevronDown, ChevronRight, Package, Eye, FileText,
-  Plus, Camera, X, Check, Clock, ExternalLink, Truck, ImageIcon, List,
+  Plus, X, Check, Clock, ExternalLink, Truck, ImageIcon, List, Search, Trash2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAppData } from "../contexts/AppDataContext";
@@ -11,6 +11,8 @@ import { AuthContext } from "../auth/AuthContext";
 import { Card, Button, Badge, formatCurrency } from "../components/ui";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
 import { uploadAttachment } from "../lib/uploadAttachment";
+import { generateRPPdfBytes, uploadGeneratedPdf, deleteGeneratedPdf } from "../lib/pdfForms";
+import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 
 const PO_TYPE_LABELS = {
   CR: "CR — เครดิต",
@@ -27,12 +29,15 @@ const PO_TYPE_LABELS = {
 
 const ReceiveView = React.memo(() => {
   const {
-    pos, vendors, receives, projects,
-    addData, updateData, showAlert, canUseFunction,
-    visibleProjects,
+    pos, vendors, receives, projects, prs,
+    addData, updateData, deleteData, showAlert, openConfirm, canUseFunction,
+    isColumnVisible,
+    visibleProjects, loadVendors,
   } = useAppData();
   const { selectedProjectId } = useUI();
   const { user, userData } = useContext(AuthContext);
+
+  // ไม่โหลด vendors ตอน mount — โหลดเมื่อ user เปิด PO detail จริงๆ (ลด Firebase reads)
 
   const [activeTab, setActiveTab] = useState<"po" | "history">("po");
   const [viewingPO, setViewingPO] = useState(null);
@@ -40,10 +45,19 @@ const ReceiveView = React.memo(() => {
   const [receiveForm, setReceiveForm] = useState([]);
   const [receiveNote, setReceiveNote] = useState("");
   const [receiveDate, setReceiveDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [receiveVendorName, setReceiveVendorName] = useState("");
+  const [receiveDocumentNo, setReceiveDocumentNo] = useState("");
   const [saving, setSaving] = useState(false);
+  const [savingStep, setSavingStep] = useState("");
   const [expandedTypes, setExpandedTypes] = useState({});
   const [photoPreview, setPhotoPreview] = useState(null);
-  const fileInputRefs = useRef({});
+  const [viewingRcv, setViewingRcv] = useState(null);
+
+  // Search states
+  const [poPOSearch, setPoPOSearch] = useState("");
+  const [poVendorSearch, setPoVendorSearch] = useState("");
+  const [histPOSearch, setHistPOSearch] = useState("");
+  const [histVendorSearch, setHistVendorSearch] = useState("");
 
   const currentProject = projects.find((p) => p.id === selectedProjectId);
 
@@ -74,17 +88,6 @@ const ReceiveView = React.memo(() => {
     return map;
   }, [projectReceives]);
 
-  // Group POs by poType
-  const groupedPOs = useMemo(() => {
-    const groups = {};
-    approvedPOs.forEach((po) => {
-      const type = po.poType || "OTHER";
-      if (!groups[type]) groups[type] = [];
-      groups[type].push(po);
-    });
-    return groups;
-  }, [approvedPOs]);
-
   const getReceiveProgress = useCallback(
     (po) => {
       const summary = receiveSummary[po.id] || {};
@@ -108,29 +111,89 @@ const ReceiveView = React.memo(() => {
     [vendors]
   );
 
+  // Filtered approved POs for "po" tab (search by PO No. and Vendor)
+  const filteredApprovedPOs = useMemo(() => {
+    return approvedPOs.filter((po) => {
+      const poNoMatch = !poPOSearch || (po.poNo || "").toLowerCase().includes(poPOSearch.toLowerCase());
+      const vendorMatch = !poVendorSearch || getVendorName(po.vendorId).toLowerCase().includes(poVendorSearch.toLowerCase());
+      return poNoMatch && vendorMatch;
+    });
+  }, [approvedPOs, poPOSearch, poVendorSearch, getVendorName]);
+
+  // Group POs by poType (use filtered list for display)
+  const groupedPOs = useMemo(() => {
+    const groups = {};
+    filteredApprovedPOs.forEach((po) => {
+      const type = po.poType || "OTHER";
+      if (!groups[type]) groups[type] = [];
+      groups[type].push(po);
+    });
+    return groups;
+  }, [filteredApprovedPOs]);
+
   const toggleType = (type) => {
     setExpandedTypes((prev) => ({ ...prev, [type]: !prev[type] }));
   };
 
-  // Generate receive number
+  const getPrNoFromPo = useCallback((po) => {
+    if (!po) return "";
+    if (po.prNo) return String(po.prNo);
+    // items อาจมี prNo ตรงๆ (PO ใหม่)
+    const fromItemsPrNo = [...new Set((po.items || []).map((i) => i.prNo).filter(Boolean))];
+    if (fromItemsPrNo.length > 0) return fromItemsPrNo.join(", ");
+    // items มี prId → lookup จาก prs collection
+    const fromItemsPrId = [...new Set((po.items || []).map((i) => i.prId).filter(Boolean))];
+    if (fromItemsPrId.length > 0) {
+      const nos = fromItemsPrId.map((id) => prs.find((pr) => pr.id === id)?.prNo).filter(Boolean);
+      if (nos.length > 0) return nos.join(", ");
+    }
+    // fallback: selectedPrIds (กรณีเก็บไว้)
+    const linkedPrIds = Array.isArray(po.selectedPrIds) ? po.selectedPrIds : [];
+    if (linkedPrIds.length === 0) return "";
+    const linkedPrNos = linkedPrIds
+      .map((prId) => prs.find((pr) => pr.id === prId)?.prNo)
+      .filter(Boolean);
+    return linkedPrNos.join(", ");
+  }, [prs]);
+
+  // Generate RP number
   const generateReceiveNo = useCallback(() => {
-    if (!currentProject?.jobNo) return `RCV-${Date.now()}`;
+    if (!currentProject?.jobNo) return `RP-${Date.now()}`;
     const yy = String(new Date().getFullYear()).slice(-2);
     const jobCode = currentProject.jobNo;
     const existing = receives.filter(
-      (r) => r.projectId === selectedProjectId && r.receiveNo?.startsWith(`RCV${yy}${jobCode}`)
+      (r) =>
+        r.projectId === selectedProjectId &&
+        (
+          r.rpNo?.startsWith(`RP${yy}${jobCode}`) ||
+          r.receiveNo?.startsWith(`RP${yy}${jobCode}`) ||
+          r.receiveNo?.startsWith(`RCV${yy}${jobCode}`)
+        )
     );
     const seq = String(existing.length + 1).padStart(4, "0");
-    return `RCV${yy}${jobCode}-${seq}`;
+    return `RP${yy}${jobCode}-${seq}`;
   }, [currentProject, receives, selectedProjectId]);
 
-  // Open PO Detail Modal
+  // Open PO Detail Modal — trigger loadVendors lazily ตรงนี้แทนการโหลดตอน mount
   const openPODetail = (po) => {
     setViewingPO(po);
     setReceiveMode(false);
     setReceiveNote("");
+    setReceiveVendorName(getVendorName(po?.vendorId));
+    setReceiveDocumentNo("");
     setReceiveDate(new Date().toISOString().split("T")[0]);
+    loadVendors();
   };
+
+  // sync receiveVendorName เมื่อ vendors โหลดเสร็จหลังจากเปิด PO detail
+  useEffect(() => {
+    if (viewingPO && vendors.length > 0) {
+      setReceiveVendorName((prev) => {
+        if (prev && prev !== "-") return prev;
+        return getVendorName(viewingPO.vendorId);
+      });
+    }
+  }, [vendors, viewingPO, getVendorName]);
 
   // Switch to receive form mode
   const startReceiveMode = () => {
@@ -141,11 +204,18 @@ const ReceiveView = React.memo(() => {
       const ordered = Number(item.quantity || 0);
       const alreadyReceived = Number(summary[idx] || 0);
       const remaining = Math.max(0, ordered - alreadyReceived);
+      const unitPrice = Number(item.price) || 0;
+      const lineAmount =
+        Number(item.amount) || (Number.isFinite(ordered * unitPrice) ? ordered * unitPrice : 0);
+      const lineNo = item.lineNo ?? item.rowNo ?? idx + 1;
       return {
         poItemIndex: idx,
+        lineNo,
         materialNo: item.materialNo || "",
         description: item.description || "",
         unit: item.unit || "",
+        unitPrice,
+        lineAmount,
         orderedQty: ordered,
         alreadyReceived,
         remaining,
@@ -196,6 +266,19 @@ const ReceiveView = React.memo(() => {
     );
   };
 
+  /** ปุ่มเดียว — ไม่ใส่ capture ให้ OS ให้เลือกถ่าย / แกลเลอรี / อัปโหลดไฟล์ */
+  const openItemPhotoPicker = (itemIdx) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.multiple = true;
+    input.onchange = (e) => {
+      handlePhotoAdd(itemIdx, e.target.files);
+      input.value = "";
+    };
+    input.click();
+  };
+
   // Save receive transaction
   const handleSaveReceive = async () => {
     const po = viewingPO;
@@ -217,8 +300,20 @@ const ReceiveView = React.memo(() => {
     }
 
     setSaving(true);
+    setSavingStep("กำลังอัปโหลดรูปภาพ...");
     try {
       const receiveNo = generateReceiveNo();
+      const now = new Date();
+      const receivedByName = `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim();
+      const resolvedPrNo = getPrNoFromPo(po);
+      const resolvedProjectCode = po.projectItemCode
+        || (resolvedPrNo ? resolvedPrNo.split(",")[0].trim().substring(0, 3) : "");
+      // ดึงชื่อผู้จำหน่ายจาก vendors list โดยตรง (เป็นค่าจริง ไม่ใช่ "-")
+      const vendorObj = vendors.find((v) => v.id === po.vendorId);
+      const resolvedVendorName =
+        (receiveVendorName && receiveVendorName !== "-")
+          ? receiveVendorName
+          : (vendorObj?.name || po.vendorName || "");
 
       // Upload photos
       const savedItems = [];
@@ -238,27 +333,73 @@ const ReceiveView = React.memo(() => {
           description: item.description,
           unit: item.unit,
           orderedQty: item.orderedQty,
+          price: item.unitPrice,
+          amount: Number(item.receivedQty) * Number(item.unitPrice || 0),
           receivedQty: Number(item.receivedQty),
           photos: uploadedPhotos,
         });
       }
 
+      // ── Generate & Upload RP PDF ──────────────────────────────────────────
+      setSavingStep("กำลังสร้าง PDF ใบตรวจรับสินค้า...");
+      let pdfUrl: string | null = null;
+      let pdfPath: string | null = null;
+      try {
+        const rpData = {
+          rpNo: receiveNo,
+          receiveNo,
+          receivedDate: receiveDate,
+          projectItemCode: resolvedProjectCode,
+          vendorName: resolvedVendorName,
+          prNo: resolvedPrNo,
+          poNo: po.poNo,
+          documentNo: receiveDocumentNo || "",
+          receivedByName,
+          location: po.location || currentProject?.location || currentProject?.name || "",
+          items: savedItems,
+          createdAt: now.toISOString(),
+        };
+
+        const signatureUrl = userData?.signatureUrl || null;
+        let bytes = await generateRPPdfBytes(rpData, { signatureUrl });
+
+        const safeRpNo = receiveNo.replace(/[^a-zA-Z0-9\-_]/g, "_");
+        const safeProjId = selectedProjectId || "unknown";
+        pdfPath = `generated/receives/${safeProjId}/${safeRpNo}.pdf`;
+
+        setSavingStep("กำลังอัปโหลด PDF...");
+        pdfUrl = await uploadGeneratedPdf(bytes, pdfPath);
+      } catch (pdfErr) {
+        console.warn("[ReceiveView] PDF generation failed (non-fatal):", pdfErr);
+        pdfUrl = null;
+        pdfPath = null;
+      }
+      // ─────────────────────────────────────────────────────────────────────
+
+      setSavingStep("กำลังบันทึกข้อมูล...");
       const receiveData = {
         receiveNo,
+        rpNo: receiveNo,
         poId: po.id,
         poNo: po.poNo,
+        prNo: resolvedPrNo,
+        projectItemCode: resolvedProjectCode,
+        vendorName: resolvedVendorName,
+        documentNo: receiveDocumentNo || "",
         projectId: selectedProjectId,
         items: savedItems,
         receivedDate: receiveDate,
         receivedByUid: user?.uid || null,
-        receivedByName: `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim(),
+        receivedByName,
         note: receiveNote,
-        createdAt: new Date().toISOString(),
+        createdAt: now.toISOString(),
+        ...(pdfUrl ? { pdfUrl, pdfPath } : {}),
       };
 
       const success = await addData("receives", receiveData);
       if (!success) {
         setSaving(false);
+        setSavingStep("");
         return;
       }
 
@@ -274,8 +415,8 @@ const ReceiveView = React.memo(() => {
       );
 
       if (allFullyReceived) {
-        await updateData("pos", po.id, { status: "Closed PO" });
-        showAlert("รับของครบ", `PO ${po.poNo} รับของครบทุกรายการ — สถานะเปลี่ยนเป็น Closed PO`, "success");
+        await updateData("pos", po.id, { status: "Received", statusNow: "Received" });
+        showAlert("รับของครบ", `PO ${po.poNo} รับของครบทุกรายการ — สถานะเปลี่ยนเป็น Received`, "success");
       } else {
         await updateData("pos", po.id, { statusNow: "Partial Receive" });
         showAlert("สำเร็จ", `บันทึกรับของ ${receiveNo} เรียบร้อย`, "success");
@@ -286,6 +427,7 @@ const ReceiveView = React.memo(() => {
     } catch (e) {
       showAlert("Error", "เกิดข้อผิดพลาด: " + e.message, "error");
     } finally {
+      setSavingStep("");
       setSaving(false);
     }
   };
@@ -297,6 +439,21 @@ const ReceiveView = React.memo(() => {
       .filter((r) => r.poId === viewingPO.id)
       .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
   }, [viewingPO, projectReceives]);
+
+  const previewReceiveNo = useMemo(() => {
+    if (!receiveMode) return "";
+    return generateReceiveNo();
+  }, [receiveMode, generateReceiveNo]);
+
+  const currentPrNo = useMemo(() => getPrNoFromPo(viewingPO), [viewingPO, getPrNoFromPo]);
+  const projectItemCode = useMemo(() => {
+    if (viewingPO?.projectItemCode) return viewingPO.projectItemCode;
+    if (currentPrNo) {
+      const first = String(currentPrNo).split(",")[0].trim();
+      return first.substring(0, 3);
+    }
+    return "";
+  }, [viewingPO, currentPrNo]);
 
   const poDescription = (po) => {
     const items = po.items || [];
@@ -310,6 +467,31 @@ const ReceiveView = React.memo(() => {
     [...projectReceives].sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")),
     [projectReceives]
   );
+
+  // Filtered receive history by search
+  const filteredReceiveHistory = useMemo(() => {
+    return sortedReceiveHistory.filter((rcv) => {
+      const poNoMatch = !histPOSearch || (rcv.poNo || "").toLowerCase().includes(histPOSearch.toLowerCase());
+      const vendorMatch = !histVendorSearch || (rcv.vendorName || "").toLowerCase().includes(histVendorSearch.toLowerCase());
+      return poNoMatch && vendorMatch;
+    });
+  }, [sortedReceiveHistory, histPOSearch, histVendorSearch]);
+
+  // Delete receive record
+  const handleDeleteReceive = useCallback((rcv) => {
+    openConfirm(
+      "ยืนยันการลบ",
+      `คุณต้องการลบ ${rcv.rpNo || rcv.receiveNo || "รายการนี้"} ใช่หรือไม่?`,
+      async () => {
+        if (rcv.pdfPath) {
+          await deleteGeneratedPdf(rcv.pdfPath);
+        }
+        await deleteData("receives", rcv.id);
+        showAlert("สำเร็จ", `ลบ ${rcv.rpNo || rcv.receiveNo || "รายการ"} เรียบร้อยแล้ว`, "success");
+      },
+      "danger"
+    );
+  }, [openConfirm, deleteData, showAlert]);
 
   return (
     <div className="space-y-4">
@@ -355,59 +537,141 @@ const ReceiveView = React.memo(() => {
       {/* ── Tab: รายการ Receive ── */}
       {activeTab === "history" && (
         <Card className="overflow-hidden">
+          {/* Toolbar */}
+          <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50/60">
+            <div className="relative">
+              <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              <input
+                type="text"
+                value={histPOSearch}
+                onChange={(e) => setHistPOSearch(e.target.value)}
+                placeholder="ค้นหา PO No."
+                className="pl-7 pr-2 py-1 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 w-36"
+              />
+            </div>
+            <div className="relative">
+              <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              <input
+                type="text"
+                value={histVendorSearch}
+                onChange={(e) => setHistVendorSearch(e.target.value)}
+                placeholder="ค้นหา Vendor"
+                className="pl-7 pr-2 py-1 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 w-36"
+              />
+            </div>
+            {(histPOSearch || histVendorSearch) && (
+              <button
+                type="button"
+                onClick={() => { setHistPOSearch(""); setHistVendorSearch(""); }}
+                className="text-xs text-slate-400 hover:text-red-500 transition-colors px-1"
+              >
+                <X size={13} />
+              </button>
+            )}
+            <div className="ml-auto">
+              <ColumnVisibilityToggle tableId="receive-history" />
+            </div>
+          </div>
+
           {sortedReceiveHistory.length === 0 ? (
             <div className="p-10 text-center text-slate-400">
               <List size={36} className="mx-auto mb-3 opacity-30" />
               <p className="font-medium text-sm">ยังไม่มีประวัติการรับของในโครงการนี้</p>
             </div>
+          ) : filteredReceiveHistory.length === 0 ? (
+            <div className="p-8 text-center text-slate-400">
+              <Search size={28} className="mx-auto mb-2 opacity-30" />
+              <p className="text-sm">ไม่พบรายการที่ตรงกับการค้นหา</p>
+            </div>
           ) : (
             <table className="w-full text-left text-xs text-slate-600">
               <thead className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-100">
                 <tr>
-                  <th className="py-2.5 px-4">Receive No.</th>
-                  <th className="py-2.5 px-4">วันที่ทำรับ</th>
-                  <th className="py-2.5 px-4">PO No.</th>
-                  <th className="py-2.5 px-4">Type</th>
-                  <th className="py-2.5 px-4">Vendor</th>
-                  <th className="py-2.5 px-4 text-center">รายการสินค้า</th>
-                  <th className="py-2.5 px-4">ผู้รับของ</th>
-                  <th className="py-2.5 px-4">หมายเหตุ</th>
+                  {isColumnVisible("receive-history", "rpNo") && <th className="py-1 px-3">RP No.</th>}
+                  {isColumnVisible("receive-history", "date") && <th className="py-1 px-3">วันที่ทำรับ</th>}
+                  {isColumnVisible("receive-history", "poNo") && <th className="py-1 px-3">PO No.</th>}
+                  {isColumnVisible("receive-history", "type") && <th className="py-1 px-3">Type</th>}
+                  {isColumnVisible("receive-history", "vendor") && <th className="py-1 px-3">Vendor</th>}
+                  {isColumnVisible("receive-history", "items") && <th className="py-1 px-3 text-center">รายการสินค้า</th>}
+                  {isColumnVisible("receive-history", "receivedBy") && <th className="py-1 px-3">ผู้รับของ</th>}
+                  {isColumnVisible("receive-history", "note") && <th className="py-1 px-3">หมายเหตุ</th>}
+                  <th className="py-1 px-3 text-center">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {sortedReceiveHistory.map((rcv) => {
+                {filteredReceiveHistory.map((rcv) => {
                   const po = pos.find((p) => p.id === rcv.poId);
                   const vendor = vendors.find((v) => v.id === po?.vendorId);
                   const itemCount = (rcv.items || []).length;
                   return (
-                    <tr key={rcv.id} className="hover:bg-slate-50 transition-colors">
-                      <td className="py-2.5 px-4 font-medium text-blue-700 whitespace-nowrap">
-                        {rcv.receiveNo || "-"}
-                      </td>
-                      <td className="py-2.5 px-4 whitespace-nowrap">
-                        {rcv.receivedDate
-                          ? new Date(rcv.receivedDate).toLocaleDateString("th-TH", { year: "numeric", month: "short", day: "numeric" })
-                          : "-"}
-                      </td>
-                      <td className="py-2.5 px-4 font-medium whitespace-nowrap">{rcv.poNo || "-"}</td>
-                      <td className="py-2.5 px-4">
-                        {po?.poType ? (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 whitespace-nowrap">
-                            {po.poType}
+                    <tr
+                      key={rcv.id}
+                      className="hover:bg-blue-50/40 cursor-pointer transition-colors"
+                      onClick={() => setViewingRcv({ rcv, po, vendor })}
+                    >
+                      {isColumnVisible("receive-history", "rpNo") && (
+                        <td className="py-1 px-3 font-medium text-blue-700 whitespace-nowrap">
+                          {rcv.rpNo || rcv.receiveNo || "-"}
+                        </td>
+                      )}
+                      {isColumnVisible("receive-history", "date") && (
+                        <td className="py-1 px-3 whitespace-nowrap">
+                          {rcv.receivedDate
+                            ? new Date(rcv.receivedDate).toLocaleDateString("th-TH", { year: "numeric", month: "short", day: "numeric" })
+                            : "-"}
+                        </td>
+                      )}
+                      {isColumnVisible("receive-history", "poNo") && (
+                        <td className="py-1 px-3 font-medium whitespace-nowrap">{rcv.poNo || "-"}</td>
+                      )}
+                      {isColumnVisible("receive-history", "type") && (
+                        <td className="py-1 px-3">
+                          {po?.poType ? (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 whitespace-nowrap">
+                              {po.poType}
+                            </span>
+                          ) : "-"}
+                        </td>
+                      )}
+                      {isColumnVisible("receive-history", "vendor") && (
+                        <td className="py-1 px-3 max-w-[180px] truncate" title={rcv.vendorName || vendor?.name || "-"}>
+                          {rcv.vendorName || vendor?.name || "-"}
+                        </td>
+                      )}
+                      {isColumnVisible("receive-history", "items") && (
+                        <td className="py-1 px-3 text-center">
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 font-semibold text-[10px] border border-blue-100">
+                            <Package size={9} /> {itemCount} รายการ
                           </span>
-                        ) : "-"}
-                      </td>
-                      <td className="py-2.5 px-4 max-w-[180px] truncate" title={vendor?.name || "-"}>
-                        {vendor?.name || "-"}
-                      </td>
-                      <td className="py-2.5 px-4 text-center">
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-semibold text-[11px] border border-blue-100">
-                          <Package size={10} /> {itemCount} รายการ
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-4 whitespace-nowrap">{rcv.receivedByName || "-"}</td>
-                      <td className="py-2.5 px-4 text-slate-400 max-w-[160px] truncate" title={rcv.note || ""}>
-                        {rcv.note || "-"}
+                        </td>
+                      )}
+                      {isColumnVisible("receive-history", "receivedBy") && (
+                        <td className="py-1 px-3 whitespace-nowrap">{rcv.receivedByName || "-"}</td>
+                      )}
+                      {isColumnVisible("receive-history", "note") && (
+                        <td className="py-1 px-3 text-slate-400 max-w-[160px] truncate" title={rcv.note || ""}>
+                          {rcv.note || "-"}
+                        </td>
+                      )}
+                      <td className="py-1 px-3 text-center" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-[10px] font-medium transition-colors"
+                            onClick={() => setViewingRcv({ rcv, po, vendor })}
+                          >
+                            <Eye size={11} /> ดู
+                          </button>
+                          {canUseFunction("receive", "delete") && (
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-red-200 bg-white hover:bg-red-50 text-red-500 text-[10px] font-medium transition-colors"
+                              onClick={() => handleDeleteReceive(rcv)}
+                            >
+                              <Trash2 size={11} /> ลบ
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -426,87 +690,142 @@ const ReceiveView = React.memo(() => {
         </Card>
       ) : (
         <div className="space-y-3">
-          {Object.entries(groupedPOs).map(([type, poList]) => {
-            const isExpanded = expandedTypes[type] !== false;
-            return (
-              <Card key={type} className="overflow-hidden">
+          {/* Search toolbar */}
+          <Card className="px-3 py-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative">
+                <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                <input
+                  type="text"
+                  value={poPOSearch}
+                  onChange={(e) => setPoPOSearch(e.target.value)}
+                  placeholder="ค้นหา PO No."
+                  className="pl-7 pr-2 py-1 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 w-36"
+                />
+              </div>
+              <div className="relative">
+                <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                <input
+                  type="text"
+                  value={poVendorSearch}
+                  onChange={(e) => setPoVendorSearch(e.target.value)}
+                  placeholder="ค้นหา Vendor"
+                  className="pl-7 pr-2 py-1 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 w-36"
+                />
+              </div>
+              {(poPOSearch || poVendorSearch) && (
                 <button
                   type="button"
-                  onClick={() => toggleType(type)}
-                  className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors"
+                  onClick={() => { setPoPOSearch(""); setPoVendorSearch(""); }}
+                  className="text-xs text-slate-400 hover:text-red-500 transition-colors px-1"
                 >
-                  <div className="flex items-center gap-2">
-                    {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                    <span className="px-2 py-0.5 rounded text-xs font-bold bg-slate-200 text-slate-700">
-                      {type}
-                    </span>
-                    <span className="text-sm font-semibold text-slate-700">
-                      {PO_TYPE_LABELS[type] || type}
-                    </span>
-                    <span className="text-xs text-slate-400">({poList.length} PO)</span>
-                  </div>
+                  <X size={13} />
                 </button>
-                {isExpanded && (
-                  <table className="w-full text-left text-xs text-slate-600">
-                    <thead className="bg-slate-50/60 text-slate-500 uppercase font-semibold">
-                      <tr>
-                        <th className="py-2 px-4">PO No.</th>
-                        <th className="py-2 px-4">Vendor</th>
-                        <th className="py-2 px-4">รายละเอียด</th>
-                        <th className="py-2 px-4 text-right">ยอดรวม</th>
-                        <th className="py-2 px-4 text-center">สถานะรับของ</th>
-                        <th className="py-2 px-4 text-center">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {poList.map((po) => {
-                        const progress = getReceiveProgress(po);
-                        const pct = progress.totalOrdered > 0
-                          ? Math.min(100, Math.round((progress.totalReceived / progress.totalOrdered) * 100))
-                          : 0;
-                        return (
-                          <tr
-                            key={po.id}
-                            className="hover:bg-blue-50/40 cursor-pointer transition-colors"
-                            onClick={() => openPODetail(po)}
-                          >
-                            <td className="py-2.5 px-4 font-medium text-blue-700">{po.poNo}</td>
-                            <td className="py-2.5 px-4">{getVendorName(po.vendorId)}</td>
-                            <td className="py-2.5 px-4 max-w-[250px] truncate" title={poDescription(po)}>
-                              {poDescription(po)}
-                            </td>
-                            <td className="py-2.5 px-4 text-right font-semibold">{formatCurrency(po.amount)}</td>
-                            <td className="py-2.5 px-4">
-                              <div className="flex flex-col items-center gap-1">
-                                <div className="w-full max-w-[100px] bg-slate-200 rounded-full h-1.5">
-                                  <div
-                                    className={`h-1.5 rounded-full transition-all ${pct >= 100 ? "bg-green-500" : pct > 0 ? "bg-blue-500" : "bg-slate-300"}`}
-                                    style={{ width: `${pct}%` }}
-                                  />
-                                </div>
-                                <span className={`text-[10px] font-semibold ${pct >= 100 ? "text-green-600" : "text-slate-500"}`}>
-                                  {pct}% ({progress.totalReceived}/{progress.totalOrdered})
-                                </span>
-                              </div>
-                            </td>
-                            <td className="py-2.5 px-4 text-center">
-                              <Button
-                                variant="outline"
-                                className="text-[10px] px-2 py-1"
-                                onClick={(e) => { e.stopPropagation(); openPODetail(po); }}
-                              >
-                                <Eye size={12} /> ดู
-                              </Button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                )}
-              </Card>
-            );
-          })}
+              )}
+              <div className="ml-auto">
+                <ColumnVisibilityToggle tableId="receive-po" />
+              </div>
+            </div>
+          </Card>
+
+          {Object.keys(groupedPOs).length === 0 ? (
+            <Card className="p-8 text-center text-slate-400">
+              <Search size={28} className="mx-auto mb-2 opacity-30" />
+              <p className="text-sm">ไม่พบ PO ที่ตรงกับการค้นหา</p>
+            </Card>
+          ) : (
+            Object.entries(groupedPOs).map(([type, poList]) => {
+              const isExpanded = expandedTypes[type] !== false;
+              return (
+                <Card key={type} className="overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => toggleType(type)}
+                    className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                      <span className="px-2 py-0.5 rounded text-xs font-bold bg-slate-200 text-slate-700">
+                        {type}
+                      </span>
+                      <span className="text-sm font-semibold text-slate-700">
+                        {PO_TYPE_LABELS[type] || type}
+                      </span>
+                      <span className="text-xs text-slate-400">({poList.length} PO)</span>
+                    </div>
+                  </button>
+                  {isExpanded && (
+                    <table className="w-full text-left text-xs text-slate-600">
+                      <thead className="bg-slate-50/60 text-slate-500 uppercase font-semibold">
+                        <tr>
+                          {isColumnVisible("receive-po", "poNo") && <th className="py-1 px-3">PO No.</th>}
+                          {isColumnVisible("receive-po", "vendor") && <th className="py-1 px-3">Vendor</th>}
+                          {isColumnVisible("receive-po", "description") && <th className="py-1 px-3">รายละเอียด</th>}
+                          {isColumnVisible("receive-po", "amount") && <th className="py-1 px-3 text-right">ยอดรวม</th>}
+                          {isColumnVisible("receive-po", "progress") && <th className="py-1 px-3 text-center">สถานะรับของ</th>}
+                          <th className="py-1 px-3 text-center">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {poList.map((po) => {
+                          const progress = getReceiveProgress(po);
+                          const pct = progress.totalOrdered > 0
+                            ? Math.min(100, Math.round((progress.totalReceived / progress.totalOrdered) * 100))
+                            : 0;
+                          return (
+                            <tr
+                              key={po.id}
+                              className="hover:bg-blue-50/40 cursor-pointer transition-colors"
+                              onClick={() => openPODetail(po)}
+                            >
+                              {isColumnVisible("receive-po", "poNo") && (
+                                <td className="py-1 px-3 font-medium text-blue-700">{po.poNo}</td>
+                              )}
+                              {isColumnVisible("receive-po", "vendor") && (
+                                <td className="py-1 px-3">{getVendorName(po.vendorId)}</td>
+                              )}
+                              {isColumnVisible("receive-po", "description") && (
+                                <td className="py-1 px-3 max-w-[250px] truncate" title={poDescription(po)}>
+                                  {poDescription(po)}
+                                </td>
+                              )}
+                              {isColumnVisible("receive-po", "amount") && (
+                                <td className="py-1 px-3 text-right font-semibold">{formatCurrency(po.amount)}</td>
+                              )}
+                              {isColumnVisible("receive-po", "progress") && (
+                                <td className="py-1 px-3">
+                                  <div className="flex flex-col items-center gap-0.5">
+                                    <div className="w-full max-w-[90px] bg-slate-200 rounded-full h-1">
+                                      <div
+                                        className={`h-1 rounded-full transition-all ${pct >= 100 ? "bg-green-500" : pct > 0 ? "bg-blue-500" : "bg-slate-300"}`}
+                                        style={{ width: `${pct}%` }}
+                                      />
+                                    </div>
+                                    <span className={`text-[10px] font-semibold ${pct >= 100 ? "text-green-600" : "text-slate-500"}`}>
+                                      {pct}% ({progress.totalReceived}/{progress.totalOrdered})
+                                    </span>
+                                  </div>
+                                </td>
+                              )}
+                              <td className="py-1 px-3 text-center">
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-[10px] font-medium transition-colors"
+                                  onClick={(e) => { e.stopPropagation(); openPODetail(po); }}
+                                >
+                                  <Eye size={11} /> ดู
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </Card>
+              );
+            })
+          )}
         </div>
       ))}
 
@@ -523,7 +842,7 @@ const ReceiveView = React.memo(() => {
             onClick={() => { if (!saving) { setViewingPO(null); setReceiveMode(false); } }}
           >
             <motion.div
-              className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-8"
+              className={`bg-white rounded-2xl shadow-2xl w-full my-8 ${receiveMode ? "max-w-6xl" : "max-w-4xl"}`}
               variants={modalContentVariants}
               transition={modalTransition}
               onClick={(e) => e.stopPropagation()}
@@ -536,7 +855,7 @@ const ReceiveView = React.memo(() => {
                   </div>
                   <div>
                     <h3 className="text-lg font-bold text-slate-800">
-                      {receiveMode ? "ทำรับของ" : "รายละเอียด PO"}
+                      {receiveMode ? "ทำรับของ" : "รายละเอียด Recieve"}
                     </h3>
                     <p className="text-xs text-slate-400">{viewingPO.poNo}</p>
                   </div>
@@ -697,7 +1016,63 @@ const ReceiveView = React.memo(() => {
                 ) : (
                   /* ── Receive Form ── */
                   <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-1">RP No.</label>
+                        <input
+                          type="text"
+                          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-slate-100 text-slate-600"
+                          value={previewReceiveNo}
+                          readOnly
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-1">สินค้าของโครงการ</label>
+                        <input
+                          type="text"
+                          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-slate-100 text-slate-600"
+                          value={projectItemCode || "-"}
+                          readOnly
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-1">ผู้จำหน่าย</label>
+                        <input
+                          type="text"
+                          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm"
+                          value={receiveVendorName}
+                          onChange={(e) => setReceiveVendorName(e.target.value)}
+                          placeholder="ระบุผู้จำหน่าย"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-1">เลขที่เอกสาร</label>
+                        <input
+                          type="text"
+                          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm"
+                          value={receiveDocumentNo}
+                          onChange={(e) => setReceiveDocumentNo(e.target.value)}
+                          placeholder="ระบุเลขที่เอกสาร"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-1">PR No.</label>
+                        <input
+                          type="text"
+                          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-slate-100 text-slate-600"
+                          value={currentPrNo || "-"}
+                          readOnly
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-1">PO No.</label>
+                        <input
+                          type="text"
+                          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-slate-100 text-slate-600"
+                          value={viewingPO?.poNo || "-"}
+                          readOnly
+                        />
+                      </div>
                       <div>
                         <label className="block text-xs font-medium text-slate-700 mb-1">วันที่รับของ</label>
                         <input
@@ -719,42 +1094,46 @@ const ReceiveView = React.memo(() => {
                       </div>
                     </div>
 
-                    <div className="border rounded-lg overflow-hidden">
-                      <table className="w-full text-xs text-slate-600">
-                        <thead className="bg-slate-50 text-slate-500 uppercase font-semibold">
+                    <div className="border rounded-lg overflow-x-auto">
+                      <table className="w-full min-w-[880px] text-xs text-slate-600">
+                        <thead className="bg-slate-50 text-slate-500 font-semibold">
                           <tr>
-                            <th className="py-2 px-3 text-left">#</th>
-                            <th className="py-2 px-3 text-left">รายละเอียด</th>
-                            <th className="py-2 px-3 text-center">หน่วย</th>
-                            <th className="py-2 px-3 text-right">สั่ง</th>
-                            <th className="py-2 px-3 text-right">รับแล้ว</th>
-                            <th className="py-2 px-3 text-right">คงเหลือ</th>
-                            <th className="py-2 px-3 text-center w-[100px]">จำนวนรับ</th>
-                            <th className="py-2 px-3 text-center">รูปถ่าย</th>
+                            <th className="py-2 px-2 text-center whitespace-nowrap">#</th>
+                            <th className="py-2 px-2 text-left min-w-[140px]">รายละเอียด</th>
+                            <th className="py-2 px-2 text-center whitespace-nowrap">หน่วย</th>
+                            <th className="py-2 px-2 text-right whitespace-nowrap">ราคาต่อหน่วย</th>
+                            <th className="py-2 px-2 text-right whitespace-nowrap">สั่ง</th>
+                            <th className="py-2 px-2 text-right whitespace-nowrap">จำนวนเงิน</th>
+                            <th className="py-2 px-2 text-right whitespace-nowrap">รับแล้ว</th>
+                            <th className="py-2 px-2 text-right whitespace-nowrap">คงเหลือ</th>
+                            <th className="py-2 px-2 text-center whitespace-nowrap w-[88px]">จำนวนรับ</th>
+                            <th className="py-2 px-2 text-center min-w-[100px]">รูปถ่าย</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {receiveForm.map((item, idx) => (
                             <tr key={idx} className={item.remaining === 0 ? "bg-green-50/50 opacity-60" : ""}>
-                              <td className="py-2 px-3 text-slate-400">{idx + 1}</td>
-                              <td className="py-2 px-3">
+                              <td className="py-2 px-2 text-center text-slate-500 font-medium">{item.lineNo}</td>
+                              <td className="py-2 px-2">
                                 <p className="font-medium">{item.description || "-"}</p>
                                 {item.materialNo && (
                                   <p className="text-[10px] text-slate-400 font-mono">{item.materialNo}</p>
                                 )}
                               </td>
-                              <td className="py-2 px-3 text-center">{item.unit || "-"}</td>
-                              <td className="py-2 px-3 text-right">{item.orderedQty}</td>
-                              <td className="py-2 px-3 text-right text-blue-600 font-semibold">{item.alreadyReceived}</td>
-                              <td className="py-2 px-3 text-right text-orange-600 font-semibold">{item.remaining}</td>
-                              <td className="py-2 px-3">
+                              <td className="py-2 px-2 text-center">{item.unit || "-"}</td>
+                              <td className="py-2 px-2 text-right tabular-nums">{formatCurrency(item.unitPrice)}</td>
+                              <td className="py-2 px-2 text-right tabular-nums">{item.orderedQty}</td>
+                              <td className="py-2 px-2 text-right tabular-nums font-medium">{formatCurrency(item.lineAmount)}</td>
+                              <td className="py-2 px-2 text-right text-blue-600 font-semibold tabular-nums">{item.alreadyReceived}</td>
+                              <td className="py-2 px-2 text-right text-orange-600 font-semibold tabular-nums">{item.remaining}</td>
+                              <td className="py-2 px-2">
                                 {item.remaining > 0 ? (
                                   <input
                                     type="number"
                                     min={0}
                                     max={item.remaining}
                                     step="any"
-                                    className="w-full border border-slate-200 rounded px-2 py-1 text-sm text-center focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+                                    className="w-full min-w-[72px] border border-slate-200 rounded px-2 py-1 text-sm text-center focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
                                     value={item.receivedQty || ""}
                                     onChange={(e) => {
                                       const val = Math.min(Number(e.target.value) || 0, item.remaining);
@@ -767,29 +1146,22 @@ const ReceiveView = React.memo(() => {
                                   </span>
                                 )}
                               </td>
-                              <td className="py-2 px-3 text-center">
+                              <td className="py-2 px-2 text-center">
                                 {item.remaining > 0 && (
                                   <div className="flex flex-col items-center gap-1">
                                     <button
                                       type="button"
-                                      onClick={() => {
-                                        if (!fileInputRefs.current[idx]) {
-                                          const input = document.createElement("input");
-                                          input.type = "file";
-                                          input.accept = "image/*";
-                                          input.multiple = true;
-                                          input.onchange = (e) => handlePhotoAdd(idx, e.target.files);
-                                          fileInputRefs.current[idx] = input;
-                                        }
-                                        fileInputRefs.current[idx].click();
-                                      }}
-                                      className="p-1.5 rounded-lg bg-slate-100 hover:bg-blue-100 text-slate-500 hover:text-blue-600 transition-colors"
-                                      title="แนบรูปถ่าย"
+                                      onClick={() => openItemPhotoPicker(idx)}
+                                      className="inline-flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-lg bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-700 transition-colors"
+                                      title="ถ่ายภาพ แกลเลอรี หรืออัปโหลดไฟล์"
                                     >
-                                      <Camera size={14} />
+                                      <ImageIcon size={16} />
+                                      <span className="text-[9px] font-medium leading-tight whitespace-nowrap">
+                                        อัปโหลด / ถ่าย
+                                      </span>
                                     </button>
                                     {item.photos.length > 0 && (
-                                      <div className="flex flex-wrap gap-1 max-w-[120px]">
+                                      <div className="flex flex-wrap gap-1 justify-center max-w-[140px]">
                                         {item.photos.map((photo, pi) => (
                                           <div key={pi} className="relative group">
                                             <img
@@ -849,7 +1221,7 @@ const ReceiveView = React.memo(() => {
                             <circle cx="12" cy="12" r="10" strokeOpacity=".25" />
                             <path d="M12 2a10 10 0 0 1 10 10" />
                           </svg>
-                          กำลังบันทึก...
+                          {savingStep || "กำลังบันทึก..."}
                         </>
                       ) : (
                         <>
@@ -863,6 +1235,207 @@ const ReceiveView = React.memo(() => {
             </motion.div>
           </motion.div>
         )}
+      </AnimatePresence>
+
+      {/* ── Receive Detail Modal ── */}
+      <AnimatePresence>
+        {viewingRcv && (() => {
+          const { rcv, po, vendor } = viewingRcv;
+          const rcvItems = rcv.items || [];
+          const poType = po?.poType;
+          return (
+            <motion.div
+              className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-start justify-center z-[10015] p-4 overflow-y-auto"
+              initial="hidden" animate="visible" exit="exit"
+              variants={modalOverlayVariants} transition={overlayTransition}
+              onClick={() => setViewingRcv(null)}
+            >
+              <motion.div
+                className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-8"
+                variants={modalContentVariants} transition={modalTransition}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Header */}
+                <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-teal-50 flex items-center justify-center">
+                      <Truck size={20} className="text-teal-600" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold text-slate-800">รายละเอียดการรับของ</h3>
+                      <p className="text-xs text-slate-400">{rcv.rpNo || rcv.receiveNo || "-"}</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setViewingRcv(null)}
+                    className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                {/* Body */}
+                <div className="p-6 max-h-[75vh] overflow-y-auto custom-scrollbar space-y-6">
+
+                  {/* PDF Thumbnail — อยู่บนสุด */}
+                  {rcv.pdfUrl && (
+                    <div className="flex flex-col sm:flex-row gap-4 items-start">
+                      <div className="inline-block rounded-2xl bg-gradient-to-br from-teal-50 via-emerald-50 to-cyan-50 border border-teal-100 p-3 shadow-sm shrink-0">
+                        <div
+                          className="relative w-[210px] rounded-xl overflow-hidden border border-teal-100 shadow-md bg-white cursor-pointer group"
+                          onClick={() => window.open(rcv.pdfUrl, "_blank")}
+                          title="คลิกเพื่อเปิด PDF"
+                        >
+                          <iframe
+                            src={`${rcv.pdfUrl}#view=FitH&toolbar=0&navpanes=0&scrollbar=0`}
+                            title="RP PDF preview"
+                            className="w-full border-0 pointer-events-none select-none"
+                            style={{ height: 296, transformOrigin: "top left" }}
+                            scrolling="no"
+                          />
+                          <div className="absolute inset-0 bg-teal-600/0 group-hover:bg-teal-600/10 transition-colors flex items-center justify-center">
+                            <span className="opacity-0 group-hover:opacity-100 transition-opacity bg-white/90 text-teal-700 text-[10px] font-semibold px-3 py-1.5 rounded-full shadow flex items-center gap-1">
+                              <ExternalLink size={11} /> เปิดดู PDF
+                            </span>
+                          </div>
+                        </div>
+                        <div className="mt-2 w-[210px] flex items-center justify-between">
+                          <p className="text-[10px] text-teal-600 font-medium truncate max-w-[140px]">
+                            {rcv.rpNo || rcv.receiveNo || "receive"}.pdf
+                          </p>
+                          <a
+                            href={rcv.pdfUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-teal-100 hover:bg-teal-200 text-teal-600 text-[10px] font-semibold transition-colors"
+                          >
+                            <ExternalLink size={10} /> เปิด
+                          </a>
+                        </div>
+                      </div>
+
+                      {/* Info summary ด้านข้าง thumbnail (บน sm ขึ้นไป) */}
+                      <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2 self-start">
+                        {[
+                          { label: "RP No.", value: rcv.rpNo || rcv.receiveNo || "-" },
+                          { label: "วันที่รับสินค้า", value: rcv.receivedDate ? new Date(rcv.receivedDate).toLocaleDateString("th-TH", { day: "2-digit", month: "long", year: "numeric" }) : "-" },
+                          { label: "PO No.", value: rcv.poNo || "-" },
+                          { label: "PR No.", value: rcv.prNo || "-" },
+                          { label: "ผู้จำหน่าย", value: rcv.vendorName || vendor?.name || "-" },
+                          { label: "เลขที่เอกสาร", value: rcv.documentNo || "-" },
+                          { label: "สินค้าของโครงการ", value: rcv.projectItemCode || "-" },
+                          { label: "ผู้รับของ", value: rcv.receivedByName || "-" },
+                        ].map((f) => (
+                          <div key={f.label} className="bg-slate-50 rounded-xl px-3 py-2">
+                            <p className="text-[10px] text-slate-400 uppercase font-semibold">{f.label}</p>
+                            <p className="text-sm font-medium text-slate-800 truncate" title={String(f.value)}>{f.value}</p>
+                          </div>
+                        ))}
+                        {rcv.note && (
+                          <div className="bg-amber-50 rounded-xl px-3 py-2 col-span-1 sm:col-span-2">
+                            <p className="text-[10px] text-amber-500 uppercase font-semibold">หมายเหตุ</p>
+                            <p className="text-sm text-slate-700">{rcv.note}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Info Grid — แสดงเมื่อไม่มี PDF */}
+                  {!rcv.pdfUrl && (
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                      {[
+                        { label: "RP No.", value: rcv.rpNo || rcv.receiveNo || "-" },
+                        { label: "วันที่รับสินค้า", value: rcv.receivedDate ? new Date(rcv.receivedDate).toLocaleDateString("th-TH", { day: "2-digit", month: "long", year: "numeric" }) : "-" },
+                        { label: "PO No.", value: rcv.poNo || "-" },
+                        { label: "PR No.", value: rcv.prNo || "-" },
+                        { label: "สินค้าของโครงการ", value: rcv.projectItemCode || "-" },
+                        { label: "ผู้จำหน่าย", value: rcv.vendorName || vendor?.name || "-" },
+                        { label: "เลขที่เอกสาร", value: rcv.documentNo || "-" },
+                        { label: "Type", value: poType ? `${poType} — ${PO_TYPE_LABELS[poType]?.replace(/^\w+\s—\s/, "") || poType}` : "-" },
+                        { label: "ผู้รับของ", value: rcv.receivedByName || "-" },
+                      ].map((f) => (
+                        <div key={f.label} className="bg-slate-50 rounded-xl p-3">
+                          <p className="text-[10px] text-slate-400 uppercase font-semibold mb-0.5">{f.label}</p>
+                          <p className="text-sm font-medium text-slate-800 truncate" title={String(f.value)}>{f.value}</p>
+                        </div>
+                      ))}
+                      {rcv.note && (
+                        <div className="bg-amber-50 rounded-xl p-3 col-span-2 md:col-span-3">
+                          <p className="text-[10px] text-amber-500 uppercase font-semibold mb-0.5">หมายเหตุ</p>
+                          <p className="text-sm text-slate-700">{rcv.note}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Items Table */}
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-700 mb-2 flex items-center gap-1.5">
+                      <Package size={14} /> รายการสินค้าที่รับ ({rcvItems.length} รายการ)
+                    </h4>
+                    <div className="border border-slate-100 rounded-xl overflow-hidden">
+                      <table className="w-full text-xs text-slate-600">
+                        <thead className="bg-slate-50 text-slate-500 uppercase font-semibold">
+                          <tr>
+                            <th className="py-2 px-3 text-left">#</th>
+                            <th className="py-2 px-3 text-left">รหัสสินค้า</th>
+                            <th className="py-2 px-3 text-left">รายละเอียด</th>
+                            <th className="py-2 px-3 text-center">หน่วย</th>
+                            <th className="py-2 px-3 text-right">จำนวนรับ</th>
+                            <th className="py-2 px-3 text-center">รูปถ่าย</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {rcvItems.map((item, idx) => (
+                            <tr key={idx} className="hover:bg-slate-50">
+                              <td className="py-2 px-3 text-slate-400">{idx + 1}</td>
+                              <td className="py-2 px-3 font-mono text-[10px] text-slate-500">{item.materialNo || "-"}</td>
+                              <td className="py-2 px-3 font-medium">{item.description || "-"}</td>
+                              <td className="py-2 px-3 text-center">{item.unit || "-"}</td>
+                              <td className="py-2 px-3 text-right font-bold text-blue-600">{item.receivedQty ?? item.quantity ?? "-"}</td>
+                              <td className="py-2 px-3 text-center">
+                                {item.photos?.length > 0 ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setPhotoPreview(item.photos)}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 hover:bg-blue-100 text-slate-500 hover:text-blue-600 text-[10px] font-semibold transition-colors"
+                                  >
+                                    <ImageIcon size={10} /> {item.photos.length} รูป
+                                  </button>
+                                ) : (
+                                  <span className="text-slate-300">-</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Footer */}
+                <div className="flex items-center justify-end px-6 py-4 border-t border-slate-100 bg-slate-50/50 rounded-b-2xl">
+                  {rcv.pdfUrl && (
+                    <a
+                      href={rcv.pdfUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold transition-colors mr-3"
+                    >
+                      <ExternalLink size={14} /> เปิด PDF เต็มหน้า
+                    </a>
+                  )}
+                  <Button variant="secondary" onClick={() => setViewingRcv(null)}>
+                    ปิด
+                  </Button>
+                </div>
+              </motion.div>
+            </motion.div>
+          );
+        })()}
       </AnimatePresence>
 
       {/* ── Photo Preview Modal ── */}

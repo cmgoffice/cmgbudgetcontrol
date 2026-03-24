@@ -83,6 +83,7 @@ export const storage = STORAGE_BUCKET_OVERRIDE
 export const FORM_TEMPLATE_PATHS = {
   pr: "forms/pr-form-lib.pdf",
   po: "forms/po-form-lib.pdf",
+  rp: "forms/rp-form-lib.pdf",
 } as const;
 
 export const appId =

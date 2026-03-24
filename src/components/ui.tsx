@@ -71,6 +71,7 @@ export const Badge = ({ status }: any) => {
     Rejected: "bg-red-50 text-red-700 border border-red-200",
     Paid: "bg-green-100 text-green-800",
     "Partial Receive": "bg-sky-50 text-sky-700 border border-sky-200",
+    "Received": "bg-emerald-100 text-emerald-800 border border-emerald-300",
     "Closed PO": "bg-slate-100 text-slate-700 border border-slate-300",
     Pending: "bg-yellow-100 text-yellow-800",
     "Approved User": "bg-green-100 text-green-800",

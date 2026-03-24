@@ -22,7 +22,7 @@ export const PR_PENDING_ACTIVE = "Pending Active PR";
 export function getPORevisionFlow(status: string): { pendingStatus: string; approverRoles: string[] } | null {
   if (status === "Pending PCM") return { pendingStatus: PO_REVISION_PENDING_PCM, approverRoles: ["PCM", "Administrator"] };
   if (status === "Pending GM") return { pendingStatus: PO_REVISION_PENDING_GM, approverRoles: ["GM", "Administrator"] };
-  if (status === "Approved" || status === "Closed PO") return { pendingStatus: PO_REVISION_PENDING_GM, approverRoles: ["GM", "Administrator"] };
+  if (status === "Approved" || status === "Closed PO" || status === "Received") return { pendingStatus: PO_REVISION_PENDING_GM, approverRoles: ["GM", "Administrator"] };
   return null;
 }
 
@@ -67,6 +67,7 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
     { key: "export",  label: "Export CSV" },
     { key: "email",   label: "ส่ง Email PDF" },
     { key: "download",label: "Download PDF" },
+    { key: "delete",  label: "ลบ PO" },
     { key: "closePO", label: "ขอปิด / ยืนยันปิด PO" },
   ],
   vendor: [
@@ -89,6 +90,7 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
   receive: [
     { key: "receive",     label: "ทำรับของ" },
     { key: "viewHistory", label: "ดูประวัติรับของ" },
+    { key: "delete",      label: "ลบ Receive" },
   ],
   "payment-subcontract": [
     { key: "create",          label: "สร้าง Payment" },

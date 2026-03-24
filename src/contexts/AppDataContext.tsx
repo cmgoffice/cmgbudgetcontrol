@@ -220,11 +220,13 @@ export const AppDataProvider = ({
   const [columnVisibility, setColumnVisibility] = useState<Record<string, Record<string, boolean>>>({});
   const colVisSaveTimer = useRef(null);
 
-  // ── Lazy-loaded collections (โหลดเมื่อเข้าหน้าที่ใช้ ลดโควต้าเปิดแอป) ─────
-  const [vendorsLoading, setVendorsLoading] = useState(false);
+  // ── Lazy / one-shot loaded collections (getDocs แทน onSnapshot — ลด Firebase read quota) ──
+  const [vendorsLoading,   setVendorsLoading]   = useState(false);
   const [materialsLoading, setMaterialsLoading] = useState(false);
-  const vendorsLoadedRef = useRef(false);
+  const [projectsLoading,  setProjectsLoading]  = useState(false);
+  const vendorsLoadedRef   = useRef(false);
   const materialsLoadedRef = useRef(false);
+  const projectsLoadedRef  = useRef(false);
 
   const loadVendors = useCallback(async () => {
     if (vendorsLoadedRef.current) return;
@@ -255,6 +257,27 @@ export const AppDataProvider = ({
       setMaterialsLoading(false);
     }
   }, []);
+
+  const loadProjects = useCallback(async () => {
+    if (projectsLoadedRef.current) return;
+    projectsLoadedRef.current = true;
+    setProjectsLoading(true);
+    try {
+      const snap = await getDocs(collection(db, "artifacts", appId, "public", "data", "projects"));
+      setProjects(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    } catch (err) {
+      console.error("Error loading projects:", err);
+      projectsLoadedRef.current = false;
+    } finally {
+      setProjectsLoading(false);
+    }
+  }, []);
+
+  /** บังคับ re-fetch projects (เรียกหลัง add/edit/delete project โดย view อื่นที่ write ตรง Firestore) */
+  const refreshProjects = useCallback(async () => {
+    projectsLoadedRef.current = false;
+    await loadProjects();
+  }, [loadProjects]);
 
   // ── Firebase sync (realtime ผ่าน onSnapshot — แก้ไขที่ใดก็ตามจะอัปเดตทุกที่โดยไม่ต้องรีเฟรช) ─
   useEffect(() => {
@@ -288,9 +311,11 @@ export const AppDataProvider = ({
       setFunctionPermissions(mergeFunctionPermissionsWithDefaults(raw));
     });
 
-    // ไม่ sync vendors, materials ที่นี่ — ใช้ loadVendors() / loadMaterials() เมื่อเข้าหน้า Vendor / Material / PO
+    // projects โหลดครั้งเดียว (getDocs) — ลด onSnapshot listener และ Firebase read quota
+    loadProjects();
+
+    // vendors, materials ไม่ sync ที่นี่ — ใช้ loadVendors() / loadMaterials() เมื่อเข้าหน้าที่ใช้
     const unsubs = [
-      syncCollection("projects",  setProjects),
       syncCollection("budgets",   setBudgets),
       syncCollection("prs",       setPrs),
       syncCollection("pos",       setPos),
@@ -319,7 +344,7 @@ export const AppDataProvider = ({
       if (colSaveTimer.current) clearTimeout(colSaveTimer.current);
       if (colVisSaveTimer.current) clearTimeout(colVisSaveTimer.current);
     };
-  }, [user?.uid]);
+  }, [user?.uid, loadProjects]);
 
   // ── Column resize ──────────────────────────────────────────────────────────
   const handleColumnResize = useCallback((tableId, colKey, width) => {
@@ -371,14 +396,16 @@ export const AppDataProvider = ({
       let newId = customId;
       if (customId) {
         await setDoc(doc(db, "artifacts", appId, "public", "data", collectionName, customId), data);
-        if (collectionName === "vendors") setVendors((prev) => [...prev, { id: customId, ...data }]);
+        if (collectionName === "vendors")   setVendors((prev)   => [...prev, { id: customId, ...data }]);
         if (collectionName === "materials") setMaterials((prev) => [...prev, { id: customId, ...data }]);
+        if (collectionName === "projects")  setProjects((prev)  => [...prev, { id: customId, ...data }]);
       } else {
         const colRef = collection(db, "artifacts", appId, "public", "data", collectionName);
         const docRef = await addDoc(colRef, data);
         newId = docRef.id;
-        if (collectionName === "vendors") setVendors((prev) => [...prev, { id: docRef.id, ...data }]);
+        if (collectionName === "vendors")   setVendors((prev)   => [...prev, { id: docRef.id, ...data }]);
         if (collectionName === "materials") setMaterials((prev) => [...prev, { id: docRef.id, ...data }]);
+        if (collectionName === "projects")  setProjects((prev)  => [...prev, { id: docRef.id, ...data }]);
       }
       if (!skipLog) {
         await logAction("Create", buildCreateLogDetails(collectionName, data, newId));
@@ -404,8 +431,9 @@ export const AppDataProvider = ({
     };
     try {
       await updateDoc(doc(db, "artifacts", appId, "public", "data", collectionName, id), payload);
-      if (collectionName === "vendors") setVendors((prev) => prev.map((v) => (v.id === id ? { ...v, ...payload } : v)));
+      if (collectionName === "vendors")   setVendors((prev)   => prev.map((v) => (v.id === id ? { ...v, ...payload } : v)));
       if (collectionName === "materials") setMaterials((prev) => prev.map((m) => (m.id === id ? { ...m, ...payload } : m)));
+      if (collectionName === "projects")  setProjects((prev)  => prev.map((p) => (p.id === id ? { ...p, ...payload } : p)));
       if (!skipLog) {
         const details = buildUpdateLogDetails(collectionName, id, payload, listBundle);
         await logAction("Update", details);
@@ -426,8 +454,9 @@ export const AppDataProvider = ({
     };
     try {
       await deleteDoc(doc(db, "artifacts", appId, "public", "data", collectionName, id));
-      if (collectionName === "vendors") setVendors((prev) => prev.filter((v) => v.id !== id));
+      if (collectionName === "vendors")   setVendors((prev)   => prev.filter((v) => v.id !== id));
       if (collectionName === "materials") setMaterials((prev) => prev.filter((m) => m.id !== id));
+      if (collectionName === "projects")  setProjects((prev)  => prev.filter((p) => p.id !== id));
       if (!skipLog) {
         await logAction("Delete", buildDeleteLogDetails(collectionName, id, listBundle));
       }
@@ -612,12 +641,15 @@ export const AppDataProvider = ({
     let newStatus = po.status;
     if (action === "approve") {
       if (po.status === "Pending PCM" && (roles.includes("PCM") || roles.includes("Administrator"))) newStatus = "Pending GM";
-      else if (po.status === "Pending GM" && (roles.includes("GM") || roles.includes("Administrator"))) newStatus = "Approved";
+      else if (po.status === "Pending GM" && (roles.includes("GM") || roles.includes("Administrator"))) {
+        newStatus = po.receiveType === "Receive Auto" ? "Received" : "Approved";
+      }
     } else if (action === "reject") {
       newStatus = "Rejected";
     }
     if (newStatus !== po.status) {
-      const payload = { status: newStatus };
+      const payload: any = { status: newStatus };
+      if (newStatus === "Received") payload.statusNow = "Received";
       if (action === "approve") payload.rejectReason = "";
       await updateData("pos", id, payload);
     }
@@ -707,9 +739,10 @@ export const AppDataProvider = ({
     totalPendingCount, pendingByProject, pendingCountByMenu,
     // CRUD
     addData, updateData, deleteData,
-    // lazy load (ลดโควต้า — โหลดเมื่อเข้าหน้าที่ใช้)
+    // lazy / one-shot load (ลดโควต้า — โหลดเมื่อเข้าหน้าที่ใช้)
     loadVendors, loadMaterials,
     vendorsLoading, materialsLoading,
+    loadProjects, refreshProjects, projectsLoading,
     // column widths
     columnWidths, handleColumnResize,
     // column visibility (per-user)
@@ -734,6 +767,7 @@ export const AppDataProvider = ({
     addData, updateData, deleteData,
     loadVendors, loadMaterials,
     vendorsLoading, materialsLoading,
+    loadProjects, refreshProjects, projectsLoading,
     columnWidths, handleColumnResize,
     columnVisibility, saveColumnVisibility, isColumnVisible,
     handlePRAction, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,

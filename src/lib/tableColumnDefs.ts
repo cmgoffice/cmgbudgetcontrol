@@ -190,6 +190,25 @@ export const TABLE_COLUMN_DEFS: Record<string, ColumnDef[]> = {
     { key: "projects", label: "Projects",   defaultVisible: true },
     { key: "actions",  label: "Actions",    defaultVisible: true, locked: true },
   ],
+  "receive-po": [
+    { key: "poNo",        label: "PO No.",       defaultVisible: true },
+    { key: "vendor",      label: "Vendor",       defaultVisible: true },
+    { key: "description", label: "รายละเอียด",    defaultVisible: true },
+    { key: "amount",      label: "ยอดรวม",       defaultVisible: true },
+    { key: "progress",    label: "สถานะรับของ",  defaultVisible: true },
+    { key: "actions",     label: "Actions",      defaultVisible: true, locked: true },
+  ],
+  "receive-history": [
+    { key: "rpNo",       label: "RP No.",        defaultVisible: true },
+    { key: "date",       label: "วันที่ทำรับ",    defaultVisible: true },
+    { key: "poNo",       label: "PO No.",        defaultVisible: true },
+    { key: "type",       label: "Type",          defaultVisible: true },
+    { key: "vendor",     label: "Vendor",        defaultVisible: true },
+    { key: "items",      label: "รายการสินค้า",   defaultVisible: true },
+    { key: "receivedBy", label: "ผู้รับของ",      defaultVisible: true },
+    { key: "note",       label: "หมายเหตุ",       defaultVisible: true },
+    { key: "actions",    label: "Actions",        defaultVisible: true, locked: true },
+  ],
 };
 
 export function getDefaultVisibility(tableId: string): Record<string, boolean> {
