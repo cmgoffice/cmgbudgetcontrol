@@ -32,6 +32,7 @@ import DashboardView from "./views/DashboardView";
 import VendorView from "./views/VendorView";
 import MaterialView from "./views/MaterialView";
 import InvoiceView from "./views/InvoiceView";
+import ReceiveView from "./views/ReceiveView";
 import ProjectsView from "./views/ProjectsView";
 import PRView from "./views/PRView";
 import POView from "./views/POView";
@@ -116,7 +117,7 @@ const AppShell = () => {
   // ── Initial menu redirect — เด้งไปเมนูแรกที่มีสิทธิ์ทันทีที่ permissions พร้อม ──
   const MENU_ORDER = [
     "dashboard", "projects", "budget", "pr",
-    "po", "payment-subcontract", "vendor", "material", "invoice", "profile", "admin",
+    "po", "payment-subcontract", "vendor", "material", "receive", "invoice", "profile", "admin",
   ];
   const initialRedirectDone = useRef(false);
   useEffect(() => {
@@ -252,10 +253,19 @@ const AppShell = () => {
               </>
             );
           })()}
-          {canAccessModule("invoice") && (
+          {canAccessModule("receive") && (
             <SidebarItem
               icon={<FileInput size={20} />}
-              label="Invoice Receive"
+              label="Receive"
+              active={activeMenu === "receive"}
+              onClick={() => handleMenuChange("receive")}
+              collapsed={sidebarCollapsed}
+            />
+          )}
+          {canAccessModule("invoice") && (
+            <SidebarItem
+              icon={<FileText size={20} />}
+              label="Invoice"
               active={activeMenu === "invoice"}
               onClick={() => handleMenuChange("invoice")}
               collapsed={sidebarCollapsed}
@@ -345,7 +355,9 @@ const AppShell = () => {
                             : activeMenu === "material"
                               ? "Material"
                               : activeMenu === "invoice"
-                              ? "Invoice Receive"
+                              ? "Invoice"
+                              : activeMenu === "receive"
+                              ? "Receive"
                               : activeMenu === "profile"
                                 ? "User Profile"
                                 : activeMenu === "admin"
@@ -356,7 +368,7 @@ const AppShell = () => {
           <div className="flex-1" />
 
           {/* Project Cards — อยู่ขวา ก่อนกระดิ่ง ขยายออกซ้ายเมื่อมีโครงการเพิ่ม */}
-          {["budget","pr","po","payment-subcontract","invoice"].includes(activeMenu) && visibleProjects.length > 0 && (
+          {["budget","pr","po","payment-subcontract","invoice","receive"].includes(activeMenu) && visibleProjects.length > 0 && (
             <div className="flex items-center gap-1.5 shrink-0">
               {visibleProjects.map((p) => {
                 const projPending = pendingByProject?.find((x) => x.projectId === p.id);
@@ -519,7 +531,7 @@ const AppShell = () => {
         )}
         <div
           className={
-            ["projects", "budget", "pr", "po", "payment-subcontract", "vendor", "material", "invoice", "admin"].includes(
+            ["projects", "budget", "pr", "po", "payment-subcontract", "vendor", "material", "invoice", "receive", "admin"].includes(
               activeMenu
             )
               ? "p-4 md:p-6 w-full max-w-none min-w-0"
@@ -673,7 +685,10 @@ const AppShell = () => {
               <MaterialView />
             </div>
             <div data-menu-page="invoice" style={{ display: activeMenu === "invoice" ? undefined : "none" }}>
-              <InvoiceView />
+              <InvoiceView menuType="invoice" />
+            </div>
+            <div data-menu-page="receive" style={{ display: activeMenu === "receive" ? undefined : "none" }}>
+              <ReceiveView />
             </div>
             {activeMenu === "profile" && (
               <div data-menu-page="profile">
@@ -1666,6 +1681,7 @@ const SIDEBAR_MODULES = [
   { key: "payment-subcontract", label: "Payment Subcontract" },
   { key: "vendor", label: "Vendor" },
   { key: "material", label: "Material" },
+  { key: "receive", label: "Receive" },
   { key: "invoice", label: "Invoice" },
   { key: "profile", label: "โปรไฟล์" },
 ];

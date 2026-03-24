@@ -32,7 +32,8 @@ export const UIProvider = ({ children, logAction }) => {
     "po-table": "ตารางข้อมูล PO",
     vendor: "Vendor Management",
     material: "Material",
-    invoice: "Invoice Receive",
+    invoice: "Invoice",
+    receive: "Receive",
     profile: "ข้อมูลส่วนตัว",
     admin: "Admin Dashboard",
   };

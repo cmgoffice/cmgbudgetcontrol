@@ -1465,7 +1465,7 @@ const POView = React.memo(() => {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {pos
-                .filter((po) => po.projectId === selectedProjectId)
+                .filter((po) => po.projectId === selectedProjectId && po.status !== "Closed PO")
                 .map((po) => {
                   const vendor = vendors.find((v) => v.id === po.vendorId);
                   // Count PRs and get details

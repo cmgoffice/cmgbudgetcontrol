@@ -12,7 +12,7 @@ import ResizableTh from "../components/ResizableTh";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 import { useProportionalTableLayout } from "../hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
-const InvoiceView = React.memo(() => {
+const InvoiceView = React.memo(({ menuType = "invoice" }) => {
   const { invoices, pos, addData, updateData, deleteData, showAlert, userRole, userRoles, columnWidths, handleColumnResize, visibleProjects, canUseFunction, isColumnVisible } = useAppData();
   const { selectedProjectId } = useUI();
   const invoiceTableRef = useRef(null);
@@ -25,6 +25,12 @@ const InvoiceView = React.memo(() => {
     driftKey: "description",
     handleColumnResize,
   });
+  const isReceiveMenu = menuType === "receive";
+  const pageTitle = isReceiveMenu ? "Receive" : "Invoice";
+  const pageSubtitle = isReceiveMenu ? "F. รับวางบิล (Receive)" : "F. ใบแจ้งหนี้ (Invoice)";
+  const addButtonLabel = isReceiveMenu ? "เพิ่ม Receive" : "เพิ่ม Invoice";
+  const modalTitle = isReceiveMenu ? "บันทึกรับ Invoice" : "บันทึก Invoice";
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState({
     invNo: "",
@@ -87,15 +93,15 @@ const InvoiceView = React.memo(() => {
     <div className="space-y-4">
       <div className="flex flex-col md:flex-row justify-between items-center gap-4">
         <div className="flex items-center gap-2">
-          <h2 className="text-xl font-bold text-slate-800">
-            F. รับวางบิล (Invoice Receive)
+          <h2 className="text-xl font-bold text-slate-800" title={pageTitle}>
+            {pageSubtitle}
           </h2>
           <ColumnVisibilityToggle tableId="invoice" />
         </div>
         <div className="flex items-center gap-2">
         {canUseFunction("invoice", "add") && (
           <Button onClick={() => setIsModalOpen(true)}>
-            <Plus size={14} /> รับ Invoice
+            <Plus size={14} /> {addButtonLabel}
           </Button>
         )}
         </div>
@@ -172,7 +178,7 @@ const InvoiceView = React.memo(() => {
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
           <Card className="w-full max-w-lg p-6">
-            <h3 className="text-lg font-bold mb-4">บันทึกรับ Invoice</h3>
+            <h3 className="text-lg font-bold mb-4">{modalTitle}</h3>
             <div className="space-y-4">
               <InputGroup label="Ref. PO No.">
                 <select

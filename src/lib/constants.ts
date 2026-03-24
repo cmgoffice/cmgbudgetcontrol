@@ -86,6 +86,10 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
     { key: "approve", label: "อนุมัติ Invoice" },
     { key: "delete",  label: "ลบ Invoice" },
   ],
+  receive: [
+    { key: "receive",     label: "ทำรับของ" },
+    { key: "viewHistory", label: "ดูประวัติรับของ" },
+  ],
   "payment-subcontract": [
     { key: "create",          label: "สร้าง Payment" },
     { key: "edit",            label: "แก้ไข Payment" },
@@ -123,6 +127,7 @@ export const MODULE_ACCESS: Record<string, string[]> = {
   vendor: ["Administrator", "MD", "GM", "PM", "PCM", "Procurement", "Staff"],
   material: ["Administrator", "MD", "GM", "PM", "PCM", "Procurement", "Staff"],
   invoice: ["Administrator", "MD", "GM", "PM", "PCM", "Staff"],
+  receive: ["Administrator", "MD", "GM", "PM", "PCM", "Staff"],
   "payment-subcontract": ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff"],
   profile: ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff", "Admin Site"],
   admin: ["Administrator"],
