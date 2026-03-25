@@ -8,6 +8,8 @@ import {
   Truck, Package, Paperclip, Clock, Hash, Tag, ClipboardList, FileSpreadsheet, Upload, Download,
   BarChart3, Zap, Building2, ShoppingCart, RefreshCw
 } from "lucide-react";
+import { doc, runTransaction } from "firebase/firestore";
+import { db, appId } from "../lib/firebase";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "../components/ui";
@@ -104,6 +106,7 @@ const POView = React.memo(() => {
       { code: "CA", label: "CA — เงินสด/เงินโอน" },
       { code: "RE", label: "RE — เช่า" },
       { code: "WF", label: "WF — รายจ่ายประจำ" },
+      { code: "INW", label: "INW — รายจ่ายธนาคาร" },
     ];
 
     // Contract PR types ที่ต้องให้แสดงในขั้น Select PRs สำหรับ Create PO
@@ -127,7 +130,7 @@ const POView = React.memo(() => {
       if (poType === "RE") return "RE";
       if (["CA", "CR"].includes(poType)) return "EQM";
       if (["CR", "CA", "OL"].includes(poType)) return "Material";
-      if (["CC", "WF", "DC", "SM"].includes(poType)) return "Receive Auto";
+      if (["CC", "WF", "DC", "SM", "INW"].includes(poType)) return "Receive Auto";
       return "Material";
     };
 
@@ -167,12 +170,7 @@ const POView = React.memo(() => {
     const vendorDropdownAnchorRef = useRef(null);
     const [vendorDropdownRect, setVendorDropdownRect] = useState(null);
     useEffect(() => {
-      if (vendorSearchDebounceRef.current) clearTimeout(vendorSearchDebounceRef.current);
-      vendorSearchDebounceRef.current = setTimeout(() => {
-        setVendorSearchQuery(vendorSearchText.trim());
-        vendorSearchDebounceRef.current = null;
-      }, 2000);
-      return () => { if (vendorSearchDebounceRef.current) clearTimeout(vendorSearchDebounceRef.current); };
+      setVendorSearchQuery(vendorSearchText.trim());
     }, [vendorSearchText]);
     const vendorFilteredList = useMemo(() => {
       const q = (vendorSearchQuery || "").toLowerCase();
@@ -253,8 +251,73 @@ const POView = React.memo(() => {
       return () => { window.removeEventListener("scroll", update, true); window.removeEventListener("resize", update); };
     }, [vendorDropdownOpen]);
 
-    // Auto-generate PO No.: PO{YY}{JXX}-{POT}{XXXX}
+    // Counter-based PO No. reservation: PO{YY}{JXX}-{POT}{XXXX}
     // ตัวอย่าง: PO26J01-CC0001
+    const reserveNextPoNo = useCallback(async (poTypeCode?: string) => {
+      if (!selectedProjectId) throw new Error("กรุณาเลือกโครงการก่อนสร้าง PO");
+      const currentProject = projects.find((p) => p.id === selectedProjectId);
+      if (!currentProject || !currentProject.jobNo) throw new Error("ไม่พบข้อมูลโครงการ");
+      
+      const typeCode = poTypeCode || formData.poType;
+      if (!typeCode) throw new Error("กรุณาเลือก PO Type");
+
+      // YY = 2 ตัวท้าย ค.ศ.
+      const yy = String(new Date().getFullYear()).slice(-2);
+
+      // JXX = Job No. ไม่มีขีด เช่น J-01 → J01
+      const jobRaw = String(currentProject.jobNo).trim();
+      const jxx = jobRaw.replace(/-/g, "");
+
+      // prefix คือส่วนที่ใช้นับ running number ของ type นี้
+      const prefix = `PO${yy}${jxx}-${typeCode}`;
+
+      // Find existing max sequence for fallback
+      const existingMaxSeq = pos
+        .filter((po) => po.poNo && po.poNo.startsWith(prefix))
+        .reduce((max, po) => {
+          const m = po.poNo.match(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\d+)$`));
+          if (!m) return max;
+          const n = Number(m[1]);
+          return Number.isFinite(n) ? Math.max(max, n) : max;
+        }, 0);
+
+      const counterId = `${selectedProjectId}__${prefix.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+      const counterRef = doc(
+        db,
+        "artifacts",
+        appId,
+        "public",
+        "data",
+        "settings",
+        "poRunningNo",
+        "poCountersByPrefix",
+        counterId
+      );
+
+      const nextPoNo = await runTransaction(db, async (tx) => {
+        const snap = await tx.get(counterRef);
+        const current = Number(
+          snap.exists()
+            ? snap.data()?.lastSeq || 0
+            : existingMaxSeq
+        );
+        const next = current + 1;
+        tx.set(
+          counterRef,
+          {
+            projectId: selectedProjectId,
+            prefix,
+            lastSeq: next,
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+        return `${prefix}${String(next).padStart(4, "0")}`;
+      });
+      return nextPoNo;
+    }, [selectedProjectId, projects, formData.poType, pos]);
+
+    // Preview-only PO No. generation for UI display
     const generatePoNo = (poTypeCode?: string) => {
       if (!selectedProjectId) return "";
       const currentProject = projects.find((p) => p.id === selectedProjectId);
@@ -271,15 +334,8 @@ const POView = React.memo(() => {
 
       // prefix คือส่วนที่ใช้นับ running number ของ type นี้
       const prefix = `PO${yy}${jxx}-${typeCode}`;
-
-      // นับ PO ที่มี prefix เดียวกัน (ไม่รวมที่กำลัง edit)
-      const existingCount = pos.filter(
-        (po) => po.poNo && po.poNo.startsWith(prefix)
-      ).length;
-      const nextNo = existingCount + 1;
-      // XXXX = 4 หลัก 0001..9999
-      const suffix = String(nextNo).padStart(4, "0");
-      return `${prefix}${suffix}`;
+      
+      return `${prefix}XXXX`; // Preview only - actual number assigned on save
     };
 
     // Vendor Modal Form State is handled in separate VendorView, 
@@ -756,7 +812,26 @@ const POView = React.memo(() => {
       if (!formData.poType) {
         return showAlert("ข้อมูลไม่ครบ", L.noType, "warning");
       }
-      if (!formData.poNo || !formData.vendorId || formData.items.length === 0) {
+
+      // Reserve PO number for new POs using counter-based system
+      let resolvedPoNo = formData.poNo;
+      const isNewPO = !editingPoId;
+      if (isNewPO) {
+        try {
+          if (canUseFunction("po", "manualPoOverride") && formData.poNo.trim() && formData.poNo !== generatePoNo()) {
+            // User has permission and provided manual number
+            resolvedPoNo = await reserveNextPoNo(formData.poType, formData.poNo.trim());
+          } else {
+            // Use automatic counter-based numbering
+            resolvedPoNo = await reserveNextPoNo();
+            setFormData(prev => ({ ...prev, poNo: resolvedPoNo }));
+          }
+        } catch (e) {
+          return showAlert("สร้างเลข PO ไม่สำเร็จ", e?.message || "ไม่สามารถจองเลข PO ใหม่ได้", "error");
+        }
+      }
+
+      if (!resolvedPoNo || !formData.vendorId || formData.items.length === 0) {
         return showAlert("ข้อมูลไม่ครบ", L.noData, "warning");
       }
 
@@ -846,7 +921,7 @@ const POView = React.memo(() => {
         const vendor = vendors.find((v: any) => v.id === formData.vendorId) || null;
         const project = projects.find((p: any) => p.id === selectedProjectId) || null;
         const draftPayload = {
-          poNo: formData.poNo, poType: formData.poType,
+          poNo: resolvedPoNo, poType: formData.poType,
           receiveType: formData.receiveType,
           projectId: selectedProjectId, vendorId: formData.vendorId,
           requiredDate: formData.requiredDate, vatType: formData.vatType,
@@ -859,7 +934,7 @@ const POView = React.memo(() => {
             : new Date().toISOString(),
           ...(manualVatOverride != null && !isNaN(manualVatOverride) ? { manualVat: manualVatOverride } : {}),
         };
-        const safePONo = formData.poNo.replace(/[^a-zA-Z0-9\-_]/g, "_");
+        const safePONo = resolvedPoNo.replace(/[^a-zA-Z0-9\-_]/g, "_");
         const safeProjId = selectedProjectId || "unknown";
         // Prefer dataURL to avoid CORS on Storage URL
         const creatorSignatureUrl = userData?.signatureDataUrl || userData?.signatureUrl || null;
@@ -1955,14 +2030,37 @@ const POView = React.memo(() => {
                       <div className="min-w-0">
                         <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1 uppercase tracking-wider">
                           <Hash size={11} className="text-red-500 shrink-0" /> {L.docNo}
+                          {!editingPoId && canUseFunction("po", "manualPoOverride") && (
+                            <span className="ml-2 px-2 py-0.5 text-[10px] rounded bg-green-100 text-green-700 border border-green-300">
+                              Manual Edit Enabled
+                            </span>
+                          )}
                         </label>
                         <input
                             type="text"
-                            readOnly
-                            className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-sm bg-slate-100 text-slate-700 font-mono font-semibold cursor-default"
-                            placeholder={formData.poType ? "(Auto)" : "เลือก Type ก่อน"}
+                            readOnly={!canUseFunction("po", "manualPoOverride") || !!editingPoId}
+                            className={`w-full border border-slate-200 rounded-lg px-3 py-1.5 text-sm font-mono font-semibold ${
+                              canUseFunction("po", "manualPoOverride") && !editingPoId
+                                ? 'bg-white text-slate-900 cursor-text focus:border-green-500 focus:ring-2 focus:ring-green-100'
+                                : 'bg-slate-100 text-slate-700 cursor-default'
+                            }`}
+                            placeholder={
+                              canUseFunction("po", "manualPoOverride") && !editingPoId
+                                ? "แก้ไขเลข PO ได้ (เช่น PO26J01-CC0049)"
+                                : formData.poType ? "(Auto)" : "เลือก Type ก่อน"
+                            }
                             value={formData.poNo}
+                            onChange={(e) => {
+                              if (canUseFunction("po", "manualPoOverride") && !editingPoId) {
+                                setFormData({ ...formData, poNo: e.target.value });
+                              }
+                            }}
                           />
+                        {canUseFunction("po", "manualPoOverride") && !editingPoId && (
+                          <div className="mt-1 text-[10px] text-green-600">
+                            💡 คุณสามารถแก้ไขเลข PO ได้ตามสิทธิ์ที่ Admin กำหนด
+                          </div>
+                        )}
                       </div>
                       {/* วันที่เปิด + สถานที่ส่งสินค้า */}
                       <div className="min-w-0 flex gap-2">

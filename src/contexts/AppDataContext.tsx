@@ -574,10 +574,18 @@ export const AppDataProvider = ({
     return false;
   }), [payments, roles]);
 
-  const totalPendingCount = useMemo(() =>
-    pendingBudgetsGlobal.length + pendingSubItemsGlobal.length +
-    pendingPRsGlobal.length    + pendingPOsGlobal.length,
-  [pendingBudgetsGlobal, pendingSubItemsGlobal, pendingPRsGlobal, pendingPOsGlobal]);
+  const totalPendingCount = useMemo(() => {
+    const visibleProjectIds = visibleProjects.map(p => p.id);
+    const visibleBudgets = pendingBudgetsGlobal.filter(b => visibleProjectIds.includes(b.projectId));
+    const visibleSubItems = pendingSubItemsGlobal.filter(s => {
+      const b = budgets.find(x => x.id === s.budgetId);
+      return b && visibleProjectIds.includes(b.projectId);
+    });
+    const visiblePRs = pendingPRsGlobal.filter(pr => visibleProjectIds.includes(pr.projectId));
+    const visiblePOs = pendingPOsGlobal.filter(po => visibleProjectIds.includes(po.projectId));
+    const visiblePayments = pendingPaymentsGlobal.filter(p => visibleProjectIds.includes(p.projectId));
+    return visibleBudgets.length + visibleSubItems.length + visiblePRs.length + visiblePOs.length + visiblePayments.length;
+  }, [pendingBudgetsGlobal, pendingSubItemsGlobal, pendingPRsGlobal, pendingPOsGlobal, pendingPaymentsGlobal, visibleProjects, budgets]);
 
   const pendingCountByMenu = useMemo(() => ({
     budget:               pendingBudgetsGlobal.length + pendingSubItemsGlobal.length,
@@ -590,8 +598,9 @@ export const AppDataProvider = ({
 
   const pendingByProject = useMemo(() => {
     const map = {};
+    const visibleProjectIds = visibleProjects.map(p => p.id);
     const inc = (pid, key) => {
-      if (!pid) return;
+      if (!pid || !visibleProjectIds.includes(pid)) return;
       if (!map[pid]) map[pid] = { budgets: 0, prs: 0, pos: 0, subItems: 0, payments: 0 };
       map[pid][key]++;
     };
@@ -612,7 +621,7 @@ export const AppDataProvider = ({
         total: counts.budgets + counts.prs + counts.pos + counts.subItems + counts.payments,
       };
     });
-  }, [pendingBudgetsGlobal, pendingSubItemsGlobal, pendingPRsGlobal, pendingPOsGlobal, pendingPaymentsGlobal, projects, budgets]);
+  }, [pendingBudgetsGlobal, pendingSubItemsGlobal, pendingPRsGlobal, pendingPOsGlobal, pendingPaymentsGlobal, projects, budgets, visibleProjects]);
 
   // ── PR / PO approval handlers ──────────────────────────────────────────────
   const handlePRAction = useCallback(async (id, action) => {

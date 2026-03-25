@@ -33,10 +33,8 @@ const MaterialAutoComplete = React.memo(({ value, onChange, onSelectMaterial, ma
     updatePos();
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
     if (val.trim()) {
-      debounceTimer.current = setTimeout(() => {
-        setDebouncedQuery(val);
-        setOpen(true);
-      }, 2000);
+      setDebouncedQuery(val);
+      setOpen(true);
     } else {
       setDebouncedQuery("");
       setOpen(false);

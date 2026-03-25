@@ -519,10 +519,20 @@ const PRView = React.memo(() => {
           const subUsed = prs
             .filter(p => p.projectId === selectedProjectId && p.costCode === budgetItem.code && p.status !== "Rejected" && p.id !== editingPRId)
             .reduce((sum, p) => {
-              const matchItems = (p.items || []).filter(i =>
-                (selectedSub.id && (i.subItemId === selectedSub.id || i.budgetSubItemId === selectedSub.id)) ||
-                (!i.subItemId && !i.budgetSubItemId && i.description?.trim() === selectedSub.description?.trim())
-              );
+              const matchItems = (p.items || []).filter(i => {
+                // Only match items that have proper sub-item IDs to avoid counting legacy records incorrectly
+                if (selectedSub.id && (i.subItemId === selectedSub.id || i.budgetSubItemId === selectedSub.id)) {
+                  return true;
+                }
+                // For legacy records without subItemId, only match if this is the only sub-item with this exact description
+                // and the PR was created before sub-item system (no subItemId on any items)
+                if (!i.subItemId && !i.budgetSubItemId && i.description?.trim() === selectedSub.description?.trim()) {
+                  // Check if this PR has any items with subItemId - if yes, it's not a legacy PR
+                  const hasAnySubItemId = (p.items || []).some(item => item.subItemId || item.budgetSubItemId);
+                  return !hasAnySubItemId;
+                }
+                return false;
+              });
               return sum + matchItems.reduce((s, i) => s + (i.quantity * i.price), 0);
             }, 0);
           const subBalance = selectedSub.amount - subUsed;
@@ -540,8 +550,11 @@ const PRView = React.memo(() => {
       const currentPrTotal = prs
         .filter((pr) => {
           if (pr.projectId !== selectedProjectId || pr.status === "Rejected" || pr.id === editingPRId) return false;
-          // ใช้ costCode เสมอ (สอดคล้องกับ BudgetView)
-          return pr.costCode === headerData.costCode;
+          // ให้นับเฉพาะ PR ที่เป็นของ budget item นี้เท่านั้น
+          // ถ้ามี budgetId ให้ match ด้วย budgetId, ถ้าไม่มี (legacy) ให้ match ด้วย costCode
+          const matchById = budgetItem.id && pr.budgetId === budgetItem.id;
+          const matchByCodeLegacy = !pr.budgetId && pr.costCode === headerData.costCode;
+          return matchById || matchByCodeLegacy;
         })
         .reduce((sum, pr) => sum + Number(pr.totalAmount), 0);
       const thisPrTotal = calculateTotal();
@@ -1191,9 +1204,11 @@ const PRView = React.memo(() => {
       const groups = {};
       const ALLOWED_CATS = ["001", "002", "003", "004", "005", "006", "007", "008", "009"];
       availableBudgets.forEach((b) => {
-        // แสดงเฉพาะ budget ที่มี sub-item ที่อนุมัติแล้ว (status === "Approved") อย่างน้อย 1 รายการ
-        const hasApprovedSubs = b.subItems && b.subItems.some(s => s.status === "Approved");
-        if (!hasApprovedSubs) return;
+        // แสดง budget ที่มี sub-item ที่อนุมัติแล้ว หรือไม่มี sub-item เลย (main budget item)
+        const hasSubItems = b.subItems && b.subItems.length > 0;
+        const hasApprovedSubs = hasSubItems && b.subItems.some(s => s.status === "Approved");
+        // อนุญาตให้เลือกได้ถ้า: มี sub-item ที่ approved หรือไม่มี sub-item เลย
+        if (hasSubItems && !hasApprovedSubs) return;
         const cat = b.code.substring(0, 3);
         if (!ALLOWED_CATS.includes(cat)) return;
         if (!groups[cat]) groups[cat] = [];
@@ -1226,8 +1241,11 @@ const PRView = React.memo(() => {
       const groups = {};
       const CONTRACT_CATS = ["004", "006"];
       availableBudgets.forEach((b) => {
-        const hasApprovedSubs = b.subItems && b.subItems.some(s => s.status === "Approved");
-        if (!hasApprovedSubs) return;
+        // แสดง budget ที่มี sub-item ที่อนุมัติแล้ว หรือไม่มี sub-item เลย (main budget item)
+        const hasSubItems = b.subItems && b.subItems.length > 0;
+        const hasApprovedSubs = hasSubItems && b.subItems.some(s => s.status === "Approved");
+        // อนุญาตให้เลือกได้ถ้า: มี sub-item ที่ approved หรือไม่มี sub-item เลย
+        if (hasSubItems && !hasApprovedSubs) return;
         const cat = b.code.substring(0, 3);
         if (!CONTRACT_CATS.includes(cat)) return;
         if (!groups[cat]) groups[cat] = [];
@@ -2048,10 +2066,20 @@ const PRView = React.memo(() => {
                               const subUsed = prs
                                 .filter(p => p.projectId === selectedProjectId && p.costCode === selectedBudget.code && p.status !== 'Rejected' && p.id !== editingPRId)
                                 .reduce((sum, p) => {
-                                  const matchItems = (p.items || []).filter(i =>
-                                    (sub.id && (i.subItemId === sub.id || i.budgetSubItemId === sub.id)) ||
-                                    (!i.subItemId && !i.budgetSubItemId && i.description?.trim() === sub.description?.trim())
-                                  );
+                                  const matchItems = (p.items || []).filter(i => {
+                                    // Only match items that have proper sub-item IDs to avoid counting legacy records incorrectly
+                                    if (sub.id && (i.subItemId === sub.id || i.budgetSubItemId === sub.id)) {
+                                      return true;
+                                    }
+                                    // For legacy records without subItemId, only match if this is the only sub-item with this exact description
+                                    // and the PR was created before sub-item system (no subItemId on any items)
+                                    if (!i.subItemId && !i.budgetSubItemId && i.description?.trim() === sub.description?.trim()) {
+                                      // Check if this PR has any items with subItemId - if yes, it's not a legacy PR
+                                      const hasAnySubItemId = (p.items || []).some(item => item.subItemId || item.budgetSubItemId);
+                                      return !hasAnySubItemId;
+                                    }
+                                    return false;
+                                  });
                                   return sum + matchItems.reduce((s, i) => s + (i.quantity * i.price), 0);
                                 }, 0);
                               const currentFormUsed = lineItems
@@ -2419,10 +2447,20 @@ const PRView = React.memo(() => {
                                     const subUsed = prs
                                       .filter(p => p.projectId === selectedProjectId && p.costCode === b.code && p.status !== 'Rejected')
                                       .reduce((sum, p) => {
-                                        const matchItems = (p.items || []).filter(i =>
-                                          (sub.id && (i.subItemId === sub.id || i.budgetSubItemId === sub.id)) ||
-                                          (!i.subItemId && !i.budgetSubItemId && i.description?.trim() === sub.description?.trim())
-                                        );
+                                        const matchItems = (p.items || []).filter(i => {
+                                          // Only match items that have proper sub-item IDs to avoid counting legacy records incorrectly
+                                          if (sub.id && (i.subItemId === sub.id || i.budgetSubItemId === sub.id)) {
+                                            return true;
+                                          }
+                                          // For legacy records without subItemId, only match if this is the only sub-item with this exact description
+                                          // and the PR was created before sub-item system (no subItemId on any items)
+                                          if (!i.subItemId && !i.budgetSubItemId && i.description?.trim() === sub.description?.trim()) {
+                                            // Check if this PR has any items with subItemId - if yes, it's not a legacy PR
+                                            const hasAnySubItemId = (p.items || []).some(item => item.subItemId || item.budgetSubItemId);
+                                            return !hasAnySubItemId;
+                                          }
+                                          return false;
+                                        });
                                         return sum + matchItems.reduce((s, i) => s + (i.quantity * i.price), 0);
                                       }, 0);
 

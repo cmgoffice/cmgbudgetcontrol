@@ -62,6 +62,7 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
     { key: "delete",  label: "ลบ PO" },
     { key: "requestRevision", label: "ขอแก้ไข PO (รออนุญาต)" },
     { key: "approve", label: "อนุมัติ / ปฏิเสธ PO" },
+    { key: "manualPoOverride", label: "แก้ไขเลข PO ด้วยตนเอง" },
   ],
   "po-table": [
     { key: "export",  label: "Export CSV" },
@@ -178,6 +179,7 @@ export const PURCHASE_TYPES = [
   "น้ำมัน > OL",
   "ค่าแรง > DC",
   "เงินเดือน > SM",
+  "รายจ่ายธนาคาร > INW",
 ];
 
 export const PURCHASE_TYPE_CODES: Record<string, string[]> = {
@@ -190,6 +192,7 @@ export const PURCHASE_TYPE_CODES: Record<string, string[]> = {
   "น้ำมัน > OL": ["OL"],
   "ค่าแรง > DC": ["DC"],
   "เงินเดือน > SM": ["SM"],
+  "รายจ่ายธนาคาร > INW": ["INW"],
   // backward compat: existing PRs saved with old keys
   "จัดซื้อจัดจ้าง > WA, ST, ML, CS, SA": ["WA", "ST", "ML", "CS", "SA"],
   "ขอซื้อเช่า > RE": ["RT", "RI"],
