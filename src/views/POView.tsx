@@ -251,9 +251,9 @@ const POView = React.memo(() => {
       return () => { window.removeEventListener("scroll", update, true); window.removeEventListener("resize", update); };
     }, [vendorDropdownOpen]);
 
-    // Counter-based PO No. reservation: PO{YY}{JXX}-{POT}{XXXX}
+    // Counter-based PO No. reservation with conflict checking: PO{YY}{JXX}-{POT}{XXXX}
     // ตัวอย่าง: PO26J01-CC0001
-    const reserveNextPoNo = useCallback(async (poTypeCode?: string) => {
+    const reserveNextPoNo = useCallback(async (poTypeCode?: string, manualPoNo?: string, maxRetries = 5) => {
       if (!selectedProjectId) throw new Error("กรุณาเลือกโครงการก่อนสร้าง PO");
       const currentProject = projects.find((p) => p.id === selectedProjectId);
       if (!currentProject || !currentProject.jobNo) throw new Error("ไม่พบข้อมูลโครงการ");
@@ -271,15 +271,27 @@ const POView = React.memo(() => {
       // prefix คือส่วนที่ใช้นับ running number ของ type นี้
       const prefix = `PO${yy}${jxx}-${typeCode}`;
 
-      // Find existing max sequence for fallback
+      // If manual PO number is provided, validate and use it
+      if (manualPoNo) {
+        // Check if manual PO number already exists
+        const existingPo = pos.find(po => po.poNo === manualPoNo && po.status !== "Rejected");
+        if (existingPo) {
+          throw new Error(`เลข PO ${manualPoNo} มีอยู่แล้วในระบบ กรุณาใช้เลขอื่น`);
+        }
+        return manualPoNo;
+      }
+
+      // Find existing max sequence from ALL POs (including manual ones)
       const existingMaxSeq = pos
-        .filter((po) => po.poNo && po.poNo.startsWith(prefix))
+        .filter((po) => po.poNo && po.poNo.startsWith(prefix) && po.status !== "Rejected")
         .reduce((max, po) => {
           const m = po.poNo.match(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\d+)$`));
           if (!m) return max;
           const n = Number(m[1]);
           return Number.isFinite(n) ? Math.max(max, n) : max;
         }, 0);
+      
+      console.log(`Found existing max sequence for ${prefix}: ${existingMaxSeq}`);
 
       const counterId = `${selectedProjectId}__${prefix.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
       const counterRef = doc(
@@ -294,30 +306,157 @@ const POView = React.memo(() => {
         counterId
       );
 
-      const nextPoNo = await runTransaction(db, async (tx) => {
-        const snap = await tx.get(counterRef);
-        const current = Number(
-          snap.exists()
-            ? snap.data()?.lastSeq || 0
-            : existingMaxSeq
-        );
-        const next = current + 1;
-        tx.set(
-          counterRef,
-          {
-            projectId: selectedProjectId,
-            prefix,
-            lastSeq: next,
-            updatedAt: new Date().toISOString(),
-          },
-          { merge: true }
-        );
-        return `${prefix}${String(next).padStart(4, "0")}`;
-      });
-      return nextPoNo;
+      // Retry mechanism for conflict resolution
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+          const nextPoNo = await runTransaction(db, async (tx) => {
+            const snap = await tx.get(counterRef);
+            const counterSeq = snap.exists() ? snap.data()?.lastSeq || 0 : 0;
+            
+            // Always use the higher of counter or existing max sequence
+            const current = Math.max(counterSeq, existingMaxSeq);
+            console.log(`Counter sequence: ${counterSeq}, Existing max: ${existingMaxSeq}, Using: ${current}`);
+            
+            let next = current + 1;
+            let candidatePoNo = `${prefix}${String(next).padStart(4, "0")}`;
+            
+            // Keep incrementing until we find a non-conflicting number
+            while (pos.find(po => po.poNo === candidatePoNo && po.status !== "Rejected")) {
+              next++;
+              candidatePoNo = `${prefix}${String(next).padStart(4, "0")}`;
+              console.log(`Conflict found, trying next: ${candidatePoNo}`);
+            }
+            
+            // Update counter with the final sequence number
+            tx.set(
+              counterRef,
+              {
+                projectId: selectedProjectId,
+                prefix,
+                lastSeq: next,
+                updatedAt: new Date().toISOString(),
+              },
+              { merge: true }
+            );
+            
+            console.log(`Reserved PO number: ${candidatePoNo}`);
+            return candidatePoNo;
+          });
+          
+          // Final check after transaction
+          const finalConflict = pos.find(po => po.poNo === nextPoNo && po.status !== "Rejected");
+          if (!finalConflict) {
+            return nextPoNo;
+          }
+          
+          console.warn(`Conflict detected for PO ${nextPoNo}, retrying... (attempt ${attempt + 1})`);
+        } catch (error) {
+          console.error(`Error in PO number reservation attempt ${attempt + 1}:`, error);
+          if (attempt === maxRetries - 1) {
+            throw error;
+          }
+          // Wait a bit before retrying
+          await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+        }
+      }
+      
+      throw new Error("ไม่สามารถสร้างเลข PO ได้หลังจากพยายามหลายครั้ง กรุณาลองใหม่อีกครั้ง");
     }, [selectedProjectId, projects, formData.poType, pos]);
 
-    // Preview-only PO No. generation for UI display
+    // State to track reserved PO number and cleanup
+    const [reservedPoNo, setReservedPoNo] = useState("");
+    const [isReservingPoNo, setIsReservingPoNo] = useState(false);
+    const [reservedCounterRef, setReservedCounterRef] = useState(null);
+    const [reservedSequence, setReservedSequence] = useState(0);
+
+    // Cleanup function to rollback reserved counter if not saved
+    const cleanupReservedPoNo = useCallback(async () => {
+      if (reservedCounterRef && reservedSequence > 0) {
+        try {
+          console.log(`Rolling back counter from ${reservedSequence} to ${reservedSequence - 1}`);
+          await runTransaction(db, async (tx) => {
+            const snap = await tx.get(reservedCounterRef);
+            if (snap.exists()) {
+              const currentSeq = snap.data()?.lastSeq || 0;
+              // Only rollback if the counter hasn't been used by another PO
+              if (currentSeq === reservedSequence) {
+                tx.set(
+                  reservedCounterRef,
+                  {
+                    ...snap.data(),
+                    lastSeq: reservedSequence - 1,
+                    updatedAt: new Date().toISOString(),
+                  },
+                  { merge: true }
+                );
+              }
+            }
+          });
+        } catch (error) {
+          console.error("Error rolling back PO counter:", error);
+        }
+      }
+      setReservedPoNo("");
+      setReservedCounterRef(null);
+      setReservedSequence(0);
+    }, [reservedCounterRef, reservedSequence]);
+
+    // Reserve actual PO number for display (not just preview)
+    const reservePoNoForDisplay = useCallback(async (poTypeCode?: string) => {
+      if (!selectedProjectId || editingPoId) return "";
+      
+      const currentProject = projects.find((p) => p.id === selectedProjectId);
+      if (!currentProject || !currentProject.jobNo) return "";
+      const typeCode = poTypeCode || formData.poType;
+      if (!typeCode) return "";
+
+      setIsReservingPoNo(true);
+      try {
+        // Clean up any previous reservation first
+        await cleanupReservedPoNo();
+        
+        const newPoNo = await reserveNextPoNo(typeCode);
+        setReservedPoNo(newPoNo);
+        
+        // Store counter reference for potential rollback
+        const prefix = `PO${String(new Date().getFullYear()).slice(-2)}${String(currentProject.jobNo).trim().replace(/-/g, "")}-${typeCode}`;
+        const counterId = `${selectedProjectId}__${prefix.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+        const counterRef = doc(db, "artifacts", appId, "public", "data", "settings", "poRunningNo", "poCountersByPrefix", counterId);
+        setReservedCounterRef(counterRef);
+        
+        // Extract sequence number from PO number
+        const seqMatch = newPoNo.match(/(\d+)$/);
+        if (seqMatch) {
+          setReservedSequence(Number(seqMatch[1]));
+        }
+        
+        return newPoNo;
+      } catch (error) {
+        console.error("Error reserving PO number:", error);
+        return "";
+      } finally {
+        setIsReservingPoNo(false);
+      }
+    }, [selectedProjectId, projects, formData.poType, reserveNextPoNo, editingPoId, cleanupReservedPoNo]);
+
+    // Cleanup on component unmount or when starting new PO
+    useEffect(() => {
+      return () => {
+        // Cleanup when component unmounts
+        if (reservedPoNo && !editingPoId) {
+          cleanupReservedPoNo();
+        }
+      };
+    }, []);
+
+    // Cleanup when switching projects or resetting form
+    useEffect(() => {
+      if (!editingPoId && reservedPoNo) {
+        cleanupReservedPoNo();
+      }
+    }, [selectedProjectId]);
+
+    // Preview-only PO No. generation for UI display (fallback)
     const generatePoNo = (poTypeCode?: string) => {
       if (!selectedProjectId) return "";
       const currentProject = projects.find((p) => p.id === selectedProjectId);
@@ -813,18 +952,30 @@ const POView = React.memo(() => {
         return showAlert("ข้อมูลไม่ครบ", L.noType, "warning");
       }
 
-      // Reserve PO number for new POs using counter-based system
+      // Reserve PO number for new POs using counter-based system with conflict checking
       let resolvedPoNo = formData.poNo;
       const isNewPO = !editingPoId;
       if (isNewPO) {
         try {
           if (canUseFunction("po", "manualPoOverride") && formData.poNo.trim() && formData.poNo !== generatePoNo()) {
-            // User has permission and provided manual number
+            // User has permission and provided manual number - validate it
             resolvedPoNo = await reserveNextPoNo(formData.poType, formData.poNo.trim());
           } else {
-            // Use automatic counter-based numbering
-            resolvedPoNo = await reserveNextPoNo();
+            // Use reserved number or get new one with conflict checking
+            if (reservedPoNo && reservedPoNo.includes(formData.poType)) {
+              // Use the already reserved number
+              resolvedPoNo = reservedPoNo;
+            } else {
+              // Reserve new number with retry mechanism
+              resolvedPoNo = await reserveNextPoNo(formData.poType);
+            }
             setFormData(prev => ({ ...prev, poNo: resolvedPoNo }));
+          }
+          
+          // Final conflict check before proceeding
+          const finalConflictCheck = pos.find(po => po.poNo === resolvedPoNo && po.status !== "Rejected" && po.id !== editingPoId);
+          if (finalConflictCheck) {
+            throw new Error(`เลข PO ${resolvedPoNo} ถูกใช้ไปแล้วโดย PO อื่น กรุณาลองใหม่อีกครั้ง`);
           }
         } catch (e) {
           return showAlert("สร้างเลข PO ไม่สำเร็จ", e?.message || "ไม่สามารถจองเลข PO ใหม่ได้", "error");
@@ -1005,6 +1156,10 @@ const POView = React.memo(() => {
         setIsModalOpen(false);
         setIsFullScreenModalOpen(false);
         setEditingPoId(null);
+        // Clear reserved PO state after successful save
+        setReservedPoNo("");
+        setReservedCounterRef(null);
+        setReservedSequence(0);
         setFormData({
           poNo: "", poType: "", receiveType: "", vendorId: "", requiredDate: "", poOpenDate: new Date().toISOString().split("T")[0], vatType: "ex-vat", selectedPrIds: [], items: [], reason: "", note: "", discount: 0, location: "",
         });
@@ -1979,7 +2134,11 @@ const POView = React.memo(() => {
                     </div>
                   </div>
                   <button
-                    onClick={() => {
+                    onClick={async () => {
+                      // Cleanup reserved PO number if not saved
+                      if (!editingPoId && reservedPoNo) {
+                        await cleanupReservedPoNo();
+                      }
                       setIsModalOpen(false);
                       setIsFullScreenModalOpen(false);
                     }}
@@ -2013,11 +2172,26 @@ const POView = React.memo(() => {
                           className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-sm bg-white hover:border-red-300 focus:border-red-500 focus:ring-2 focus:ring-red-100 cursor-pointer text-slate-900"
                           value={formData.poType}
                           disabled={!!editingPoId}
-                          onChange={(e) => {
+                          onChange={async (e) => {
                             const newType = e.target.value;
-                            const newPoNo = newType ? generatePoNo(newType) : "";
                             const defaultReceive = getDefaultReceiveType(newType);
-                            setFormData({ ...formData, poType: newType, poNo: newPoNo, receiveType: defaultReceive });
+                            
+                            if (newType && !editingPoId) {
+                              // Reserve actual PO number for new PO
+                              try {
+                                const actualPoNo = await reservePoNoForDisplay(newType);
+                                setFormData({ ...formData, poType: newType, poNo: actualPoNo, receiveType: defaultReceive });
+                              } catch (error) {
+                                console.error("Error reserving PO number:", error);
+                                // Fallback to placeholder if reservation fails
+                                const fallbackPoNo = generatePoNo(newType);
+                                setFormData({ ...formData, poType: newType, poNo: fallbackPoNo, receiveType: defaultReceive });
+                              }
+                            } else {
+                              // For editing or empty type, use placeholder
+                              const newPoNo = newType ? generatePoNo(newType) : "";
+                              setFormData({ ...formData, poType: newType, poNo: newPoNo, receiveType: defaultReceive });
+                            }
                           }}
                         >
                           <option value="">-- เลือก --</option>
@@ -2045,11 +2219,13 @@ const POView = React.memo(() => {
                                 : 'bg-slate-100 text-slate-700 cursor-default'
                             }`}
                             placeholder={
-                              canUseFunction("po", "manualPoOverride") && !editingPoId
+                              isReservingPoNo
+                                ? "กำลังจองเลข PO..."
+                                : canUseFunction("po", "manualPoOverride") && !editingPoId
                                 ? "แก้ไขเลข PO ได้ (เช่น PO26J01-CC0049)"
-                                : formData.poType ? "(Auto)" : "เลือก Type ก่อน"
+                                : formData.poType ? "(จองเลขแล้ว)" : "เลือก Type ก่อน"
                             }
-                            value={formData.poNo}
+                            value={isReservingPoNo ? "กำลังจองเลข PO..." : formData.poNo}
                             onChange={(e) => {
                               if (canUseFunction("po", "manualPoOverride") && !editingPoId) {
                                 setFormData({ ...formData, poNo: e.target.value });
