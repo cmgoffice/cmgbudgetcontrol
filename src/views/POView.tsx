@@ -1964,7 +1964,6 @@ const POView = React.memo(() => {
                     {[
                       { label: L.docNo, value: viewingPO.poNo },
                       { label: L.docType, value: viewingPO.poType || "-" },
-                      { label: "Ref PR No.", value: poPrNos || "-" },
                       { label: "Vendor", value: poVendor?.name || "-" },
                       { label: L.dateLabel, value: viewingPO.poDate ? viewingPO.poDate.split("T")[0] : "-" },
                       { label: "สถานที่ส่งสินค้า", value: viewingPO.location || "-" },
@@ -1977,6 +1976,126 @@ const POView = React.memo(() => {
                         <p className="font-semibold text-slate-700 truncate" title={value}>{value}</p>
                       </div>
                     ))}
+                    
+                    {/* Special handling for Ref PR No. - clickable PR numbers */}
+                    <div className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
+                      <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">Ref PR No.</p>
+                      <div className="flex flex-wrap gap-1">
+                        {poPrIds.length > 0 ? poPrIds.map((prId: string) => {
+                          const pr = prs.find((p: any) => p.id === prId);
+                          if (!pr) return <span key={prId} className="text-slate-700">-</span>;
+                          
+                          return (
+                            <button
+                              key={prId}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (pr.pdfUrl) {
+                                  window.open(pr.pdfUrl, '_blank', 'noopener,noreferrer');
+                                } else {
+                                  showAlert?.("ไม่พบไฟล์ PDF", `PR ${pr.prNo} ยังไม่มีไฟล์ PDF`, "warning");
+                                }
+                              }}
+                              className={`text-xs font-semibold px-2 py-0.5 rounded transition-colors ${
+                                pr.pdfUrl 
+                                  ? "text-blue-600 bg-blue-50 hover:bg-blue-100 hover:text-blue-700 border border-blue-200" 
+                                  : "text-slate-500 bg-slate-100 cursor-not-allowed"
+                              }`}
+                              title={pr.pdfUrl ? `คลิกเพื่อเปิด PDF ของ ${pr.prNo}` : `${pr.prNo} - ยังไม่มีไฟล์ PDF`}
+                            >
+                              {pr.prNo}
+                            </button>
+                          );
+                        }) : (
+                          <span className="font-semibold text-slate-700">-</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* ไฟล์แนบ - Display attachment URLs from PRs */}
+                    <div className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100 col-span-2 md:col-span-3">
+                      <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">เอกสารแนบจาก PR</p>
+                      <div className="space-y-1">
+                        {(() => {
+                          // Get all attachments from PRs referenced by this PO
+                          const prAttachments = poPrIds.map((prId: string) => {
+                            const pr = prs.find((p: any) => p.id === prId);
+                            if (!pr) return null;
+                            
+                            const attachments = [];
+                            
+                            // Add main attachment if exists
+                            if (pr.attachmentUrl && pr.attachmentName) {
+                              attachments.push({
+                                prNo: pr.prNo,
+                                prId: pr.id,
+                                name: pr.attachmentName,
+                                url: pr.attachmentUrl,
+                                type: 'main'
+                              });
+                            }
+                            
+                            // Add additional attachments if they exist
+                            if (pr.attachments && Array.isArray(pr.attachments)) {
+                              pr.attachments.forEach((att: any, idx: number) => {
+                                if (att.url && att.name) {
+                                  attachments.push({
+                                    prNo: pr.prNo,
+                                    prId: pr.id,
+                                    name: att.name,
+                                    url: att.url,
+                                    type: 'additional',
+                                    index: idx
+                                  });
+                                }
+                              });
+                            }
+                            
+                            return attachments;
+                          }).filter(Boolean).flat();
+
+                          if (prAttachments.length === 0) {
+                            return <span className="font-semibold text-slate-700 text-xs">ไม่มีเอกสารแนบ</span>;
+                          }
+
+                          return (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                              {prAttachments.map((attachment: any, idx: number) => (
+                                <div key={`${attachment.prId}-${attachment.type}-${attachment.index || 0}`} 
+                                     className="flex items-center gap-2 p-2 bg-white rounded-md border border-slate-200 hover:bg-blue-50 hover:border-blue-300 transition-colors">
+                                  <div className="flex-shrink-0">
+                                    <Paperclip size={12} className="text-slate-500" />
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 mb-0.5">
+                                      <span className="text-[10px] font-semibold text-slate-700">{attachment.prNo}</span>
+                                      <span className="text-[9px] px-1 py-0.5 bg-slate-200 text-slate-600 rounded-full">
+                                        {attachment.type === 'main' ? 'หลัก' : 'เพิ่มเติม'}
+                                      </span>
+                                    </div>
+                                    <p className="text-xs text-slate-600 truncate" title={attachment.name}>
+                                      {attachment.name}
+                                    </p>
+                                  </div>
+                                  <div className="flex-shrink-0">
+                                    <a
+                                      href={attachment.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center justify-center w-6 h-6 rounded-md text-blue-600 hover:text-blue-800 hover:bg-blue-100 transition-colors"
+                                      title="เปิดไฟล์"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <FileOutput size={12} />
+                                    </a>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
                   </div>
 
                   {/* Line Items */}
@@ -2018,6 +2137,7 @@ const POView = React.memo(() => {
                       </tfoot>
                     </table>
                   </div>
+
 
                   {viewingPO.note && (
                     <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-800">
@@ -2477,7 +2597,7 @@ const POView = React.memo(() => {
                         <Building2 size={16} className="text-slate-600" />
                         <span className="text-sm font-bold text-slate-700 uppercase tracking-wide">Vendor Details</span>
                       </div>
-                      <div className="p-3 text-sm flex-1">
+                      <div className="p-3 text-sm">
                         {formData.vendorId && (() => {
                           const v = vendors.find((x: any) => x.id === formData.vendorId);
                           if (!v) return <p className="text-slate-400">กำลังโหลด...</p>;
@@ -2496,6 +2616,101 @@ const POView = React.memo(() => {
                           <p className="text-slate-400 italic">เลือก Vendor ทางซ้ายเพื่อดูข้อมูล</p>
                         )}
                       </div>
+                      
+                      {/* PR Attachments Section */}
+                      {formData.selectedPrIds.length > 0 && (
+                        <div className="border-t border-slate-200 bg-white">
+                          <div className="px-4 py-2.5 bg-slate-100/80 border-b border-slate-200 flex items-center gap-2">
+                            <Paperclip size={16} className="text-slate-600" />
+                            <span className="text-sm font-bold text-slate-700 uppercase tracking-wide">เอกสารแนบจาก PR</span>
+                          </div>
+                          <div className="p-3 text-sm max-h-40 overflow-y-auto">
+                            {(() => {
+                              // Get all attachments from selected PRs
+                              const prAttachments = formData.selectedPrIds.map((prId: string) => {
+                                const pr = prs.find((p: any) => p.id === prId);
+                                if (!pr) return null;
+                                
+                                const attachments = [];
+                                
+                                // Add main attachment if exists
+                                if (pr.attachmentUrl && pr.attachmentName) {
+                                  attachments.push({
+                                    prNo: pr.prNo,
+                                    prId: pr.id,
+                                    name: pr.attachmentName,
+                                    url: pr.attachmentUrl,
+                                    type: 'main'
+                                  });
+                                }
+                                
+                                // Add additional attachments if they exist
+                                if (pr.attachments && Array.isArray(pr.attachments)) {
+                                  pr.attachments.forEach((att: any, idx: number) => {
+                                    if (att.url && att.name) {
+                                      attachments.push({
+                                        prNo: pr.prNo,
+                                        prId: pr.id,
+                                        name: att.name,
+                                        url: att.url,
+                                        type: 'additional',
+                                        index: idx
+                                      });
+                                    }
+                                  });
+                                }
+                                
+                                return attachments;
+                              }).filter(Boolean).flat();
+                              
+                              if (prAttachments.length === 0) {
+                                return (
+                                  <div className="text-center py-4">
+                                    <Paperclip size={24} className="mx-auto mb-2 text-slate-300" />
+                                    <p className="text-slate-400 text-xs">ไม่มีเอกสารแนบใน PR ที่เลือก</p>
+                                  </div>
+                                );
+                              }
+                              
+                              return (
+                                <div className="space-y-2">
+                                  {prAttachments.map((attachment: any, idx: number) => (
+                                    <div key={`${attachment.prId}-${attachment.type}-${attachment.index || 0}`} 
+                                         className="flex items-center gap-2 p-2 bg-slate-50 rounded-lg border border-slate-200 hover:bg-blue-50 hover:border-blue-300 transition-colors">
+                                      <div className="flex-shrink-0">
+                                        <Paperclip size={14} className="text-slate-500" />
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 mb-1">
+                                          <span className="text-xs font-semibold text-slate-700">{attachment.prNo}</span>
+                                          <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 text-slate-600 rounded-full">
+                                            {attachment.type === 'main' ? 'หลัก' : 'เพิ่มเติม'}
+                                          </span>
+                                        </div>
+                                        <p className="text-xs text-slate-600 truncate" title={attachment.name}>
+                                          {attachment.name}
+                                        </p>
+                                      </div>
+                                      <div className="flex-shrink-0">
+                                        <a
+                                          href={attachment.url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-blue-600 hover:text-blue-800 hover:bg-blue-100 transition-colors"
+                                          title="เปิดไฟล์"
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          <FileOutput size={14} />
+                                        </a>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
