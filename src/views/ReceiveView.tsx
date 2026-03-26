@@ -613,43 +613,54 @@ const ReceiveView = React.memo(() => {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2 mb-2">
-        <h2 className="text-xl font-bold text-slate-800">
-          Receive — รับของ
-        </h2>
-      </div>
+      {/* ── Page Header + Tabs ── */}
+      <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white/40 p-2 rounded-2xl border border-slate-100/50 shadow-sm">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-100 to-teal-100 flex items-center justify-center shadow-sm">
+              <Truck size={19} className="text-emerald-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-emerald-800 leading-none">E. Receive (รับของ)</h2>
+              <p className="text-[10px] text-emerald-400 mt-1">บันทึกการรับสินค้าจาก PO และติดตามประวัติ</p>
+            </div>
+          </div>
 
-      {/* Tabs */}
-      <div className="flex items-center gap-1 bg-white rounded-xl shadow-sm border border-slate-200 p-1 w-fit">
-        <button
-          type="button"
-          onClick={() => setActiveTab("po")}
-          className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-2 ${
-            activeTab === "po"
-              ? "bg-blue-600 text-white shadow"
-              : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-          }`}
-        >
-          <Truck size={15} /> รับของ
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab("history")}
-          className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-2 ${
-            activeTab === "history"
-              ? "bg-blue-600 text-white shadow"
-              : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-          }`}
-        >
-          <List size={15} /> รายการ Receive
-          {sortedReceiveHistory.length > 0 && (
-            <span className={`text-[10px] font-bold rounded-full px-1.5 py-0.5 min-w-[18px] text-center ${
-              activeTab === "history" ? "bg-white/20 text-white" : "bg-slate-200 text-slate-600"
-            }`}>
-              {sortedReceiveHistory.length}
-            </span>
-          )}
-        </button>
+          {/* ── Tabs ── */}
+          <div className="flex items-center gap-1 bg-emerald-50/50 rounded-xl border border-emerald-100/50 p-1 w-fit">
+            <button
+              type="button"
+              onClick={() => setActiveTab("po")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                activeTab === "po"
+                  ? "bg-white text-emerald-600 shadow-sm ring-1 ring-emerald-200"
+                  : "text-emerald-400 hover:text-emerald-600 hover:bg-white/50"
+              }`}
+            >
+              <Package size={13} />
+              รับของ
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("history")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                activeTab === "history"
+                  ? "bg-white text-emerald-600 shadow-sm ring-1 ring-emerald-200"
+                  : "text-emerald-400 hover:text-emerald-600 hover:bg-white/50"
+              }`}
+            >
+              <List size={13} />
+              รายการ Receive
+              {sortedReceiveHistory.length > 0 && (
+                <span className={`text-[9px] font-bold rounded-full px-1 py-0.5 min-w-[16px] text-center ${
+                  activeTab === "history" ? "bg-emerald-100 text-emerald-600" : "bg-emerald-50 text-emerald-400"
+                }`}>
+                  {sortedReceiveHistory.length}
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* ── Tab: รายการ Receive ── */}

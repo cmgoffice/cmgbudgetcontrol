@@ -6,7 +6,7 @@ import {
   PlusCircle, Briefcase, Calendar, MapPin, DollarSign, Info, FileOutput, Search, ListFilter,
   Truck, Package, Paperclip, Clock, Hash, Tag, ClipboardList, FileSpreadsheet, Upload, Download,
   BarChart3, Zap, Building2, Wallet, ShoppingCart, FileInput, RefreshCw, UserCheck, History,
-  Bell, CircleDot, AtSign, MapPinned, UserCircle, Square, CheckSquare, Flame, Mail
+  Bell, CircleDot, AtSign, MapPinned, UserCircle, Square, CheckSquare, Flame, Mail, Settings, Send
 } from "lucide-react";
 import { doc, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
 import { motion, AnimatePresence } from "framer-motion";
@@ -1973,37 +1973,53 @@ const BudgetView = React.memo(() => {
 
     return (
       <div className="space-y-4 w-full min-w-0">
-        <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+        {/* ── Page Header + Tabs ── */}
+        <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white/40 p-2 rounded-2xl border border-slate-100/50 shadow-sm">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 flex items-center justify-center shadow-sm">
+                <Briefcase size={19} className="text-blue-600" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-blue-800 leading-none">A. Budget (งบประมาณ)</h2>
+                <p className="text-[10px] text-blue-400 mt-1">วางแผนและควบคุมงบประมาณโครงการ</p>
+              </div>
+            </div>
+
+            {/* ── Tabs ── */}
+            <div className="flex items-center gap-1 bg-blue-50/50 rounded-xl border border-blue-100/50 p-1 w-fit overflow-x-auto no-scrollbar">
+              <button
+                onClick={() => setBudgetCategory("OVERVIEW")}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                  budgetCategory === "OVERVIEW"
+                    ? "bg-white text-blue-600 shadow-sm ring-1 ring-blue-200"
+                    : "text-blue-400 hover:text-blue-600 hover:bg-white/50"
+                }`}
+              >
+                <BarChart3 size={13} />
+                Overview
+              </button>
+              {Object.entries(COST_CATEGORIES).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setBudgetCategory(key)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                    budgetCategory === key
+                      ? "bg-white text-blue-600 shadow-sm ring-1 ring-blue-200"
+                      : "text-blue-400 hover:text-blue-600 hover:bg-white/50"
+                  }`}
+                >
+                  {key}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="flex items-center gap-2">
-            <h2 className="text-xl font-bold text-slate-800">
-              B. Project Budget
-            </h2>
             <ColumnVisibilityToggle tableId="budget" />
           </div>
         </div>
-        <div className="flex overflow-x-auto gap-1 pb-2 border-b border-slate-200 no-scrollbar">
-          <button
-            onClick={() => setBudgetCategory("OVERVIEW")}
-            className={`px-4 py-2 whitespace-nowrap text-xs font-medium rounded-t-lg transition-colors flex items-center gap-2 ${budgetCategory === "OVERVIEW"
-              ? "bg-slate-800 text-white shadow-sm"
-              : "bg-white text-slate-600 hover:bg-slate-50"
-              }`}
-          >
-            <BarChart3 size={14} /> ภาพรวม (Overview)
-          </button>
-          {Object.entries(COST_CATEGORIES).map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => setBudgetCategory(key)}
-              className={`px-4 py-2 whitespace-nowrap text-xs font-medium rounded-t-lg transition-colors ${budgetCategory === key
-                ? "bg-blue-600 text-white shadow-sm"
-                : "bg-white text-slate-600 hover:bg-slate-50"
-                }`}
-            >
-              {key}
-            </button>
-          ))}
-        </div>
+
         {budgetCategory === "OVERVIEW" ? (
           <>
             <Card className="overflow-hidden w-full min-w-0">
@@ -2609,15 +2625,16 @@ const BudgetView = React.memo(() => {
           </>
         ) : (
           <>
-            <div className="flex justify-between items-center gap-2 mb-2 flex-wrap">
+            <div className="flex justify-between items-center gap-2 mb-2 flex-wrap bg-white/40 p-2 rounded-2xl border border-slate-100/50 shadow-sm">
               <div className="flex gap-2 items-center">
                 {budgetCategory !== "OVERVIEW" && (
                   <div className="relative z-[10]">
                     <button
                       type="button"
-                      className="flex items-center gap-1 px-3 py-1.5 h-8 rounded-md font-medium text-xs shadow-sm bg-slate-600 text-white hover:bg-slate-700"
+                      className="flex items-center gap-1 px-3 py-1.5 h-8 rounded-lg font-bold text-xs shadow-sm bg-slate-600 text-white hover:bg-slate-700 transition-all active:scale-95"
                       onClick={() => setActionDropdownOpen((v) => !v)}
                     >
+                      <Settings size={12} />
                       Action
                       <ChevronDown size={12} className={actionDropdownOpen ? "rotate-180" : ""} />
                     </button>
@@ -2628,59 +2645,58 @@ const BudgetView = React.memo(() => {
                         {canUseFunction("budget", "submit") && (
                           <button
                             type="button"
-                            className="w-full text-left px-3 py-2 text-xs hover:bg-green-50 text-green-700 flex items-center gap-2"
+                            className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 text-blue-700 flex items-center gap-2 font-medium"
                             onClick={handleBulkSubmitBudgets}
                           >
-                            ส่งไปยัง MD Approve ({selectedBudgetIds.length} รายการ)
+                            <Send size={12} /> ส่งไปยัง MD Approve ({selectedBudgetIds.length} รายการ)
                           </button>
                         )}
                         {canUseFunction("budget", "delete") && (
                           <button
                             type="button"
-                            className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 text-red-700 flex items-center gap-2"
+                            className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 text-red-700 flex items-center gap-2 font-medium"
                             onClick={handleBulkDeleteBudgets}
                           >
-                            ลบหลายรายการที่เลือก ({selectedBudgetIds.length})
+                            <Trash2 size={12} /> ลบทิ้ง ({selectedBudgetIds.length} รายการ)
                           </button>
                         )}
                       </div>
                     )}
                   </div>
                 )}
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    onClick={handleDownloadTemplate}
+                    className="text-[10px] h-8 px-2 border-slate-200 text-slate-500"
+                    title="Download Template"
+                  >
+                    <Download size={12} />
+                  </Button>
+                  {canUseFunction("budget", "import") && (
+                    <label className="flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-100 hover:bg-emerald-100 cursor-pointer transition-colors" title="Import CSV">
+                      <FileSpreadsheet size={14} />
+                      <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
+                    </label>
+                  )}
+                </div>
               </div>
+
               <div className="flex gap-2 flex-wrap">
               {canUseFunction("budget", "delete") && (
                 <Button
                   variant="outline"
                   onClick={handleClearAllBudgets}
-                  className="text-xs h-8 border-red-400 text-red-600 hover:bg-red-50"
+                  className="text-[10px] h-8 border-red-200 text-red-500 hover:bg-red-50 px-2"
                   disabled={currentBudgets.length === 0}
                 >
-                  <Trash2 size={14} /> ล้างข้อมูลทั้งหมด
+                  <Trash2 size={12} /> ล้างทั้งหมด
                 </Button>
               )}
-              <Button
-                variant="outline"
-                onClick={handleDownloadTemplate}
-                className="text-xs h-8"
-              >
-                <Download size={14} /> Template
-              </Button>
-              {canUseFunction("budget", "import") && (
-                <label className="flex items-center gap-2 px-3 py-1.5 rounded-md font-medium transition-all text-xs shadow-sm bg-green-600 text-white hover:bg-green-700 cursor-pointer h-8">
-                  <FileSpreadsheet size={14} /> Import CSV
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".csv"
-                    className="hidden"
-                    onChange={handleFileUpload}
-                  />
-                </label>
-              )}
-              <div className="w-4"></div>
+              
               {canUseFunction("budget", "add") && (
                 <Button
+                  className="bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-100 border-none rounded-xl px-4 py-2 text-sm font-bold flex items-center gap-2 transition-all active:scale-95"
                   onClick={() => {
                     setEditingBudgetId(null);
                     setSelectedBudget(null);
@@ -2689,7 +2705,7 @@ const BudgetView = React.memo(() => {
                     setIsModalOpen(true);
                   }}
                 >
-                  <Plus size={14} /> ตั้งงบประมาณ (Budget)
+                  <Plus size={16} /> ตั้งงบประมาณ
                 </Button>
               )}
               </div>

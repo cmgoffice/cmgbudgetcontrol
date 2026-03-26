@@ -819,19 +819,28 @@ const PaymentView = React.memo(() => {
   // ─── Render ──────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-4 w-full min-w-0">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-3">
+      {/* ── Page Header ── */}
+      <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white/40 p-2 rounded-2xl border border-slate-100/50 shadow-sm">
         <div className="flex items-center gap-2">
-          <h2 className="text-xl font-bold text-orange-800">Payment Subcontractor</h2>
-          <ColumnVisibilityToggle tableId="payment" />
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-100 to-amber-100 flex items-center justify-center shadow-sm">
+            <CreditCard size={19} className="text-orange-600" />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-orange-800 leading-none">B. Payment Subcontractor</h2>
+            <p className="text-[10px] text-orange-400 mt-1">จัดการการเบิกจ่ายงานผู้รับเหมาช่วง</p>
+          </div>
+          <div className="ml-2">
+            <ColumnVisibilityToggle tableId="payment" />
+          </div>
         </div>
+
         <div className="flex items-center gap-2">
           {canUseFunction?.("payment-subcontract", "create") !== false && (
             <Button
               onClick={openCreate}
-              className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow-sm"
+              className="bg-orange-500 hover:bg-orange-600 text-white shadow-md shadow-orange-100 border-none rounded-xl px-4 py-2 text-sm font-bold flex items-center gap-2 transition-all active:scale-95"
             >
-              <Plus size={14} /> สร้าง Payment
+              <Plus size={16} /> สร้าง Payment
             </Button>
           )}
         </div>

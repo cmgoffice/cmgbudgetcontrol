@@ -251,72 +251,76 @@ const InvoiceView = React.memo(() => {
 
   return (
     <div className="space-y-4">
-      {/* ── Page Header ── */}
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-100 to-purple-100 flex items-center justify-center shadow-sm">
-          <FileText size={19} className="text-violet-600" />
-        </div>
-        <div>
-          <h2 className="text-xl font-bold text-violet-800">
-            F. ใบแจ้งหนี้ (Invoice)
-          </h2>
-          <p className="text-xs text-violet-400">
-            จัดการใบแจ้งหนี้จาก PO ที่รับสินค้าแล้ว (สถานะ Received)
-          </p>
-        </div>
-      </div>
+      {/* ── Page Header + Tabs ── */}
+      <div className="flex items-center justify-between gap-4 bg-white/40 p-2 rounded-2xl border border-slate-100/50 shadow-sm">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-100 to-purple-100 flex items-center justify-center shadow-sm">
+              <FileText size={19} className="text-violet-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-violet-800 leading-none">
+                F. ใบแจ้งหนี้ (Invoice)
+              </h2>
+              <p className="text-[10px] text-violet-400 mt-1">
+                จัดการใบแจ้งหนี้จาก PO ที่รับสินค้าแล้ว
+              </p>
+            </div>
+          </div>
 
-      {/* ── Tabs ── */}
-      <div className="flex items-center gap-2 bg-white rounded-2xl border border-slate-100 shadow-sm p-1.5 w-fit">
-        <button
-          type="button"
-          onClick={() => setActiveTab("po")}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
-            activeTab === "po"
-              ? "bg-gradient-to-r from-violet-500 to-purple-500 text-white shadow-md shadow-violet-200"
-              : "text-violet-500 hover:bg-violet-50"
-          }`}
-        >
-          <Package size={14} />
-          PO ที่รับแล้ว
-          <span
-            className={`text-[10px] font-bold rounded-full px-1.5 py-0.5 min-w-[18px] text-center ${
-              activeTab === "po"
-                ? "bg-white/20 text-white"
-                : "bg-violet-100 text-violet-600"
-            }`}
-          >
-            {receivedPOs.length}
-          </span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab("history")}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
-            activeTab === "history"
-              ? "bg-gradient-to-r from-amber-400 to-orange-400 text-white shadow-md shadow-amber-200"
-              : "text-amber-600 hover:bg-amber-50"
-          }`}
-        >
-          <DollarSign size={14} />
-          ประวัติ Invoice
-          <span
-            className={`text-[10px] font-bold rounded-full px-1.5 py-0.5 min-w-[18px] text-center ${
-              activeTab === "history"
-                ? "bg-white/20 text-white"
-                : "bg-amber-100 text-amber-600"
-            }`}
-          >
-            {projectInvoices.length}
-          </span>
-        </button>
+          {/* ── Tabs ── */}
+          <div className="flex items-center gap-1 bg-violet-50/50 rounded-xl border border-violet-100/50 p-1 w-fit">
+            <button
+              type="button"
+              onClick={() => setActiveTab("po")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                activeTab === "po"
+                  ? "bg-white text-violet-600 shadow-sm ring-1 ring-violet-200"
+                  : "text-violet-400 hover:text-violet-600 hover:bg-white/50"
+              }`}
+            >
+              <Package size={13} />
+              PO ที่รับแล้ว
+              <span
+                className={`text-[9px] font-bold rounded-full px-1 py-0.5 min-w-[16px] text-center ${
+                  activeTab === "po"
+                    ? "bg-violet-100 text-violet-600"
+                    : "bg-violet-50 text-violet-400"
+                }`}
+              >
+                {receivedPOs.length}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("history")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                activeTab === "history"
+                  ? "bg-white text-amber-600 shadow-sm ring-1 ring-amber-200"
+                  : "text-amber-400 hover:text-amber-600 hover:bg-white/50"
+              }`}
+            >
+              <DollarSign size={13} />
+              ประวัติ Invoice
+              <span
+                className={`text-[9px] font-bold rounded-full px-1 py-0.5 min-w-[16px] text-center ${
+                  activeTab === "history"
+                    ? "bg-amber-100 text-amber-600"
+                    : "bg-amber-50 text-amber-400"
+                }`}
+              >
+                {projectInvoices.length}
+              </span>
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* ══════════════════════════════════════
           Tab: PO ที่รับแล้ว (Received)
       ══════════════════════════════════════ */}
       {activeTab === "po" && (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {/* Search toolbar */}
           <Card className="px-4 py-3 bg-gradient-to-r from-violet-50 to-purple-50 border-violet-100">
             <div className="flex flex-wrap items-center gap-2">
@@ -374,7 +378,7 @@ const InvoiceView = React.memo(() => {
                 ไม่พบ PO ที่มีสถานะ Received
               </p>
               <p className="text-xs text-slate-400 mt-1">
-                PO ต้องผ่านการรับสินค้า (Receive) ก่อนจึงจะออกใบแจ้งหนี้ได้
+                PO ต้องผ่านการรับสินค้า (Receive) ก่อนจึงจะลงข้อมูลใบแจ้งหนี้ได้
               </p>
             </Card>
           ) : (
@@ -416,11 +420,11 @@ const InvoiceView = React.memo(() => {
                         className={`${c.thead} text-slate-500 uppercase font-semibold`}
                       >
                         <tr>
-                          <th className="py-2 px-3">PO No.</th>
-                          <th className="py-2 px-3">Vendor</th>
-                          <th className="py-2 px-3">รายละเอียด</th>
-                          <th className="py-2 px-3 text-right">ยอดรวม</th>
-                          <th className="py-2 px-3 text-center">Actions</th>
+                          <th className="py-1.5 px-3">PO No.</th>
+                          <th className="py-1.5 px-3">Vendor</th>
+                          <th className="py-1.5 px-3">รายละเอียด</th>
+                          <th className="py-1.5 px-3 text-right">ยอดรวม</th>
+                          <th className="py-1.5 px-3 text-center">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -431,23 +435,23 @@ const InvoiceView = React.memo(() => {
                             onClick={() => openPODetail(po)}
                           >
                             <td
-                              className={`py-2 px-3 font-semibold ${c.poNo}`}
+                              className={`py-1.5 px-3 font-semibold ${c.poNo}`}
                             >
                               {po.poNo}
                             </td>
-                            <td className="py-2 px-3">
+                            <td className="py-1.5 px-3">
                               {getVendorName(po.vendorId)}
                             </td>
                             <td
-                              className="py-2 px-3 max-w-[260px] truncate"
+                              className="py-1.5 px-3 max-w-[260px] truncate"
                               title={poDescription(po)}
                             >
                               {poDescription(po)}
                             </td>
-                            <td className="py-2 px-3 text-right font-semibold">
+                            <td className="py-1.5 px-3 text-right font-semibold">
                               {formatCurrency(po.amount)}
                             </td>
-                            <td className="py-2 px-3 text-center">
+                            <td className="py-1.5 px-3 text-center">
                               <button
                                 type="button"
                                 className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[10px] font-medium transition-colors ${c.btn}`}
@@ -456,7 +460,7 @@ const InvoiceView = React.memo(() => {
                                   openPODetail(po);
                                 }}
                               >
-                                <FileText size={11} /> ออกใบแจ้งหนี้
+                                <FileText size={11} /> ลงข้อมูลใบแจ้งหนี้
                               </button>
                             </td>
                           </tr>
@@ -475,7 +479,7 @@ const InvoiceView = React.memo(() => {
           Tab: ประวัติ Invoice
       ══════════════════════════════════════ */}
       {activeTab === "history" && (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {/* Search */}
           <Card className="px-4 py-3 bg-gradient-to-r from-amber-50 to-orange-50 border-amber-100">
             <div className="flex items-center gap-2">
@@ -511,14 +515,14 @@ const InvoiceView = React.memo(() => {
             <table className="w-full text-left text-xs text-slate-600">
               <thead className="bg-gradient-to-r from-amber-50 to-orange-50 text-slate-600 uppercase font-semibold border-b border-amber-100">
                 <tr>
-                  <th className="py-2.5 px-3">Invoice No.</th>
-                  <th className="py-2.5 px-3">Ref. PO</th>
-                  <th className="py-2.5 px-3">Vendor</th>
-                  <th className="py-2.5 px-3">วันที่</th>
-                  <th className="py-2.5 px-3">ประเภทชำระ</th>
-                  <th className="py-2.5 px-3 text-right">จำนวนเงิน</th>
-                  <th className="py-2.5 px-3 text-center">สถานะ</th>
-                  <th className="py-2.5 px-3 text-center">Actions</th>
+                  <th className="py-1.5 px-3">Invoice No.</th>
+                  <th className="py-1.5 px-3">Ref. PO</th>
+                  <th className="py-1.5 px-3">Vendor</th>
+                  <th className="py-1.5 px-3">วันที่</th>
+                  <th className="py-1.5 px-3">ประเภทชำระ</th>
+                  <th className="py-1.5 px-3 text-right">จำนวนเงิน</th>
+                  <th className="py-1.5 px-3 text-center">สถานะ</th>
+                  <th className="py-1.5 px-3 text-center">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-amber-50">
@@ -543,19 +547,19 @@ const InvoiceView = React.memo(() => {
                         idx % 2 === 0 ? "bg-white" : "bg-amber-50/25"
                       } hover:bg-amber-50/60`}
                     >
-                      <td className="py-2 px-3 font-semibold text-amber-700">
+                      <td className="py-1.5 px-3 font-semibold text-amber-700">
                         {inv.invNo}
                       </td>
-                      <td className="py-2 px-3 font-medium text-violet-600">
+                      <td className="py-1.5 px-3 font-medium text-violet-600">
                         {inv.poNo || inv.poRef || "-"}
                       </td>
-                      <td className="py-2 px-3">
+                      <td className="py-1.5 px-3">
                         {inv.vendorName || "-"}
                       </td>
-                      <td className="py-2 px-3">
+                      <td className="py-1.5 px-3">
                         {inv.invDate || inv.receiveDate || "-"}
                       </td>
-                      <td className="py-2 px-3">
+                      <td className="py-1.5 px-3">
                         {inv.paymentType ? (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-violet-100 text-violet-700">
                             {inv.paymentType}
@@ -564,13 +568,13 @@ const InvoiceView = React.memo(() => {
                           "-"
                         )}
                       </td>
-                      <td className="py-2 px-3 text-right font-semibold">
+                      <td className="py-1.5 px-3 text-right font-semibold">
                         {formatCurrency(inv.amount)}
                       </td>
-                      <td className="py-2 px-3 text-center">
+                      <td className="py-1.5 px-3 text-center">
                         <Badge status={inv.status} />
                       </td>
-                      <td className="py-2 px-3">
+                      <td className="py-1.5 px-3">
                         <div className="flex items-center justify-center gap-1">
                           {canUseFunction("invoice", "approve") &&
                             (userRoles.includes("PM") ||
@@ -618,7 +622,7 @@ const InvoiceView = React.memo(() => {
       )}
 
       {/* ══════════════════════════════════════
-          Modal: ออกใบแจ้งหนี้
+          Modal: ลงข้อมูลใบแจ้งหนี้
       ══════════════════════════════════════ */}
       <AnimatePresence>
         {viewingPO && (
@@ -640,14 +644,14 @@ const InvoiceView = React.memo(() => {
               onClick={(e) => e.stopPropagation()}
             >
               {/* Modal Header */}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-violet-100 bg-gradient-to-r from-violet-50 via-purple-50 to-white rounded-t-2xl">
-                <div className="flex items-center gap-3">
+              <div className="flex items-center justify-between px-5 py-3 border-b border-violet-100 bg-gradient-to-r from-violet-50 via-purple-50 to-white rounded-t-2xl">
+                <div className="flex items-center gap-2">
                   <div className="w-10 h-10 rounded-xl bg-violet-100 flex items-center justify-center">
                     <FileText size={20} className="text-violet-600" />
                   </div>
                   <div>
                     <h3 className="text-lg font-bold text-violet-800">
-                      ออกใบแจ้งหนี้
+                      ลงข้อมูลใบแจ้งหนี้
                     </h3>
                     <p className="text-xs text-violet-400">
                       {viewingPO.poNo} —{" "}
@@ -667,9 +671,9 @@ const InvoiceView = React.memo(() => {
               </div>
 
               {/* Modal Body */}
-              <div className="p-6 max-h-[72vh] overflow-y-auto custom-scrollbar space-y-5">
+              <div className="p-4 max-h-[72vh] overflow-y-auto custom-scrollbar space-y-3">
                 {/* PO Info Cards */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                   {[
                     {
                       label: "PO No.",
@@ -697,14 +701,14 @@ const InvoiceView = React.memo(() => {
                   ].map((f) => (
                     <div
                       key={f.label}
-                      className={`rounded-xl p-3 ${
+                      className={`rounded-lg p-2.5 ${
                         f.tone === "violet"
                           ? "bg-violet-50 border border-violet-100"
                           : "bg-amber-50 border border-amber-100"
                       }`}
                     >
                       <p
-                        className={`text-[10px] font-semibold uppercase tracking-wide ${
+                        className={`text-[9px] font-semibold uppercase tracking-wide ${
                           f.tone === "violet"
                             ? "text-violet-400"
                             : "text-amber-400"
@@ -713,7 +717,7 @@ const InvoiceView = React.memo(() => {
                         {f.label}
                       </p>
                       <p
-                        className={`text-sm font-bold truncate mt-0.5 ${
+                        className={`text-xs font-bold truncate mt-0.5 ${
                           f.tone === "violet"
                             ? "text-violet-800"
                             : "text-amber-800"
@@ -727,7 +731,7 @@ const InvoiceView = React.memo(() => {
                 </div>
 
                 {/* Invoice Entry Fields */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-gradient-to-r from-violet-50/60 to-amber-50/60 rounded-2xl p-4 border border-violet-100">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-gradient-to-r from-violet-50/60 to-amber-50/60 rounded-xl p-3 border border-violet-100">
                   <div>
                     <label className="flex items-center gap-1 text-xs font-semibold text-violet-700 mb-1.5">
                       <FileText size={11} /> เลขที่ใบแจ้งหนี้{" "}
@@ -787,19 +791,19 @@ const InvoiceView = React.memo(() => {
 
                 {/* Items Table */}
                 <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="text-sm font-bold text-slate-700 flex items-center gap-1.5">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <h4 className="text-xs font-bold text-slate-700 flex items-center gap-1">
                       รายการสินค้าจาก PO
-                      <span className="text-xs font-normal text-slate-400">
+                      <span className="text-[11px] font-normal text-slate-400">
                         ({invoiceForm.items.length} รายการ) — เลือกรายการที่ต้องการวางบิล
                       </span>
                     </h4>
                   </div>
-                  <div className="border border-violet-100 rounded-2xl overflow-hidden">
+                  <div className="border border-violet-100 rounded-xl overflow-hidden">
                     <table className="w-full text-xs text-slate-600">
                       <thead className="bg-gradient-to-r from-violet-50 to-purple-50 text-slate-500 uppercase font-semibold">
                         <tr>
-                          <th className="py-2.5 px-3 text-center w-8">
+                          <th className="py-1.5 px-3 text-center w-8">
                             <input
                               type="checkbox"
                               checked={
@@ -818,15 +822,15 @@ const InvoiceView = React.memo(() => {
                               className="accent-violet-500 w-3.5 h-3.5"
                             />
                           </th>
-                          <th className="py-2.5 px-3">#</th>
-                          <th className="py-2.5 px-3">รหัสวัสดุ</th>
-                          <th className="py-2.5 px-3">รายละเอียด</th>
-                          <th className="py-2.5 px-3 text-center">หน่วย</th>
-                          <th className="py-2.5 px-3 text-right">ราคา/หน่วย</th>
-                          <th className="py-2.5 px-3 text-right w-24">
+                          <th className="py-1.5 px-3">#</th>
+                          <th className="py-1.5 px-3">รหัสวัสดุ</th>
+                          <th className="py-1.5 px-3">รายละเอียด</th>
+                          <th className="py-1.5 px-3 text-center">หน่วย</th>
+                          <th className="py-1.5 px-3 text-right">ราคา/หน่วย</th>
+                          <th className="py-1.5 px-3 text-right w-24">
                             จำนวนวางบิล
                           </th>
-                          <th className="py-2.5 px-3 text-right">จำนวนเงิน</th>
+                          <th className="py-1.5 px-3 text-right">จำนวนเงิน</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-violet-50">
@@ -841,7 +845,7 @@ const InvoiceView = React.memo(() => {
                                 : "bg-violet-50/20"
                             }`}
                           >
-                            <td className="py-2 px-3 text-center">
+                            <td className="py-1.5 px-3 text-center">
                               <input
                                 type="checkbox"
                                 checked={item.checked}
@@ -858,22 +862,22 @@ const InvoiceView = React.memo(() => {
                                 className="accent-violet-500 w-3.5 h-3.5"
                               />
                             </td>
-                            <td className="py-2 px-3 text-slate-400">
+                            <td className="py-1.5 px-3 text-slate-400">
                               {idx + 1}
                             </td>
-                            <td className="py-2 px-3 font-mono text-[10px] text-slate-500">
+                            <td className="py-1.5 px-3 font-mono text-[10px] text-slate-500">
                               {item.materialNo || "-"}
                             </td>
-                            <td className="py-2 px-3">
+                            <td className="py-1.5 px-3">
                               {item.description || "-"}
                             </td>
-                            <td className="py-2 px-3 text-center">
+                            <td className="py-1.5 px-3 text-center">
                               {item.unit || "-"}
                             </td>
-                            <td className="py-2 px-3 text-right">
+                            <td className="py-1.5 px-3 text-right">
                               {formatCurrency(item.price || 0)}
                             </td>
-                            <td className="py-2 px-3">
+                            <td className="py-1.5 px-3">
                               <input
                                 type="number"
                                 min={0}
@@ -896,7 +900,7 @@ const InvoiceView = React.memo(() => {
                                 className="w-20 border border-violet-200 rounded-lg px-2 py-1 text-right text-xs focus:outline-none focus:ring-2 focus:ring-violet-300 bg-white disabled:bg-slate-50 disabled:cursor-not-allowed"
                               />
                             </td>
-                            <td className="py-2 px-3 text-right font-semibold text-violet-700">
+                            <td className="py-1.5 px-3 text-right font-semibold text-violet-700">
                               {formatCurrency(
                                 Number(item.invoiceQty) *
                                   Number(item.price || 0)
@@ -924,7 +928,7 @@ const InvoiceView = React.memo(() => {
               </div>
 
               {/* Modal Footer */}
-              <div className="flex items-center justify-between px-6 py-4 border-t border-violet-100 bg-gradient-to-r from-violet-50/40 to-amber-50/40 rounded-b-2xl">
+              <div className="flex items-center justify-between px-5 py-3 border-t border-violet-100 bg-gradient-to-r from-violet-50/40 to-amber-50/40 rounded-b-2xl">
                 <p className="text-xs text-slate-400 flex items-center gap-1">
                   <AlertCircle size={11} />
                   หลังบันทึก สถานะ PO จะเปลี่ยนเป็น{" "}

@@ -1649,43 +1649,53 @@ const POView = React.memo(() => {
           </div>
         ) : (
         <>
-        <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+        {/* ── Page Header ── */}
+        <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white/40 p-2 rounded-2xl border border-slate-100/50 shadow-sm">
           <div className="flex items-center gap-2">
-            <h2 className="text-xl font-bold text-slate-800">
-              {L.pageTitle}
-            </h2>
-            <ColumnVisibilityToggle tableId="po" />
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-100 to-orange-100 flex items-center justify-center shadow-sm">
+              <ShoppingCart size={19} className="text-amber-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-amber-800 leading-none">{L.pageTitle}</h2>
+              <p className="text-[10px] text-amber-400 mt-1">จัดการใบสั่งซื้อและติดตามสถานะ</p>
+            </div>
+            <div className="ml-2">
+              <ColumnVisibilityToggle tableId="po" />
+            </div>
           </div>
-          {canUseFunction("po", "create") && (
-            <Button
-              onClick={() => {
-                setEditingPoId(null);
-                setFormData({
-                  poNo: "",
-                  poType: "",
-                  receiveType: "",
-                  vendorId: "",
-                  requiredDate: "",
-                  poOpenDate: new Date().toISOString().split("T")[0],
-                  vatType: "ex-vat",
-                  selectedPrIds: [],
-                  items: [],
-                  reason: "",
-                  note: "",
-                  discount: 0,
-                  location: "",
-                });
-                setManualVatOverride(null);
-                setVatEditOpen(false);
-                setDiscountEnabled(false);
-                setIsModalOpen(true);
-                setIsFullScreenModalOpen(true);
-              }}
-              variant="warning"
-            >
-              <Plus size={14} /> {L.createBtn}
-            </Button>
-          )}
+
+          <div className="flex items-center gap-2">
+            {canUseFunction("po", "create") && (
+              <Button
+                className="bg-amber-500 hover:bg-amber-600 text-white shadow-md shadow-amber-100 border-none rounded-xl px-4 py-2 text-sm font-bold flex items-center gap-2 transition-all active:scale-95"
+                onClick={() => {
+                  setEditingPoId(null);
+                  setFormData({
+                    poNo: "",
+                    poType: "",
+                    receiveType: "",
+                    vendorId: "",
+                    requiredDate: "",
+                    poOpenDate: new Date().toISOString().split("T")[0],
+                    vatType: "ex-vat",
+                    selectedPrIds: [],
+                    items: [],
+                    reason: "",
+                    note: "",
+                    discount: 0,
+                    location: "",
+                  });
+                  setManualVatOverride(null);
+                  setVatEditOpen(false);
+                  setDiscountEnabled(false);
+                  setIsModalOpen(true);
+                  setIsFullScreenModalOpen(true);
+                }}
+              >
+                <Plus size={16} /> {L.createBtn}
+              </Button>
+            )}
+          </div>
         </div>
 
         <Card className="overflow-hidden w-full min-w-0">

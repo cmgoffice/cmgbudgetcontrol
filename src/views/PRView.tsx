@@ -1317,38 +1317,51 @@ const PRView = React.memo(() => {
           document.body
         )}
 
-        <div className="w-full min-w-0 flex flex-col md:flex-row justify-between items-center gap-4">
+        {/* ── Page Header ── */}
+        <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white/40 p-2 rounded-2xl border border-slate-100/50 shadow-sm">
           <div className="flex items-center gap-2">
-            <h2 className="text-xl font-bold text-slate-800">C. Purchase Request (PR)</h2>
-            <ColumnVisibilityToggle tableId="pr" />
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-rose-100 to-pink-100 flex items-center justify-center shadow-sm">
+              <FileText size={19} className="text-rose-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-rose-800 leading-none">C. Purchase Request (PR)</h2>
+              <p className="text-[10px] text-rose-400 mt-1">จัดการใบขอซื้อและสถานะการอนุมัติ</p>
+            </div>
+            <div className="ml-2">
+              <ColumnVisibilityToggle tableId="pr" />
+            </div>
           </div>
-          {canUseFunction("pr", "create") && (
-            <Button
-              onClick={() => {
-                setIsModalOpen(true);
-                setIsFullScreenModalOpen(true);
-                setEditingPRId(null);
-                setHeaderData({
-                  prNo: "",
-                  requestDate: new Date().toISOString().split("T")[0],
-                  requestor: userData ? `${userData.firstName || ""} ${userData.lastName || ""}`.trim() : "",
-                  requestorEmail: userData?.email || "",
-                  costCode: "",
-                  selectedBudgetId: "",
-                  selectedSubItemId: "",
-                  urgency: "Normal",
-                  purchaseType: "",
-                  deliveryLocation: "",
-                  attachment: null,
-                  attachmentUrl: "",
-                  attachmentName: "",
-                });
-                setLineItems([]);
-              }}
-            >
-              <Plus size={14} /> สร้าง PR ใหม่
-            </Button>
-          )}
+
+          <div className="flex items-center gap-2">
+            {canUseFunction("pr", "create") && (
+              <Button
+                className="bg-rose-500 hover:bg-rose-600 text-white shadow-md shadow-rose-100 border-none rounded-xl px-4 py-2 text-sm font-bold flex items-center gap-2 transition-all active:scale-95"
+                onClick={() => {
+                  setIsModalOpen(true);
+                  setIsFullScreenModalOpen(true);
+                  setEditingPRId(null);
+                  setHeaderData({
+                    prNo: "",
+                    requestDate: new Date().toISOString().split("T")[0],
+                    requestor: userData ? `${userData.firstName || ""} ${userData.lastName || ""}`.trim() : "",
+                    requestorEmail: userData?.email || "",
+                    costCode: "",
+                    selectedBudgetId: "",
+                    selectedSubItemId: "",
+                    urgency: "Normal",
+                    purchaseType: "",
+                    deliveryLocation: "",
+                    attachment: null,
+                    attachmentUrl: "",
+                    attachmentName: "",
+                  });
+                  setLineItems([]);
+                }}
+              >
+                <Plus size={16} /> สร้าง PR ใหม่
+              </Button>
+            )}
+          </div>
         </div>
         <Card className="overflow-hidden w-full min-w-0">
           <div ref={prTableRef} className="w-full min-w-0">
