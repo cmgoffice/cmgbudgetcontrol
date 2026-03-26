@@ -2012,90 +2012,111 @@ const POView = React.memo(() => {
                       </div>
                     </div>
 
-                    {/* ไฟล์แนบ - Display attachment URLs from PRs */}
-                    <div className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100 col-span-2 md:col-span-3">
-                      <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">เอกสารแนบจาก PR</p>
-                      <div className="space-y-1">
-                        {(() => {
-                          // Get all attachments from PRs referenced by this PO
-                          const prAttachments = poPrIds.map((prId: string) => {
-                            const pr = prs.find((p: any) => p.id === prId);
-                            if (!pr) return null;
-                            
-                            const attachments = [];
-                            
-                            // Add main attachment if exists
-                            if (pr.attachmentUrl && pr.attachmentName) {
-                              attachments.push({
+                    {/* ไฟล์แนบ - Display all attachments (Budget + PR) */}
+                    {(() => {
+                      const allAttachments: { source: string; prNo: string; name: string; url: string; type: string }[] = [];
+
+                      // Collect attachments from all PRs referenced by this PO
+                      poPrIds.forEach((prId: string) => {
+                        const pr = prs.find((p: any) => p.id === prId);
+                        if (!pr) return;
+
+                        // Get budget attachments through PR
+                        const budgetItem = pr.budgetId
+                          ? budgets.find(b => b.id === pr.budgetId && b.projectId === pr.projectId)
+                          : pr.costCode
+                            ? budgets.find(b => b.code === pr.costCode && b.projectId === pr.projectId)
+                            : null;
+
+                        // Add budget attachments
+                        if (budgetItem?.attachments) {
+                          budgetItem.attachments.forEach((att: any) => {
+                            if (att.url) {
+                              allAttachments.push({
+                                source: 'budget',
                                 prNo: pr.prNo,
-                                prId: pr.id,
-                                name: pr.attachmentName,
-                                url: pr.attachmentUrl,
-                                type: 'main'
+                                name: att.name || 'ไฟล์แนบจากงบประมาณ',
+                                url: att.url,
+                                type: 'budget'
                               });
                             }
-                            
-                            // Add additional attachments if they exist
-                            if (pr.attachments && Array.isArray(pr.attachments)) {
-                              pr.attachments.forEach((att: any, idx: number) => {
-                                if (att.url && att.name) {
-                                  attachments.push({
+                          });
+                        }
+
+                        // Add sub-item attachments if applicable
+                        if (budgetItem?.subItems && pr.items?.length > 0) {
+                          const firstItem = pr.items[0];
+                          if (firstItem.subItemId || firstItem.budgetSubItemId) {
+                            const subItemId = firstItem.subItemId || firstItem.budgetSubItemId;
+                            const subItem = budgetItem.subItems.find(s => s.id === subItemId);
+                            if (subItem?.attachments) {
+                              subItem.attachments.forEach((att: any) => {
+                                if (att.url) {
+                                  allAttachments.push({
+                                    source: 'budget-subitem',
                                     prNo: pr.prNo,
-                                    prId: pr.id,
-                                    name: att.name,
+                                    name: att.name || 'ไฟล์แนบจากรายการย่อย',
                                     url: att.url,
-                                    type: 'additional',
-                                    index: idx
+                                    type: 'budget'
                                   });
                                 }
                               });
                             }
-                            
-                            return attachments;
-                          }).filter(Boolean).flat();
-
-                          if (prAttachments.length === 0) {
-                            return <span className="font-semibold text-slate-700 text-xs">ไม่มีเอกสารแนบ</span>;
                           }
+                        }
 
-                          return (
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                              {prAttachments.map((attachment: any, idx: number) => (
-                                <div key={`${attachment.prId}-${attachment.type}-${attachment.index || 0}`} 
-                                     className="flex items-center gap-2 p-2 bg-white rounded-md border border-slate-200 hover:bg-blue-50 hover:border-blue-300 transition-colors">
-                                  <div className="flex-shrink-0">
-                                    <Paperclip size={12} className="text-slate-500" />
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2 mb-0.5">
-                                      <span className="text-[10px] font-semibold text-slate-700">{attachment.prNo}</span>
-                                      <span className="text-[9px] px-1 py-0.5 bg-slate-200 text-slate-600 rounded-full">
-                                        {attachment.type === 'main' ? 'หลัก' : 'เพิ่มเติม'}
-                                      </span>
-                                    </div>
-                                    <p className="text-xs text-slate-600 truncate" title={attachment.name}>
-                                      {attachment.name}
-                                    </p>
-                                  </div>
-                                  <div className="flex-shrink-0">
-                                    <a
-                                      href={attachment.url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="inline-flex items-center justify-center w-6 h-6 rounded-md text-blue-600 hover:text-blue-800 hover:bg-blue-100 transition-colors"
-                                      title="เปิดไฟล์"
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
-                                      <FileOutput size={12} />
-                                    </a>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    </div>
+                        // Add PR attachments
+                        if (pr.attachmentUrl) {
+                          allAttachments.push({
+                            source: 'pr',
+                            prNo: pr.prNo,
+                            name: pr.attachmentName || 'ไฟล์แนบจาก PR',
+                            url: pr.attachmentUrl,
+                            type: 'pr'
+                          });
+                        }
+                      });
+
+                      if (allAttachments.length === 0) return null;
+
+                      return (
+                        <div className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100 col-span-2 md:col-span-3">
+                          <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1.5 flex items-center gap-1">
+                            <Paperclip size={11} /> ไฟล์แนบทั้งหมด ({allAttachments.length} ไฟล์)
+                          </p>
+                          <div className="space-y-1">
+                            {allAttachments.map((att, idx) => (
+                              <div key={`${att.type}-${idx}`} className="flex items-center gap-1.5 text-[11px]">
+                                <span className="text-slate-400">•</span>
+                                <span className="text-[9px] px-1 py-0.5 rounded font-medium" style={{
+                                  backgroundColor: att.type === 'budget' ? '#dbeafe' : '#dcfce7',
+                                  color: att.type === 'budget' ? '#1e40af' : '#166534'
+                                }}>
+                                  {att.prNo}
+                                </span>
+                                <span className="text-[9px] px-1 py-0.5 rounded font-medium" style={{
+                                  backgroundColor: att.type === 'budget' ? '#eff6ff' : '#f0fdf4',
+                                  color: att.type === 'budget' ? '#3730a3' : '#15803d'
+                                }}>
+                                  {att.type === 'budget' ? (att.source === 'budget-subitem' ? 'งบ-รายการย่อย' : 'งบประมาณ') : 'PR'}
+                                </span>
+                                <a
+                                  href={att.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className={`hover:underline truncate ${
+                                    att.type === 'budget' ? 'text-blue-600 hover:text-blue-800' : 'text-green-600 hover:text-green-800'
+                                  }`}
+                                  title={att.name}
+                                >
+                                  {att.name}
+                                </a>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Line Items */}

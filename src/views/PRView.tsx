@@ -1511,18 +1511,87 @@ const PRView = React.memo(() => {
                     { label: "ความเร่งด่วน", value: prLive.urgency || "-" },
                     { label: "สถานที่รับของ", value: prLive.deliveryLocation || "-" },
                     { label: "Email", value: prLive.requestorEmail || "-" },
-                    ...(prLive.attachmentUrl ? [{ label: "ไฟล์แนบ", value: prLive.attachmentName || "ไฟล์แนบ", url: prLive.attachmentUrl }] : []),
-                  ].map(({ label, value, url }) => (
+                  ].map(({ label, value }) => (
                     <div key={label} className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
                       <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">{label}</p>
-                      {url ? (
-                        <a href={url} target="_blank" rel="noopener noreferrer" className="font-semibold text-blue-600 hover:underline truncate block" title={value}>{value || "เปิดไฟล์"}</a>
-                      ) : (
-                        <p className="font-semibold text-slate-700 truncate" title={value}>{value || "-"}</p>
-                      )}
+                      <p className="font-semibold text-slate-700 truncate" title={value}>{value || "-"}</p>
                     </div>
                   ))}
                 </div>
+
+                {/* Attachments Section - Combined Budget & PR Attachments */}
+                {(() => {
+                  // Get budget attachments
+                  const budgetItem = prLive.budgetId
+                    ? budgets.find(b => b.id === prLive.budgetId && b.projectId === prLive.projectId)
+                    : prLive.costCode
+                      ? budgets.find(b => b.code === prLive.costCode && b.projectId === prLive.projectId)
+                      : null;
+
+                  const budgetAttachments: { url: string; name: string }[] = budgetItem?.attachments || [];
+                  const subItemAttachments: { url: string; name: string }[] = [];
+
+                  // Get sub-item attachments if applicable
+                  if (budgetItem?.subItems && prLive.items?.length > 0) {
+                    const firstItem = prLive.items[0];
+                    if (firstItem.subItemId || firstItem.budgetSubItemId) {
+                      const subItemId = firstItem.subItemId || firstItem.budgetSubItemId;
+                      const subItem = budgetItem.subItems.find(s => s.id === subItemId);
+                      if (subItem?.attachments) {
+                        subItemAttachments.push(...subItem.attachments);
+                      }
+                    }
+                  }
+
+                  const allBudgetAttachments = [...budgetAttachments, ...subItemAttachments];
+                  const hasBudgetAttachments = allBudgetAttachments.length > 0;
+                  const hasPrAttachments = prLive.attachmentUrl;
+
+                  if (!hasBudgetAttachments && !hasPrAttachments) return null;
+
+                  return (
+                    <div className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
+                      <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1.5 flex items-center gap-1">
+                        <Paperclip size={11} /> ไฟล์แนบทั้งหมด ({allBudgetAttachments.length + (hasPrAttachments ? 1 : 0)} ไฟล์)
+                      </p>
+                      <div className="space-y-1">
+                        {/* Budget Attachments */}
+                        {hasBudgetAttachments && allBudgetAttachments.map((att, idx) => (
+                          <div key={`budget-${idx}`} className="flex items-center gap-1.5 text-[11px]">
+                            <span className="text-slate-400">•</span>
+                            <span className="text-[9px] px-1 py-0.5 bg-blue-100 text-blue-700 rounded font-medium">งบประมาณ</span>
+                            <a
+                              href={att.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:text-blue-800 hover:underline truncate"
+                              title={att.name}
+                            >
+                              {att.name || `ไฟล์แนบ ${idx + 1}`}
+                            </a>
+                          </div>
+                        ))}
+
+                        {/* PR Attachments */}
+                        {hasPrAttachments && (
+                          <div className="flex items-center gap-1.5 text-[11px]">
+                            <span className="text-slate-400">•</span>
+                            <span className="text-[9px] px-1 py-0.5 bg-green-100 text-green-700 rounded font-medium">PR</span>
+                            <a
+                              href={prLive.attachmentUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-green-600 hover:text-green-800 hover:underline truncate"
+                              title={prLive.attachmentName}
+                            >
+                              {prLive.attachmentName || "ไฟล์แนบจาก PR"}
+                            </a>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Line Items */}
                 <div className="rounded-xl border border-slate-200 overflow-hidden">
@@ -2041,7 +2110,15 @@ const PRView = React.memo(() => {
                             type="text"
                             className="w-full border border-dashed border-slate-300 rounded-lg px-3 py-2 pr-9 text-sm bg-slate-50 cursor-pointer font-medium text-slate-700 hover:border-slate-400 transition-all duration-200"
                             value={
-                              headerData.costCode ? `${headerData.costCode}` : ""
+                              headerData.costCode ? (() => {
+                                const selectedBudget = headerData.selectedBudgetId
+                                  ? availableBudgets.find((b) => b.id === headerData.selectedBudgetId)
+                                  : availableBudgets.find((b) => b.code === headerData.costCode);
+                                if (selectedBudget && selectedBudget.description) {
+                                  return `${headerData.costCode} - ${selectedBudget.description}`;
+                                }
+                                return headerData.costCode;
+                              })() : ""
                             }
                             placeholder="คลิกเพื่อเลือก"
                             readOnly

@@ -12,6 +12,7 @@ import { Card, Button, Badge, formatCurrency } from "../components/ui";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { generateRPPdfBytes, uploadGeneratedPdf, deleteGeneratedPdf } from "../lib/pdfForms";
+import { combineImagesToPdf, createPdfThumbnail, generateCombinedPdfFilename } from "../lib/imageToPdf";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 
 const PO_TYPE_LABELS = {
@@ -52,6 +53,7 @@ const ReceiveView = React.memo(() => {
   const [expandedTypes, setExpandedTypes] = useState({});
   const [photoPreview, setPhotoPreview] = useState(null);
   const [viewingRcv, setViewingRcv] = useState(null);
+  const [uploadingPhotos, setUploadingPhotos] = useState({});
 
   // Search states
   const [poPOSearch, setPoPOSearch] = useState("");
@@ -236,20 +238,86 @@ const ReceiveView = React.memo(() => {
     );
   };
 
-  const handlePhotoAdd = (itemIdx, files) => {
-    if (!files || files.length === 0) return;
-    setReceiveForm((prev) =>
-      prev.map((item, i) => {
-        if (i !== itemIdx) return item;
-        const newPhotos = [...item.photoFiles];
-        const newPreviews = [...item.photos];
-        Array.from(files).forEach((file) => {
-          newPhotos.push(file);
-          newPreviews.push({ url: URL.createObjectURL(file), name: file.name, isLocal: true });
-        });
-        return { ...item, photoFiles: newPhotos, photos: newPreviews };
-      })
-    );
+  const handlePhotoAdd = async (itemIdx, files) => {
+    if (!files || files.length === 0) {
+      console.warn("[Photo Upload] No files provided to handlePhotoAdd");
+      return;
+    }
+
+    // Set uploading state
+    setUploadingPhotos(prev => ({ ...prev, [itemIdx]: true }));
+
+    try {
+      const validFiles = [];
+      const validPreviews = [];
+      const maxFileSize = 10 * 1024 * 1024; // 10MB limit
+      const supportedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+
+      for (let index = 0; index < files.length; index++) {
+        const file = files[index];
+        
+        // Validate file type
+        if (!supportedTypes.includes(file.type.toLowerCase())) {
+          console.warn(`[Photo Upload] Unsupported file type: ${file.type} for file: ${file.name}`);
+          showAlert("ไฟล์ไม่รองรับ", `ไฟล์ "${file.name}" ไม่ใช่รูปภาพที่รองรับ\nรองรับเฉพาะ: JPG, PNG, GIF, WebP`, "warning");
+          continue;
+        }
+
+        // Validate file size
+        if (file.size > maxFileSize) {
+          console.warn(`[Photo Upload] File too large: ${file.size} bytes for file: ${file.name}`);
+          showAlert("ไฟล์ใหญ่เกินไป", `ไฟล์ "${file.name}" มีขนาดใหญ่เกิน 10MB\nขนาดปัจจุบัน: ${(file.size / 1024 / 1024).toFixed(2)}MB`, "warning");
+          continue;
+        }
+
+        try {
+          const objectUrl = URL.createObjectURL(file);
+          validFiles.push(file);
+          validPreviews.push({ 
+            url: objectUrl, 
+            name: file.name, 
+            isLocal: true,
+            size: file.size,
+            type: file.type
+          });
+          console.log(`[Photo Upload] Added file ${index + 1}/${files.length}: ${file.name} (${(file.size / 1024).toFixed(1)}KB)`);
+        } catch (error) {
+          console.error(`[Photo Upload] Error creating object URL for file: ${file.name}`, error);
+          showAlert("เกิดข้อผิดพลาด", `ไม่สามารถโหลดไฟล์ "${file.name}" ได้`, "error");
+        }
+      }
+
+      if (validFiles.length === 0) {
+        console.warn("[Photo Upload] No valid files to add");
+        return;
+      }
+
+      setReceiveForm((prev) =>
+        prev.map((item, i) => {
+          if (i !== itemIdx) return item;
+          const newPhotoFiles = [...item.photoFiles, ...validFiles];
+          const newPhotos = [...item.photos, ...validPreviews];
+          
+          console.log(`[Photo Upload] Updated item ${itemIdx}: total ${newPhotoFiles.length} files`);
+          return { 
+            ...item, 
+            photoFiles: newPhotoFiles, 
+            photos: newPhotos 
+          };
+        })
+      );
+
+      if (validFiles.length > 0) {
+        showAlert("สำเร็จ", `เพิ่มรูปภาพ ${validFiles.length} ไฟล์แล้ว`, "success");
+      }
+
+    } catch (error) {
+      console.error("[Photo Upload] Error in handlePhotoAdd:", error);
+      showAlert("เกิดข้อผิดพลาด", "ไม่สามารถเพิ่มรูปภาพได้ กรุณาลองใหม่", "error");
+    } finally {
+      // Clear uploading state
+      setUploadingPhotos(prev => ({ ...prev, [itemIdx]: false }));
+    }
   };
 
   const removePhoto = (itemIdx, photoIdx) => {
@@ -268,15 +336,47 @@ const ReceiveView = React.memo(() => {
 
   /** ปุ่มเดียว — ไม่ใส่ capture ให้ OS ให้เลือกถ่าย / แกลเลอรี / อัปโหลดไฟล์ */
   const openItemPhotoPicker = (itemIdx) => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "image/*";
-    input.multiple = true;
-    input.onchange = (e) => {
-      handlePhotoAdd(itemIdx, e.target.files);
-      input.value = "";
-    };
-    input.click();
+    try {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*";
+      input.multiple = true;
+      input.style.display = "none";
+      
+      // Add to DOM temporarily to ensure it works on all browsers
+      document.body.appendChild(input);
+      
+      input.onchange = (e) => {
+        try {
+          const files = e.target.files;
+          if (files && files.length > 0) {
+            console.log(`[Photo Upload] Selected ${files.length} files for item ${itemIdx}`);
+            handlePhotoAdd(itemIdx, files);
+          } else {
+            console.warn("[Photo Upload] No files selected");
+          }
+        } catch (error) {
+          console.error("[Photo Upload] Error handling file selection:", error);
+          showAlert("เกิดข้อผิดพลาด", "ไม่สามารถเลือกไฟล์ได้ กรุณาลองใหม่", "error");
+        } finally {
+          // Clean up
+          document.body.removeChild(input);
+        }
+      };
+      
+      input.onerror = (error) => {
+        console.error("[Photo Upload] Input error:", error);
+        showAlert("เกิดข้อผิดพลาด", "ไม่สามารถเปิดตัวเลือกไฟล์ได้", "error");
+        document.body.removeChild(input);
+      };
+      
+      // Trigger file picker
+      input.click();
+      
+    } catch (error) {
+      console.error("[Photo Upload] Error creating file input:", error);
+      showAlert("เกิดข้อผิดพลาด", "ไม่สามารถเปิดตัวเลือกไฟล์ได้ กรุณาลองใหม่", "error");
+    }
   };
 
   // Save receive transaction
@@ -315,8 +415,10 @@ const ReceiveView = React.memo(() => {
           ? receiveVendorName
           : (vendorObj?.name || po.vendorName || "");
 
-      // Upload photos
+      // Upload photos and combine into PDF
       const savedItems = [];
+      const allPhotoFiles = []; // Collect all photo files for PDF combination
+      
       for (const item of itemsToSave) {
         const uploadedPhotos = [];
         for (const file of item.photoFiles) {
@@ -326,6 +428,7 @@ const ReceiveView = React.memo(() => {
             subPath: receiveNo,
           });
           uploadedPhotos.push({ url: result.url, name: result.name });
+          allPhotoFiles.push(file); // Add to collection for PDF combination
         }
         savedItems.push({
           poItemIndex: item.poItemIndex,
@@ -340,10 +443,12 @@ const ReceiveView = React.memo(() => {
         });
       }
 
-      // ── Generate & Upload RP PDF ──────────────────────────────────────────
+      // ── Generate RP PDF and Combine with Photos ──────────────────────────
       setSavingStep("กำลังสร้าง PDF ใบตรวจรับสินค้า...");
       let pdfUrl: string | null = null;
       let pdfPath: string | null = null;
+      let totalPhotos = allPhotoFiles.length;
+      
       try {
         const rpData = {
           rpNo: receiveNo,
@@ -361,14 +466,25 @@ const ReceiveView = React.memo(() => {
         };
 
         const signatureUrl = userData?.signatureUrl || null;
-        let bytes = await generateRPPdfBytes(rpData, { signatureUrl });
+        let rpPdfBytes = await generateRPPdfBytes(rpData, { signatureUrl });
+
+        // If there are photos, append them to the RP PDF
+        if (allPhotoFiles.length > 0) {
+          setSavingStep("กำลังรวมรูปภาพเข้ากับ PDF ใบตรวจรับสินค้า...");
+          rpPdfBytes = await combineImagesToPdf(allPhotoFiles, {
+            title: `ใบตรวจรับสินค้า ${receiveNo} พร้อมรูปภาพ`,
+            maintainAspectRatio: true,
+            existingPdfBytes: rpPdfBytes,
+          });
+        }
 
         const safeRpNo = receiveNo.replace(/[^a-zA-Z0-9\-_]/g, "_");
         const safeProjId = selectedProjectId || "unknown";
         pdfPath = `generated/receives/${safeProjId}/${safeRpNo}.pdf`;
 
         setSavingStep("กำลังอัปโหลด PDF...");
-        pdfUrl = await uploadGeneratedPdf(bytes, pdfPath);
+        pdfUrl = await uploadGeneratedPdf(rpPdfBytes, pdfPath);
+        
       } catch (pdfErr) {
         console.warn("[ReceiveView] PDF generation failed (non-fatal):", pdfErr);
         pdfUrl = null;
@@ -394,6 +510,7 @@ const ReceiveView = React.memo(() => {
         note: receiveNote,
         createdAt: now.toISOString(),
         ...(pdfUrl ? { pdfUrl, pdfPath } : {}),
+        ...(totalPhotos > 0 ? { totalPhotos } : {}),
       };
 
       const success = await addData("receives", receiveData);
@@ -483,6 +600,7 @@ const ReceiveView = React.memo(() => {
       "ยืนยันการลบ",
       `คุณต้องการลบ ${rcv.rpNo || rcv.receiveNo || "รายการนี้"} ใช่หรือไม่?`,
       async () => {
+        // Delete combined RP PDF (includes photos if any)
         if (rcv.pdfPath) {
           await deleteGeneratedPdf(rcv.pdfPath);
         }
@@ -640,9 +758,16 @@ const ReceiveView = React.memo(() => {
                       )}
                       {isColumnVisible("receive-history", "items") && (
                         <td className="py-1 px-3 text-center">
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 font-semibold text-[10px] border border-blue-100">
-                            <Package size={9} /> {itemCount} รายการ
-                          </span>
+                          <div className="flex flex-col items-center gap-1">
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 font-semibold text-[10px] border border-blue-100">
+                              <Package size={9} /> {itemCount} รายการ
+                            </span>
+                            {rcv.totalPhotos > 0 && (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-teal-50 text-teal-700 font-semibold text-[9px] border border-teal-100">
+                                <ImageIcon size={8} /> {rcv.totalPhotos} รูป
+                              </span>
+                            )}
+                          </div>
                         </td>
                       )}
                       {isColumnVisible("receive-history", "receivedBy") && (
@@ -1149,17 +1274,41 @@ const ReceiveView = React.memo(() => {
                               <td className="py-2 px-2 text-center">
                                 {item.remaining > 0 && (
                                   <div className="flex flex-col items-center gap-1">
-                                    <button
-                                      type="button"
-                                      onClick={() => openItemPhotoPicker(idx)}
-                                      className="inline-flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-lg bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-700 transition-colors"
-                                      title="ถ่ายภาพ แกลเลอรี หรืออัปโหลดไฟล์"
-                                    >
-                                      <ImageIcon size={16} />
-                                      <span className="text-[9px] font-medium leading-tight whitespace-nowrap">
-                                        อัปโหลด / ถ่าย
-                                      </span>
-                                    </button>
+                                    <div className="relative">
+                                      <input
+                                        type="file"
+                                        accept="image/*"
+                                        multiple
+                                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                                        onChange={(e) => {
+                                          if (e.target.files && e.target.files.length > 0) {
+                                            handlePhotoAdd(idx, e.target.files);
+                                            e.target.value = ""; // Reset input
+                                          }
+                                        }}
+                                        title="ถ่ายภาพ แกลเลอรี หรืออัปโหลดไฟล์"
+                                        disabled={uploadingPhotos[idx]}
+                                      />
+                                      <button
+                                        type="button"
+                                        className={`inline-flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-lg transition-colors relative z-0 ${
+                                          uploadingPhotos[idx]
+                                            ? "bg-blue-100 text-blue-600 cursor-wait"
+                                            : "bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-700"
+                                        }`}
+                                        title={uploadingPhotos[idx] ? "กำลังประมวลผลรูปภาพ..." : "ถ่ายภาพ แกลเลอรี หรืออัปโหลดไฟล์"}
+                                        disabled={uploadingPhotos[idx]}
+                                      >
+                                        {uploadingPhotos[idx] ? (
+                                          <Clock size={16} className="animate-spin" />
+                                        ) : (
+                                          <ImageIcon size={16} />
+                                        )}
+                                        <span className="text-[9px] font-medium leading-tight whitespace-nowrap">
+                                          {uploadingPhotos[idx] ? "กำลังโหลด..." : "อัปโหลด / ถ่าย"}
+                                        </span>
+                                      </button>
+                                    </div>
                                     {item.photos.length > 0 && (
                                       <div className="flex flex-wrap gap-1 justify-center max-w-[140px]">
                                         {item.photos.map((photo, pi) => (
@@ -1285,7 +1434,7 @@ const ReceiveView = React.memo(() => {
                         <div
                           className="relative w-[210px] rounded-xl overflow-hidden border border-teal-100 shadow-md bg-white cursor-pointer group"
                           onClick={() => window.open(rcv.pdfUrl, "_blank")}
-                          title="คลิกเพื่อเปิด PDF"
+                          title="คลิกเพื่อเปิด PDF ใบตรวจรับสินค้า"
                         >
                           <iframe
                             src={`${rcv.pdfUrl}#view=FitH&toolbar=0&navpanes=0&scrollbar=0`}
@@ -1301,9 +1450,16 @@ const ReceiveView = React.memo(() => {
                           </div>
                         </div>
                         <div className="mt-2 w-[210px] flex items-center justify-between">
-                          <p className="text-[10px] text-teal-600 font-medium truncate max-w-[140px]">
-                            {rcv.rpNo || rcv.receiveNo || "receive"}.pdf
-                          </p>
+                          <div className="flex flex-col">
+                            <p className="text-[10px] text-teal-600 font-medium truncate max-w-[140px]">
+                              ใบตรวจรับสินค้า{rcv.totalPhotos > 0 ? ` + ${rcv.totalPhotos} รูป` : ""}.pdf
+                            </p>
+                            {rcv.totalPhotos > 0 && (
+                              <p className="text-[8px] text-teal-400 mt-0.5">
+                                รวมรูปภาพในไฟล์เดียวกัน
+                              </p>
+                            )}
+                          </div>
                           <a
                             href={rcv.pdfUrl}
                             target="_blank"
@@ -1425,7 +1581,7 @@ const ReceiveView = React.memo(() => {
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold transition-colors mr-3"
                     >
-                      <ExternalLink size={14} /> เปิด PDF เต็มหน้า
+                      <ExternalLink size={14} /> เปิด PDF เต็มหน้า{rcv.totalPhotos > 0 ? ` (รวม ${rcv.totalPhotos} รูป)` : ""}
                     </a>
                   )}
                   <Button variant="secondary" onClick={() => setViewingRcv(null)}>
