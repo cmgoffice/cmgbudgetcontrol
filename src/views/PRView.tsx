@@ -547,23 +547,35 @@ const PRView = React.memo(() => {
         }
       }
 
-      const currentPrTotal = prs
-        .filter((pr) => {
-          if (pr.projectId !== selectedProjectId || pr.status === "Rejected" || pr.id === editingPRId) return false;
-          // ให้นับเฉพาะ PR ที่เป็นของ budget item นี้เท่านั้น
-          // ถ้ามี budgetId ให้ match ด้วย budgetId, ถ้าไม่มี (legacy) ให้ match ด้วย costCode
-          const matchById = budgetItem.id && pr.budgetId === budgetItem.id;
-          const matchByCodeLegacy = !pr.budgetId && pr.costCode === headerData.costCode;
-          return matchById || matchByCodeLegacy;
-        })
-        .reduce((sum, pr) => sum + Number(pr.totalAmount), 0);
+      // Use deduplication but keep original matching logic to avoid counting all PRs with same costCode
+      const currentPrTotal = (() => {
+        const seen = new Set<string>();
+        return prs
+          .filter((pr) => {
+            if (pr.projectId !== selectedProjectId || pr.status === "Rejected" || pr.id === editingPRId) return false;
+            // Keep original matching logic: budgetId match OR legacy costCode match (for PRs without budgetId)
+            const matchById = budgetItem.id && pr.budgetId === budgetItem.id;
+            const matchByCodeLegacy = !pr.budgetId && pr.costCode === budgetItem.code;
+            if (!(matchById || matchByCodeLegacy)) return false;
+            // Add deduplication to prevent double counting
+            if (seen.has(pr.id)) return false;
+            seen.add(pr.id);
+            return true;
+          })
+          .reduce((sum, pr) => sum + Number(pr.totalAmount), 0);
+      })();
       const thisPrTotal = calculateTotal();
       const totalBudget =
         budgetItem.subItems && budgetItem.subItems.length > 0
           ? budgetItem.subItems.reduce((sum, s) => sum + s.amount, 0)
           : budgetItem.amount;
 
-      if (currentPrTotal + thisPrTotal > totalBudget) {
+      // Skip main budget validation if budget has sub-items and we have a selected sub-item
+      // because sub-item validation above is more accurate and specific
+      const hasSubItemSelected = budgetItem.subItems && budgetItem.subItems.length > 0 && 
+        (headerData.selectedSubItemId || (lineItems.length > 0 && lineItems[0].subItemId));
+      
+      if (!hasSubItemSelected && currentPrTotal + thisPrTotal > totalBudget) {
         return showAlert(
           "งบประมาณไม่พอ",
           `งบทั้งหมด: ${formatCurrency(

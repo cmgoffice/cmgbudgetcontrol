@@ -863,66 +863,92 @@ const BudgetView = React.memo(() => {
     const getBudgetStats = (budget) => {
       const budgetCode = budget.code;
       const budgetDocId = budget.id;
+      const hasSubItems = budget.subItems && budget.subItems.length > 0;
+      const budgetDesc = (budget.description || "").trim();
+
+      // Collect all sub-item IDs for this budget
+      const subItemIds = hasSubItems ? budget.subItems.map(sub => sub.id) : [];
+
+      const itemBelongsToBudget = (item, parentDoc = null) => {
+        // For budgets with sub-items, only match items that reference specific sub-items
+        if (hasSubItems) {
+          // Check if item has budgetSubItemId that matches one of our sub-items
+          if (item.budgetSubItemId && subItemIds.includes(item.budgetSubItemId)) return true;
+          if (item.subItemId && subItemIds.includes(item.subItemId)) return true;
+          // Don't count items that only match by costCode when budget has sub-items
+          return false;
+        }
+        
+        // For budgets without sub-items, use original logic
+        // Prefer direct budgetId match
+        if (item.budgetId) return item.budgetId === budgetDocId;
+        // Fallback for legacy: PR-level budgetId
+        if (parentDoc?.budgetId) return parentDoc.budgetId === budgetDocId;
+        // Match by description for legacy items
+        const iDesc = (item.description || "").trim();
+        return iDesc === budgetDesc;
+      };
 
       const relatedPRs = prs.filter((pr) => {
         if (pr.projectId !== selectedProjectId) return false;
+        if (pr.status === "Rejected") return false;
+        
+        // For budgets with sub-items, only include PRs that have items belonging to this budget
+        if (hasSubItems) {
+          if (!pr.items || pr.items.length === 0) return false;
+          return pr.items.some(i => itemBelongsToBudget(i, pr));
+        }
+        
+        // For budgets without sub-items, use original logic
         // Match by budgetId (direct link)
         if (pr.budgetId === budgetDocId) return true;
         // Match by item-level budgetId
         if (pr.items?.some(i => i.budgetId === budgetDocId)) return true;
         // Fallback: match by cost code (legacy data without budgetId)
-        if (pr.costCode === budgetCode) return true;
-        if (pr.items?.some(i => (i.costCode || pr.costCode) === budgetCode)) return true;
+        if (!pr.budgetId && pr.costCode === budgetCode) return true;
         return false;
       });
 
       const relatedPOs = pos.filter((po) => {
         if (po.projectId !== selectedProjectId) return false;
+        if (po.status === "Rejected") return false;
+        
+        // For budgets with sub-items, only include POs that have items belonging to this budget
+        if (hasSubItems) {
+          if (!po.items || po.items.length === 0) return false;
+          return po.items.some(i => itemBelongsToBudget(i));
+        }
+        
+        // For budgets without sub-items, use original logic
         if (po.items?.some(i => i.budgetId === budgetDocId)) return true;
         // Fallback: match by cost code
         if (po.items?.some(i => i.costCode === budgetCode)) return true;
         return false;
       });
 
-      const hasSubItems = budget.subItems && budget.subItems.length > 0;
-      const budgetDesc = (budget.description || "").trim();
-
-      const itemBelongsToBudget = (item, parentDoc = null) => {
-        // Prefer direct budgetId match
-        if (item.budgetId) return item.budgetId === budgetDocId;
-        // Fallback for legacy: PR-level budgetId
-        if (parentDoc?.budgetId) return parentDoc.budgetId === budgetDocId;
-        if (hasSubItems) return true;
-        const iDesc = (item.description || "").trim();
-        return iDesc === budgetDesc;
-      };
-
       const prTotal = relatedPRs.reduce((sum, pr) => {
-        if (pr.status === "Rejected") return sum;
         let prAmount = 0;
         if (pr.items && pr.items.length > 0) {
           prAmount = pr.items.reduce((iSum, i) => {
-            const itemCode = i.costCode || pr.costCode;
-            if (!i.budgetId && itemCode !== budgetCode) return iSum;
             if (!itemBelongsToBudget(i, pr)) return iSum;
             return iSum + (Number(i.amount) || (Number(i.quantity) * Number(i.price)));
           }, 0);
-        } else {
+        } else if (!hasSubItems) {
+          // Only count PRs without items for budgets without sub-items
           prAmount = Number(pr.totalAmount || 0);
         }
         return sum + prAmount;
       }, 0);
 
       const poTotal = relatedPOs.reduce((sum, po) => {
-        if (po.status === "Rejected") return sum;
         let poAmount = 0;
         if (po.items && po.items.length > 0) {
           poAmount = po.items.reduce((iSum, i) => {
-            if (!i.budgetId && i.costCode !== budgetCode) return iSum;
             if (!itemBelongsToBudget(i)) return iSum;
             return iSum + (Number(i.amount) || (Number(i.quantity) * Number(i.price)));
           }, 0);
-        } else {
+        } else if (!hasSubItems) {
+          // Only count POs without items for budgets without sub-items
           poAmount = Number(po.totalAmount || 0);
         }
         return sum + poAmount;
