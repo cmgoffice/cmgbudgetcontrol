@@ -1502,21 +1502,49 @@ const PRView = React.memo(() => {
 
                 {/* Info grid */}
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
-                  {[
-                    { label: "PR No.", value: prLive.prNo },
-                    { label: "วันที่", value: prLive.requestDate },
-                    { label: "ผู้ขอซื้อ", value: prLive.requestor },
-                    { label: "Cost Code", value: prLive.costCode },
-                    { label: "ประเภท", value: getPurchaseTypeDisplayLabel(prLive.purchaseType) },
-                    { label: "ความเร่งด่วน", value: prLive.urgency || "-" },
-                    { label: "สถานที่รับของ", value: prLive.deliveryLocation || "-" },
-                    { label: "Email", value: prLive.requestorEmail || "-" },
-                  ].map(({ label, value }) => (
-                    <div key={label} className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
-                      <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">{label}</p>
-                      <p className="font-semibold text-slate-700 truncate" title={value}>{value || "-"}</p>
-                    </div>
-                  ))}
+                  {(() => {
+                    // Resolve budget item (ค้นหาจาก budgetId ก่อน แล้ว fallback ด้วย costCode)
+                    const headerBudgetItem = prLive.budgetId
+                      ? budgets.find((b: any) => b.id === prLive.budgetId && b.projectId === prLive.projectId)
+                      : prLive.costCode
+                        ? budgets.find((b: any) => b.code === prLive.costCode && b.projectId === prLive.projectId)
+                        : null;
+
+                    // ลำดับความสำคัญของ description:
+                    // 1) sub-item description (ถ้า PR มี subItemId และ budget มี subItems)
+                    // 2) main budget description (fallback)
+                    const resolveSubDesc = (): string => {
+                      // prPayload spread จาก headerWithoutFile → มี selectedSubItemId ที่ root level
+                      // items[0].subItemId / items[0].budgetSubItemId → fallback สำหรับ PR เก่า
+                      const subItemId = prLive.selectedSubItemId || prLive.subItemId
+                        || (prLive.items?.[0]?.subItemId) || (prLive.items?.[0]?.budgetSubItemId);
+                      if (subItemId && headerBudgetItem?.subItems?.length > 0) {
+                        const sub = headerBudgetItem.subItems.find((s: any) => s.id === subItemId);
+                        if (sub?.description) return sub.description;
+                      }
+                      return headerBudgetItem?.description || "";
+                    };
+                    const subDesc = resolveSubDesc();
+                    const costCodeDisplay = prLive.costCode
+                      ? `${prLive.costCode}${subDesc ? ` ${subDesc}` : ""}`
+                      : "";
+
+                    return [
+                      { label: "PR No.", value: prLive.prNo },
+                      { label: "วันที่", value: prLive.requestDate },
+                      { label: "ผู้ขอซื้อ", value: prLive.requestor },
+                      { label: "Cost Code", value: costCodeDisplay },
+                      { label: "ประเภท", value: getPurchaseTypeDisplayLabel(prLive.purchaseType) },
+                      { label: "ความเร่งด่วน", value: prLive.urgency || "-" },
+                      { label: "สถานที่รับของ", value: prLive.deliveryLocation || "-" },
+                      { label: "Email", value: prLive.requestorEmail || "-" },
+                    ].map(({ label, value }) => (
+                      <div key={label} className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
+                        <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">{label}</p>
+                        <p className="font-semibold text-slate-700 truncate" title={value}>{value || "-"}</p>
+                      </div>
+                    ));
+                  })()}
                 </div>
 
                 {/* Attachments Section - Combined Budget & PR Attachments */}
@@ -2111,12 +2139,6 @@ const PRView = React.memo(() => {
                             className="w-full border border-dashed border-slate-300 rounded-lg px-3 py-2 pr-9 text-sm bg-slate-50 cursor-pointer font-medium text-slate-700 hover:border-slate-400 transition-all duration-200"
                             value={
                               headerData.costCode ? (() => {
-                                const selectedBudget = headerData.selectedBudgetId
-                                  ? availableBudgets.find((b) => b.id === headerData.selectedBudgetId)
-                                  : availableBudgets.find((b) => b.code === headerData.costCode);
-                                if (selectedBudget && selectedBudget.description) {
-                                  return `${headerData.costCode} - ${selectedBudget.description}`;
-                                }
                                 return headerData.costCode;
                               })() : ""
                             }
@@ -2132,6 +2154,28 @@ const PRView = React.memo(() => {
                           />
                           <ListFilter className="absolute right-3 top-2.5 text-slate-500" size={14} />
                         </div>
+                        {headerData.costCode && (
+                          <>
+                            <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mt-3 mb-1.5 uppercase tracking-wider">
+                              <ClipboardList size={11} className="text-slate-500" /> รายการ (Main Description)
+                            </label>
+                            <input
+                              type="text"
+                              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-slate-700 font-medium"
+                              readOnly
+                              disabled={!!editingPRId}
+                              value={
+                                headerData.costCode ? (() => {
+                                  const selectedBudget = headerData.selectedBudgetId
+                                    ? availableBudgets.find((b) => b.id === headerData.selectedBudgetId)
+                                    : availableBudgets.find((b) => b.code === headerData.costCode);
+                                  return selectedBudget?.description || "";
+                                })() : ""
+                              }
+                              placeholder="(เลือก Budget Approve แล้วจะแสดง)"
+                            />
+                          </>
+                        )}
                         {headerData.costCode && (() => {
                           const selectedBudget = headerData.selectedBudgetId
                             ? availableBudgets.find((b) => b.id === headerData.selectedBudgetId)
