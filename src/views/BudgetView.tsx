@@ -1237,18 +1237,19 @@ const BudgetView = React.memo(() => {
           else if (allApproved) categoryStatus = "Budget - MD Approved";
           else categoryStatus = "Budget - In Progress";
         }
+        // Calculate balance properly for each budget in the category
         const catBalance = catBudgets.reduce((sum, b) => {
           const hasSubItems = b.subItems && b.subItems.length > 0;
-          const sumSubItems = hasSubItems ? b.subItems.reduce((acc, sub) => acc + sub.amount, 0) : 0;
           const bTotal = Number(b.amount);
-
+          
           if (hasSubItems) {
+            // For budgets with subitems: Balance = Budget Total - Sum of Subitems
+            const sumSubItems = b.subItems.reduce((acc, sub) => acc + sub.amount, 0);
             return sum + (bTotal - sumSubItems);
           } else {
-            // For budgets without subitems, deduct PRs that belong to it
-            const bPRs = prs.filter(pr => pr.projectId === selectedProjectId && pr.costCode === b.code && pr.status !== "Rejected");
-            const bPRTotal = bPRs.reduce((acc, pr) => acc + Number(pr.totalAmount || pr.amount), 0);
-            return sum + (bTotal - bPRTotal);
+            // For budgets without subitems: Balance = Budget Total - Invoice Total
+            const stats = getBudgetStats(b);
+            return sum + (bTotal - stats.invoiceTotal);
           }
         }, 0);
 
@@ -2766,7 +2767,10 @@ const BudgetView = React.memo(() => {
                     const hasSubItems = b.subItems && b.subItems.length > 0;
                     const sumSubItems = hasSubItems ? b.subItems.reduce((sum, sub) => sum + sub.amount, 0) : 0;
                     const stats = getBudgetStats(b); // Pass the whole budget object
-                    const budgetBalance = hasSubItems ? totalBudget - sumSubItems : totalBudget - stats.prTotal;
+                    // Calculate balance based on whether budget has subitems
+                    // For budgets with subitems: Balance = Budget Total - Sum of Subitems
+                    // For budgets without subitems: Balance = Budget Total - Invoice Total
+                    const budgetBalance = hasSubItems ? totalBudget - sumSubItems : totalBudget - stats.invoiceTotal;
                     const isLocked =
                       b.status === "Approved" || b.status === "Wait MD Approve";
                     const canDelete = (userRole === "MD" || b.status === "Draft") && canUseFunction("budget", "delete");
