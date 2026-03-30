@@ -71,6 +71,7 @@ export const TABLE_COLUMN_DEFS: Record<string, ColumnDef[]> = {
     { key: "prNos",       label: "Ref PR No.",     defaultVisible: true },
     { key: "description", label: "Description PR", defaultVisible: true },
     { key: "vendor",      label: "Vendor",         defaultVisible: true },
+    { key: "creator",     label: "ผู้เปิด/สร้าง PO", defaultVisible: true },
     { key: "items",       label: "Item",           defaultVisible: true },
     { key: "amount",      label: "Amount",         defaultVisible: true },
     { key: "status",      label: "Status",         defaultVisible: true },

@@ -26,6 +26,7 @@ import {
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
 import { motion, AnimatePresence } from "framer-motion";
 import { generatePOPdfBytes, uploadGeneratedPdf, stampSignatureToField, stampSignatureToPdf, deleteGeneratedPdf, stampTextToFieldRect } from "../lib/pdfForms";
+import { uploadAttachment } from "../lib/uploadAttachment";
 const POView = React.memo(() => {
   const L = {
     docName: "PO",
@@ -35,7 +36,9 @@ const POView = React.memo(() => {
     createBtn: "สร้างใบสั่งซื้อ (PO)",
     createTitle: "สร้างใบสั่งซื้อ (Create PO)",
     createDesc: "กรอกข้อมูลให้ครบถ้วนเพื่อสร้างใบสั่งซื้อ",
-    saveBtn: "บันทึก PO",
+    saveBtn: "ส่งขออนุมัติ",
+    draftBtn: "บันทึกดราฟ",
+    draftSuccess: "บันทึกดราฟเรียบร้อย — แก้ไขต่อหรือส่งขออนุมัติได้จากตาราง",
     savingStep: "บันทึกข้อมูล PO...",
     saveSuccess: "บันทึก PO เรียบร้อย",
     savePdfOk: "บันทึก PO และสร้าง PDF เรียบร้อย — กดดาวน์โหลดได้จากตาราง PO",
@@ -78,7 +81,25 @@ const POView = React.memo(() => {
     const [expandedPoRows, setExpandedPoRows] = useState({});
     const [editingPoId, setEditingPoId] = useState(null);
     const [viewingPO, setViewingPO] = useState<any>(null);
+    const [poApproveFlightFromStatus, setPoApproveFlightFromStatus] = useState({});
     const [isPoRevisionModalOpen, setIsPoRevisionModalOpen] = useState(false);
+
+    useEffect(() => {
+      setPoApproveFlightFromStatus((prev) => {
+        const next = { ...prev };
+        for (const id of Object.keys(prev)) {
+          const from = prev[id];
+          const p = pos.find((x) => x.id === id);
+          if (!p || p.status !== from) delete next[id];
+        }
+        return next;
+      });
+    }, [pos]);
+
+    const isPoApproveInFlight = (po) => {
+      const from = poApproveFlightFromStatus[po?.id];
+      return from != null && po?.status === from;
+    };
     const [poRevisionReason, setPoRevisionReason] = useState("");
     const [poRevisionPoId, setPoRevisionPoId] = useState<string | null>(null);
 
@@ -157,6 +178,8 @@ const POView = React.memo(() => {
     const [vatEditOpen, setVatEditOpen] = useState(false);
     const [vatEditValue, setVatEditValue] = useState("");
     const [discountEnabled, setDiscountEnabled] = useState(false);
+    const [poPendingFiles, setPoPendingFiles] = useState<File[]>([]);
+    const [poSavedAttachments, setPoSavedAttachments] = useState<{ url: string; name: string }[]>([]);
     const [isAddItemModalOpen, setIsAddItemModalOpen] = useState(false);
     const [freeItemPrNoDropdownId, setFreeItemPrNoDropdownId] = useState<string | null>(null);
     const [disPrPickerOpenKey, setDisPrPickerOpenKey] = useState<string | null>(null); // key: `item:${prId}:${idx}` | `free:${id}`
@@ -929,6 +952,25 @@ const POView = React.memo(() => {
       }));
     };
 
+    const creatorDisplayName = useMemo(
+      () => `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim() || user?.email || "",
+      [userData?.firstName, userData?.lastName, user?.email]
+    );
+
+    const uploadPoPendingFiles = async (poNoForPath: string) => {
+      if (!poPendingFiles.length) return [] as { url: string; name: string }[];
+      const uploaded: { url: string; name: string }[] = [];
+      for (const file of poPendingFiles) {
+        const r = await uploadAttachment(file, {
+          type: "po",
+          projectId: selectedProjectId || "",
+          prNo: poNoForPath.replace(/[^a-zA-Z0-9\-_]/g, "_"),
+        });
+        uploaded.push({ url: r.url, name: r.name });
+      }
+      return uploaded;
+    };
+
     const calculateTotals = () => {
       const subtotal = formData.items.reduce((sum, item) => sum + item.amount, 0);
       const discount = Number(formData.discount) || 0;
@@ -945,6 +987,137 @@ const POView = React.memo(() => {
         total = afterDiscount + vat;
       }
       return { subtotal, discount, vat, total };
+    };
+
+    const handleSavePODraft = async () => {
+      if (!formData.poType) {
+        return showAlert("ข้อมูลไม่ครบ", L.noType, "warning");
+      }
+
+      let resolvedPoNo = formData.poNo?.trim() || "";
+      const isNewPO = !editingPoId;
+      if (isNewPO) {
+        try {
+          if (canUseFunction("po", "manualPoOverride") && formData.poNo.trim() && formData.poNo !== generatePoNo()) {
+            resolvedPoNo = await reserveNextPoNo(formData.poType, formData.poNo.trim());
+          } else {
+            if (reservedPoNo && reservedPoNo.includes(formData.poType)) {
+              resolvedPoNo = reservedPoNo;
+            } else {
+              resolvedPoNo = await reserveNextPoNo(formData.poType);
+            }
+            setFormData((prev) => ({ ...prev, poNo: resolvedPoNo }));
+          }
+          const conflict = pos.find((p) => p.poNo === resolvedPoNo && p.status !== "Rejected" && p.id !== editingPoId);
+          if (conflict) {
+            throw new Error(`เลข PO ${resolvedPoNo} ถูกใช้ไปแล้วโดย PO อื่น กรุณาลองใหม่อีกครั้ง`);
+          }
+        } catch (e) {
+          return showAlert("สร้างเลข PO ไม่สำเร็จ", e?.message || "ไม่สามารถจองเลข PO ใหม่ได้", "error");
+        }
+      } else {
+        const editing = pos.find((p) => p.id === editingPoId);
+        resolvedPoNo = (editing?.poNo || formData.poNo || "").trim();
+        if (!resolvedPoNo) {
+          return showAlert("ข้อมูลไม่ครบ", "ไม่พบเลข PO สำหรับดราฟนี้", "warning");
+        }
+      }
+
+      const totals = calculateTotals();
+      const itemsDraft = (formData.items || []).map((it: any) => ({
+        ...it,
+        disPrAllocations: Array.isArray(it.disPrAllocations) && it.disPrAllocations.length ? it.disPrAllocations : [],
+      }));
+
+      let newUrls: { url: string; name: string }[] = [];
+      try {
+        newUrls = await uploadPoPendingFiles(resolvedPoNo);
+      } catch (e) {
+        return showAlert("อัปโหลดไฟล์ไม่สำเร็จ", e?.message || String(e), "error");
+      }
+      const attachments = [...poSavedAttachments, ...newUrls];
+
+      const editingPo = editingPoId ? pos.find((p) => p.id === editingPoId) : null;
+      const preserveRevision = editingPo?.status === "Draft" && editingPo?.originalPoAmount != null;
+
+      const draftPayload: Record<string, any> = {
+        poNo: resolvedPoNo,
+        poType: formData.poType,
+        ...(formData.receiveType ? { receiveType: formData.receiveType } : {}),
+        projectId: selectedProjectId,
+        vendorId: formData.vendorId || "",
+        requiredDate: formData.requiredDate || "",
+        vatType: formData.vatType || "ex-vat",
+        items: itemsDraft,
+        amount: totals.total,
+        grandTotal: totals.total,
+        discount: formData.discount || 0,
+        reason: formData.reason || "",
+        ...(manualVatOverride != null && !isNaN(manualVatOverride) ? { manualVat: manualVatOverride } : {}),
+        status: "Draft",
+        createdDate: editingPo?.createdDate || new Date().toISOString(),
+        poDate: formData.poOpenDate ? new Date(formData.poOpenDate + "T00:00:00").toISOString() : new Date().toISOString(),
+        location: formData.location || "",
+        rejectReason: "",
+        attachments,
+        selectedPrIds: formData.selectedPrIds || [],
+        createdByUid: editingPo?.createdByUid || user?.uid || null,
+        creatorSignatureDataUrl: editingPo?.creatorSignatureDataUrl || userData?.signatureDataUrl || userData?.signatureUrl || null,
+        ...(creatorDisplayName
+          ? { createdByName: editingPo?.createdByName || creatorDisplayName }
+          : {}),
+      };
+
+      if (preserveRevision) {
+        draftPayload.originalPoAmount = editingPo.originalPoAmount;
+        if (editingPo.lockedPrAllocations) draftPayload.lockedPrAllocations = editingPo.lockedPrAllocations;
+      } else {
+        draftPayload.originalPoAmount = null;
+        draftPayload.lockedPrAllocations = null;
+      }
+
+      if (editingPo?.pdfUrl) {
+        draftPayload.pdfUrl = editingPo.pdfUrl;
+        draftPayload.pdfPath = editingPo.pdfPath;
+      }
+
+      let ok = false;
+      if (editingPoId) {
+        ok = await updateData("pos", editingPoId, draftPayload);
+      } else {
+        ok = await addData("pos", draftPayload);
+      }
+
+      if (ok) {
+        setPoPendingFiles([]);
+        setPoSavedAttachments(attachments);
+        showAlert("สำเร็จ", L.draftSuccess, "success");
+        setIsModalOpen(false);
+        setIsFullScreenModalOpen(false);
+        setEditingPoId(null);
+        setReservedPoNo("");
+        setReservedCounterRef(null);
+        setReservedSequence(0);
+        setFormData({
+          poNo: "",
+          poType: "",
+          receiveType: "",
+          vendorId: "",
+          requiredDate: "",
+          poOpenDate: new Date().toISOString().split("T")[0],
+          vatType: "ex-vat",
+          selectedPrIds: [],
+          items: [],
+          reason: "",
+          note: "",
+          discount: 0,
+          location: "",
+        });
+        setManualVatOverride(null);
+        setVatEditOpen(false);
+        setVatEditValue("");
+        setDiscountEnabled(false);
+      }
     };
 
     const handleSavePO = async () => {
@@ -980,6 +1153,11 @@ const POView = React.memo(() => {
         } catch (e) {
           return showAlert("สร้างเลข PO ไม่สำเร็จ", e?.message || "ไม่สามารถจองเลข PO ใหม่ได้", "error");
         }
+      }
+
+      if (!isNewPO && (!resolvedPoNo || !String(resolvedPoNo).trim())) {
+        const ep = pos.find((p) => p.id === editingPoId);
+        if (ep?.poNo) resolvedPoNo = ep.poNo;
       }
 
       if (!resolvedPoNo || !formData.vendorId || formData.items.length === 0) {
@@ -1061,6 +1239,14 @@ const POView = React.memo(() => {
         itemsWithAllocations[idx].disPrAllocations = allocs;
       }
 
+      let attachmentList = [...poSavedAttachments];
+      try {
+        const uploaded = await uploadPoPendingFiles(resolvedPoNo);
+        attachmentList = [...attachmentList, ...uploaded];
+      } catch (e) {
+        return showAlert("อัปโหลดไฟล์ไม่สำเร็จ", e?.message || String(e), "error");
+      }
+
       // แสดง Progress Modal
       const setProgress = (pct: number, step: string) => setSavePoProgress({ show: true, pct, step });
       setProgress(5, "เตรียมข้อมูล...");
@@ -1124,8 +1310,9 @@ const POView = React.memo(() => {
 
       setProgress(85, L.savingStep);
 
+      const existingPoForCreator = editingPoId ? pos.find((p) => p.id === editingPoId) : null;
       const basePayload = {
-        poNo: formData.poNo,
+        poNo: resolvedPoNo,
         poType: formData.poType,
         ...(formData.receiveType ? { receiveType: formData.receiveType } : {}),
         projectId: selectedProjectId,
@@ -1138,14 +1325,21 @@ const POView = React.memo(() => {
         discount: formData.discount || 0,
         reason: formData.reason || "",
         ...(manualVatOverride != null && !isNaN(manualVatOverride) ? { manualVat: manualVatOverride } : {}),
-        ...(pdfUrl ? { pdfUrl, pdfPath: `generated/pos/${(selectedProjectId || "unknown")}/${formData.poNo.replace(/[^a-zA-Z0-9\-_]/g, "_")}.pdf` } : {}),
-        createdByUid: user?.uid || null,
+        ...(pdfUrl ? { pdfUrl, pdfPath: `generated/pos/${(selectedProjectId || "unknown")}/${resolvedPoNo.replace(/[^a-zA-Z0-9\-_]/g, "_")}.pdf` } : {}),
+        attachments: attachmentList,
+        createdByUid: existingPoForCreator?.createdByUid ?? user?.uid ?? null,
+        ...(creatorDisplayName || existingPoForCreator?.createdByName
+          ? {
+              createdByName: existingPoForCreator?.createdByName || creatorDisplayName,
+            }
+          : {}),
         creatorSignatureDataUrl: userData?.signatureDataUrl || userData?.signatureUrl || null,
         status: "Pending PCM",
-        createdDate: new Date().toISOString(),
+        createdDate: existingPoForCreator?.createdDate || new Date().toISOString(),
         poDate: formData.poOpenDate ? new Date(formData.poOpenDate + "T00:00:00").toISOString() : new Date().toISOString(),
         location: formData.location || "",
         rejectReason: "",
+        selectedPrIds: formData.selectedPrIds || [],
       };
 
       let success = false;
@@ -1167,6 +1361,8 @@ const POView = React.memo(() => {
         setVatEditOpen(false);
         setVatEditValue("");
         setDiscountEnabled(false);
+        setPoPendingFiles([]);
+        setPoSavedAttachments([]);
         if (resolvedPdfUrl) {
           showAlert("สำเร็จ", L.savePdfOk, "success");
         } else if (resolvedPdfError) {
@@ -1382,6 +1578,7 @@ const POView = React.memo(() => {
       }
 
       if (newStatus !== po.status) {
+        setPoApproveFlightFromStatus((s) => ({ ...s, [poId]: po.status }));
         let updatedPdfUrl: string | undefined;
         let firestoreExtra: Record<string, any> = {};
 
@@ -1444,7 +1641,7 @@ const POView = React.memo(() => {
           console.warn(`[PO Approve] PDF regeneration/stamp failed:`, stampErr);
         }
 
-        await updateData("pos", poId, {
+        const ok = await updateData("pos", poId, {
           status: newStatus,
           ...(newStatus === "Received" ? { statusNow: "Received" } : {}),
           rejectReason: "",
@@ -1454,8 +1651,13 @@ const POView = React.memo(() => {
           ...firestoreExtra,
         });
 
-        // อัปเดต viewingPO ใน state ให้เป็นข้อมูลล่าสุด (เพื่อให้ Modal โชว์ PDF ใหม่ทันที)
-        if (viewingPO && viewingPO.id === poId) {
+        if (!ok) {
+          setPoApproveFlightFromStatus((s) => {
+            const n = { ...s };
+            delete n[poId];
+            return n;
+          });
+        } else if (viewingPO && viewingPO.id === poId) {
           setViewingPO((prev) => ({
             ...prev,
             status: newStatus,
@@ -1463,8 +1665,6 @@ const POView = React.memo(() => {
             ...(updatedPdfUrl ? { pdfUrl: updatedPdfUrl, pdfUpdatedAt: nowIso } : {}),
           }));
         }
-
-        showAlert("อนุมัติ", `เลื่อนสถานะเป็น ${newStatus}`, "success");
       }
     };
 
@@ -1670,6 +1870,8 @@ const POView = React.memo(() => {
                 className="bg-amber-500 hover:bg-amber-600 text-white shadow-md shadow-amber-100 border-none rounded-xl px-4 py-2 text-sm font-bold flex items-center gap-2 transition-all active:scale-95"
                 onClick={() => {
                   setEditingPoId(null);
+                  setPoPendingFiles([]);
+                  setPoSavedAttachments([]);
                   setFormData({
                     poNo: "",
                     poType: "",
@@ -1708,6 +1910,7 @@ const POView = React.memo(() => {
                 {isColumnVisible("po", "prNos") && <ResizableTh tableId="po" colKey="prNos" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.prNos}>Ref PR No.</ResizableTh>}
                 {isColumnVisible("po", "description") && <ResizableTh tableId="po" colKey="description" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.description}>Description PR</ResizableTh>}
                 {isColumnVisible("po", "vendor") && <ResizableTh tableId="po" colKey="vendor" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.vendor}>Vendor</ResizableTh>}
+                {isColumnVisible("po", "creator") && <ResizableTh tableId="po" colKey="creator" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.creator}>ผู้เปิด/สร้าง PO</ResizableTh>}
                 {isColumnVisible("po", "items") && <ResizableTh tableId="po" colKey="items" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.items}>Item</ResizableTh>}
                 {isColumnVisible("po", "amount") && <ResizableTh tableId="po" colKey="amount" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.amount}>Amount</ResizableTh>}
                 {isColumnVisible("po", "status") && <ResizableTh tableId="po" colKey="status" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.status}>Status</ResizableTh>}
@@ -1744,6 +1947,7 @@ const POView = React.memo(() => {
                         {isColumnVisible("po", "prNos") && <td className="py-2 px-3 text-xs" title={prNos}><span className="cell-text">{prNos}</span></td>}
                         {isColumnVisible("po", "description") && <td className="py-2 px-3 text-xs text-slate-600" title={descSummary}><span className="cell-text">{descSummary}</span></td>}
                         {isColumnVisible("po", "vendor") && <td className="py-2 px-3" title={vendor?.name || "-"}><span className="cell-text">{vendor?.name || "-"}</span></td>}
+                        {isColumnVisible("po", "creator") && <td className="py-2 px-3 text-xs" title={po.createdByName || po.createdByUid || ""}><span className="cell-text">{po.createdByName || (po.createdByUid ? `${String(po.createdByUid).slice(0, 8)}…` : "—")}</span></td>}
                         {isColumnVisible("po", "items") && <td className="py-2 px-3 text-center">{po.items ? po.items.length : 1}</td>}
                         {isColumnVisible("po", "amount") && <td className="py-2 px-3 text-right font-semibold">{formatCurrency(po.amount)}</td>}
                         {isColumnVisible("po", "status") && <td className="py-2 px-3 text-center">
@@ -1797,13 +2001,13 @@ const POView = React.memo(() => {
                             </>
                           )}
                           {/* Approval Buttons */}
-                          {canUseFunction("po", "approve") && po.status === "Pending PCM" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
+                          {canUseFunction("po", "approve") && po.status === "Pending PCM" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && !isPoApproveInFlight(po) && (
                             <>
                               <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(po.id, "approve")}>PCM Approve</Button>
                               <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>
                             </>
                           )}
-                          {canUseFunction("po", "approve") && po.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator")) && (
+                          {canUseFunction("po", "approve") && po.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator")) && !isPoApproveInFlight(po) && (
                             <>
                               <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(po.id, "approve")}>GM Approve</Button>
                               <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>
@@ -1816,8 +2020,14 @@ const POView = React.memo(() => {
                               className="px-2 py-0.5 text-[10px]"
                               onClick={() => {
                                 // เตรียมฟอร์มสำหรับแก้ไข PO ที่ถูก Reject
-                                const prIdsFromItems = po.items ? [...new Set(po.items.map(i => i.prId))] : (po.prRefId ? [po.prRefId] : []);
+                                const prIdsFromItems = po.items ? [...new Set(po.items.map(i => i.prId).filter(Boolean))] : (po.prRefId ? [po.prRefId] : []);
                                 const poOpenDateVal = po.poDate ? (po.poDate.split("T")[0] || new Date().toISOString().split("T")[0]) : new Date().toISOString().split("T")[0];
+                                setPoPendingFiles([]);
+                                setPoSavedAttachments(
+                                  Array.isArray(po.attachments)
+                                    ? po.attachments.filter((a: any) => a?.url).map((a: any) => ({ url: a.url, name: a.name || "ไฟล์" }))
+                                    : []
+                                );
                                 setFormData({
                                   poNo: po.poNo || "",
                                   poType: po.poType || "",
@@ -1826,7 +2036,7 @@ const POView = React.memo(() => {
                                   requiredDate: po.requiredDate || "",
                                   poOpenDate: poOpenDateVal,
                                   vatType: po.vatType || "ex-vat",
-                                  selectedPrIds: prIdsFromItems,
+                                  selectedPrIds: Array.isArray(po.selectedPrIds) && po.selectedPrIds.length > 0 ? po.selectedPrIds : prIdsFromItems,
                                   items: (po.items || []).map((it, idx) => ((it.prId == null || it.prId === "") && !it.id) ? { ...it, id: `free-${idx}-${Date.now()}` } : it),
                                   reason: po.reason || "",
                                   note: po.note || "",
@@ -2026,6 +2236,17 @@ const POView = React.memo(() => {
                     {(() => {
                       const allAttachments: { source: string; prNo: string; name: string; url: string; type: string }[] = [];
 
+                      (viewingPO.attachments || []).forEach((att: any) => {
+                        if (!att?.url) return;
+                        allAttachments.push({
+                          source: "po-doc",
+                          prNo: viewingPO.poNo || "PO",
+                          name: att.name || "แนบจาก PO",
+                          url: att.url,
+                          type: "po",
+                        });
+                      });
+
                       // Collect attachments from all PRs referenced by this PO
                       poPrIds.forEach((prId: string) => {
                         const pr = prs.find((p: any) => p.id === prId);
@@ -2099,23 +2320,23 @@ const POView = React.memo(() => {
                               <div key={`${att.type}-${idx}`} className="flex items-center gap-1.5 text-[11px]">
                                 <span className="text-slate-400">•</span>
                                 <span className="text-[9px] px-1 py-0.5 rounded font-medium" style={{
-                                  backgroundColor: att.type === 'budget' ? '#dbeafe' : '#dcfce7',
-                                  color: att.type === 'budget' ? '#1e40af' : '#166534'
+                                  backgroundColor: att.type === 'po' ? '#e9d5ff' : att.type === 'budget' ? '#dbeafe' : '#dcfce7',
+                                  color: att.type === 'po' ? '#5b21b6' : att.type === 'budget' ? '#1e40af' : '#166534'
                                 }}>
                                   {att.prNo}
                                 </span>
                                 <span className="text-[9px] px-1 py-0.5 rounded font-medium" style={{
-                                  backgroundColor: att.type === 'budget' ? '#eff6ff' : '#f0fdf4',
-                                  color: att.type === 'budget' ? '#3730a3' : '#15803d'
+                                  backgroundColor: att.type === 'po' ? '#faf5ff' : att.type === 'budget' ? '#eff6ff' : '#f0fdf4',
+                                  color: att.type === 'po' ? '#6b21a8' : att.type === 'budget' ? '#3730a3' : '#15803d'
                                 }}>
-                                  {att.type === 'budget' ? (att.source === 'budget-subitem' ? 'งบ-รายการย่อย' : 'งบประมาณ') : 'PR'}
+                                  {att.type === 'po' ? 'แนบ PO' : att.type === 'budget' ? (att.source === 'budget-subitem' ? 'งบ-รายการย่อย' : 'งบประมาณ') : 'PR'}
                                 </span>
                                 <a
                                   href={att.url}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className={`hover:underline truncate ${
-                                    att.type === 'budget' ? 'text-blue-600 hover:text-blue-800' : 'text-green-600 hover:text-green-800'
+                                    att.type === 'po' ? 'text-violet-600 hover:text-violet-800' : att.type === 'budget' ? 'text-blue-600 hover:text-blue-800' : 'text-green-600 hover:text-green-800'
                                   }`}
                                   title={att.name}
                                 >
@@ -2201,13 +2422,13 @@ const POView = React.memo(() => {
                         <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handlePORevisionAllow(viewingPO.id); setViewingPO(null); }}>อนุญาตแก้ไข</Button>
                       </>
                     )}
-                    {canUseFunction("po", "approve") && viewingPO.status === "Pending PCM" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
+                    {canUseFunction("po", "approve") && viewingPO.status === "Pending PCM" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && !isPoApproveInFlight(viewingPO) && (
                       <>
                         <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setRejectPoId(viewingPO.id); setRejectReason(""); setViewingPO(null); }}>Reject</Button>
                         <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(viewingPO.id, "approve"); setViewingPO(null); }}>PCM Approve</Button>
                       </>
                     )}
-                    {canUseFunction("po", "approve") && viewingPO.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator")) && (
+                    {canUseFunction("po", "approve") && viewingPO.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator")) && !isPoApproveInFlight(viewingPO) && (
                       <>
                         <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setRejectPoId(viewingPO.id); setRejectReason(""); setViewingPO(null); }}>Reject</Button>
                         <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(viewingPO.id, "approve"); setViewingPO(null); }}>GM Approve</Button>
@@ -3003,6 +3224,41 @@ const POView = React.memo(() => {
                   </div>
                 )}
 
+                <div className="mt-4 mb-4 border border-slate-200 rounded-xl bg-white shadow-sm overflow-hidden">
+                  <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 flex items-center gap-2">
+                    <Upload size={14} className="text-slate-500 shrink-0" />
+                    <span className="text-[11px] font-bold text-slate-700">แนบเอกสาร (หลายไฟล์) — อัปโหลด Firebase Storage</span>
+                  </div>
+                  <div className="p-4 space-y-2">
+                    <input
+                      type="file"
+                      multiple
+                      className="block w-full text-xs text-slate-600 file:mr-2 file:py-1 file:px-2 file:rounded-lg file:border-0 file:text-[11px] file:font-medium file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"
+                      onChange={(e) => {
+                        const files = Array.from(e.target.files || []);
+                        if (files.length) setPoPendingFiles((prev) => [...prev, ...files]);
+                        e.target.value = "";
+                      }}
+                    />
+                    {(poSavedAttachments.length > 0 || poPendingFiles.length > 0) && (
+                      <ul className="text-xs space-y-1 max-h-32 overflow-y-auto">
+                        {poSavedAttachments.map((a, i) => (
+                          <li key={`saved-${i}-${a.url}`} className="flex items-center justify-between gap-2 text-slate-600 border border-slate-100 rounded-lg px-2 py-1">
+                            <a href={a.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline truncate min-w-0">{a.name}</a>
+                            <button type="button" className="text-red-500 shrink-0 text-[10px] font-medium" onClick={() => setPoSavedAttachments((prev) => prev.filter((_, j) => j !== i))}>ลบ</button>
+                          </li>
+                        ))}
+                        {poPendingFiles.map((f, i) => (
+                          <li key={`pend-${i}-${f.name}`} className="flex items-center justify-between gap-2 text-amber-800 bg-amber-50/80 border border-amber-100 rounded-lg px-2 py-1">
+                            <span className="truncate min-w-0">{f.name} <span className="text-amber-600">(รออัปโหลด)</span></span>
+                            <button type="button" className="text-red-500 shrink-0 text-[10px] font-medium" onClick={() => setPoPendingFiles((prev) => prev.filter((_, j) => j !== i))}>ลบ</button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+
                 {/* Footer / ยอดรวม PO + เหตุผล */}
                 <div className="mt-4 mb-6 grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
                   {/* Left: reason input */}
@@ -3072,10 +3328,11 @@ const POView = React.memo(() => {
                         </div>
                       </div>
 
-                      <div className="mt-3 flex justify-end">
+                      <div className="mt-3 flex justify-end gap-2 flex-wrap">
+                        <Button size="sm" variant="secondary" className="px-4 rounded-lg flex items-center gap-1.5 text-xs font-semibold shrink-0" onClick={handleSavePODraft}><FileText size={13} /> {L.draftBtn}</Button>
                         <Button size="sm" className="px-5 rounded-lg flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold shrink-0" onClick={handleSavePO}><Save size={13} /> {L.saveBtn}</Button>
                       </div>
-                      <div className="mt-2 text-[10px] text-slate-400 italic">กรอกข้อมูลให้ครบก่อนบันทึก</div>
+                      <div className="mt-2 text-[10px] text-slate-400 italic">บันทึกดราฟได้ก่อน — ส่งขออนุมัติเมื่อกรอกครบ (Vendor, รายการ, Dis PR)</div>
                     </div>
                   </div>
                 </div>

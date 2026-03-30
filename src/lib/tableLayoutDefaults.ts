@@ -66,6 +66,7 @@ export const TABLE_LAYOUT_DEFAULTS: Record<string, Record<string, number>> = {
     prNos: 120,
     description: 200,
     vendor: 140,
+    creator: 120,
     items: 72,
     amount: 100,
     status: 96,

@@ -118,6 +118,25 @@ const PRView = React.memo(() => {
     const [selectedPrForEditBudget, setSelectedPrForEditBudget] = useState(null);
     const [editBudgetReason, setEditBudgetReason] = useState("");
     const [viewingPR, setViewingPR] = useState(null); // PR View Modal
+    /** ขณะรอ Approve: ค่า = สถานะ PR ตอนกด — ซ่อนปุ่มจน snapshot เปลี่ยนสถานะ หรือล้างเมื่อ update ล้มเหลว */
+    const [prApproveFlightFromStatus, setPrApproveFlightFromStatus] = useState({});
+
+    useEffect(() => {
+      setPrApproveFlightFromStatus((prev) => {
+        const next = { ...prev };
+        for (const id of Object.keys(prev)) {
+          const from = prev[id];
+          const p = prs.find((x: any) => x.id === id);
+          if (!p || p.status !== from) delete next[id];
+        }
+        return next;
+      });
+    }, [prs]);
+
+    const isPrApproveInFlight = (pr: any) => {
+      const from = prApproveFlightFromStatus[pr?.id];
+      return from != null && pr?.status === from;
+    };
     const [prPdfReadyUrl, setPrPdfReadyUrl] = useState<string | null>(null);
 
     const [selectedPrForReject, setSelectedPrForReject] = useState(null);
@@ -959,6 +978,7 @@ const PRView = React.memo(() => {
       else if (isMDApprove) newStatus = "Approved";
 
       if (newStatus !== pr.status) {
+        setPrApproveFlightFromStatus((s) => ({ ...s, [id]: pr.status }));
         const emailField = isCMApprove ? "cmApproverEmail" : isPMApprove ? "pmApproverEmail" : null;
         const approverEmail = userData?.email || user?.email || "";
         const approverSig = userData?.signatureDataUrl || userData?.signatureUrl;
@@ -1001,7 +1021,7 @@ const PRView = React.memo(() => {
           console.warn("[PR Approve] Regenerate PDF failed:", e);
         }
 
-        await updateData("prs", id, {
+        const ok = await updateData("prs", id, {
           status: newStatus,
           rejectReason: "",
           ...(emailField && approverEmail ? { [emailField]: approverEmail } : {}),
@@ -1009,8 +1029,13 @@ const PRView = React.memo(() => {
           ...(updatedPdfUrl ? { pdfUpdatedAt: new Date().toISOString() } : {}),
         });
 
-        // อัปเดต viewingPR ใน state ให้เป็นข้อมูลล่าสุด
-        if (viewingPR && viewingPR.id === id) {
+        if (!ok) {
+          setPrApproveFlightFromStatus((s) => {
+            const n = { ...s };
+            delete n[id];
+            return n;
+          });
+        } else if (viewingPR && viewingPR.id === id) {
           setViewingPR((prev) => ({
             ...prev,
             status: newStatus,
@@ -1020,8 +1045,6 @@ const PRView = React.memo(() => {
             ...(updatedPdfUrl ? { pdfUpdatedAt: new Date().toISOString() } : {}),
           }));
         }
-
-        showAlert("อนุมัติ", `เลื่อนสถานะเป็น ${newStatus}`, "success");
       }
     };
 
@@ -1124,25 +1147,25 @@ const PRView = React.memo(() => {
               className="py-0.5 px-2 text-right flex justify-end gap-1"
               onClick={(e) => e.stopPropagation()}
             >
-              {canUseFunction("pr", "approve") && (userRoles.includes("CM") || userRoles.includes("PM") || userRoles.includes("Administrator")) && pr.status === "Pending CM" && (
+              {canUseFunction("pr", "approve") && (userRoles.includes("CM") || userRoles.includes("PM") || userRoles.includes("Administrator")) && pr.status === "Pending CM" && !isPrApproveInFlight(pr) && (
                 <>
                   <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>CM Approve</Button>
                   <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>
                 </>
               )}
-              {canUseFunction("pr", "approve") && (userRoles.includes("PM") || userRoles.includes("Administrator")) && pr.status === "Pending PM" && (
+              {canUseFunction("pr", "approve") && (userRoles.includes("PM") || userRoles.includes("Administrator")) && pr.status === "Pending PM" && !isPrApproveInFlight(pr) && (
                 <>
                   <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>PM Approve</Button>
                   <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>
                 </>
               )}
-              {canUseFunction("pr", "approve") && (userRoles.includes("GM") || userRoles.includes("Administrator")) && pr.status === "Pending GM" && (
+              {canUseFunction("pr", "approve") && (userRoles.includes("GM") || userRoles.includes("Administrator")) && pr.status === "Pending GM" && !isPrApproveInFlight(pr) && (
                 <>
                   <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>GM Approve</Button>
                   <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>
                 </>
               )}
-              {canUseFunction("pr", "approve") && (userRoles.includes("MD") || userRoles.includes("Administrator")) && pr.status === "Pending MD" && (
+              {canUseFunction("pr", "approve") && (userRoles.includes("MD") || userRoles.includes("Administrator")) && pr.status === "Pending MD" && !isPrApproveInFlight(pr) && (
                 <>
                   <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>MD Approve</Button>
                   <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>
@@ -1680,25 +1703,25 @@ const PRView = React.memo(() => {
                   <XCircle size={15} /> ปิด
                 </button>
                 <div className="flex items-center gap-2">
-                  {(userRoles.includes("CM") || userRoles.includes("PM") || userRoles.includes("Administrator")) && prLive.status === "Pending CM" && (
+                  {(userRoles.includes("CM") || userRoles.includes("PM") || userRoles.includes("Administrator")) && prLive.status === "Pending CM" && !isPrApproveInFlight(prLive) && (
                     <>
                       <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setViewingPR(null); handleAction(prLive.id, "reject"); }}>Reject</Button>
                       <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(prLive.id, "approve"); setViewingPR(null); }}>CM Approve</Button>
                     </>
                   )}
-                  {(userRoles.includes("PM") || userRoles.includes("Administrator")) && prLive.status === "Pending PM" && (
+                  {(userRoles.includes("PM") || userRoles.includes("Administrator")) && prLive.status === "Pending PM" && !isPrApproveInFlight(prLive) && (
                     <>
                       <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setViewingPR(null); handleAction(prLive.id, "reject"); }}>Reject</Button>
                       <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(prLive.id, "approve"); setViewingPR(null); }}>PM Approve</Button>
                     </>
                   )}
-                  {(userRoles.includes("GM") || userRoles.includes("Administrator")) && prLive.status === "Pending GM" && (
+                  {(userRoles.includes("GM") || userRoles.includes("Administrator")) && prLive.status === "Pending GM" && !isPrApproveInFlight(prLive) && (
                     <>
                       <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setViewingPR(null); handleAction(prLive.id, "reject"); }}>Reject</Button>
                       <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(prLive.id, "approve"); setViewingPR(null); }}>GM Approve</Button>
                     </>
                   )}
-                  {(userRoles.includes("MD") || userRoles.includes("Administrator")) && prLive.status === "Pending MD" && (
+                  {(userRoles.includes("MD") || userRoles.includes("Administrator")) && prLive.status === "Pending MD" && !isPrApproveInFlight(prLive) && (
                     <>
                       <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setViewingPR(null); handleAction(prLive.id, "reject"); }}>Reject</Button>
                       <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(prLive.id, "approve"); setViewingPR(null); }}>MD Approve</Button>
