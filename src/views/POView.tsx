@@ -84,6 +84,12 @@ const POView = React.memo(() => {
     const [poApproveFlightFromStatus, setPoApproveFlightFromStatus] = useState({});
     const [isPoRevisionModalOpen, setIsPoRevisionModalOpen] = useState(false);
 
+    // Prevent double-click on "บันทึกดราฟ" / "ส่งขออนุมัติ" (avoid duplicate PO/PR records)
+    const poDraftInFlightRef = useRef(false);
+    const poSendInFlightRef = useRef(false);
+    const [poDraftInFlight, setPoDraftInFlight] = useState(false);
+    const [poSendInFlight, setPoSendInFlight] = useState(false);
+
     useEffect(() => {
       setPoApproveFlightFromStatus((prev) => {
         const next = { ...prev };
@@ -952,10 +958,12 @@ const POView = React.memo(() => {
       }));
     };
 
-    const creatorDisplayName = useMemo(
-      () => `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim() || user?.email || "",
-      [userData?.firstName, userData?.lastName, user?.email]
-    );
+    const creatorFirstName = userData?.firstName || "";
+    const creatorLastName = userData?.lastName || "";
+    const creatorDisplayName = useMemo(() => {
+      const full = `${creatorFirstName} ${creatorLastName}`.trim();
+      return full || user?.email || "";
+    }, [creatorFirstName, creatorLastName, user?.email]);
 
     const uploadPoPendingFiles = async (poNoForPath: string) => {
       if (!poPendingFiles.length) return [] as { url: string; name: string }[];
@@ -990,9 +998,14 @@ const POView = React.memo(() => {
     };
 
     const handleSavePODraft = async () => {
+      if (poDraftInFlightRef.current || poSendInFlightRef.current) return;
       if (!formData.poType) {
         return showAlert("ข้อมูลไม่ครบ", L.noType, "warning");
       }
+
+      poDraftInFlightRef.current = true;
+      setPoDraftInFlight(true);
+      try {
 
       let resolvedPoNo = formData.poNo?.trim() || "";
       const isNewPO = !editingPoId;
@@ -1062,6 +1075,8 @@ const POView = React.memo(() => {
         attachments,
         selectedPrIds: formData.selectedPrIds || [],
         createdByUid: editingPo?.createdByUid || user?.uid || null,
+        createdByFirstName: editingPo?.createdByFirstName || creatorFirstName || null,
+        createdByLastName: editingPo?.createdByLastName || creatorLastName || null,
         creatorSignatureDataUrl: editingPo?.creatorSignatureDataUrl || userData?.signatureDataUrl || userData?.signatureUrl || null,
         ...(creatorDisplayName
           ? { createdByName: editingPo?.createdByName || creatorDisplayName }
@@ -1118,12 +1133,21 @@ const POView = React.memo(() => {
         setVatEditValue("");
         setDiscountEnabled(false);
       }
+      } finally {
+        poDraftInFlightRef.current = false;
+        setPoDraftInFlight(false);
+      }
     };
 
     const handleSavePO = async () => {
+      if (poDraftInFlightRef.current || poSendInFlightRef.current) return;
       if (!formData.poType) {
         return showAlert("ข้อมูลไม่ครบ", L.noType, "warning");
       }
+
+      poSendInFlightRef.current = true;
+      setPoSendInFlight(true);
+      try {
 
       // Reserve PO number for new POs using counter-based system with conflict checking
       let resolvedPoNo = formData.poNo;
@@ -1328,6 +1352,8 @@ const POView = React.memo(() => {
         ...(pdfUrl ? { pdfUrl, pdfPath: `generated/pos/${(selectedProjectId || "unknown")}/${resolvedPoNo.replace(/[^a-zA-Z0-9\-_]/g, "_")}.pdf` } : {}),
         attachments: attachmentList,
         createdByUid: existingPoForCreator?.createdByUid ?? user?.uid ?? null,
+        createdByFirstName: existingPoForCreator?.createdByFirstName ?? creatorFirstName ?? null,
+        createdByLastName: existingPoForCreator?.createdByLastName ?? creatorLastName ?? null,
         ...(creatorDisplayName || existingPoForCreator?.createdByName
           ? {
               createdByName: existingPoForCreator?.createdByName || creatorDisplayName,
@@ -1485,6 +1511,10 @@ const POView = React.memo(() => {
         doPostSave(pdfUrl, pdfError);
       } else {
         setSavePoProgress({ show: false, pct: 0, step: "" });
+      }
+      } finally {
+        poSendInFlightRef.current = false;
+        setPoSendInFlight(false);
       }
     };
 
@@ -1947,7 +1977,15 @@ const POView = React.memo(() => {
                         {isColumnVisible("po", "prNos") && <td className="py-2 px-3 text-xs" title={prNos}><span className="cell-text">{prNos}</span></td>}
                         {isColumnVisible("po", "description") && <td className="py-2 px-3 text-xs text-slate-600" title={descSummary}><span className="cell-text">{descSummary}</span></td>}
                         {isColumnVisible("po", "vendor") && <td className="py-2 px-3" title={vendor?.name || "-"}><span className="cell-text">{vendor?.name || "-"}</span></td>}
-                        {isColumnVisible("po", "creator") && <td className="py-2 px-3 text-xs" title={po.createdByName || po.createdByUid || ""}><span className="cell-text">{po.createdByName || (po.createdByUid ? `${String(po.createdByUid).slice(0, 8)}…` : "—")}</span></td>}
+                        {isColumnVisible("po", "creator") && (() => {
+                          const nameFromFirstLast = [po.createdByFirstName, po.createdByLastName].filter(Boolean).join(" ");
+                          const displayName = po.createdByName || nameFromFirstLast || (po.createdByUid ? `${String(po.createdByUid).slice(0, 8)}…` : "—");
+                          return (
+                            <td className="py-2 px-3 text-xs" title={displayName}>
+                              <span className="cell-text">{displayName}</span>
+                            </td>
+                          );
+                        })()}
                         {isColumnVisible("po", "items") && <td className="py-2 px-3 text-center">{po.items ? po.items.length : 1}</td>}
                         {isColumnVisible("po", "amount") && <td className="py-2 px-3 text-right font-semibold">{formatCurrency(po.amount)}</td>}
                         {isColumnVisible("po", "status") && <td className="py-2 px-3 text-center">
@@ -3329,8 +3367,23 @@ const POView = React.memo(() => {
                       </div>
 
                       <div className="mt-3 flex justify-end gap-2 flex-wrap">
-                        <Button size="sm" variant="secondary" className="px-4 rounded-lg flex items-center gap-1.5 text-xs font-semibold shrink-0" onClick={handleSavePODraft}><FileText size={13} /> {L.draftBtn}</Button>
-                        <Button size="sm" className="px-5 rounded-lg flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold shrink-0" onClick={handleSavePO}><Save size={13} /> {L.saveBtn}</Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={poDraftInFlight || poSendInFlight}
+                          className="px-4 rounded-lg flex items-center gap-1.5 text-xs font-semibold shrink-0"
+                          onClick={handleSavePODraft}
+                        >
+                          <FileText size={13} /> {L.draftBtn}
+                        </Button>
+                        <Button
+                          size="sm"
+                          disabled={poDraftInFlight || poSendInFlight}
+                          className="px-5 rounded-lg flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold shrink-0"
+                          onClick={handleSavePO}
+                        >
+                          <Save size={13} /> {poSendInFlight ? "กำลังส่ง..." : L.saveBtn}
+                        </Button>
                       </div>
                       <div className="mt-2 text-[10px] text-slate-400 italic">บันทึกดราฟได้ก่อน — ส่งขออนุมัติเมื่อกรอกครบ (Vendor, รายการ, Dis PR)</div>
                     </div>
