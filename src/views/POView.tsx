@@ -691,6 +691,7 @@ const POView = React.memo(() => {
               subItemId: item.subItemId || null,
               budgetId: item.budgetId || pr.budgetId || null,
               budgetSubItemId: item.budgetSubItemId || item.subItemId || null,
+              disPrPlan: [pr.prNo],
             });
           });
         }
@@ -769,7 +770,7 @@ const POView = React.memo(() => {
           subItemId: itemData.subItemId || null,
           budgetId: itemData.budgetId || null,
           budgetSubItemId: itemData.budgetSubItemId || null,
-          disPrPlan: [],
+          disPrPlan: itemData.prNo ? [itemData.prNo] : [],
           disPrAllocations: []
         }]
       }));
@@ -826,7 +827,7 @@ const POView = React.memo(() => {
             price: 0,
             amount: 0,
             linkedPrNo,
-            disPrPlan: [],
+            disPrPlan: linkedPrNo ? [linkedPrNo] : [],
             disPrAllocations: []
           }]
         };
@@ -2143,6 +2144,68 @@ const POView = React.memo(() => {
                   );
                 })}
             </tbody>
+            {/* Footer with totals */}
+            <tfoot className="border-t-2 border-slate-300">
+              <tr className="bg-slate-50">
+                <td colSpan={(() => {
+                  let cols = 0;
+                  if (isColumnVisible("po", "poNo")) cols++;
+                  if (isColumnVisible("po", "poType")) cols++;
+                  if (isColumnVisible("po", "prNos")) cols++;
+                  if (isColumnVisible("po", "description")) cols++;
+                  if (isColumnVisible("po", "vendor")) cols++;
+                  if (isColumnVisible("po", "creator")) cols++;
+                  if (isColumnVisible("po", "items")) cols++;
+                  return Math.max(1, cols);
+                })()} className="px-3 py-2 text-right text-xs font-semibold text-slate-600">
+                  ยอดรวมทั้งหมด (Ex VAT):
+                </td>
+                <td className="px-3 py-2 text-right text-sm font-bold text-slate-800">
+                  {formatCurrency(
+                    pos
+                      .filter((po) => po.projectId === selectedProjectId && po.status !== "Closed PO" && po.status !== "Received")
+                      .reduce((total, po) => {
+                        // Calculate amount ex VAT for each PO
+                        let subtotal = 0;
+                        if (po.items && po.items.length > 0) {
+                          subtotal = po.items.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+                        }
+                        const discount = Number(po.discount || 0);
+                        const amountExVat = Math.max(0, subtotal - discount);
+                        return total + amountExVat;
+                      }, 0)
+                  )}
+                </td>
+                {isColumnVisible("po", "status") && <td></td>}
+                {isColumnVisible("po", "actions") && <td></td>}
+              </tr>
+              <tr className="bg-slate-100">
+                <td colSpan={(() => {
+                  let cols = 0;
+                  if (isColumnVisible("po", "poNo")) cols++;
+                  if (isColumnVisible("po", "poType")) cols++;
+                  if (isColumnVisible("po", "prNos")) cols++;
+                  if (isColumnVisible("po", "description")) cols++;
+                  if (isColumnVisible("po", "vendor")) cols++;
+                  if (isColumnVisible("po", "creator")) cols++;
+                  if (isColumnVisible("po", "items")) cols++;
+                  return Math.max(1, cols);
+                })()} className="px-3 py-2 text-right text-xs font-semibold text-slate-700">
+                  ยอดรวมทั้งหมด:
+                </td>
+                <td className="px-3 py-2 text-right text-sm font-bold text-slate-900">
+                  {formatCurrency(
+                    pos
+                      .filter((po) => po.projectId === selectedProjectId && po.status !== "Closed PO" && po.status !== "Received")
+                      .reduce((total, po) => {
+                        return total + Number(po.grandTotal || po.amount || po.totalAmount || 0);
+                      }, 0)
+                  )}
+                </td>
+                {isColumnVisible("po", "status") && <td></td>}
+                {isColumnVisible("po", "actions") && <td></td>}
+              </tr>
+            </tfoot>
           </table>
           </div>
         </Card>

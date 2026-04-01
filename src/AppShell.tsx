@@ -1350,9 +1350,25 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
         {filtered.length > 0 && (
           <div className="px-4 py-3 bg-slate-50 border-t border-slate-100 flex justify-between items-center text-xs text-slate-500">
             <span>แสดง {filtered.length} รายการ</span>
-            <span className="font-bold text-slate-700">
-              ยอดรวมทั้งหมด: ฿{filtered.reduce((s: number, r: any) => s + Number(isPR ? r.totalAmount : r.grandTotal || 0), 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
-            </span>
+            <div className="flex gap-4">
+              {!isPR && (
+                <span className="font-bold text-slate-600">
+                  ยอดรวมทั้งหมด (Ex VAT): ฿{filtered.reduce((s: number, r: any) => {
+                    // Calculate amount ex VAT for each PO
+                    let subtotal = 0;
+                    if (r.items && r.items.length > 0) {
+                      subtotal = r.items.reduce((sum: number, item: any) => sum + Number(item.amount || 0), 0);
+                    }
+                    const discount = Number(r.discount || 0);
+                    const amountExVat = Math.max(0, subtotal - discount);
+                    return s + amountExVat;
+                  }, 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
+                </span>
+              )}
+              <span className="font-bold text-slate-700">
+                ยอดรวมทั้งหมด: ฿{filtered.reduce((s: number, r: any) => s + Number(isPR ? r.totalAmount : r.grandTotal || r.amount || 0), 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
+              </span>
+            </div>
           </div>
         )}
       </Card>

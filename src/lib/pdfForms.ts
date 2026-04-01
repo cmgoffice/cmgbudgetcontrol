@@ -66,7 +66,9 @@ async function tryLoadPdfFromUrl(url: string, timeoutMs = 6000): Promise<ArrayBu
   }
 }
 
-async function loadTemplate(kind: "pr" | "po" | "rp"): Promise<{ pdfDoc: any; hasForm: boolean; customFont?: any }> {
+let globalFontBytes: ArrayBuffer | null = null;
+
+async function loadTemplate(kind: "pr" | "po" | "rp"): Promise<{ pdfDoc: any; hasForm: boolean; customFont?: any; templateBytes?: ArrayBuffer }> {
   const base = kind === "pr" ? "pr-form-lib" : kind === "rp" ? "rp-form-lib" : "po-form-lib";
 
   const localCandidates = [
@@ -102,17 +104,21 @@ async function loadTemplate(kind: "pr" | "po" | "rp"): Promise<{ pdfDoc: any; ha
       const pdfDoc = await PDFDocument.load(arrayBuffer);
       pdfDoc.registerFontkit(fontkit);
       try {
-        const fontRes = await fetch("/fonts/THSarabunNew.ttf");
-        if (fontRes.ok) {
-          const fontBytes = await fontRes.arrayBuffer();
-          customFont = await pdfDoc.embedFont(fontBytes);
+        if (!globalFontBytes) {
+          const fontRes = await fetch("/fonts/THSarabunNew.ttf");
+          if (fontRes.ok) {
+            globalFontBytes = await fontRes.arrayBuffer();
+          }
+        }
+        if (globalFontBytes) {
+          customFont = await pdfDoc.embedFont(globalFontBytes);
         }
       } catch (_) {}
       if (!customFont) {
         const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
         pdfDoc.getForm().updateFieldAppearances(font);
       }
-      return { pdfDoc, hasForm: true, customFont };
+      return { pdfDoc, hasForm: true, customFont, templateBytes: arrayBuffer };
     } catch (_) {}
   }
 
@@ -141,11 +147,12 @@ async function buildBasicPage(pdfDoc: any, lines: string[]) {
   }
 }
 
-function fillItemsTable(form: any, items: any[], maxRows = 20, customFont?: any) {
+function fillItemsTable(form: any, items: any[], maxRows = 20, customFont?: any, startIndex = 1) {
   for (let i = 1; i <= maxRows; i++) {
     const idx2 = String(i).padStart(2, "0");
     const item = items[i - 1];
-    setTextIfExists(form, [`item_no_${idx2}`, `no_${idx2}`, `fill_no_${idx2}`, `fill_${8 + i}`], item ? String(i) : "", customFont);
+    const displayNum = item ? String(startIndex + i - 1) : "";
+    setTextIfExists(form, [`item_no_${idx2}`, `no_${idx2}`, `fill_no_${idx2}`, `fill_${8 + i}`], displayNum, customFont);
     // item_material_XX = Material No.
     setTextIfExists(form, [`item_material_${idx2}`, `item_material_no_${idx2}`, `material_${idx2}`, `product_code_${idx2}`, `fill_${13 + i}`], item?.materialNo || "", customFont);
     setTextIfExists(form, [`item_desc_${idx2}`, `desc_${idx2}`, `description_${idx2}`, `fill_${14 + i}`], item?.description || "", customFont);
@@ -158,7 +165,7 @@ function fillItemsTable(form: any, items: any[], maxRows = 20, customFont?: any)
 }
 
 export async function generatePRPdfBytes(pr: any, { projectName = "", budgetDesc = "" } = {}) {
-  const { pdfDoc, hasForm, customFont } = await loadTemplate("pr");
+  const { pdfDoc: initialDoc, hasForm, customFont, templateBytes } = await loadTemplate("pr");
 
   const items = (pr.items || []).map((it: any) => ({
     description: it.description || "",
@@ -169,102 +176,101 @@ export async function generatePRPdfBytes(pr: any, { projectName = "", budgetDesc
     amount: it.amount ?? (Number(it.quantity || 0) * Number(it.price || 0)),
   }));
   const totalAmount = pr.totalAmount ?? items.reduce((s: number, x: any) => s + Number(x.amount || 0), 0);
-
-  // job_no = 3 ตัวแรกของ PR No. (เช่น "J99-EQM-001" → "J99")
   const jobNo = (pr.prNo || pr.id || "").split("-")[0] || "";
 
   if (hasForm) {
-    const form = pdfDoc.getForm();
-
-    // Debug: log ทุก field ใน PR template
-    try {
-      console.log("[PR PDF] Form fields:", form.getFields().map((f: any) => f.getName()));
-    } catch (_) {}
-
-    // Header fields
-    setTextIfExists(form, ["pr_no"], pr.prNo || pr.id || "", customFont);
-    setTextIfExists(form, ["pr_date"], safeDate(pr.requestDate), customFont);
-    setTextIfExists(form, ["pr_name"], pr.requestor || "", customFont);
-    setTextIfExists(form, ["job_no"], jobNo, customFont);
-    setTextIfExists(form, ["pr_type"], (pr.purchaseType || "").split(">")[0].trim(), customFont);
-    setTextIfExists(form, ["pr_urgency"], pr.urgency === "Urgent" ? "ด่วน" : "ปกติ", customFont);
-    setTextIfExists(form, ["pr_location", "Text1"], pr.deliveryLocation || "", customFont);
-
-    // Approver emails (ใส่เมื่อมีข้อมูล)
-    if (pr.cmApproverEmail) setTextIfExists(form, ["prcm", "pr_cm", "prCM", "pr_cm_email", "pr_cm_mail"], pr.cmApproverEmail, customFont);
-    if (pr.pmApproverEmail) setTextIfExists(form, ["prpm", "pr_pm", "prPM", "pr_pm_email", "pr_pm_mail"], pr.pmApproverEmail, customFont);
-
-    // Item rows (สูงสุด 5 แถวตาม template pr-form-lib.pdf)
+    const mergedPdf = await PDFDocument.create();
     const MAX_ROWS = 5;
-    for (let i = 1; i <= MAX_ROWS; i++) {
-      const idx2 = String(i).padStart(2, "0");
-      const item = items[i - 1];
-      // Cost code — แถวแรกใช้จาก pr.costCode, แถวอื่นใช้จาก item.costCode ถ้ามี
-      const costCode = i === 1 ? (pr.costCode || item?.costCode || "") : (item?.costCode || "");
-      setTextIfExists(form, [`pr_costcode${idx2}`, `pr_costcode`], item ? costCode : (i === 1 ? (pr.costCode || "") : ""), customFont);
-      setTextIfExists(form, [`pr_detail${idx2}`], item?.description || "", customFont);
-      setTextIfExists(form, [`pr_qty${idx2}`], item ? fmtQty(item.quantity) : "", customFont);
-      setTextIfExists(form, [`pr_unit${idx2}`], item?.unit || "", customFont);
-      setTextIfExists(form, [`pr_text${idx2}`], item?.note || "", customFont);
+    const itemChunks = [];
+    if (items.length === 0) itemChunks.push([]);
+    else {
+      for (let i = 0; i < items.length; i += MAX_ROWS) itemChunks.push(items.slice(i, i + MAX_ROWS));
     }
 
-    // บันทึก rect ของ fields ก่อน flatten (ใช้ stamp หลัง approve)
-    const prSigRects: Record<string, { x: number; y: number; width: number; height: number; page: number }> = {};
-    const prFieldRects: Record<string, { x: number; y: number; width: number; height: number; page: number }> = {};
-    const saveFieldRect = (name: string) => {
-      try {
-        const f = form.getField(name);
-        const widgets = f.acroField.getWidgets();
-        if (widgets.length > 0) {
-          const rect = widgets[0].getRectangle();
-          let pageIdx = 0;
-          const pages = pdfDoc.getPages();
-          outerPR: for (let pi = 0; pi < pages.length; pi++) {
-            try {
-              const annots = pages[pi].node.Annots();
-              if (annots) {
-                for (const r of annots.asArray()) {
-                  if (r.tag === "ref" && r.objectNumber === widgets[0].ref.objectNumber) {
-                    pageIdx = pi; break outerPR;
-                  }
-                }
-              }
-            } catch (_) {}
-          }
-          prFieldRects[name] = { x: rect.x, y: rect.y, width: rect.width, height: rect.height, page: pageIdx };
+    const prSigRects: Record<string, any> = {};
+    const prFieldRects: Record<string, any> = {};
+
+    for (let c = 0; c < itemChunks.length; c++) {
+      const chunk = itemChunks[c];
+      
+      let pdfDoc = c === 0 ? initialDoc : await PDFDocument.load(templateBytes as ArrayBuffer);
+      let pageCustomFont = customFont;
+      
+      if (c > 0) {
+        pdfDoc.registerFontkit(fontkit);
+        if (globalFontBytes) pageCustomFont = await pdfDoc.embedFont(globalFontBytes);
+        else {
+          pageCustomFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+          pdfDoc.getForm().updateFieldAppearances(pageCustomFont);
         }
-      } catch (_) {}
-    };
+      }
 
-    ["Signature1", "Signature2", "Signature3"].forEach((name) => {
-      saveFieldRect(name);
-      if (prFieldRects[name]) prSigRects[name] = prFieldRects[name];
-    });
-    // Approver email fields we want to stamp when approving
-    ["prcm", "prpm", "pr_cm", "pr_pm"].forEach(saveFieldRect);
+      const form = pdfDoc.getForm();
 
-    try { form.flatten(); } catch (_) {}
+      setTextIfExists(form, ["pr_no"], pr.prNo || pr.id || "", pageCustomFont);
+      setTextIfExists(form, ["pr_date"], safeDate(pr.requestDate), pageCustomFont);
+      setTextIfExists(form, ["pr_name"], pr.requestor || "", pageCustomFont);
+      setTextIfExists(form, ["job_no"], jobNo, pageCustomFont);
+      setTextIfExists(form, ["pr_type"], (pr.purchaseType || "").split(">")[0].trim(), pageCustomFont);
+      setTextIfExists(form, ["pr_urgency"], pr.urgency === "Urgent" ? "ด่วน" : "ปกติ", pageCustomFont);
+      setTextIfExists(form, ["pr_location", "Text1"], pr.deliveryLocation || "", pageCustomFont);
 
-    // Re-embed sig rects เป็น hidden field "_sigRects"
+      if (pr.cmApproverEmail) setTextIfExists(form, ["prcm", "pr_cm", "prCM", "pr_cm_email", "pr_cm_mail"], pr.cmApproverEmail, pageCustomFont);
+      if (pr.pmApproverEmail) setTextIfExists(form, ["prpm", "pr_pm", "prPM", "pr_pm_email", "pr_pm_mail"], pr.pmApproverEmail, pageCustomFont);
+
+      for (let i = 1; i <= MAX_ROWS; i++) {
+        const idx2 = String(i).padStart(2, "0");
+        const item = chunk[i - 1];
+        const absoluteIndex = (c * MAX_ROWS) + i - 1;
+        const mainCostCode = absoluteIndex === 0 ? (pr.costCode || item?.costCode || "") : (item?.costCode || "");
+        setTextIfExists(form, [`pr_costcode${idx2}`, `pr_costcode`], item ? mainCostCode : (i === 1 && absoluteIndex === 0 ? (pr.costCode || "") : ""), pageCustomFont);
+        setTextIfExists(form, [`pr_detail${idx2}`], item?.description || "", pageCustomFont);
+        setTextIfExists(form, [`pr_qty${idx2}`], item ? fmtQty(item.quantity) : "", pageCustomFont);
+        setTextIfExists(form, [`pr_unit${idx2}`], item?.unit || "", pageCustomFont);
+        setTextIfExists(form, [`pr_text${idx2}`], item?.note || "", pageCustomFont);
+      }
+
+      const saveFieldRect = (name: string) => {
+        try {
+          const f = form.getField(name);
+          const widgets = f.acroField.getWidgets();
+          if (widgets.length > 0) {
+            const rect = widgets[0].getRectangle();
+            prFieldRects[name] = { x: rect.x, y: rect.y, width: rect.width, height: rect.height, page: c };
+          }
+        } catch (_) {}
+      };
+
+      ["Signature1", "Signature2", "Signature3"].forEach((name) => {
+        saveFieldRect(name);
+        if (prFieldRects[name]) prSigRects[name] = prFieldRects[name];
+      });
+      ["prcm", "prpm", "pr_cm", "pr_pm"].forEach(saveFieldRect);
+
+      try { form.flatten(); } catch (_) {}
+      const [copiedPage] = await mergedPdf.copyPages(pdfDoc, [0]);
+      mergedPdf.addPage(copiedPage);
+    }
+
+    try { mergedPdf.getForm(); } catch (_) {}
+
     if (Object.keys(prSigRects).length > 0) {
       try {
-        const newForm = pdfDoc.getForm();
+        const newForm = mergedPdf.getForm();
         const metaField = newForm.createTextField("_sigRects");
         metaField.setText(JSON.stringify(prSigRects));
-        const metaPage = pdfDoc.getPages()[0];
-        metaField.addToPage(metaPage, { x: -200, y: -200, width: 1, height: 1, borderWidth: 0 });
+        metaField.addToPage(mergedPdf.getPages()[0], { x: -200, y: -200, width: 1, height: 1, borderWidth: 0 });
       } catch (_) {}
     }
-    // Re-embed all rects เป็น "_fieldRects"
     if (Object.keys(prFieldRects).length > 0) {
       try {
-        const newForm = pdfDoc.getForm();
+        const newForm = mergedPdf.getForm();
         const metaField = newForm.createTextField("_fieldRects");
         metaField.setText(JSON.stringify(prFieldRects));
-        const metaPage = pdfDoc.getPages()[0];
-        metaField.addToPage(metaPage, { x: -200, y: -201, width: 1, height: 1, borderWidth: 0 });
+        metaField.addToPage(mergedPdf.getPages()[0], { x: -200, y: -201, width: 1, height: 1, borderWidth: 0 });
       } catch (_) {}
     }
+    return await mergedPdf.save();
   } else {
     const lines: string[] = [
       `## Purchase Request`, ``,
@@ -287,14 +293,13 @@ export async function generatePRPdfBytes(pr: any, { projectName = "", budgetDesc
       ``,
       `* หมายเหตุ: ไม่พบ Template PDF กรุณาอัปโหลด PR Form ในหน้า Admin → แบบฟอร์ม PDF`,
     ];
-    await buildBasicPage(pdfDoc, lines, customFont);
+    await buildBasicPage(initialDoc, lines, customFont);
+    return await initialDoc.save();
   }
-
-  return await pdfDoc.save();
 }
 
 export async function generatePOPdfBytes(po: any, { vendor = null, project = null }: { vendor?: any; project?: any } = {}) {
-  const { pdfDoc, hasForm, customFont } = await loadTemplate("po");
+  const { pdfDoc: initialDoc, hasForm, customFont, templateBytes } = await loadTemplate("po");
 
   const vendorCode    = vendor?.code    || po.vendorCode    || "";
   const vendorName    = vendor?.name    || po.vendorName    || "";
@@ -325,115 +330,102 @@ export async function generatePOPdfBytes(po: any, { vendor = null, project = nul
   const netTotal = po.grandTotal != null ? Number(po.grandTotal) : (po.amount != null ? Number(po.amount) : (subTotalAfterDiscount + vat));
 
   if (hasForm) {
-    const form = pdfDoc.getForm();
+    const mergedPdf = await PDFDocument.create();
+    const MAX_ROWS = 10;
+    const itemChunks = [];
+    if (items.length === 0) itemChunks.push([]);
+    else {
+      for (let i = 0; i < items.length; i += MAX_ROWS) itemChunks.push(items.slice(i, i + MAX_ROWS));
+    }
 
-    // Debug: แสดงชื่อ field ทั้งหมดใน PDF template (ดูใน console เพื่อตรวจสอบชื่อ field จริง)
-    try {
-      const allFields = form.getFields().map((f: any) => f.getName());
-      console.log("[PO PDF] Form fields:", allFields);
-    } catch (_) {}
+    const sigRects: Record<string, any> = {};
+    const fieldRects: Record<string, any> = {};
 
-    // Header
-    setTextIfExists(form, ["po_no", "poNo", "pono", "PONo", "PO_NO"], po.poNo || po.id || "", customFont);
-
-    // po_date = วันที่เปิด PO (po.poDate เป็น ISO string จาก Firestore)
-    const poDateValue = safeDate(po.poDate || po.poOpenDate || po.createdDate);
-    setTextIfExists(form, ["po_date", "poDate", "po_open_date", "open_date", "date", "PO_DATE"], poDateValue, customFont);
-    setTextIfExists(form, ["receive_date", "receivedate", "due_date"], safeDate(po.requiredDate), customFont);
-
-    // location = สถานที่จัดส่ง — ใช้เฉพาะค่าจาก po.location ที่ user เลือกในฟอร์มเท่านั้น
-    setTextIfExists(form, ["location_receive", "location", "remark"], po.location || "", customFont);
-
-    // reason = เหตุผล (จากหน้าสร้าง PO)
-    setMultilineIfExists(form, ["reason", "Reason", "po_reason", "poReason"], po.reason || "", customFont);
-
-    // วันที่สร้าง PO ใต้ Signature1
-    const createDateStr = safeDate(po.createdDate || po.poDate || po.poOpenDate);
-    setTextIfExists(form, ["createdate", "create_date", "date_create", "sig1date"], createDateStr, customFont);
-
-    // Approve dates — ถ้า po มีค่าเหล่านี้ (กรณี regenerate ตอน Approve) ให้เติมลงฟอร์มก่อน flatten
-    if (po.pcmdate) setTextIfExists(form, ["pcmdate", "pcm_date", "PCMDate"], po.pcmdate, customFont);
-    if (po.gmdate)  setTextIfExists(form, ["gmdate",  "gm_date",  "GMDate"],  po.gmdate,  customFont);
-
-    // Vendor fields
-    // vendor_contact = รหัส Vendor
-    setTextIfExists(form, ["vendor_contact", "vendorcontact", "vendorcode", "vendor_code"], vendorCode, customFont);
-    // vendor_name = ชื่อ Vendor
-    setTextIfExists(form, ["vendor_name", "vendorname"], vendorName, customFont);
-    // vendor_address = ที่อยู่ + โทร (รวม)
-    setMultilineIfExists(form, ["vendor_address", "vendoraddress"], vendorAddressWithTel, customFont);
-    // vendor_credit_term = เครดิต (template ใช้ชื่อ "vendor")
-    setTextIfExists(form, ["vendor_credit_term", "vendor", "vendorcredit", "vendorco"], vendorCredit, customFont);
-
-    // Items table — item_material_XX = Material No.
-    fillItemsTable(form, items, 20, customFont);
-
-    // Summary
-    setTextIfExists(form, ["total_amount", "amount", "fill_10"], fmtMoney(subtotal), customFont);
-    setTextIfExists(form, ["discount", "fill_11"], fmtMoney(discount), customFont);
-    setTextIfExists(form, ["sub_total", "subtotal", "fill_12"], fmtMoney(subTotalAfterDiscount), customFont);
-    setTextIfExists(form, ["vat_7", "vat7", "fill_13"], fmtMoney(vat), customFont);
-    setTextIfExists(form, ["net_total", "total", "fill_7"], fmtMoney(netTotal), customFont);
-
-    // บันทึก rect ของ Signature fields ก่อน flatten (pdf-lib มีแค่ form.flatten() ไม่มี flattenFields)
-    const sigRects: Record<string, { x: number; y: number; width: number; height: number; page: number }> = {};
-    const fieldRects: Record<string, { x: number; y: number; width: number; height: number; page: number }> = {};
-    const saveFieldRect = (name: string) => {
-      try {
-        const f = form.getField(name);
-        const widgets = f.acroField.getWidgets();
-        if (widgets.length > 0) {
-          const rect = widgets[0].getRectangle();
-          let pageIdx = 0;
-          const pages = pdfDoc.getPages();
-          outer2: for (let pi = 0; pi < pages.length; pi++) {
-            try {
-              const annots = pages[pi].node.Annots();
-              if (annots) {
-                for (const r of annots.asArray()) {
-                  if (r.tag === "ref" && r.objectNumber === widgets[0].ref.objectNumber) {
-                    pageIdx = pi; break outer2;
-                  }
-                }
-              }
-            } catch (_) {}
-          }
-          fieldRects[name] = { x: rect.x, y: rect.y, width: rect.width, height: rect.height, page: pageIdx };
+    for (let c = 0; c < itemChunks.length; c++) {
+      const chunk = itemChunks[c];
+      let pdfDoc = c === 0 ? initialDoc : await PDFDocument.load(templateBytes as ArrayBuffer);
+      let pageCustomFont = customFont;
+      
+      if (c > 0) {
+        pdfDoc.registerFontkit(fontkit);
+        if (globalFontBytes) pageCustomFont = await pdfDoc.embedFont(globalFontBytes);
+        else {
+          pageCustomFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+          pdfDoc.getForm().updateFieldAppearances(pageCustomFont);
         }
+      }
+
+      const form = pdfDoc.getForm();
+
+      try {
+        const allFields = form.getFields().map((f: any) => f.getName());
+        console.log("[PO PDF] Form fields:", allFields);
       } catch (_) {}
-    };
 
-    ["Signature1", "Signature2", "Signature3"].forEach((name) => {
-      saveFieldRect(name);
-      if (fieldRects[name]) sigRects[name] = fieldRects[name];
-    });
-    // additional text fields we want to stamp later (after flatten)
-    ["pcmdate", "gmdate", "reason", "createdate", "create_date", "date_create", "sig1date"].forEach(saveFieldRect);
-    console.log("[PO PDF] Signature rects saved:", sigRects);
+      setTextIfExists(form, ["po_no", "poNo", "pono", "PONo", "PO_NO"], po.poNo || po.id || "", pageCustomFont);
+      const poDateValue = safeDate(po.poDate || po.poOpenDate || po.createdDate);
+      setTextIfExists(form, ["po_date", "poDate", "po_open_date", "open_date", "date", "PO_DATE"], poDateValue, pageCustomFont);
+      setTextIfExists(form, ["receive_date", "receivedate", "due_date"], safeDate(po.requiredDate), pageCustomFont);
+      setTextIfExists(form, ["location_receive", "location", "remark"], po.location || "", pageCustomFont);
+      setMultilineIfExists(form, ["reason", "Reason", "po_reason", "poReason"], po.reason || "", pageCustomFont);
+      const createDateStr = safeDate(po.createdDate || po.poDate || po.poOpenDate);
+      setTextIfExists(form, ["createdate", "create_date", "date_create", "sig1date"], createDateStr, pageCustomFont);
+      if (po.pcmdate) setTextIfExists(form, ["pcmdate", "pcm_date", "PCMDate"], po.pcmdate, pageCustomFont);
+      if (po.gmdate)  setTextIfExists(form, ["gmdate",  "gm_date",  "GMDate"],  po.gmdate,  pageCustomFont);
+      setTextIfExists(form, ["vendor_contact", "vendorcontact", "vendorcode", "vendor_code"], vendorCode, pageCustomFont);
+      setTextIfExists(form, ["vendor_name", "vendorname"], vendorName, pageCustomFont);
+      setMultilineIfExists(form, ["vendor_address", "vendoraddress"], vendorAddressWithTel, pageCustomFont);
+      setTextIfExists(form, ["vendor_credit_term", "vendor", "vendorcredit", "vendorco"], vendorCredit, pageCustomFont);
 
-    // Flatten ทั้งหมด (รวม Signature fields)
-    try { form.flatten(); } catch (_) {}
+      const startIndex = (c * MAX_ROWS) + 1;
+      fillItemsTable(form, chunk, MAX_ROWS, pageCustomFont, startIndex);
 
-    // Re-embed sig rects เป็น hidden text field "_sigRects" เพื่อให้ stampSignatureToField ใช้
+      setTextIfExists(form, ["total_amount", "amount", "fill_10"], fmtMoney(subtotal), pageCustomFont);
+      setTextIfExists(form, ["discount", "fill_11"], fmtMoney(discount), pageCustomFont);
+      setTextIfExists(form, ["sub_total", "subtotal", "fill_12"], fmtMoney(subTotalAfterDiscount), pageCustomFont);
+      setTextIfExists(form, ["vat_7", "vat7", "fill_13"], fmtMoney(vat), pageCustomFont);
+      setTextIfExists(form, ["net_total", "total", "fill_7"], fmtMoney(netTotal), pageCustomFont);
+
+      const saveFieldRect = (name: string) => {
+        try {
+          const f = form.getField(name);
+          const widgets = f.acroField.getWidgets();
+          if (widgets.length > 0) {
+            const rect = widgets[0].getRectangle();
+            fieldRects[name] = { x: rect.x, y: rect.y, width: rect.width, height: rect.height, page: c };
+          }
+        } catch (_) {}
+      };
+
+      ["Signature1", "Signature2", "Signature3"].forEach((name) => {
+        saveFieldRect(name);
+        if (fieldRects[name]) sigRects[name] = fieldRects[name];
+      });
+      ["pcmdate", "gmdate", "reason", "createdate", "create_date", "date_create", "sig1date"].forEach(saveFieldRect);
+
+      try { form.flatten(); } catch (_) {}
+      const [copiedPage] = await mergedPdf.copyPages(pdfDoc, [0]);
+      mergedPdf.addPage(copiedPage);
+    }
+
+    try { mergedPdf.getForm(); } catch (_) {}
     if (Object.keys(sigRects).length > 0) {
       try {
-        const newForm = pdfDoc.getForm();
+        const newForm = mergedPdf.getForm();
         const metaField = newForm.createTextField("_sigRects");
         metaField.setText(JSON.stringify(sigRects));
-        const metaPage = pdfDoc.getPages()[0];
-        metaField.addToPage(metaPage, { x: -200, y: -200, width: 1, height: 1, borderWidth: 0 });
+        metaField.addToPage(mergedPdf.getPages()[0], { x: -200, y: -200, width: 1, height: 1, borderWidth: 0 });
       } catch (_) {}
     }
-    // Re-embed all field rects as "_fieldRects" for stamping text later
     if (Object.keys(fieldRects).length > 0) {
       try {
-        const newForm = pdfDoc.getForm();
+        const newForm = mergedPdf.getForm();
         const metaField = newForm.createTextField("_fieldRects");
         metaField.setText(JSON.stringify(fieldRects));
-        const metaPage = pdfDoc.getPages()[0];
-        metaField.addToPage(metaPage, { x: -200, y: -201, width: 1, height: 1, borderWidth: 0 });
+        metaField.addToPage(mergedPdf.getPages()[0], { x: -200, y: -201, width: 1, height: 1, borderWidth: 0 });
       } catch (_) {}
     }
+    return await mergedPdf.save();
   } else {
     const lines: string[] = [
       `## Purchase Order`, ``,
@@ -465,10 +457,9 @@ export async function generatePOPdfBytes(po: any, { vendor = null, project = nul
       ``,
       `* หมายเหตุ: ไม่พบ Template PDF กรุณาอัปโหลด PO Form ในหน้า Admin → แบบฟอร์ม PDF`,
     ].filter(l => l !== undefined);
-    await buildBasicPage(pdfDoc, lines as string[]);
+    await buildBasicPage(initialDoc, lines as string[]);
+    return await initialDoc.save();
   }
-
-  return await pdfDoc.save();
 }
 
 /**
@@ -496,7 +487,7 @@ export async function generateRPPdfBytes(
   rp: any,
   opts: { signatureUrl?: string } = {}
 ): Promise<Uint8Array> {
-  const { pdfDoc, hasForm, customFont } = await loadTemplate("rp");
+  const { pdfDoc: initialDoc, hasForm, customFont, templateBytes } = await loadTemplate("rp");
 
   const items = (rp.items || []).map((it: any) => ({
     materialNo: it.materialNo || "",
@@ -507,83 +498,93 @@ export async function generateRPPdfBytes(
     amount: it.amount ?? (Number(it.receivedQty ?? it.quantity ?? 0) * Number(it.price ?? 0)),
   }));
 
+  let bytes: Uint8Array;
+
   if (hasForm) {
-    const form = pdfDoc.getForm();
-    try {
-      console.log("[RP PDF] Form fields:", form.getFields().map((f: any) => f.getName()));
-    } catch (_) {}
-
-    // Header
-    setTextIfExists(form, ["rpno", "rp_no", "RP_NO"], rp.rpNo || rp.receiveNo || "", customFont);
-    setTextIfExists(form, ["recievedate", "receivedate", "receive_date"], safeDate(rp.receivedDate || rp.createdAt), customFont);
-    setTextIfExists(form, ["jobno", "job_no", "jobNo"], rp.projectItemCode || rp.jobNo || "", customFont);
-    setTextIfExists(form, ["location", "Location"], rp.location || "", customFont);
-    setTextIfExists(form, ["prno", "pr_no", "PR_NO"], rp.prNo || "", customFont);
-    setTextIfExists(form, ["pono", "po_no", "PO_NO"], rp.poNo || "", customFont);
-    setTextIfExists(form, ["docno", "doc_no", "DOC_NO"], rp.documentNo || "", customFont);
-
-    // ผู้จำหน่าย — field ชื่อ "vendor" ใน template (ตรงกับ label "ผู้จำหน่าย")
-    setTextIfExists(form, ["vendor", "Vendor", "vendor_name", "vendorname", "supplier", "suppliername"], rp.vendorName || "", customFont);
-
-    // Item rows (สูงสุด 7 แถวตาม template)
+    const mergedPdf = await PDFDocument.create();
     const MAX_ROWS = 7;
-    for (let i = 1; i <= MAX_ROWS; i++) {
-      const item = items[i - 1];
-      setTextIfExists(form, [`no_${i}`, `item_no_${i}`], item ? String(i) : "", customFont);
-      setTextIfExists(form, [`code_${i}`, `item_code_${i}`], item?.materialNo || "", customFont);
-      setTextIfExists(form, [`list_${i}`, `item_list_${i}`, `desc_${i}`], item?.description || "", customFont);
-      setTextIfExists(form, [`qty_${i}`, `item_qty_${i}`], item ? fmtQty(item.receivedQty) : "", customFont);
-      setTextIfExists(form, [`unit_${i}`, `item_unit_${i}`], item?.unit || "", customFont);
-      setTextIfExists(form, [`rateunit_${i}`, `rate_unit_${i}`, `item_price_${i}`], item ? fmtMoney(item.price) : "", customFont);
-      setTextIfExists(form, [`price_${i}`, `item_amount_${i}`, `amount_${i}`], item ? fmtMoney(item.amount) : "", customFont);
+    const itemChunks = [];
+    if (items.length === 0) itemChunks.push([]);
+    else {
+      for (let i = 0; i < items.length; i += MAX_ROWS) itemChunks.push(items.slice(i, i + MAX_ROWS));
     }
 
-    // ผู้จัดทำ (ชื่อ) — stamp ก่อน flatten เพื่อให้ข้อความถูกแสดง
-    setTextIfExists(form, ["user", "User", "creator", "creatorname"], rp.receivedByName || "", customFont);
+    const rpFieldRects: Record<string, any> = {};
 
-    // บันทึก rect ของ "user" field ก่อน flatten สำหรับ stamp ลายเซ็น
-    const rpFieldRects: Record<string, { x: number; y: number; width: number; height: number; page: number }> = {};
-    const saveFieldRect = (name: string) => {
-      try {
-        const f = form.getField(name);
-        const widgets = f.acroField.getWidgets();
-        if (widgets.length > 0) {
-          const rect = widgets[0].getRectangle();
-          let pageIdx = 0;
-          const pages = pdfDoc.getPages();
-          outerRP: for (let pi = 0; pi < pages.length; pi++) {
-            try {
-              const annots = pages[pi].node.Annots();
-              if (annots) {
-                for (const r of annots.asArray()) {
-                  if (r.tag === "ref" && r.objectNumber === widgets[0].ref.objectNumber) {
-                    pageIdx = pi; break outerRP;
-                  }
-                }
-              }
-            } catch (_) {}
-          }
-          rpFieldRects[name] = { x: rect.x, y: rect.y, width: rect.width, height: rect.height, page: pageIdx };
+    for (let c = 0; c < itemChunks.length; c++) {
+      const chunk = itemChunks[c];
+      let pdfDoc = c === 0 ? initialDoc : await PDFDocument.load(templateBytes as ArrayBuffer);
+      let pageCustomFont = customFont;
+      
+      if (c > 0) {
+        pdfDoc.registerFontkit(fontkit);
+        if (globalFontBytes) pageCustomFont = await pdfDoc.embedFont(globalFontBytes);
+        else {
+          pageCustomFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+          pdfDoc.getForm().updateFieldAppearances(pageCustomFont);
         }
+      }
+
+      const form = pdfDoc.getForm();
+
+      try {
+        console.log("[RP PDF] Form fields:", form.getFields().map((f: any) => f.getName()));
       } catch (_) {}
-    };
 
-    ["user", "User", "Signature1"].forEach(saveFieldRect);
+      setTextIfExists(form, ["rpno", "rp_no", "RP_NO"], rp.rpNo || rp.receiveNo || "", pageCustomFont);
+      setTextIfExists(form, ["recievedate", "receivedate", "receive_date"], safeDate(rp.receivedDate || rp.createdAt), pageCustomFont);
+      setTextIfExists(form, ["jobno", "job_no", "jobNo"], rp.projectItemCode || rp.jobNo || "", pageCustomFont);
+      setTextIfExists(form, ["location", "Location"], rp.location || "", pageCustomFont);
+      setTextIfExists(form, ["prno", "pr_no", "PR_NO"], rp.prNo || "", pageCustomFont);
+      setTextIfExists(form, ["pono", "po_no", "PO_NO"], rp.poNo || "", pageCustomFont);
+      setTextIfExists(form, ["docno", "doc_no", "DOC_NO"], rp.documentNo || "", pageCustomFont);
+      setTextIfExists(form, ["vendor", "Vendor", "vendor_name", "vendorname", "supplier", "suppliername"], rp.vendorName || "", pageCustomFont);
 
-    try { form.flatten(); } catch (_) {}
+      for (let i = 1; i <= MAX_ROWS; i++) {
+        const item = chunk[i - 1];
+        const absoluteIndex = (c * MAX_ROWS) + i;
+        setTextIfExists(form, [`no_${i}`, `item_no_${i}`], item ? String(absoluteIndex) : "", pageCustomFont);
+        setTextIfExists(form, [`code_${i}`, `item_code_${i}`], item?.materialNo || "", pageCustomFont);
+        setTextIfExists(form, [`list_${i}`, `item_list_${i}`, `desc_${i}`], item?.description || "", pageCustomFont);
+        setTextIfExists(form, [`qty_${i}`, `item_qty_${i}`], item ? fmtQty(item.receivedQty) : "", pageCustomFont);
+        setTextIfExists(form, [`unit_${i}`, `item_unit_${i}`], item?.unit || "", pageCustomFont);
+        setTextIfExists(form, [`rateunit_${i}`, `rate_unit_${i}`, `item_price_${i}`], item ? fmtMoney(item.price) : "", pageCustomFont);
+        setTextIfExists(form, [`price_${i}`, `item_amount_${i}`, `amount_${i}`], item ? fmtMoney(item.amount) : "", pageCustomFont);
+      }
 
-    // Re-embed field rects as "_fieldRects" for post-flatten stamping
+      setTextIfExists(form, ["user", "User", "creator", "creatorname"], rp.receivedByName || "", pageCustomFont);
+
+      const saveFieldRect = (name: string) => {
+        try {
+          const f = form.getField(name);
+          const widgets = f.acroField.getWidgets();
+          if (widgets.length > 0) {
+            const rect = widgets[0].getRectangle();
+            rpFieldRects[name] = { x: rect.x, y: rect.y, width: rect.width, height: rect.height, page: c };
+          }
+        } catch (_) {}
+      };
+
+      ["user", "User", "Signature1"].forEach(saveFieldRect);
+
+      try { form.flatten(); } catch (_) {}
+      const [copiedPage] = await mergedPdf.copyPages(pdfDoc, [0]);
+      mergedPdf.addPage(copiedPage);
+    }
+
+    try { mergedPdf.getForm(); } catch (_) {}
+
     if (Object.keys(rpFieldRects).length > 0) {
       try {
-        const newForm = pdfDoc.getForm();
+        const newForm = mergedPdf.getForm();
         const metaField = newForm.createTextField("_fieldRects");
         metaField.setText(JSON.stringify(rpFieldRects));
-        const metaPage = pdfDoc.getPages()[0];
-        metaField.addToPage(metaPage, { x: -200, y: -201, width: 1, height: 1, borderWidth: 0 });
+        metaField.addToPage(mergedPdf.getPages()[0], { x: -200, y: -201, width: 1, height: 1, borderWidth: 0 });
       } catch (_) {}
     }
+
+    bytes = await mergedPdf.save();
   } else {
-    // Fallback: ไม่มี template — สร้างหน้าข้อความ
     const lines: string[] = [
       `## ใบตรวจรับสินค้า`, ``,
       `RP No.            : ${rp.rpNo || rp.receiveNo || "-"}`,
@@ -605,10 +606,9 @@ export async function generateRPPdfBytes(
       ``,
       `* หมายเหตุ: ไม่พบ Template PDF กรุณาอัปโหลด RP Form ในหน้า Admin → แบบฟอร์ม PDF`,
     ];
-    await buildBasicPage(pdfDoc, lines);
+    await buildBasicPage(initialDoc, lines);
+    bytes = await initialDoc.save();
   }
-
-  let bytes = await pdfDoc.save();
 
   // Stamp signature image at "user" field position (หลัง flatten)
   if (opts.signatureUrl) {
@@ -664,23 +664,12 @@ async function stampSignatureToFieldByName(
     const widgets = field.acroField.getWidgets();
     if (widgets.length > 0) {
       const rect = widgets[0].getRectangle();
-      let targetPage = pages[0];
-      outerSig: for (let pi = 0; pi < pages.length; pi++) {
-        try {
-          const annots = pages[pi].node.Annots();
-          if (annots) {
-            for (const r of annots.asArray()) {
-              if (r.tag === "ref" && r.objectNumber === widgets[0].ref.objectNumber) {
-                targetPage = pages[pi]; break outerSig;
-              }
-            }
-          }
-        } catch (_) {}
+      for (const targetPage of pages) {
+        targetPage.drawImage(embeddedImg, {
+          x: rect.x + padding, y: rect.y + padding,
+          width: rect.width - padding * 2, height: rect.height - padding * 2, opacity: 0.9,
+        });
       }
-      targetPage.drawImage(embeddedImg, {
-        x: rect.x + padding, y: rect.y + padding,
-        width: rect.width - padding * 2, height: rect.height - padding * 2, opacity: 0.9,
-      });
       try { form.removeField(field); } catch (_) {}
       placed = true;
     }
@@ -697,11 +686,12 @@ async function stampSignatureToFieldByName(
       } catch (_) {}
       const r = rects[fieldName];
       if (r) {
-        const targetPage = pages[r.page] ?? pages[pages.length - 1];
-        targetPage.drawImage(embeddedImg, {
-          x: r.x + padding, y: r.y + padding,
-          width: r.width - padding * 2, height: r.height - padding * 2, opacity: 0.9,
-        });
+        for (const targetPage of pages) {
+          targetPage.drawImage(embeddedImg, {
+            x: r.x + padding, y: r.y + padding,
+            width: r.width - padding * 2, height: r.height - padding * 2, opacity: 0.9,
+          });
+        }
         placed = true;
       }
     } catch (_) {}
@@ -709,11 +699,12 @@ async function stampSignatureToFieldByName(
 
   // Step 3: fallback hardcoded bottom-center
   if (!placed) {
-    const page = pages[pages.length - 1];
-    const { width: pw } = page.getSize();
-    page.drawImage(embeddedImg, {
-      x: pw / 2 - 65, y: 50, width: 130, height: 50, opacity: 0.9,
-    });
+    for (const targetPage of pages) {
+      const { width: pw } = targetPage.getSize();
+      targetPage.drawImage(embeddedImg, {
+        x: pw / 2 - 65, y: 50, width: 130, height: 50, opacity: 0.9,
+      });
+    }
   }
 
   return await pdfDoc.save();
@@ -778,26 +769,15 @@ export async function stampSignatureToField(
     const widgets = field.acroField.getWidgets();
     if (widgets.length > 0) {
       const rect = widgets[0].getRectangle();
-      let targetPage = pages[0];
-      outer: for (let pi = 0; pi < pages.length; pi++) {
-        try {
-          const annots = pages[pi].node.Annots();
-          if (annots) {
-            for (const r of annots.asArray()) {
-              if (r.tag === "ref" && r.objectNumber === widgets[0].ref.objectNumber) {
-                targetPage = pages[pi]; break outer;
-              }
-            }
-          }
-        } catch (_) {}
+      for (const targetPage of pages) {
+        targetPage.drawImage(embeddedImg, {
+          x: rect.x + padding, y: rect.y + padding,
+          width: rect.width - padding * 2, height: rect.height - padding * 2, opacity: 0.9,
+        });
       }
-      targetPage.drawImage(embeddedImg, {
-        x: rect.x + padding, y: rect.y + padding,
-        width: rect.width - padding * 2, height: rect.height - padding * 2, opacity: 0.9,
-      });
       try { form.removeField(field); } catch (_) {}
       placed = true;
-      console.log(`[stampSignatureToField] ${fieldName} stamped from live field at`, rect);
+      console.log(`[stampSignatureToField] ${fieldName} stamped from live field on all pages`);
     }
   } catch (_) {}
 
@@ -818,13 +798,14 @@ export async function stampSignatureToField(
       }
       const r = rects[fieldName];
       if (r) {
-        const targetPage = pages[r.page] ?? pages[pages.length - 1];
-        targetPage.drawImage(embeddedImg, {
-          x: r.x + padding, y: r.y + padding,
-          width: r.width - padding * 2, height: r.height - padding * 2, opacity: 0.9,
-        });
+        for (const targetPage of pages) {
+          targetPage.drawImage(embeddedImg, {
+            x: r.x + padding, y: r.y + padding,
+            width: r.width - padding * 2, height: r.height - padding * 2, opacity: 0.9,
+          });
+        }
         placed = true;
-        console.log(`[stampSignatureToField] ${fieldName} stamped from saved rect at`, r);
+        console.log(`[stampSignatureToField] ${fieldName} stamped from saved rect on all pages`);
       }
     } catch (_) {}
   }
@@ -832,15 +813,16 @@ export async function stampSignatureToField(
   // Step 3: Fallback hardcoded — แถวลายเซ็น 3 คนเรียงแนวนอนล่างหน้า
   if (!placed) {
     console.warn(`[stampSignatureToField] Using hardcoded fallback for ${fieldName}`);
-    const page = pages[pages.length - 1];
-    const { width: pw } = page.getSize();
-    const fp: Record<string, { x: number; y: number; w: number; h: number }> = {
-      Signature1: { x: 40,          y: 60, w: 130, h: 50 },
-      Signature2: { x: pw/2 - 65,   y: 60, w: 130, h: 50 },
-      Signature3: { x: pw - 170,    y: 60, w: 130, h: 50 },
-    };
-    const pos = fp[fieldName] ?? { x: 40, y: 60, w: 130, h: 50 };
-    page.drawImage(embeddedImg, { x: pos.x, y: pos.y, width: pos.w, height: pos.h, opacity: 0.9 });
+    for (const targetPage of pages) {
+      const { width: pw } = targetPage.getSize();
+      const fp: Record<string, { x: number; y: number; w: number; h: number }> = {
+        Signature1: { x: 40,          y: 60, w: 130, h: 50 },
+        Signature2: { x: pw/2 - 65,   y: 60, w: 130, h: 50 },
+        Signature3: { x: pw - 170,    y: 60, w: 130, h: 50 },
+      };
+      const pos = fp[fieldName] ?? { x: 40, y: 60, w: 130, h: 50 };
+      targetPage.drawImage(embeddedImg, { x: pos.x, y: pos.y, width: pos.w, height: pos.h, opacity: 0.9 });
+    }
   }
 
   return await pdfDoc.save();
@@ -889,7 +871,6 @@ export async function stampTextToFieldRect(
   const r = rects?.[fieldName];
   if (!r) return await pdfDoc.save();
 
-  const page = pages[r.page] ?? pages[pages.length - 1];
   const boxW = Math.max(10, r.width - padding * 2);
   const boxH = Math.max(10, r.height - padding * 2);
   const x0 = r.x + padding;
@@ -899,7 +880,9 @@ export async function stampTextToFieldRect(
   if (fieldName !== "reason") {
     // center vertically for date fields
     const y = y0 + boxH / 2 - fontSize / 2 + 1;
-    page.drawText(value, { x: x0, y, size: fontSize, font, color: rgb(0.1, 0.1, 0.1) });
+    for (const page of pages) {
+      page.drawText(value, { x: x0, y, size: fontSize, font, color: rgb(0.1, 0.1, 0.1) });
+    }
     return await pdfDoc.save();
   }
 
@@ -919,9 +902,11 @@ export async function stampTextToFieldRect(
   if (cur && lines.length < maxLines) lines.push(cur);
   // draw from top
   const startY = r.y + r.height - padding - (fontSize + 1);
-  for (let i = 0; i < lines.length; i++) {
-    const y = startY - i * (fontSize + 2);
-    page.drawText(lines[i], { x: x0, y, size: fontSize, font, color: rgb(0.1, 0.1, 0.1) });
+  for (const page of pages) {
+    for (let i = 0; i < lines.length; i++) {
+      const y = startY - i * (fontSize + 2);
+      page.drawText(lines[i], { x: x0, y, size: fontSize, font, color: rgb(0.1, 0.1, 0.1) });
+    }
   }
   return await pdfDoc.save();
 }

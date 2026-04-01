@@ -93,6 +93,7 @@ const BudgetView = React.memo(() => {
     });
     const [unitInputText, setUnitInputText] = useState("");
     const [unitDropdownOpen, setUnitDropdownOpen] = useState(false);
+    const [isRecalculating, setIsRecalculating] = useState(false);
     const unitInputRef = useRef<HTMLInputElement>(null);
     const budgetTableContainerRef = useRef<HTMLDivElement>(null);
     const dashBudgetTableRef = useRef<HTMLDivElement>(null);
@@ -875,6 +876,17 @@ const BudgetView = React.memo(() => {
           // Check if item has budgetSubItemId that matches one of our sub-items
           if (item.budgetSubItemId && subItemIds.includes(item.budgetSubItemId)) return true;
           if (item.subItemId && subItemIds.includes(item.subItemId)) return true;
+          
+          // IMPORTANT: For PO items created from PR items, trace back to find the original sub-item ID
+          if (item.prId != null && item.prItemIndex != null) {
+            const pr = prs.find(p => p.id === item.prId);
+            const prItem = pr?.items?.[item.prItemIndex];
+            if (prItem) {
+              if (prItem.budgetSubItemId && subItemIds.includes(prItem.budgetSubItemId)) return true;
+              if (prItem.subItemId && subItemIds.includes(prItem.subItemId)) return true;
+            }
+          }
+          
           // Don't count items that only match by costCode when budget has sub-items
           return false;
         }
@@ -927,31 +939,33 @@ const BudgetView = React.memo(() => {
       });
 
       const prTotal = relatedPRs.reduce((sum, pr) => {
-        let prAmount = 0;
-        if (pr.items && pr.items.length > 0) {
-          prAmount = pr.items.reduce((iSum, i) => {
-            if (!itemBelongsToBudget(i, pr)) return iSum;
-            return iSum + (Number(i.amount) || (Number(i.quantity) * Number(i.price)));
-          }, 0);
-        } else if (!hasSubItems) {
-          // Only count PRs without items for budgets without sub-items
-          prAmount = Number(pr.totalAmount || 0);
-        }
+        // Use PR's totalAmount directly for consistency with PO calculation
+        const prAmount = Number(pr.totalAmount || 0);
         return sum + prAmount;
       }, 0);
 
       const poTotal = relatedPOs.reduce((sum, po) => {
-        let poAmount = 0;
+        // Use PO's amount before VAT (subtotal - discount)
+        // Calculate from items that belong to this budget only
+        let subtotal = 0;
         if (po.items && po.items.length > 0) {
-          poAmount = po.items.reduce((iSum, i) => {
+          subtotal = po.items.reduce((iSum, i) => {
+            // Only include items that belong to this specific budget/sub-item
             if (!itemBelongsToBudget(i)) return iSum;
-            return iSum + (Number(i.amount) || (Number(i.quantity) * Number(i.price)));
+            const itemAmount = Number(i.amount || 0);
+            return iSum + itemAmount;
           }, 0);
-        } else if (!hasSubItems) {
-          // Only count POs without items for budgets without sub-items
-          poAmount = Number(po.totalAmount || 0);
         }
-        return sum + poAmount;
+        // Apply discount proportionally based on item ratio
+        if (subtotal > 0) {
+          const poSubtotal = po.items.reduce((s, i) => s + Number(i.amount || 0), 0);
+          const itemRatio = poSubtotal > 0 ? subtotal / poSubtotal : 0;
+          const discount = Number(po.discount || 0);
+          const proportionalDiscount = discount * itemRatio;
+          const poAmount = Math.max(0, subtotal - proportionalDiscount);
+          return sum + poAmount;
+        }
+        return sum;
       }, 0);
 
       const relatedInvoices = invoices.filter((inv) =>
@@ -1099,7 +1113,10 @@ const BudgetView = React.memo(() => {
               if (!poItem) return;
               const itemCode = poItem.costCode || prs.find(p => p.id === poItem.prId)?.costCode;
               if (!matchesFilter(poItem, itemCode, po)) return;
-              matchedAmt += Number(poItem.amount) || ((Number(poItem.quantity) || 0) * (Number(poItem.price) || 0));
+              const itemAmount = poItem.amount != null && poItem.amount !== '' 
+                ? Number(poItem.amount) 
+                : (Number(poItem.quantity || 0) * Number(poItem.price || 0));
+              matchedAmt += itemAmount;
             });
             if (matchedAmt > 0) {
               const s = pay.status || "Draft";
@@ -1134,7 +1151,12 @@ const BudgetView = React.memo(() => {
           if (pr.items && Array.isArray(pr.items)) {
             amount = pr.items
               .filter(i => matchesFilter(i, i.costCode || pr.costCode, pr))
-              .reduce((sum, i) => sum + (Number(i.amount) || (Number(i.quantity) * Number(i.price))), 0);
+              .reduce((sum, i) => {
+                const itemAmount = i.amount != null && i.amount !== '' 
+                  ? Number(i.amount) 
+                  : (Number(i.quantity || 0) * Number(i.price || 0));
+                return sum + itemAmount;
+              }, 0);
           } else {
             if (pr.costCode === budgetCode) {
               if (filterMode === "SUB_ITEM") amount = 0;
@@ -1184,18 +1206,33 @@ const BudgetView = React.memo(() => {
         // Filter POs relevant to this project
         const projectPOs = pos.filter((po) => po.projectId === selectedProjectId);
 
-        // Calculate PO total for this category (checking items if available)
+        // Calculate PO total for this category (checking items if available) - Ex VAT calculation
         const totalPO = projectPOs.reduce((sum, po) => {
           if (po.items && Array.isArray(po.items)) {
+            // Calculate subtotal for items matching this category
             const itemSum = po.items
               .filter(i => {
                 const c = i.costCode || prs.find(p => p.id === i.prId)?.costCode;
                 return c && c.startsWith(code);
               })
               .reduce((s, i) => s + Number(i.amount), 0);
-            return sum + itemSum;
+            
+            // Apply discount proportionally based on item ratio
+            if (itemSum > 0) {
+              const poSubtotal = po.items.reduce((s, i) => s + Number(i.amount || 0), 0);
+              const itemRatio = poSubtotal > 0 ? itemSum / poSubtotal : 0;
+              const discount = Number(po.discount || 0);
+              const proportionalDiscount = discount * itemRatio;
+              const amountExVat = Math.max(0, itemSum - proportionalDiscount);
+              return sum + amountExVat;
+            }
+            return sum;
           } else if (po.costCode && po.costCode.startsWith(code)) {
-            return sum + Number(po.amount);
+            // For legacy POs without items, calculate Ex VAT
+            const poAmount = Number(po.amount || 0);
+            const discount = Number(po.discount || 0);
+            const amountExVat = Math.max(0, poAmount - discount);
+            return sum + amountExVat;
           }
           return sum;
         }, 0);
@@ -1755,6 +1792,26 @@ const BudgetView = React.memo(() => {
       );
       await logAction("Reject Revision Sub-Item", `Rejected revision for Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code}) — สถานะกลับเป็น Approved`, budget.projectId || selectedProjectId);
       showAlert("ไม่อนุญาตแก้ไข", "สถานะรายการย่อยกลับเป็น Approved ตามเดิม", "info");
+    };
+
+    const handleRecalculateTotals = async () => {
+      if (!selectedProjectId) {
+        showAlert("แจ้งเตือน", "กรุณาเลือกโครงการก่อน", "warning");
+        return;
+      }
+      
+      setIsRecalculating(true);
+      try {
+        // Force refresh data to get the latest calculations with the new logic
+        await updateData();
+        showAlert("สำเร็จ", "คำนวณยอด PO TOTAL ใหม่เรียบร้อยแล้ว", "success");
+        await logAction("Recalculate", `Recalculated PO totals for project`, selectedProjectId);
+      } catch (error) {
+        console.error("Error recalculating totals:", error);
+        showAlert("ข้อผิดพลาด", "ไม่สามารถคำนวณยอดใหม่ได้", "error");
+      } finally {
+        setIsRecalculating(false);
+      }
     };
 
     const openReasonModal = (type, budgetId, subItemId) => {
@@ -2692,6 +2749,22 @@ const BudgetView = React.memo(() => {
                   disabled={currentBudgets.length === 0}
                 >
                   <Trash2 size={12} /> ล้างทั้งหมด
+                </Button>
+              )}
+              
+              {(userRole === "Administrator" || userRole === "MD") && (
+                <Button
+                  variant="outline"
+                  onClick={handleRecalculateTotals}
+                  className="text-[10px] h-8 border-blue-200 text-blue-500 hover:bg-blue-50 px-2"
+                  disabled={isRecalculating}
+                >
+                  {isRecalculating ? (
+                    <RefreshCw size={12} className="animate-spin" />
+                  ) : (
+                    <RefreshCw size={12} />
+                  )}
+                  <span className="ml-1">Recalculate PO</span>
                 </Button>
               )}
               
