@@ -90,16 +90,20 @@ const InvoiceView = React.memo(() => {
     [vendors]
   );
 
-  // POs with status "Received" for this project
-  const receivedPOs = useMemo(() => {
+  // POs eligible for invoice entry for this project
+  // - Normal flow: Received
+  // - Pay before receive flow: Wait Invoice
+  const invoiceEligiblePOs = useMemo(() => {
     if (!selectedProjectId) return [];
     return pos.filter(
-      (po) => po.projectId === selectedProjectId && po.status === "Received"
+      (po) =>
+        po.projectId === selectedProjectId &&
+        (po.status === "Received" || po.status === "Wait Invoice")
     );
   }, [pos, selectedProjectId]);
 
   const filteredPOs = useMemo(() => {
-    return receivedPOs.filter((po) => {
+    return invoiceEligiblePOs.filter((po) => {
       const poNoOk =
         !poPOSearch ||
         (po.poNo || "").toLowerCase().includes(poPOSearch.toLowerCase());
@@ -110,7 +114,7 @@ const InvoiceView = React.memo(() => {
           .includes(poVendorSearch.toLowerCase());
       return poNoOk && vendorOk;
     });
-  }, [receivedPOs, poPOSearch, poVendorSearch, getVendorName]);
+  }, [invoiceEligiblePOs, poPOSearch, poVendorSearch, getVendorName]);
 
   const groupedPOs = useMemo(() => {
     const groups: Record<string, any[]> = {};
@@ -189,10 +193,22 @@ const InvoiceView = React.memo(() => {
       });
 
       if (success) {
-        await updateData("pos", viewingPO.id, {
-          status: "Invoice Issue",
-          statusNow: "Invoice Issue",
-        });
+        const isPayBeforeReceive =
+          viewingPO.receiveType === "Pay before receive" || viewingPO.status === "Wait Invoice";
+
+        await updateData(
+          "pos",
+          viewingPO.id,
+          isPayBeforeReceive
+            ? {
+                status: "Approved",
+                statusNow: "Approved",
+              }
+            : {
+                status: "Invoice Issue",
+                statusNow: "Invoice Issue",
+              }
+        );
         setViewingPO(null);
         showAlert("สำเร็จ", "บันทึกใบแจ้งหนี้เรียบร้อยแล้ว", "success");
       }
@@ -211,10 +227,12 @@ const InvoiceView = React.memo(() => {
       inv.status === "Pending PM" &&
       (userRoles.includes("PM") || userRoles.includes("Administrator"))
     )
-      newStatus = "Pending GM";
+      newStatus = "Paid";
     if (
       inv.status === "Pending GM" &&
-      (userRoles.includes("GM") || userRoles.includes("Administrator"))
+      (userRoles.includes("PM") ||
+        userRoles.includes("GM") ||
+        userRoles.includes("Administrator"))
     )
       newStatus = "Paid";
     if (newStatus !== inv.status)
@@ -226,16 +244,26 @@ const InvoiceView = React.memo(() => {
     [invoices, selectedProjectId]
   );
 
-  const filteredInvoices = useMemo(() => {
-    if (!histSearch) return projectInvoices;
+  const pendingInvoices = useMemo(
+    () => projectInvoices.filter((inv) => inv.status !== "Paid"),
+    [projectInvoices]
+  );
+
+  const paidInvoices = useMemo(
+    () => projectInvoices.filter((inv) => inv.status === "Paid"),
+    [projectInvoices]
+  );
+
+  const filteredPaidInvoices = useMemo(() => {
+    if (!histSearch) return paidInvoices;
     const q = histSearch.toLowerCase();
-    return projectInvoices.filter(
+    return paidInvoices.filter(
       (inv) =>
         (inv.invNo || "").toLowerCase().includes(q) ||
         (inv.poNo || inv.poRef || "").toLowerCase().includes(q) ||
         (inv.vendorName || "").toLowerCase().includes(q)
     );
-  }, [projectInvoices, histSearch]);
+  }, [paidInvoices, histSearch]);
 
   // ─── Computed totals for invoice items ────────────────────────────────────
   const invoiceTotalAmount = useMemo(
@@ -280,7 +308,7 @@ const InvoiceView = React.memo(() => {
               }`}
             >
               <Package size={13} />
-              PO ที่รับแล้ว
+              PO พร้อมวางบิล
               <span
                 className={`text-[9px] font-bold rounded-full px-1 py-0.5 min-w-[16px] text-center ${
                   activeTab === "po"
@@ -288,7 +316,7 @@ const InvoiceView = React.memo(() => {
                     : "bg-violet-50 text-violet-400"
                 }`}
               >
-                {receivedPOs.length}
+                {invoiceEligiblePOs.length}
               </span>
             </button>
             <button
@@ -309,7 +337,7 @@ const InvoiceView = React.memo(() => {
                     : "bg-amber-50 text-amber-400"
                 }`}
               >
-                {projectInvoices.length}
+                {paidInvoices.length}
               </span>
             </button>
           </div>
@@ -317,7 +345,7 @@ const InvoiceView = React.memo(() => {
       </div>
 
       {/* ══════════════════════════════════════
-          Tab: PO ที่รับแล้ว (Received)
+          Tab: PO พร้อมวางบิล
       ══════════════════════════════════════ */}
       {activeTab === "po" && (
         <div className="space-y-2">
@@ -375,10 +403,10 @@ const InvoiceView = React.memo(() => {
                 <Package size={26} className="text-violet-300" />
               </div>
               <p className="text-sm font-medium text-slate-500">
-                ไม่พบ PO ที่มีสถานะ Received
+                ไม่พบ PO ที่พร้อมวางบิล
               </p>
               <p className="text-xs text-slate-400 mt-1">
-                PO ต้องผ่านการรับสินค้า (Receive) ก่อนจึงจะลงข้อมูลใบแจ้งหนี้ได้
+                แสดง PO สถานะ Received (โฟลวปกติ) และ Wait Invoice (Pay before receive)
               </p>
             </Card>
           ) : (
@@ -472,6 +500,78 @@ const InvoiceView = React.memo(() => {
               );
             })
           )}
+
+          {/* Pending invoice list stays in PO tab until paid */}
+          <Card className="overflow-hidden border-violet-100">
+            <div className="px-4 py-2 bg-violet-50/60 border-b border-violet-100 flex items-center justify-between">
+              <h4 className="text-xs font-bold text-violet-700">Invoice รออนุมัติจ่าย</h4>
+              <span className="text-[11px] text-violet-500">{pendingInvoices.length} รายการ</span>
+            </div>
+            <table className="w-full text-left text-xs text-slate-600">
+              <thead className="bg-violet-50/40 text-slate-500 uppercase font-semibold border-b border-violet-100">
+                <tr>
+                  <th className="py-1.5 px-3">Invoice No.</th>
+                  <th className="py-1.5 px-3">Ref. PO</th>
+                  <th className="py-1.5 px-3">Vendor</th>
+                  <th className="py-1.5 px-3">วันที่</th>
+                  <th className="py-1.5 px-3 text-right">จำนวนเงิน</th>
+                  <th className="py-1.5 px-3 text-center">สถานะ</th>
+                  <th className="py-1.5 px-3 text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-violet-50">
+                {pendingInvoices.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-8 text-center text-slate-400">
+                      ยังไม่มี Invoice ที่รออนุมัติจ่าย
+                    </td>
+                  </tr>
+                ) : (
+                  pendingInvoices.map((inv, idx) => (
+                    <tr
+                      key={inv.id}
+                      className={`transition-colors ${
+                        idx % 2 === 0 ? "bg-white" : "bg-violet-50/20"
+                      } hover:bg-violet-50/40`}
+                    >
+                      <td className="py-1.5 px-3 font-semibold text-violet-700">{inv.invNo}</td>
+                      <td className="py-1.5 px-3 font-medium text-amber-600">{inv.poNo || inv.poRef || "-"}</td>
+                      <td className="py-1.5 px-3">{inv.vendorName || "-"}</td>
+                      <td className="py-1.5 px-3">{inv.invDate || inv.receiveDate || "-"}</td>
+                      <td className="py-1.5 px-3 text-right font-semibold">{formatCurrency(inv.amount)}</td>
+                      <td className="py-1.5 px-3 text-center">
+                        <Badge status={inv.status} />
+                      </td>
+                      <td className="py-1.5 px-3">
+                        <div className="flex items-center justify-center gap-1">
+                          {canUseFunction("invoice", "approve") &&
+                            (userRoles.includes("PM") || userRoles.includes("Administrator")) &&
+                            inv.status === "Pending PM" && (
+                              <Button
+                                variant="success"
+                                size="sm"
+                                className="px-2 py-0.5 text-[10px]"
+                                onClick={() => handleApprove(inv.id)}
+                              >
+                                PM อนุมัติจ่าย
+                              </Button>
+                            )}
+                          {canUseFunction("invoice", "delete") && (
+                            <button
+                              className="text-red-400 hover:text-red-600 transition-colors"
+                              onClick={() => deleteData("invoices", inv.id)}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </Card>
         </div>
       )}
 
@@ -505,7 +605,7 @@ const InvoiceView = React.memo(() => {
                 </button>
               )}
               <span className="ml-auto text-[11px] text-amber-400">
-                {filteredInvoices.length} รายการ
+                {filteredPaidInvoices.length} รายการ
               </span>
             </div>
           </Card>
@@ -526,7 +626,7 @@ const InvoiceView = React.memo(() => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-amber-50">
-                {filteredInvoices.length === 0 ? (
+                {filteredPaidInvoices.length === 0 ? (
                   <tr>
                     <td
                       colSpan={8}
@@ -536,11 +636,11 @@ const InvoiceView = React.memo(() => {
                         size={28}
                         className="mx-auto mb-2 opacity-25"
                       />
-                      ไม่มีข้อมูล Invoice
+                      ไม่มีข้อมูล Invoice ที่ชำระแล้ว
                     </td>
                   </tr>
                 ) : (
-                  filteredInvoices.map((inv, idx) => (
+                  filteredPaidInvoices.map((inv, idx) => (
                     <tr
                       key={inv.id}
                       className={`transition-colors ${
@@ -576,32 +676,6 @@ const InvoiceView = React.memo(() => {
                       </td>
                       <td className="py-1.5 px-3">
                         <div className="flex items-center justify-center gap-1">
-                          {canUseFunction("invoice", "approve") &&
-                            (userRoles.includes("PM") ||
-                              userRoles.includes("Administrator")) &&
-                            inv.status === "Pending PM" && (
-                              <Button
-                                variant="success"
-                                size="sm"
-                                className="px-2 py-0.5 text-[10px]"
-                                onClick={() => handleApprove(inv.id)}
-                              >
-                                PM เห็นชอบ
-                              </Button>
-                            )}
-                          {canUseFunction("invoice", "approve") &&
-                            (userRoles.includes("GM") ||
-                              userRoles.includes("Administrator")) &&
-                            inv.status === "Pending GM" && (
-                              <Button
-                                variant="success"
-                                size="sm"
-                                className="px-2 py-0.5 text-[10px]"
-                                onClick={() => handleApprove(inv.id)}
-                              >
-                                GM อนุมัติจ่าย
-                              </Button>
-                            )}
                           {canUseFunction("invoice", "delete") && (
                             <button
                               className="text-red-400 hover:text-red-600 transition-colors"
@@ -931,8 +1005,7 @@ const InvoiceView = React.memo(() => {
               <div className="flex items-center justify-between px-5 py-3 border-t border-violet-100 bg-gradient-to-r from-violet-50/40 to-amber-50/40 rounded-b-2xl">
                 <p className="text-xs text-slate-400 flex items-center gap-1">
                   <AlertCircle size={11} />
-                  หลังบันทึก สถานะ PO จะเปลี่ยนเป็น{" "}
-                  <strong className="text-violet-600">Invoice Issue</strong>
+                  หลังบันทึก สถานะ PO จะเปลี่ยนตาม Receive Type
                 </p>
                 <div className="flex gap-3">
                   <button

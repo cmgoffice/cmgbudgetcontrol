@@ -648,10 +648,15 @@ export const AppDataProvider = ({
     if (!po) return;
     if (po.status === PO_REVISION_PENDING_PCM || po.status === PO_REVISION_PENDING_GM) return;
     let newStatus = po.status;
+    const receiveTypeNormalized = String(po.receiveType || "").trim().toLowerCase();
+    const isReceiveAutoType = receiveTypeNormalized === "receive auto";
+    const isPayBeforeReceiveType = receiveTypeNormalized.includes("pay before");
     if (action === "approve") {
       if (po.status === "Pending PCM" && (roles.includes("PCM") || roles.includes("Administrator"))) newStatus = "Pending GM";
       else if (po.status === "Pending GM" && (roles.includes("GM") || roles.includes("Administrator"))) {
-        newStatus = po.receiveType === "Receive Auto" ? "Received" : "Approved";
+        if (isReceiveAutoType) newStatus = "Received";
+        else if (isPayBeforeReceiveType) newStatus = "Wait Invoice";
+        else newStatus = "Approved";
       }
     } else if (action === "reject") {
       newStatus = "Rejected";
@@ -659,6 +664,7 @@ export const AppDataProvider = ({
     if (newStatus !== po.status) {
       const payload: any = { status: newStatus };
       if (newStatus === "Received") payload.statusNow = "Received";
+      if (newStatus === "Wait Invoice") payload.statusNow = "Wait Invoice";
       if (action === "approve") payload.rejectReason = "";
       await updateData("pos", id, payload);
     }

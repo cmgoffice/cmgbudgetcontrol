@@ -932,6 +932,8 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     "Closed PR": "bg-slate-100 text-slate-600 border-slate-300",
     "Closed PR Auto": "bg-emerald-100 text-emerald-800 border-emerald-300",
     "Pending Close PO": "bg-amber-50 text-amber-700 border-amber-200",
+    "Wait Invoice": "bg-amber-50 text-amber-800 border-amber-300",
+    "Invoice Issue": "bg-violet-50 text-violet-700 border-violet-200",
     "Received": "bg-emerald-100 text-emerald-800 border-emerald-300",
     "Closed PO": "bg-slate-100 text-slate-600 border-slate-300",
     "Edit Budget": "bg-red-100 text-red-800 border-red-300",
@@ -952,12 +954,67 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   const getBudgetDesc = (costCode: string, projectId: string) =>
     budgets.find((b) => b.code === costCode && b.projectId === projectId)?.description || "-";
 
+  const getPrBudgetItemName = (pr: any) => {
+    const headerBudgetItem = pr?.budgetId
+      ? budgets.find((b: any) => b.id === pr.budgetId && b.projectId === pr.projectId)
+      : pr?.costCode
+        ? budgets.find((b: any) => b.code === pr.costCode && b.projectId === pr.projectId)
+        : null;
+
+    if (!headerBudgetItem) return "";
+
+    const mainDesc = headerBudgetItem.description || "";
+    const subItemId = pr?.selectedSubItemId || pr?.subItemId
+      || pr?.items?.[0]?.subItemId || pr?.items?.[0]?.budgetSubItemId;
+
+    let subDesc = "";
+    if (subItemId && headerBudgetItem?.subItems?.length > 0) {
+      const sub = headerBudgetItem.subItems.find((s: any) => s.id === subItemId);
+      subDesc = sub?.description || "";
+    }
+
+    return mainDesc && subDesc ? `${mainDesc} + ${subDesc}` : (mainDesc || subDesc || "");
+  };
+
   const getProjectName = (projectId: string) =>
     projects.find((p) => p.id === projectId)?.name || projectId;
 
+  const getPoLinkedPrMeta = useCallback((po: any) => {
+    if (!po) return { prNos: [], costCodes: [] };
+
+    const itemPrIds = Array.isArray(po.items)
+      ? po.items.flatMap((item: any) => {
+          const directPrId = item?.prId ? [item.prId] : [];
+          const disPrIds = Array.isArray(item?.disPrAllocations)
+            ? item.disPrAllocations.map((a: any) => a?.prId).filter(Boolean)
+            : [];
+          return [...directPrId, ...disPrIds];
+        })
+      : [];
+    const selectedPrIds = Array.isArray(po.selectedPrIds) ? po.selectedPrIds.filter(Boolean) : [];
+    const prRefIds = po.prRefId ? [po.prRefId] : [];
+    const allPrIds = [...new Set([...itemPrIds, ...selectedPrIds, ...prRefIds])];
+
+    const linkedPrs = allPrIds
+      .map((prId: string) => prs.find((pr: any) => pr.id === prId))
+      .filter(Boolean);
+
+    const itemPrNos = Array.isArray(po.items)
+      ? po.items.map((item: any) => item?.prNo).filter(Boolean)
+      : [];
+
+    const prNos = [...new Set([...linkedPrs.map((pr: any) => pr.prNo).filter(Boolean), ...itemPrNos])];
+    const costCodes = [...new Set([
+      ...linkedPrs.map((pr: any) => pr.costCode).filter(Boolean),
+      ...(po.costCode ? [po.costCode] : []),
+    ])];
+
+    return { prNos, costCodes };
+  }, [prs]);
+
   const allStatuses = isPR
     ? ["Approved", "PO Issued", "Edit Budget", "Pending Close", "Closed PR", "Closed PR Auto", "Pending Active PR", "Pending MD", "Pending GM", "Pending PM", "Pending CM", "Rejected"]
-    : ["Approved", "Pending PCM", "Pending GM", "PO Edit Pending PCM", "PO Edit Pending GM", "Rejected", "Paid", "Partial", "Draft", "Pending Close PO", "Received", "Closed PO"];
+    : ["Approved", "Pending PCM", "Pending GM", "PO Edit Pending PCM", "PO Edit Pending GM", "Rejected", "Paid", "Partial", "Draft", "Pending Close PO", "Wait Invoice", "Invoice Issue", "Received", "Closed PO"];
 
   const handlePRDownloadPDF = (pr: any) => {
     const docId = pr.id || pr.prNo || "pr";
@@ -1043,12 +1100,38 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
           .filter(Boolean)
           .join(", ")
       : "";
+    const poLinkedMeta = !isPR ? getPoLinkedPrMeta(r) : { prNos: [], costCodes: [] };
+    const poProjectName = !isPR ? getProjectName(r.projectId) : "";
+    const poVendorName = !isPR
+      ? (r.vendor || (vendors || []).find((v: any) => v.id === r.vendorId)?.name || "-")
+      : "";
+    const poDateText = !isPR ? String(r.poDate || r.createdDate || "") : "";
+    const poItemCountText = !isPR ? String(r.items?.length || (r.selectedPrIds?.length || 0)) : "";
+    const poAmountText = !isPR ? String(r.grandTotal ?? r.amount ?? 0) : "";
+    const poSearchBlob = !isPR
+      ? [
+          noField,
+          poProjectName,
+          poVendorName,
+          r.poType,
+          poLinkedMeta.prNos.join(", "),
+          poLinkedMeta.costCodes.join(", "),
+          poDateText,
+          poItemCountText,
+          poAmountText,
+          r.status,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+      : "";
     const matchSearch =
       !lowerSearch ||
       (noField || "").toLowerCase().includes(lowerSearch) ||
       (r.costCode || "").toLowerCase().includes(lowerSearch) ||
       (r.requestor || r.vendor || "").toLowerCase().includes(lowerSearch) ||
-      (poRefText || "").toLowerCase().includes(lowerSearch);
+      (poRefText || "").toLowerCase().includes(lowerSearch) ||
+      (!isPR && poSearchBlob.includes(lowerSearch));
     const matchStatus = filterStatus === "all" || r.status === filterStatus;
     const matchProject = filterProject === "all" || r.projectId === filterProject;
     return matchSearch && matchStatus && matchProject;
@@ -1083,7 +1166,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
-              placeholder={isPR ? "ค้นหา PR No., Cost Code, Ref PO..." : "ค้นหา PO No., Vendor..."}
+              placeholder={isPR ? "ค้นหา PR No., Cost Code, Ref PO..." : "ค้นหา PO ได้ทุกคอลัมน์ (PO, Vendor, Cost Code, Ref PR...)"}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-56"
@@ -1121,8 +1204,9 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                 {isColumnVisible(tblId, "project") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="project" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.project}>โครงการ</ResizableTh>}
                 {isPR && isColumnVisible("pr-table", "costCode") && <ResizableTh tableId="pr-table" colKey="costCode" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.costCode}>Cost Code</ResizableTh>}
                 {isPR && isColumnVisible("pr-table", "description") && <ResizableTh tableId="pr-table" colKey="description" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.description}>รายการงบ</ResizableTh>}
+                {!isPR && isColumnVisible("po-table", "costCode") && <ResizableTh tableId="po-table" colKey="costCode" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.costCode}>Cost Code</ResizableTh>}
                 {!isPR && isColumnVisible("po-table", "vendor") && <ResizableTh tableId="po-table" colKey="vendor" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.vendor}>Vendor</ResizableTh>}
-                {!isPR && isColumnVisible("po-table", "prRef") && <ResizableTh tableId="po-table" colKey="prRef" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.prRef}>PR อ้างอิง</ResizableTh>}
+                {!isPR && isColumnVisible("po-table", "prRef") && <ResizableTh tableId="po-table" colKey="prRef" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.prRef}>Ref PR No.</ResizableTh>}
                 {isColumnVisible(tblId, "date") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="date" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.date}>วันที่</ResizableTh>}
                 {isPR && isColumnVisible("pr-table", "requestor") && <ResizableTh tableId="pr-table" colKey="requestor" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.requestor}>ผู้ขอ</ResizableTh>}
                 {isPR && isColumnVisible("pr-table", "type") && <ResizableTh tableId="pr-table" colKey="type" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.type}>ประเภท</ResizableTh>}
@@ -1156,6 +1240,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                   const vendorName = !isPR
                     ? (r.vendor || (vendors || []).find((v: any) => v.id === r.vendorId)?.name || "-")
                     : "";
+                  const poLinkedMeta = !isPR ? getPoLinkedPrMeta(r) : { prNos: [], costCodes: [] };
                   const poRefNos = isPR
                     ? pos
                         .filter((po: any) =>
@@ -1191,13 +1276,33 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                         <td className="px-2 py-0.5 font-mono text-slate-700">{r.costCode || "-"}</td>
                       )}
                       {isPR && isColumnVisible("pr-table", "description") && (
-                        <td className="px-2 py-0.5 text-slate-600 max-w-[180px] truncate"
-                          title={r.items && r.items.length > 0
-                            ? r.items.map((it: any) => it.description).filter(Boolean).join(", ")
-                            : getBudgetDesc(r.costCode, r.projectId)}>
-                          {r.items && r.items.length > 0
-                            ? r.items.map((it: any) => it.description).filter(Boolean).join(", ")
-                            : getBudgetDesc(r.costCode, r.projectId)}
+                        <td
+                          className="px-2 py-0.5 text-slate-600 max-w-[220px]"
+                          title={(() => {
+                            const budgetItemName = getPrBudgetItemName(r);
+                            const itemDescs = r.items && r.items.length > 0
+                              ? r.items.map((it: any) => it.description).filter(Boolean).join(", ")
+                              : getBudgetDesc(r.costCode, r.projectId);
+                            return budgetItemName || itemDescs || "-";
+                          })()}
+                        >
+                          <div className="leading-tight">
+                            <span className="block truncate font-semibold text-slate-700">
+                              {getPrBudgetItemName(r) || (r.items && r.items.length > 0
+                                ? r.items.map((it: any) => it.description).filter(Boolean).join(", ")
+                                : getBudgetDesc(r.costCode, r.projectId))}
+                            </span>
+                            {r.items && r.items.length > 0 && (
+                              <span className="block truncate text-[10px] text-slate-400 mt-0.5">
+                                {r.items.map((it: any) => it.description).filter(Boolean).join(", ")}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      )}
+                      {!isPR && isColumnVisible("po-table", "costCode") && (
+                        <td className="px-2 py-0.5 font-mono text-slate-700" title={poLinkedMeta.costCodes.join(", ") || "-"}>
+                          {poLinkedMeta.costCodes.length > 0 ? poLinkedMeta.costCodes.join(", ") : "-"}
                         </td>
                       )}
                       {!isPR && isColumnVisible("po-table", "vendor") && (
@@ -1205,9 +1310,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                       )}
                       {!isPR && isColumnVisible("po-table", "prRef") && (
                         <td className="px-2 py-0.5 text-slate-500 text-[11px]">
-                          {(r.selectedPrIds || []).length > 0
-                            ? prs.filter((p: any) => (r.selectedPrIds || []).includes(p.id)).map((p: any) => p.prNo).join(", ")
-                            : "-"}
+                          {poLinkedMeta.prNos.length > 0 ? poLinkedMeta.prNos.join(", ") : "-"}
                         </td>
                       )}
                       {isColumnVisible(tblId, "date") && (

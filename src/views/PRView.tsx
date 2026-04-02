@@ -313,17 +313,14 @@ const PRView = React.memo(() => {
       requiredDate: "",
       note: "",
     });
-    const [editingItemId, setEditingItemId] = useState(null);
     const [lineItems, setLineItems] = useState([]);
+    const [editingItemId, setEditingItemId] = useState(null);
     const [editingPRId, setEditingPRId] = useState(null);
     const [isCostCodeModalOpen, setIsCostCodeModalOpen] = useState(false);
     const [budgetSearchText, setBudgetSearchText] = useState("");
     const [selectedSubItemsForPR, setSelectedSubItemsForPR] = useState([]); // Multi-select state
-
-    // PR Type Selection Modal
-    const [isPrTypeModalOpen, setIsPrTypeModalOpen] = useState(false);
-
-    // Contract PR (จ้าง/เหมา) Modal
+    const [prTableSearchText, setPrTableSearchText] = useState("");
+    const [prSortConfig, setPrSortConfig] = useState<{ key: string | null; direction: "asc" | "desc" }>({ key: null, direction: "asc" });
     const [isContractPrModalOpen, setIsContractPrModalOpen] = useState(false);
     const [contractEditingPRId, setContractEditingPRId] = useState(null);
     const [contractHeaderData, setContractHeaderData] = useState({
@@ -1056,29 +1053,162 @@ const PRView = React.memo(() => {
         return groups;
       }, {});
 
-    /** ตารางบน C: ทุกสถานะยกเว้น Closed PR, Closed PR Auto และ PO Issued */
+    const getPrBudgetItemName = useCallback((pr) => {
+      const headerBudgetItem = pr?.budgetId
+        ? budgets.find((b: any) => b.id === pr.budgetId && b.projectId === pr.projectId)
+        : pr?.costCode
+          ? budgets.find((b: any) => b.code === pr.costCode && b.projectId === pr.projectId)
+          : null;
+
+      if (!headerBudgetItem) return "";
+
+      const mainDesc = headerBudgetItem.description || "";
+      const subItemId = pr?.selectedSubItemId || pr?.subItemId
+        || (pr?.items?.[0]?.subItemId) || (pr?.items?.[0]?.budgetSubItemId);
+
+      let subDesc = "";
+      if (subItemId && headerBudgetItem?.subItems?.length > 0) {
+        const sub = headerBudgetItem.subItems.find((s: any) => s.id === subItemId);
+        subDesc = sub?.description || "";
+      }
+
+      return mainDesc && subDesc ? `${mainDesc} + ${subDesc}` : (mainDesc || subDesc || "");
+    }, [budgets]);
+
+    const getPrSortValue = useCallback((pr, key) => {
+      switch (key) {
+        case "prNo": return String(pr.prNo || pr.id || "");
+        case "date": return String(pr.requestDate || "");
+        case "costCode": return String(pr.costCode || "");
+        case "description": {
+          const budgetName = getPrBudgetItemName(pr);
+          const itemDescs = pr.items?.map((it) => it.description).filter(Boolean).join(", ") || "";
+          return String(budgetName || itemDescs || "");
+        }
+        case "type": return String(pr.purchaseType || "");
+        case "requestor": return String(pr.requestor || "");
+        case "items": return Number(pr.items?.length || 0);
+        case "amount": return Number(pr.totalAmount || pr.amount || 0);
+        case "status": return String(pr.status || "");
+        case "refDoc": return String(getRefDocInfo(pr)?.docNo || "");
+        default: return "";
+      }
+    }, [getPrBudgetItemName]);
+
+    const requestPrSort = useCallback((key) => {
+      setPrSortConfig((prev) => ({
+        key,
+        direction: prev.key === key && prev.direction === "asc" ? "desc" : "asc",
+      }));
+    }, []);
+
+    const getPrSortIndicator = useCallback((key) => {
+      if (prSortConfig.key !== key) return "↕";
+      return prSortConfig.direction === "asc" ? "▲" : "▼";
+    }, [prSortConfig]);
+
+    const sortPrList = useCallback((list) => {
+      if (!prSortConfig.key) return list;
+      const { key, direction } = prSortConfig;
+      const sorted = [...list].sort((a, b) => {
+        const av = getPrSortValue(a, key);
+        const bv = getPrSortValue(b, key);
+        if (typeof av === "number" || typeof bv === "number") {
+          const na = Number(av) || 0;
+          const nb = Number(bv) || 0;
+          return direction === "asc" ? na - nb : nb - na;
+        }
+        return direction === "asc"
+          ? String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: "base" })
+          : String(bv).localeCompare(String(av), undefined, { numeric: true, sensitivity: "base" });
+      });
+      return sorted;
+    }, [prSortConfig, getPrSortValue]);
+
+    const isPrMatchSearch = useCallback((pr) => {
+      const q = (prTableSearchText || "").trim().toLowerCase();
+      if (!q) return true;
+      const budgetName = getPrBudgetItemName(pr);
+      const itemDescs = pr.items?.map((it) => it.description).filter(Boolean).join(", ") || "";
+      const refDoc = getRefDocInfo(pr);
+      const blob = [
+        pr.prNo,
+        pr.requestDate,
+        pr.costCode,
+        budgetName,
+        itemDescs,
+        pr.purchaseType,
+        getPurchaseTypeDisplayLabel(pr.purchaseType),
+        pr.requestor,
+        pr.items?.length,
+        pr.totalAmount || pr.amount,
+        pr.status,
+        refDoc?.docNo,
+      ].filter(Boolean).join(" ").toLowerCase();
+      return blob.includes(q);
+    }, [prTableSearchText, getPrBudgetItemName]);
+
+    /** ตารางบนสุด: รายการรอ Action (รอ Approve หรือ รอแก้ไข หรือ รอปิด) */
+    const pendingActionStatuses = ["Pending CM", "Pending PM", "Pending GM", "Pending MD", "Edit Budget", "Rejected", "Pending Close"];
+    const groupedPrEntriesPending = useMemo(() => {
+      const list = prs.filter(
+        (pr) =>
+          pr.projectId === selectedProjectId &&
+          pendingActionStatuses.includes(pr.status)
+      );
+      const filtered = list.filter(isPrMatchSearch);
+      const sorted = sortPrList(filtered);
+      return Object.entries(groupPrsByPurchaseType(sorted));
+    }, [prs, selectedProjectId, isPrMatchSearch, sortPrList]);
+
+    /** ตารางกลาง: ทุกสถานะยกเว้น Closed PR, Closed PR Auto, PO Issued และรอ Action */
     const groupedPrEntriesMain = useMemo(() => {
       const list = prs.filter(
         (pr) =>
           pr.projectId === selectedProjectId &&
           pr.status !== "Closed PR" &&
           pr.status !== "Closed PR Auto" &&
-          pr.status !== "PO Issued"
+          pr.status !== "PO Issued" &&
+          !pendingActionStatuses.includes(pr.status)
       );
-      return Object.entries(groupPrsByPurchaseType(list));
-    }, [prs, selectedProjectId]);
+      const filtered = list.filter(isPrMatchSearch);
+      const sorted = sortPrList(filtered);
+      return Object.entries(groupPrsByPurchaseType(sorted));
+    }, [prs, selectedProjectId, isPrMatchSearch, sortPrList]);
+
+    const showPendingActionTable = groupedPrEntriesPending.length > 0 && groupedPrEntriesPending.some(([, prs]) => prs.length > 0);
 
     /** ตารางล่าง C: เฉพาะ PO Issued — รวมทุกประเภท เรียงตามเลข PR */
     const flatPoIssuedPrs = useMemo(() => {
       const list = prs.filter(
         (pr) => pr.projectId === selectedProjectId && pr.status === "PO Issued"
       );
-      return [...list].sort((a, b) =>
-        String(a.prNo || a.id || "").localeCompare(String(b.prNo || b.id || ""), undefined, { numeric: true, sensitivity: "base" })
-      );
-    }, [prs, selectedProjectId]);
+      const filtered = list.filter(isPrMatchSearch);
+      if (!prSortConfig.key) {
+        return [...filtered].sort((a, b) =>
+          String(a.prNo || a.id || "").localeCompare(String(b.prNo || b.id || ""), undefined, { numeric: true, sensitivity: "base" })
+        );
+      }
+      return sortPrList(filtered);
+    }, [prs, selectedProjectId, isPrMatchSearch, sortPrList, prSortConfig.key]);
 
     const showPoIssuedPrTable = flatPoIssuedPrs.length > 0;
+
+    const renderPrHeaderCells = () => (
+      <>
+        {isColumnVisible("pr", "prNo") && <ResizableTh tableId="pr" colKey="prNo" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.prNo} onClick={() => requestPrSort("prNo")}>PR No. <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("prNo")}</span></ResizableTh>}
+        {isColumnVisible("pr", "date") && <ResizableTh tableId="pr" colKey="date" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.date} onClick={() => requestPrSort("date")}>Date <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("date")}</span></ResizableTh>}
+        {isColumnVisible("pr", "costCode") && <ResizableTh tableId="pr" colKey="costCode" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.costCode} onClick={() => requestPrSort("costCode")}>Cost Code <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("costCode")}</span></ResizableTh>}
+        {isColumnVisible("pr", "description") && <ResizableTh tableId="pr" colKey="description" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.description} onClick={() => requestPrSort("description")}>Description <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("description")}</span></ResizableTh>}
+        {isColumnVisible("pr", "type") && <ResizableTh tableId="pr" colKey="type" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.type} onClick={() => requestPrSort("type")}>Type <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("type")}</span></ResizableTh>}
+        {isColumnVisible("pr", "requestor") && <ResizableTh tableId="pr" colKey="requestor" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.requestor} onClick={() => requestPrSort("requestor")}>Requestor <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("requestor")}</span></ResizableTh>}
+        {isColumnVisible("pr", "items") && <ResizableTh tableId="pr" colKey="items" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.items} onClick={() => requestPrSort("items")}>Items <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("items")}</span></ResizableTh>}
+        {isColumnVisible("pr", "amount") && <ResizableTh tableId="pr" colKey="amount" className="py-0.5 px-2 text-right cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.amount} onClick={() => requestPrSort("amount")}>Amount <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("amount")}</span></ResizableTh>}
+        {isColumnVisible("pr", "status") && <ResizableTh tableId="pr" colKey="status" className="py-0.5 px-2 text-center cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.status} onClick={() => requestPrSort("status")}>Status <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("status")}</span></ResizableTh>}
+        {isColumnVisible("pr", "refDoc") && <ResizableTh tableId="pr" colKey="refDoc" className="py-0.5 px-2 text-center cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.refDoc} onClick={() => requestPrSort("refDoc")}>Ref Doc <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("refDoc")}</span></ResizableTh>}
+        {isColumnVisible("pr", "actions") && <th className="py-0.5 px-2 text-right" style={{ width: prTableLayout.scaled.actions }}>Actions</th>}
+      </>
+    );
 
     const dataRowClassForVariant = (variant) =>
       variant === "poIssued"
@@ -1100,17 +1230,26 @@ const PRView = React.memo(() => {
             {isColumnVisible("pr", "description") && <td
               className="py-0.5 px-2 text-xs text-slate-500"
               title={(() => {
+                const budgetItemName = getPrBudgetItemName(pr);
                 const itemDescs = pr.items && pr.items.length > 0
                   ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
                   : "-";
-                return pr.rejectReason ? `${itemDescs} | ปฏิเสธ: ${pr.rejectReason}` : itemDescs;
+                const displayText = budgetItemName || itemDescs;
+                return pr.rejectReason ? `${displayText} | ปฏิเสธ: ${pr.rejectReason}` : displayText;
               })()}
             >
-              <span className="cell-text">
-                {pr.items && pr.items.length > 0
-                  ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
-                  : "-"}
-              </span>
+              <div className="leading-tight">
+                <span className="cell-text font-semibold text-slate-700">
+                  {getPrBudgetItemName(pr) || (pr.items && pr.items.length > 0
+                    ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
+                    : "-")}
+                </span>
+                {pr.items && pr.items.length > 0 && (
+                  <div className="cell-text text-[10px] text-slate-400 mt-0.5">
+                    {pr.items.map((it) => it.description).filter(Boolean).join(", ")}
+                  </div>
+                )}
+              </div>
             </td>}
             {isColumnVisible("pr", "type") && <td className="py-0.5 px-2" title={pr.purchaseType}><span className="cell-text">{getPurchaseTypeDisplayLabel(pr.purchaseType)}</span></td>}
             {isColumnVisible("pr", "requestor") && <td className="py-0.5 px-2" title={pr.requestor}><span className="cell-text">{pr.requestor}</span></td>}
@@ -1214,6 +1353,25 @@ const PRView = React.memo(() => {
                 >
                   <Trash2 size={13} />
                 </button>
+              )}
+              {/* ยืนยัน Close PR — เฉพาะสถานะ Pending Close */}
+              {pr.status === "Pending Close" && (
+                <Button
+                  variant="success"
+                  className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                  onClick={() => {
+                    openConfirm(
+                      "ยืนยันการปิด PR",
+                      `คุณต้องการปิด PR ${pr.prNo} ใช่หรือไม่?`,
+                      async () => {
+                        await updateData("prs", pr.id, { status: "Closed PR" });
+                      },
+                      "success"
+                    );
+                  }}
+                >
+                  ยืนยัน Close
+                </Button>
               )}
             </td>}
           </tr>
@@ -1356,6 +1514,16 @@ const PRView = React.memo(() => {
           </div>
 
           <div className="flex items-center gap-2">
+            <div className="relative">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="ค้นหา PR ได้ทุกคอลัมน์ (PR, Cost Code, Requestor...)"
+                value={prTableSearchText}
+                onChange={(e) => setPrTableSearchText(e.target.value)}
+                className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-300 w-72"
+              />
+            </div>
             {canUseFunction("pr", "create") && (
               <Button
                 className="bg-rose-500 hover:bg-rose-600 text-white shadow-md shadow-rose-100 border-none rounded-xl px-4 py-2 text-sm font-bold flex items-center gap-2 transition-all active:scale-95"
@@ -1386,22 +1554,37 @@ const PRView = React.memo(() => {
             )}
           </div>
         </div>
+        {/* ── ตารางบนสุด: รายการรอ Action (รอ Approve หรือ รอแก้ไข) ── */}
+        {showPendingActionTable && (
+          <Card className="overflow-hidden w-full min-w-0 border-t-4 border-t-rose-500">
+            <div className="px-3 py-2 bg-rose-50 border-b border-rose-200 flex items-center gap-2">
+              <AlertCircle size={15} className="text-rose-700" />
+              <h3 className="text-xs font-bold text-rose-900 uppercase tracking-wide">
+                PR — รอดำเนินการ (รอ Approve / รอแก้ไข)
+              </h3>
+            </div>
+            <div ref={prTableRef} className="w-full min-w-0">
+              <table className="w-full text-left text-xs text-slate-600 table-fixed">
+                <thead className="bg-rose-100/60 text-slate-900 uppercase font-semibold">
+                  <tr>
+                    {renderPrHeaderCells()}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {renderPrGroupedTableBody(groupedPrEntriesPending)}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )}
+
+        {/* ── ตารางกลาง: รายการปกติ (ไม่รอ Action) ── */}
         <Card className="overflow-hidden w-full min-w-0">
           <div ref={prTableRef} className="w-full min-w-0">
           <table className="w-full text-left text-xs text-slate-600 table-fixed">
             <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
               <tr>
-                {isColumnVisible("pr", "prNo") && <ResizableTh tableId="pr" colKey="prNo" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.prNo}>PR No.</ResizableTh>}
-                {isColumnVisible("pr", "date") && <ResizableTh tableId="pr" colKey="date" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.date}>Date</ResizableTh>}
-                {isColumnVisible("pr", "costCode") && <ResizableTh tableId="pr" colKey="costCode" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.costCode}>Cost Code</ResizableTh>}
-                {isColumnVisible("pr", "description") && <ResizableTh tableId="pr" colKey="description" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.description}>Description</ResizableTh>}
-                {isColumnVisible("pr", "type") && <ResizableTh tableId="pr" colKey="type" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.type}>Type</ResizableTh>}
-                {isColumnVisible("pr", "requestor") && <ResizableTh tableId="pr" colKey="requestor" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.requestor}>Requestor</ResizableTh>}
-                {isColumnVisible("pr", "items") && <ResizableTh tableId="pr" colKey="items" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.items}>Items</ResizableTh>}
-                {isColumnVisible("pr", "amount") && <ResizableTh tableId="pr" colKey="amount" className="py-0.5 px-2 text-right" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.amount}>Amount</ResizableTh>}
-                {isColumnVisible("pr", "status") && <ResizableTh tableId="pr" colKey="status" className="py-0.5 px-2 text-center" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.status}>Status</ResizableTh>}
-                {isColumnVisible("pr", "refDoc") && <ResizableTh tableId="pr" colKey="refDoc" className="py-0.5 px-2 text-center" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.refDoc}>Ref Doc</ResizableTh>}
-                {isColumnVisible("pr", "actions") && <th className="py-0.5 px-2 text-right" style={{ width: prTableLayout.scaled.actions }}>Actions</th>}
+                {renderPrHeaderCells()}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -1423,17 +1606,7 @@ const PRView = React.memo(() => {
               <table className="w-full text-left text-xs text-slate-600 table-fixed">
                 <thead className="bg-teal-100/60 text-slate-900 uppercase font-semibold">
                   <tr>
-                    {isColumnVisible("pr", "prNo") && <ResizableTh tableId="pr" colKey="prNo" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.prNo}>PR No.</ResizableTh>}
-                    {isColumnVisible("pr", "date") && <ResizableTh tableId="pr" colKey="date" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.date}>Date</ResizableTh>}
-                    {isColumnVisible("pr", "costCode") && <ResizableTh tableId="pr" colKey="costCode" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.costCode}>Cost Code</ResizableTh>}
-                    {isColumnVisible("pr", "description") && <ResizableTh tableId="pr" colKey="description" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.description}>Description</ResizableTh>}
-                    {isColumnVisible("pr", "type") && <ResizableTh tableId="pr" colKey="type" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.type}>Type</ResizableTh>}
-                    {isColumnVisible("pr", "requestor") && <ResizableTh tableId="pr" colKey="requestor" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.requestor}>Requestor</ResizableTh>}
-                    {isColumnVisible("pr", "items") && <ResizableTh tableId="pr" colKey="items" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.items}>Items</ResizableTh>}
-                    {isColumnVisible("pr", "amount") && <ResizableTh tableId="pr" colKey="amount" className="py-0.5 px-2 text-right" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.amount}>Amount</ResizableTh>}
-                    {isColumnVisible("pr", "status") && <ResizableTh tableId="pr" colKey="status" className="py-0.5 px-2 text-center" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.status}>Status</ResizableTh>}
-                    {isColumnVisible("pr", "refDoc") && <ResizableTh tableId="pr" colKey="refDoc" className="py-0.5 px-2 text-center" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.refDoc}>Ref Doc</ResizableTh>}
-                    {isColumnVisible("pr", "actions") && <th className="py-0.5 px-2 text-right" style={{ width: prTableLayout.scaled.actions }}>Actions</th>}
+                    {renderPrHeaderCells()}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">

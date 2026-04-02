@@ -157,9 +157,10 @@ export const TABLE_LAYOUT_DEFAULTS: Record<string, Record<string, number>> = {
   "po-table": {
     rowNum: 36,
     no: 100,
-    project: 160,
-    vendor: 160,
-    prRef: 120,
+    project: 140,
+    costCode: 110,
+    vendor: 150,
+    prRef: 140,
     date: 96,
     items: 72,
     amount: 100,

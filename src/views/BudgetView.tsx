@@ -24,7 +24,7 @@ import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 
 const BudgetView = React.memo(() => {
-  const { budgets, projects, prs, pos, payments, invoices, receives, addData, updateData, deleteData,
+  const { budgets, projects, prs, pos, invoices, receives, addData, updateData, deleteData,
           showAlert, openConfirm, logAction, userRole, userRoles, userData, columnWidths, handleColumnResize,
           visibleProjects, handlePRAction, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,
           db, appId, canUseFunction, isColumnVisible } = useAppData();
@@ -866,13 +866,25 @@ const BudgetView = React.memo(() => {
       const budgetDocId = budget.id;
       const hasSubItems = budget.subItems && budget.subItems.length > 0;
       const budgetDesc = (budget.description || "").trim();
+      const hasDuplicateCostCode = budgets.some(
+        (b) => b.projectId === selectedProjectId && b.code === budgetCode && b.id !== budgetDocId
+      );
 
       // Collect all sub-item IDs for this budget
       const subItemIds = hasSubItems ? budget.subItems.map(sub => sub.id) : [];
 
+      const getItemAmount = (item) => {
+        const amount = Number(item?.amount);
+        if (Number.isFinite(amount)) return amount;
+        const qty = Number(item?.quantity || 0);
+        const price = Number(item?.price || 0);
+        return qty * price;
+      };
+
       const itemBelongsToBudget = (item, parentDoc = null) => {
         // For budgets with sub-items, only match items that reference specific sub-items
         if (hasSubItems) {
+          if (item?.budgetId && item.budgetId === budgetDocId) return true;
           // Check if item has budgetSubItemId that matches one of our sub-items
           if (item.budgetSubItemId && subItemIds.includes(item.budgetSubItemId)) return true;
           if (item.subItemId && subItemIds.includes(item.subItemId)) return true;
@@ -882,9 +894,28 @@ const BudgetView = React.memo(() => {
             const pr = prs.find(p => p.id === item.prId);
             const prItem = pr?.items?.[item.prItemIndex];
             if (prItem) {
+              if (prItem.budgetId && prItem.budgetId === budgetDocId) return true;
               if (prItem.budgetSubItemId && subItemIds.includes(prItem.budgetSubItemId)) return true;
               if (prItem.subItemId && subItemIds.includes(prItem.subItemId)) return true;
             }
+          }
+
+          // Fallback for Dis PR allocations or legacy mixed items without direct sub-item fields
+          if (Array.isArray(item.disPrAllocations) && item.disPrAllocations.length > 0) {
+            return item.disPrAllocations.some((alloc) => {
+              const pr = prs.find((p) => p.id === alloc?.prId);
+              if (!pr) return false;
+              if (pr.budgetId && pr.budgetId === budgetDocId) return true;
+              if (!hasDuplicateCostCode && pr.costCode === budgetCode) return true;
+              if (Array.isArray(pr.items)) {
+                return pr.items.some((prItem) =>
+                  (prItem.budgetId && prItem.budgetId === budgetDocId) ||
+                  (prItem.budgetSubItemId && subItemIds.includes(prItem.budgetSubItemId)) ||
+                  (prItem.subItemId && subItemIds.includes(prItem.subItemId))
+                );
+              }
+              return false;
+            });
           }
           
           // Don't count items that only match by costCode when budget has sub-items
@@ -896,6 +927,17 @@ const BudgetView = React.memo(() => {
         if (item.budgetId) return item.budgetId === budgetDocId;
         // Fallback for legacy: PR-level budgetId
         if (parentDoc?.budgetId) return parentDoc.budgetId === budgetDocId;
+        // Fallback for Dis PR allocations
+        if (Array.isArray(item.disPrAllocations) && item.disPrAllocations.length > 0) {
+          if (item.disPrAllocations.some((alloc) => {
+            const pr = prs.find((p) => p.id === alloc?.prId);
+            return !!pr && (pr.budgetId === budgetDocId || (!hasDuplicateCostCode && pr.costCode === budgetCode));
+          })) {
+            return true;
+          }
+        }
+        // Fallback for legacy item cost code
+        if (!hasDuplicateCostCode && item.costCode) return item.costCode === budgetCode;
         // Match by description for legacy items
         const iDesc = (item.description || "").trim();
         return iDesc === budgetDesc;
@@ -917,7 +959,7 @@ const BudgetView = React.memo(() => {
         // Match by item-level budgetId
         if (pr.items?.some(i => i.budgetId === budgetDocId)) return true;
         // Fallback: match by cost code (legacy data without budgetId)
-        if (!pr.budgetId && pr.costCode === budgetCode) return true;
+        if (!hasDuplicateCostCode && !pr.budgetId && pr.costCode === budgetCode) return true;
         return false;
       });
 
@@ -934,7 +976,7 @@ const BudgetView = React.memo(() => {
         // For budgets without sub-items, use original logic
         if (po.items?.some(i => i.budgetId === budgetDocId)) return true;
         // Fallback: match by cost code
-        if (po.items?.some(i => i.costCode === budgetCode)) return true;
+        if (!hasDuplicateCostCode && po.items?.some(i => i.costCode === budgetCode)) return true;
         return false;
       });
 
@@ -952,13 +994,13 @@ const BudgetView = React.memo(() => {
           subtotal = po.items.reduce((iSum, i) => {
             // Only include items that belong to this specific budget/sub-item
             if (!itemBelongsToBudget(i)) return iSum;
-            const itemAmount = Number(i.amount || 0);
+            const itemAmount = getItemAmount(i);
             return iSum + itemAmount;
           }, 0);
         }
         // Apply discount proportionally based on item ratio
         if (subtotal > 0) {
-          const poSubtotal = po.items.reduce((s, i) => s + Number(i.amount || 0), 0);
+          const poSubtotal = po.items.reduce((s, i) => s + getItemAmount(i), 0);
           const itemRatio = poSubtotal > 0 ? subtotal / poSubtotal : 0;
           const discount = Number(po.discount || 0);
           const proportionalDiscount = discount * itemRatio;
@@ -978,208 +1020,295 @@ const BudgetView = React.memo(() => {
       return { prTotal, poTotal, invoiceTotal, relatedPRs, relatedPOs };
     };
 
+    const NOW_STATUS_COLOR_MAP = {
+      green: "bg-blue-50 text-blue-800 border-blue-200",
+      blue: "bg-sky-50 text-sky-800 border-sky-200",
+      orange: "bg-orange-50 text-orange-800 border-orange-200",
+      yellow: "bg-yellow-50 text-yellow-800 border-yellow-200",
+      red: "bg-rose-50 text-rose-800 border-rose-200",
+      indigo: "bg-indigo-50 text-indigo-800 border-indigo-200",
+      purple: "bg-violet-50 text-violet-800 border-violet-200",
+      emerald: "bg-fuchsia-50 text-fuchsia-800 border-fuchsia-200",
+      cyan: "bg-cyan-50 text-cyan-800 border-cyan-200",
+      slate: "bg-slate-50 text-slate-700 border-slate-200",
+    };
+
+    const NOW_STATUS_LABEL_COLOR_MAP = {
+      "Budget รอ MD อนุมัติ": "bg-violet-50 text-violet-800 border-violet-200",
+      "Budget อนุมัติ": "bg-sky-50 text-sky-800 border-sky-200",
+      "Budget Rejected": "bg-rose-50 text-rose-800 border-rose-200",
+      "PR Wait CM": "bg-cyan-50 text-cyan-800 border-cyan-200",
+      "PR Wait PM": "bg-blue-50 text-blue-800 border-blue-200",
+      "PR Approve": "bg-indigo-50 text-indigo-800 border-indigo-200",
+      "PO Wait PCM": "bg-amber-50 text-amber-800 border-amber-200",
+      "PO Wait GM": "bg-orange-50 text-orange-800 border-orange-200",
+      "PO Approve": "bg-fuchsia-50 text-fuchsia-800 border-fuchsia-200",
+      Receiving: "bg-teal-50 text-teal-800 border-teal-200",
+      Received: "bg-red-50 text-red-800 border-red-200",
+    };
+
     const getNowStatus = (budget, stats, filterMode = "ALL", targetSubId = null) => {
       const budgetCode = budget.code;
-      const hasSubItems = budget.subItems && budget.subItems.length > 0;
-
       const budgetDocId = budget.id;
+      const hasSubItems = Array.isArray(budget.subItems) && budget.subItems.length > 0;
 
-      // Resolve the sub-item link: prefer budgetSubItemId (new), fallback to subItemId / PR chain (legacy)
+      const getItemAmount = (item) => {
+        const amount = Number(item?.amount);
+        if (Number.isFinite(amount)) return amount;
+        return Number(item?.quantity || 0) * Number(item?.price || 0);
+      };
+
       const resolveSubItemId = (item) => {
-        if (item.budgetSubItemId) return item.budgetSubItemId;
-        if (item.subItemId) return item.subItemId;
-        if (item.prId != null && item.prItemIndex != null) {
-          const pr = prs.find(p => p.id === item.prId);
+        if (item?.budgetSubItemId) return item.budgetSubItemId;
+        if (item?.subItemId) return item.subItemId;
+        if (item?.prId != null && item?.prItemIndex != null) {
+          const pr = prs.find((p) => p.id === item.prId);
           return pr?.items?.[item.prItemIndex]?.budgetSubItemId
             || pr?.items?.[item.prItemIndex]?.subItemId
-            || pr?.subItemId || null;
+            || pr?.subItemId
+            || null;
         }
         return null;
       };
 
+      const matchesTargetSubByAllocations = (item, targetSub) => {
+        if (!targetSub || !Array.isArray(item?.disPrAllocations) || item.disPrAllocations.length === 0) return false;
+        return item.disPrAllocations.some((alloc) => {
+          const pr = prs.find((p) => p.id === alloc?.prId);
+          if (!pr) return false;
+
+          // Most precise: PR item linked via index from allocation
+          if (alloc?.prItemIndex != null && Array.isArray(pr.items)) {
+            const prItem = pr.items[alloc.prItemIndex];
+            if (!prItem) return false;
+            return prItem.budgetSubItemId === targetSub.id || prItem.subItemId === targetSub.id;
+          }
+
+          // Fallback: any PR item mapped to this sub
+          if (Array.isArray(pr.items) && pr.items.some((prItem) => prItem.budgetSubItemId === targetSub.id || prItem.subItemId === targetSub.id)) {
+            return true;
+          }
+
+          // Legacy fallback
+          return pr.subItemId === targetSub.id;
+        });
+      };
+
       const matchesFilter = (item, itemCostCode, parentDoc = null) => {
-        // New items with budgetId: direct match (skip costCode check)
-        if (item.budgetId) {
-          if (item.budgetId !== budgetDocId) return false;
-        } else {
-          if (itemCostCode !== budgetCode) return false;
-        }
-
-        const iDesc = (item.description || "").trim();
-        const effectiveSubItemId = resolveSubItemId(item);
-
         if (filterMode === "SUB_ITEM" && targetSubId) {
-          const targetSub = hasSubItems ? budget.subItems.find(s => s.id === targetSubId) : null;
+          const targetSub = hasSubItems ? budget.subItems.find((s) => s.id === targetSubId) : null;
           if (!targetSub) return false;
+          const matchedByAlloc = matchesTargetSubByAllocations(item, targetSub);
+
+          if (item?.budgetId) {
+            if (item.budgetId !== budgetDocId && !matchedByAlloc) return false;
+          } else if (itemCostCode !== budgetCode && !matchedByAlloc) {
+            return false;
+          }
+
+          const iDesc = (item?.description || "").trim();
+          const effectiveSubItemId = resolveSubItemId(item);
           if (effectiveSubItemId) return effectiveSubItemId === targetSub.id;
+          if (matchedByAlloc) return true;
           const docSubId = parentDoc?.selectedSubItemId || parentDoc?.subItemId;
           if (docSubId && docSubId === targetSub.id) return true;
           const targetDesc = (targetSub.description || "").trim();
           return iDesc === targetDesc;
         }
 
-        if (filterMode === "MAIN_ONLY") {
-          if (hasSubItems) {
-            if (effectiveSubItemId) {
-              return !budget.subItems.some(sub => sub.id === effectiveSubItemId);
-            }
-            return !budget.subItems.some(sub => sub.description.trim() === iDesc);
-          } else {
-            return iDesc === (budget.description || "").trim();
-          }
+        if (item?.budgetId) {
+          if (item.budgetId !== budgetDocId) return false;
+        } else if (itemCostCode !== budgetCode) {
+          return false;
         }
 
-        if (filterMode === "ALL") {
-          if (!hasSubItems) {
-            return iDesc === (budget.description || "").trim();
+        const iDesc = (item?.description || "").trim();
+        const effectiveSubItemId = resolveSubItemId(item);
+
+        if (filterMode === "MAIN_ONLY" && hasSubItems) {
+          if (effectiveSubItemId) {
+            return !budget.subItems.some((sub) => sub.id === effectiveSubItemId);
           }
+          return !budget.subItems.some((sub) => (sub.description || "").trim() === iDesc);
         }
 
         return true;
       };
 
-      let statusesToReturn = [];
-
-      // Build a set of PO-item keys that are covered by a Payment (not Rejected)
-      const poItemInPayment = new Set<string>();
-      const relatedPoIds = new Set((stats.relatedPOs || []).map((po: any) => po.id));
-      if (payments && payments.length > 0 && relatedPoIds.size > 0) {
-        payments
-          .filter((pay: any) => pay.projectId === budget.projectId && pay.status !== "Rejected")
-          .forEach((pay: any) => {
-            (pay.items || []).forEach((pi: any) => {
-              if (relatedPoIds.has(pi.prId)) {
-                poItemInPayment.add(`${pi.prId}:${pi.prItemIndex}`);
-              }
-            });
-          });
-      }
-
-      // 1. Check PO Statuses (only items NOT covered by a Payment)
-      if (stats.relatedPOs && stats.relatedPOs.length > 0) {
-        const poGroups = stats.relatedPOs.reduce((acc, po) => {
-          const s = po.statusNow || po.status || "Pending PCM";
-          if (!acc[s]) acc[s] = 0;
-          let amount = 0;
-          if (po.items && Array.isArray(po.items)) {
-            amount = po.items
-              .filter((i, idx) => {
-                if (poItemInPayment.has(`${po.id}:${idx}`)) return false;
-                return matchesFilter(i, i.costCode || prs.find(p => p.id === i.prId)?.costCode, po);
-              })
-              .reduce((sum, i) => sum + Number(i.amount), 0);
-          } else if (po.costCode === budgetCode) {
-            if (filterMode === "SUB_ITEM") amount = 0;
-            else amount = Number(po.amount);
-          }
-          acc[s] += amount;
-          return acc;
-        }, {});
-
-        if (poGroups["Rejected"] > 0) statusesToReturn.push({ label: "PO Rejected", amount: poGroups["Rejected"], color: "red" });
-        if (poGroups["Pending PCM"] > 0) statusesToReturn.push({ label: "PO Pending PCM", amount: poGroups["Pending PCM"], color: "orange" });
-        if (poGroups["Pending GM"] > 0) statusesToReturn.push({ label: "PO Pending GM", amount: poGroups["Pending GM"], color: "blue" });
-        if (poGroups["Approved"] > 0) statusesToReturn.push({ label: "PO Approved", amount: poGroups["Approved"], color: "green" });
-        if (poGroups["Partial Receive"] > 0) {
-          let totalOrdered = 0;
-          let totalReceived = 0;
-          stats.relatedPOs
-            .filter((po) => (po.statusNow || po.status) === "Partial Receive")
-            .forEach((po) => {
-              (po.items || []).forEach((item) => { totalOrdered += Number(item.quantity || 0); });
-              receives
-                .filter((r) => r.poId === po.id)
-                .forEach((rcv) => {
-                  (rcv.items || []).forEach((rItem) => { totalReceived += Number(rItem.receivedQty || 0); });
-                });
-            });
-          const receivePercent = totalOrdered > 0 ? Math.min(100, Math.round((totalReceived / totalOrdered) * 100)) : 0;
-          statusesToReturn.push({ label: "PO Partial Receive", amount: null, color: "cyan", receivePercent });
+      const getPendingRole = (docType, status) => {
+        if (docType === "PR") {
+          if (status === "Pending CM") return "CM";
+          if (status === "Pending PM") return "PM";
+          if (status === "Pending GM") return "GM";
+          if (status === "Pending MD") return "MD";
         }
-        if (poGroups["Received"] > 0) statusesToReturn.push({ label: "PO Received", amount: null, color: "emerald", receivePercent: 100 });
+        if (docType === "PO") {
+          if (status === "Pending PCM") return "PCM";
+          if (status === "Pending GM") return "GM";
+        }
+        return null;
+      };
+
+      const statusesToReturn = [];
+
+      // Budget stage
+      const targetSub = filterMode === "SUB_ITEM" && targetSubId
+        ? (budget.subItems || []).find((s) => s.id === targetSubId)
+        : null;
+      const budgetStage = targetSub?.status || budget.status || "Draft";
+      if (budgetStage === "Wait MD Approve") {
+        statusesToReturn.push({ label: "Budget รอ MD อนุมัติ", color: "purple", amount: null });
+      } else if (budgetStage === "Approved") {
+        statusesToReturn.push({ label: "Budget อนุมัติ", color: "green", amount: null });
+      } else if (budgetStage === "Rejected") {
+        statusesToReturn.push({ label: "Budget Rejected", color: "red", amount: null });
+      } else {
+        statusesToReturn.push({ label: `Budget ${budgetStage}`, color: "slate", amount: null });
       }
 
-      // 2. Check Payment Statuses (PO items that are covered by Payment)
-      if (payments && payments.length > 0 && relatedPoIds.size > 0) {
-        const payGroups: Record<string, number> = {};
-        payments
-          .filter((pay: any) => pay.projectId === budget.projectId && pay.status !== "Rejected")
-          .forEach((pay: any) => {
-            let matchedAmt = 0;
-            (pay.items || []).forEach((pi: any) => {
-              if (!relatedPoIds.has(pi.prId)) return;
-              const po = stats.relatedPOs.find((p: any) => p.id === pi.prId);
-              const poItem = po?.items?.[pi.prItemIndex];
-              if (!poItem) return;
-              const itemCode = poItem.costCode || prs.find(p => p.id === poItem.prId)?.costCode;
-              if (!matchesFilter(poItem, itemCode, po)) return;
-              const itemAmount = poItem.amount != null && poItem.amount !== '' 
-                ? Number(poItem.amount) 
-                : (Number(poItem.quantity || 0) * Number(poItem.price || 0));
-              matchedAmt += itemAmount;
-            });
-            if (matchedAmt > 0) {
-              const s = pay.status || "Draft";
-              payGroups[s] = (payGroups[s] || 0) + matchedAmt;
-            }
-          });
+      // PR stage
+      const prGroups = {};
+      let prOpenedAmount = 0;
+      (stats.relatedPRs || []).forEach((pr) => {
+        let amount = 0;
+        if (Array.isArray(pr.items) && pr.items.length > 0) {
+          amount = pr.items
+            .filter((i) => matchesFilter(i, i.costCode || pr.costCode, pr))
+            .reduce((sum, i) => sum + getItemAmount(i), 0);
+        } else if (filterMode !== "SUB_ITEM" && pr.costCode === budgetCode) {
+          amount = Number(pr.totalAmount || pr.amount || 0);
+        }
+        if (amount <= 0) return;
+        prOpenedAmount += amount;
+        const s = pr.status || "Draft";
+        prGroups[s] = (prGroups[s] || 0) + amount;
+      });
 
-        const payColorMap: Record<string, string> = {
-          "Draft": "slate", "Pending CM": "yellow", "Pending PM": "blue",
-          "Pending MD": "purple", "Pending Procurement": "blue", "Active": "green",
-          "งวดงาน Pending CM": "yellow", "งวดงาน Pending PM": "orange",
-          "Wait Pay": "orange", "Hold": "yellow", "Paid": "emerald",
-          "Revision Requested": "red",
-        };
-        const payOrder = [
-          "Draft", "Pending CM", "Pending PM", "Pending MD", "Pending Procurement",
-          "Active", "งวดงาน Pending CM", "งวดงาน Pending PM", "Wait Pay", "Hold", "Paid",
-          "Revision Requested",
-        ];
-        payOrder.forEach((s) => {
-          if ((payGroups[s] || 0) > 0) {
-            statusesToReturn.push({ label: `PAY ${s}`, amount: payGroups[s], color: payColorMap[s] || "slate" });
+      if (prOpenedAmount > 0) {
+        ["Pending CM", "Pending PM"].forEach((st) => {
+          if ((prGroups[st] || 0) > 0) {
+            const role = getPendingRole("PR", st);
+            statusesToReturn.push({ label: `PR Wait ${role}`, amount: prGroups[st], color: "cyan" });
           }
         });
+        const prApprovedAmount = (prGroups["Approved"] || 0) + (prGroups["PO Issued"] || 0) + (prGroups["Closed PR"] || 0) + (prGroups["Closed PR Auto"] || 0);
+        if (prApprovedAmount > 0) {
+          statusesToReturn.push({ label: "PR Approve", amount: prApprovedAmount, color: "green" });
+        }
       }
 
-      // 3. Check PR Statuses (only PRs not yet issued as PO)
-      if (stats.relatedPRs && stats.relatedPRs.length > 0) {
-        const prGroups = stats.relatedPRs.reduce((acc, pr) => {
-          if (pr.status === "PO Issued") return acc;
-          let amount = 0;
-          if (pr.items && Array.isArray(pr.items)) {
-            amount = pr.items
-              .filter(i => matchesFilter(i, i.costCode || pr.costCode, pr))
-              .reduce((sum, i) => {
-                const itemAmount = i.amount != null && i.amount !== '' 
-                  ? Number(i.amount) 
-                  : (Number(i.quantity || 0) * Number(i.price || 0));
-                return sum + itemAmount;
-              }, 0);
-          } else {
-            if (pr.costCode === budgetCode) {
-              if (filterMode === "SUB_ITEM") amount = 0;
-              else amount = Number(pr.totalAmount || pr.amount);
-            }
-          }
-          if (amount > 0) {
-            if (!acc[pr.status]) acc[pr.status] = 0;
-            acc[pr.status] += amount;
-          }
-          return acc;
-        }, {});
+      // PO stage
+      const poGroups = {};
+      let poOpenedAmount = 0;
+      const matchedPoItemKeys = [];
+      (stats.relatedPOs || []).forEach((po) => {
+        let amount = 0;
+        (po.items || []).forEach((i, idx) => {
+          const itemCode = i.costCode || prs.find((p) => p.id === i.prId)?.costCode;
+          if (!matchesFilter(i, itemCode, po)) return;
+          amount += getItemAmount(i);
+          matchedPoItemKeys.push({ poId: po.id, idx, orderedQty: Number(i.quantity || 0) });
+        });
+        if (amount <= 0) return;
+        poOpenedAmount += amount;
+        const s = po.statusNow || po.status || "Pending PCM";
+        poGroups[s] = (poGroups[s] || 0) + amount;
+      });
 
-        if (prGroups["Rejected"] > 0) statusesToReturn.push({ label: "PR Rejected", amount: prGroups["Rejected"], color: "red" });
-        if (prGroups["Pending CM"] > 0) statusesToReturn.push({ label: "PR Pending CM", amount: prGroups["Pending CM"], color: "cyan" });
-        if (prGroups["Pending PM"] > 0) statusesToReturn.push({ label: "PR Pending PM", amount: prGroups["Pending PM"], color: "blue" });
-        if (prGroups["Pending GM"] > 0) statusesToReturn.push({ label: "PR Pending GM", amount: prGroups["Pending GM"], color: "indigo" });
-        if (prGroups["Pending MD"] > 0) statusesToReturn.push({ label: "PR Pending MD", amount: prGroups["Pending MD"], color: "purple" });
-        if (prGroups["Approved"] > 0) statusesToReturn.push({ label: "PR Approved", amount: prGroups["Approved"], color: "green" });
-        if (prGroups["Edit Budget"] > 0) statusesToReturn.push({ label: "PR Edit Budget", amount: prGroups["Edit Budget"], color: "red" });
+      if (poOpenedAmount > 0) {
+        ["Pending PCM", "Pending GM"].forEach((st) => {
+          if ((poGroups[st] || 0) > 0) {
+            const role = getPendingRole("PO", st);
+            statusesToReturn.push({ label: `PO Wait ${role}`, amount: poGroups[st], color: "orange" });
+          }
+        });
+        const poApprovedAmount = (poGroups["Approved"] || 0) + (poGroups["Partial Receive"] || 0) + (poGroups["Received"] || 0);
+        if (poApprovedAmount > 0) {
+          statusesToReturn.push({ label: "PO Approve", amount: poApprovedAmount, color: "green" });
+        }
+      }
+
+      // Receive stage
+      if (matchedPoItemKeys.length > 0) {
+        let orderedQty = 0;
+        let receivedQty = 0;
+        const keySet = new Set(matchedPoItemKeys.map((k) => `${k.poId}:${k.idx}`));
+        matchedPoItemKeys.forEach((k) => { orderedQty += Number(k.orderedQty || 0); });
+
+        (receives || [])
+          .filter((r: any) => r.projectId === budget.projectId)
+          .forEach((r: any) => {
+            (r.items || []).forEach((ri: any) => {
+              const key = `${r.poId}:${ri.poItemIndex}`;
+              if (!keySet.has(key)) return;
+              receivedQty += Number(ri.receivedQty || 0);
+            });
+          });
+
+        const receivePercent = orderedQty > 0
+          ? Math.max(0, Math.min(100, Math.round((receivedQty / orderedQty) * 100)))
+          : 0;
+
+        if (receivePercent > 0 && receivePercent < 100) {
+          statusesToReturn.push({ label: "Receiving", color: "cyan", amount: null, receivePercent });
+        } else if (orderedQty > 0 && receivePercent >= 100) {
+          statusesToReturn.push({ label: "Received", color: "emerald", amount: null, receivePercent: 100 });
+        }
       }
 
       return statusesToReturn;
+    };
+
+    const renderNowStatusBadges = (statuses = []) => {
+      if (!statuses.length) return <span className="text-[10px] text-slate-400">-</span>;
+      return (
+        <div className="flex flex-wrap items-center justify-center gap-0.5">
+          {statuses.map((s, idx) => {
+            const badgeClass = NOW_STATUS_LABEL_COLOR_MAP[s.label] || NOW_STATUS_COLOR_MAP[s.color] || NOW_STATUS_COLOR_MAP.slate;
+            if (typeof s.receivePercent === "number" && s.receivePercent > 0 && s.receivePercent < 100) {
+              return (
+                <span key={idx} className="flex flex-col items-center gap-0.5 min-w-[72px]">
+                  <span className={`text-[9px] px-1.5 py-0 rounded border ${badgeClass} whitespace-nowrap w-full text-center`}>
+                    <span className="font-semibold">{s.label}</span>
+                    <span className="ml-1 font-extrabold text-slate-900">{s.receivePercent}%</span>
+                  </span>
+                  <div className="w-full h-1 bg-cyan-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-cyan-500 rounded-full transition-all" style={{ width: `${s.receivePercent}%` }} />
+                  </div>
+                </span>
+              );
+            }
+            return (
+              <span key={idx} className={`text-[9px] px-1.5 py-0 rounded border ${badgeClass} whitespace-nowrap`}>
+                <span className="font-semibold">{s.label}</span>
+                {s.amount != null && (
+                  <span className="ml-1 font-extrabold text-slate-900">{formatCurrency(s.amount)}</span>
+                )}
+              </span>
+            );
+          })}
+        </div>
+      );
+    };
+
+    const pickLatestNowStatus = (statuses = []) => {
+      if (!Array.isArray(statuses) || statuses.length === 0) return null;
+
+      const getRank = (label = "") => {
+        if (label === "Received") return 100;
+        if (label === "Receiving") return 90;
+        if (label === "PO Approve") return 80;
+        if (label === "PO Wait GM") return 70;
+        if (label === "PO Wait PCM") return 60;
+        if (label === "PR Approve") return 50;
+        if (label === "PR Wait PM") return 40;
+        if (label === "PR Wait CM") return 30;
+        if (label === "Budget อนุมัติ") return 20;
+        if (label === "Budget รอ MD อนุมัติ") return 10;
+        return 0;
+      };
+
+      return [...statuses].sort((a, b) => getRank(b.label) - getRank(a.label))[0] || null;
     };
 
     const getCategorySummary = () => {
@@ -1187,81 +1316,32 @@ const BudgetView = React.memo(() => {
         const catBudgets = budgets.filter(
           (b) => b.projectId === selectedProjectId && b.category === code
         );
-        const totalBudget = catBudgets.reduce(
-          (sum, b) => sum + calculateTotalBudget(b),
-          0
-        );
-        const catPRs = prs.filter(
-          (pr) =>
-            pr.projectId === selectedProjectId &&
-            pr.costCode &&
-            pr.costCode.startsWith(code) &&
-            pr.status !== "Rejected"
-        );
-        const totalPR = catPRs.reduce(
-          (sum, pr) => sum + Number(pr.totalAmount || pr.amount),
-          0
-        );
+        // Overview summary ต้องมาจากผลรวม Main item ของแต่ละหน้า (001-009)
+        const mainRows = catBudgets.map((b) => {
+          const totalBudget = Number(calculateTotalBudget(b)) || 0;
+          const stats = getBudgetStats(b);
+          const hasSubItems = Array.isArray(b.subItems) && b.subItems.length > 0;
+          const sumSubItems = hasSubItems
+            ? b.subItems.reduce((sum, sub) => sum + (Number(sub.amount) || 0), 0)
+            : 0;
+          // ใช้สูตรเดียวกับหน้า category ของแถว Main
+          const balance = hasSubItems
+            ? totalBudget - sumSubItems
+            : totalBudget - (Number(stats.invoiceTotal) || 0);
 
-        // Filter POs relevant to this project
-        const projectPOs = pos.filter((po) => po.projectId === selectedProjectId);
+          return {
+            totalBudget,
+            prTotal: Number(stats.prTotal) || 0,
+            poTotal: Number(stats.poTotal) || 0,
+            invoiceTotal: Number(stats.invoiceTotal) || 0,
+            balance,
+          };
+        });
 
-        // Calculate PO total for this category (checking items if available) - Ex VAT calculation
-        const totalPO = projectPOs.reduce((sum, po) => {
-          if (po.items && Array.isArray(po.items)) {
-            // Calculate subtotal for items matching this category
-            const itemSum = po.items
-              .filter(i => {
-                const c = i.costCode || prs.find(p => p.id === i.prId)?.costCode;
-                return c && c.startsWith(code);
-              })
-              .reduce((s, i) => s + Number(i.amount), 0);
-            
-            // Apply discount proportionally based on item ratio
-            if (itemSum > 0) {
-              const poSubtotal = po.items.reduce((s, i) => s + Number(i.amount || 0), 0);
-              const itemRatio = poSubtotal > 0 ? itemSum / poSubtotal : 0;
-              const discount = Number(po.discount || 0);
-              const proportionalDiscount = discount * itemRatio;
-              const amountExVat = Math.max(0, itemSum - proportionalDiscount);
-              return sum + amountExVat;
-            }
-            return sum;
-          } else if (po.costCode && po.costCode.startsWith(code)) {
-            // For legacy POs without items, calculate Ex VAT
-            const poAmount = Number(po.amount || 0);
-            const discount = Number(po.discount || 0);
-            const amountExVat = Math.max(0, poAmount - discount);
-            return sum + amountExVat;
-          }
-          return sum;
-        }, 0);
-
-        // Get PO Numbers that contain items from this category for Invoice filtering
-        const catPO_Nos = projectPOs
-          .filter(po => {
-            if (po.items && Array.isArray(po.items)) {
-              return po.items.some(i => {
-                const c = i.costCode || prs.find(p => p.id === i.prId)?.costCode;
-                return c && c.startsWith(code);
-              });
-            }
-            return po.costCode && po.costCode.startsWith(code);
-          })
-          .map(po => po.poNo);
-
-        const catInvoices = invoices.filter(
-          (inv) =>
-            inv.projectId === selectedProjectId && catPO_Nos.includes(inv.poRef)
-        );
-
-        // Note: Invoice logic assumes the whole invoice belongs to the category if the PO does.
-        // For mixed POs, this might over-count if we don't have itemized invoices.
-        // But preventing the crash is the priority.
-        const totalInvoice = catInvoices.reduce(
-          (sum, inv) => sum + Number(inv.amount),
-          0
-        );
+        const totalBudget = mainRows.reduce((sum, r) => sum + r.totalBudget, 0);
+        const totalPR = mainRows.reduce((sum, r) => sum + r.prTotal, 0);
+        const totalPO = mainRows.reduce((sum, r) => sum + r.poTotal, 0);
+        const totalInvoice = mainRows.reduce((sum, r) => sum + r.invoiceTotal, 0);
         let categoryStatus = "No Budget";
         if (catBudgets.length > 0) {
           const hasDraft = catBudgets.some((b) => b.status === "Draft");
@@ -1274,21 +1354,7 @@ const BudgetView = React.memo(() => {
           else if (allApproved) categoryStatus = "Budget - MD Approved";
           else categoryStatus = "Budget - In Progress";
         }
-        // Calculate balance properly for each budget in the category
-        const catBalance = catBudgets.reduce((sum, b) => {
-          const hasSubItems = b.subItems && b.subItems.length > 0;
-          const bTotal = Number(b.amount);
-          
-          if (hasSubItems) {
-            // For budgets with subitems: Balance = Budget Total - Sum of Subitems
-            const sumSubItems = b.subItems.reduce((acc, sub) => acc + sub.amount, 0);
-            return sum + (bTotal - sumSubItems);
-          } else {
-            // For budgets without subitems: Balance = Budget Total - Invoice Total
-            const stats = getBudgetStats(b);
-            return sum + (bTotal - stats.invoiceTotal);
-          }
-        }, 0);
+        const catBalance = mainRows.reduce((sum, r) => sum + r.balance, 0);
 
         return {
           code,
@@ -2990,7 +3056,11 @@ const BudgetView = React.memo(() => {
                             {formatCurrency(stats.poTotal)}
                           </td>
                           )}
-                          {isColumnVisible("budget", "nowStatus") && <td className="py-1 px-3 min-w-0 overflow-hidden"></td>}
+                          {isColumnVisible("budget", "nowStatus") && (
+                          <td className="py-1 px-3 min-w-0 overflow-hidden">
+                            {/* ตาม requirement: Main row ไม่ต้องแสดง NOW STATUS */}
+                          </td>
+                          )}
                           {isColumnVisible("budget", "actions") && <td className="py-1 px-3 text-right">
                             <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                               {canUseFunction("budget", "approve") && (userRole === "MD" || userRole === "Administrator") &&
@@ -3159,54 +3229,10 @@ const BudgetView = React.memo(() => {
                                   </div>
                                 </td>}
                                 {(() => { const cnt = [isColumnVisible("budget", "balance"), isColumnVisible("budget", "prTotal"), isColumnVisible("budget", "poTotal")].filter(Boolean).length; return cnt > 0 ? <td colSpan={cnt} className="border-b border-slate-100"></td> : null; })()}
-                                {isColumnVisible("budget", "nowStatus") && <td className="py-0.5 px-3 text-center min-w-0 border-b border-slate-100">
-                                  {(() => {
-                                    const subStatuses = getNowStatus(b, stats, "SUB_ITEM", sub.id);
-                                    const colorMap = {
-                                      green: "bg-green-50 text-green-700 border-green-200",
-                                      blue: "bg-blue-50 text-blue-700 border-blue-200",
-                                      orange: "bg-orange-50 text-orange-700 border-orange-200",
-                                      yellow: "bg-yellow-50 text-yellow-700 border-yellow-200",
-                                      red: "bg-red-50 text-red-700 border-red-200",
-                                      indigo: "bg-indigo-50 text-indigo-700 border-indigo-200",
-                                      purple: "bg-purple-50 text-purple-700 border-purple-200",
-                                      emerald: "bg-emerald-50 text-emerald-700 border-emerald-200",
-                                      cyan: "bg-cyan-50 text-cyan-700 border-cyan-200",
-                                      slate: "bg-slate-50 text-slate-600 border-slate-200",
-                                    };
-                                    if (subStatuses.length === 0) return null;
-                                    return (
-                                      <div className="flex flex-wrap items-center justify-center gap-0.5">
-                                        {subStatuses.map((s, idx) => {
-                                          if (s.label === "PO Partial Receive") {
-                                            return (
-                                              <span key={idx} className="flex flex-col items-center gap-0.5 min-w-[56px]">
-                                                <span className={`text-[9px] font-semibold px-1.5 py-0 rounded border ${colorMap[s.color] || colorMap.slate} whitespace-nowrap w-full text-center`}>
-                                                  Receive {s.receivePercent}%
-                                                </span>
-                                                <div className="w-full h-1 bg-cyan-100 rounded-full overflow-hidden">
-                                                  <div className="h-full bg-cyan-500 rounded-full transition-all" style={{ width: `${s.receivePercent}%` }} />
-                                                </div>
-                                              </span>
-                                            );
-                                          }
-                                          if (s.label === "PO Received") {
-                                            return (
-                                              <span key={idx} className={`text-[9px] font-semibold px-1.5 py-0 rounded border ${colorMap[s.color] || colorMap.slate} whitespace-nowrap`}>
-                                                Receive
-                                              </span>
-                                            );
-                                          }
-                                          return (
-                                            <span key={idx} className={`text-[9px] font-semibold px-1.5 py-0 rounded border ${colorMap[s.color] || colorMap.slate} whitespace-nowrap`}>
-                                              {s.label}{s.amount !== null ? ` ${formatCurrency(s.amount)}` : ""}
-                                            </span>
-                                          );
-                                        })}
-                                      </div>
-                                    );
-                                  })()}
-                                </td>}
+                                {isColumnVisible("budget", "nowStatus") && <td className="py-0.5 px-3 text-center min-w-0 border-b border-slate-100">{renderNowStatusBadges((() => {
+                                  const latest = pickLatestNowStatus(getNowStatus(b, stats, "SUB_ITEM", sub.id));
+                                  return latest ? [latest] : [];
+                                })())}</td>}
                                 {isColumnVisible("budget", "actions") && <td className="py-0.5 px-3 text-right border-b border-slate-100">
                                   <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                     {(sub.status === "Rejected" && (userRole === "PM" || userRole === "CM" || userRole === "MD" || userRole === "Administrator")) && (

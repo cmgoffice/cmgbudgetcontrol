@@ -520,7 +520,7 @@ const ReceiveView = React.memo(() => {
         return;
       }
 
-      // Check if all items are now fully received → auto Close PO
+      // Check if all items are now fully received
       const summary = { ...(receiveSummary[po.id] || {}) };
       savedItems.forEach((item) => {
         summary[item.poItemIndex] = (summary[item.poItemIndex] || 0) + item.receivedQty;
@@ -532,8 +532,21 @@ const ReceiveView = React.memo(() => {
       );
 
       if (allFullyReceived) {
-        await updateData("pos", po.id, { status: "Received", statusNow: "Received" });
-        showAlert("รับของครบ", `PO ${po.poNo} รับของครบทุกรายการ — สถานะเปลี่ยนเป็น Received`, "success");
+        const isPayBeforeReceive = po.receiveType === "Pay before receive";
+        await updateData(
+          "pos",
+          po.id,
+          isPayBeforeReceive
+            ? { status: "Closed PO", statusNow: "Closed PO" }
+            : { status: "Received", statusNow: "Received" }
+        );
+        showAlert(
+          "รับของครบ",
+          isPayBeforeReceive
+            ? `PO ${po.poNo} รับของครบทุกรายการ — สถานะเปลี่ยนเป็น Closed PO`
+            : `PO ${po.poNo} รับของครบทุกรายการ — สถานะเปลี่ยนเป็น Received`,
+          "success"
+        );
       } else {
         await updateData("pos", po.id, { statusNow: "Partial Receive" });
         showAlert("สำเร็จ", `บันทึกรับของ ${receiveNo} เรียบร้อย`, "success");

@@ -8,7 +8,7 @@ import {
   Truck, Package, Paperclip, Clock, Hash, Tag, ClipboardList, FileSpreadsheet, Upload, Download,
   BarChart3, Zap, Building2, ShoppingCart, RefreshCw
 } from "lucide-react";
-import { doc, runTransaction } from "firebase/firestore";
+import { doc, runTransaction, collection, getDocs } from "firebase/firestore";
 import { db, appId } from "../lib/firebase";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
@@ -78,6 +78,8 @@ const POView = React.memo(() => {
     const [isPrSelectModalOpen, setIsPrSelectModalOpen] = useState(false);
     const [tempSelectedPrIds, setTempSelectedPrIds] = useState<string[]>([]);
     const [prSelectFilterText, setPrSelectFilterText] = useState("");
+    const [poTableSearchText, setPoTableSearchText] = useState("");
+    const [poSortConfig, setPoSortConfig] = useState<{ key: string | null; direction: "asc" | "desc" }>({ key: null, direction: "asc" });
     const [expandedPoRows, setExpandedPoRows] = useState({});
     const [editingPoId, setEditingPoId] = useState(null);
     const [viewingPO, setViewingPO] = useState<any>(null);
@@ -145,6 +147,7 @@ const POView = React.memo(() => {
       { value: "Subcontractor", label: "Subcontractor" },
       { value: "Service", label: "Service" },
       { value: "EQM", label: "EQM" },
+      { value: "Pay before receive", label: "Pay before receive" },
       { value: "Receive Auto", label: "Receive Auto" },
       { value: "RE", label: "RE" },
     ];
@@ -186,9 +189,29 @@ const POView = React.memo(() => {
     const [discountEnabled, setDiscountEnabled] = useState(false);
     const [poPendingFiles, setPoPendingFiles] = useState<File[]>([]);
     const [poSavedAttachments, setPoSavedAttachments] = useState<{ url: string; name: string }[]>([]);
+    const [userNameByUid, setUserNameByUid] = useState<Record<string, string>>({});
     const [isAddItemModalOpen, setIsAddItemModalOpen] = useState(false);
     const [freeItemPrNoDropdownId, setFreeItemPrNoDropdownId] = useState<string | null>(null);
     const [disPrPickerOpenKey, setDisPrPickerOpenKey] = useState<string | null>(null); // key: `item:${prId}:${idx}` | `free:${id}`
+
+    const getPoRefPrIds = useCallback((po: any): string[] => {
+      if (!po) return [];
+
+      const itemPrIds = Array.isArray(po.items)
+        ? po.items.flatMap((item: any) => {
+            const directPrIds = item?.prId ? [item.prId] : [];
+            const disPrIds = Array.isArray(item?.disPrAllocations)
+              ? item.disPrAllocations.map((a: any) => a?.prId).filter(Boolean)
+              : [];
+            return [...directPrIds, ...disPrIds];
+          })
+        : [];
+
+      const selectedPrIds = Array.isArray(po.selectedPrIds) ? po.selectedPrIds.filter(Boolean) : [];
+      const prRefIds = po.prRefId ? [po.prRefId] : [];
+
+      return [...new Set([...itemPrIds, ...selectedPrIds, ...prRefIds].filter(Boolean))];
+    }, []);
     const [disPrPickerRect, setDisPrPickerRect] = useState<DOMRect | null>(null);
     const [vendorSearchText, setVendorSearchText] = useState("");
     const [vendorSearchQuery, setVendorSearchQuery] = useState("");
@@ -198,6 +221,34 @@ const POView = React.memo(() => {
     const requiredDateInputRef = useRef(null);
     const vendorDropdownAnchorRef = useRef(null);
     const [vendorDropdownRect, setVendorDropdownRect] = useState(null);
+
+    useEffect(() => {
+      let mounted = true;
+      const loadUserNames = async () => {
+        try {
+          const snap = await getDocs(collection(db, "artifacts", appId, "public", "data", "users"));
+          if (!mounted) return;
+          const map: Record<string, string> = {};
+          snap.docs.forEach((d) => {
+            const data: any = d.data() || {};
+            const fullName = [data.firstName, data.lastName].filter(Boolean).join(" ").trim();
+            const displayName = fullName || data.displayName || data.email || "";
+            if (displayName) {
+              map[d.id] = displayName;
+              if (data.uid) map[data.uid] = displayName;
+            }
+          });
+          setUserNameByUid(map);
+        } catch (err) {
+          console.warn("[POView] Failed to load users for creator display:", err);
+        }
+      };
+      loadUserNames();
+      return () => {
+        mounted = false;
+      };
+    }, []);
+
     useEffect(() => {
       setVendorSearchQuery(vendorSearchText.trim());
     }, [vendorSearchText]);
@@ -1601,11 +1652,17 @@ const POView = React.memo(() => {
       // Approve Flow
       const isPCMApprove = po.status === "Pending PCM" && (userRoles.includes("PCM") || userRoles.includes("Administrator"));
       const isGMApprove  = po.status === "Pending GM"  && (userRoles.includes("GM")  || userRoles.includes("Administrator"));
+      const receiveTypeNormalized = String(po.receiveType || "").trim().toLowerCase();
+      const isReceiveAutoType = receiveTypeNormalized === "receive auto";
+      const isPayBeforeReceiveType = receiveTypeNormalized.includes("pay before");
       if (isPCMApprove) {
         newStatus = "Pending GM";
       } else if (isGMApprove) {
         // Auto-receive PO: after final approval, skip "Approved" and go directly to "Received"
-        newStatus = po.receiveType === "Receive Auto" ? "Received" : "Approved";
+        // Pay before receive: after final approval, wait invoice before returning to Approved for Receive flow
+        if (isReceiveAutoType) newStatus = "Received";
+        else if (isPayBeforeReceiveType) newStatus = "Wait Invoice";
+        else newStatus = "Approved";
       }
 
       if (newStatus !== po.status) {
@@ -1675,6 +1732,7 @@ const POView = React.memo(() => {
         const ok = await updateData("pos", poId, {
           status: newStatus,
           ...(newStatus === "Received" ? { statusNow: "Received" } : {}),
+          ...(newStatus === "Wait Invoice" ? { statusNow: "Wait Invoice" } : {}),
           rejectReason: "",
           ...(isPCMApprove ? { pcmApprovedAt: nowIso } : {}),
           ...(isGMApprove  ? { gmApprovedAt:  nowIso } : {}),
@@ -1702,6 +1760,171 @@ const POView = React.memo(() => {
     // For Reject Modal
     const [rejectPoId, setRejectPoId] = useState(null);
     const [rejectReason, setRejectReason] = useState("");
+
+    const getPoCreatorDisplayName = useCallback((po) => {
+      const nameFromFirstLast = [po.createdByFirstName, po.createdByLastName].filter(Boolean).join(" ");
+      const nameFromUidMap = po.createdByUid ? userNameByUid[po.createdByUid] : "";
+      return po.createdByName || nameFromFirstLast || nameFromUidMap || (po.createdByUid ? `${String(po.createdByUid).slice(0, 8)}…` : "—");
+    }, [userNameByUid]);
+
+    const getPoSortValue = useCallback((entry, key) => {
+      const { po, prNos, descSummary, vendorName, creatorName } = entry;
+      switch (key) {
+        case "poNo": return String(po.poNo || po.id || "");
+        case "poType": return String(po.poType || "");
+        case "prNos": return String(prNos || "");
+        case "description": return String(descSummary || "");
+        case "vendor": return String(vendorName || "");
+        case "creator": return String(creatorName || "");
+        case "items": return Number(po.items?.length || 0);
+        case "amount": return Number(po.amount || po.grandTotal || po.totalAmount || 0);
+        case "status": return String(po.status || "");
+        default: return "";
+      }
+    }, []);
+
+    const requestPoSort = useCallback((key) => {
+      setPoSortConfig((prev) => ({
+        key,
+        direction: prev.key === key && prev.direction === "asc" ? "desc" : "asc",
+      }));
+    }, []);
+
+    const getPoSortIndicator = useCallback((key) => {
+      if (poSortConfig.key !== key) return "↕";
+      return poSortConfig.direction === "asc" ? "▲" : "▼";
+    }, [poSortConfig]);
+
+    const displayedPOsPending = useMemo(() => {
+      const q = (poTableSearchText || "").trim().toLowerCase();
+      const pendingActionStatuses = ["Pending PCM", "Pending GM", PO_REVISION_PENDING_PCM, PO_REVISION_PENDING_GM, "Rejected", "Draft", "Pending Close PO"];
+
+      const base = pos
+        .filter((po) => po.projectId === selectedProjectId && pendingActionStatuses.includes(po.status))
+        .map((po) => {
+          const vendor = vendors.find((v) => v.id === po.vendorId);
+          const prIds = getPoRefPrIds(po);
+          const prNos = prIds.map(id => prs.find(p => p.id === id)?.prNo || "-").join(", ");
+          const firstDesc = po.items && po.items.length > 0 ? po.items[0].description : "-";
+          const descSummary = po.items && po.items.length > 1 ? `${firstDesc} (+${po.items.length - 1})` : firstDesc;
+          const vendorName = vendor?.name || "-";
+          const creatorName = getPoCreatorDisplayName(po);
+          return { po, vendorName, prNos, descSummary, creatorName };
+        });
+
+      const filtered = !q
+        ? base
+        : base.filter(({ po, vendorName, prNos, descSummary, creatorName }) => {
+            const blob = [
+              po.poNo,
+              po.poType,
+              po.status,
+              po.projectId,
+              po.requiredDate,
+              po.poDate,
+              po.receiveType,
+              po.location,
+              po.reason,
+              po.note,
+              prNos,
+              descSummary,
+              vendorName,
+              creatorName,
+              po.items?.length,
+              po.amount,
+            ].filter(Boolean).join(" ").toLowerCase();
+            return blob.includes(q);
+          });
+
+      if (!poSortConfig.key) return filtered;
+
+      const { key, direction } = poSortConfig;
+      return [...filtered].sort((a, b) => {
+        const av = getPoSortValue(a, key);
+        const bv = getPoSortValue(b, key);
+        if (typeof av === "number" || typeof bv === "number") {
+          const na = Number(av) || 0;
+          const nb = Number(bv) || 0;
+          return direction === "asc" ? na - nb : nb - na;
+        }
+        return direction === "asc"
+          ? String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: "base" })
+          : String(bv).localeCompare(String(av), undefined, { numeric: true, sensitivity: "base" });
+      });
+    }, [pos, selectedProjectId, vendors, prs, getPoRefPrIds, getPoCreatorDisplayName, poTableSearchText, poSortConfig, getPoSortValue]);
+
+    const displayedPOsNormal = useMemo(() => {
+      const q = (poTableSearchText || "").trim().toLowerCase();
+      const pendingActionStatuses = ["Pending PCM", "Pending GM", PO_REVISION_PENDING_PCM, PO_REVISION_PENDING_GM, "Rejected", "Draft", "Pending Close PO"];
+
+      const base = pos
+        .filter((po) => po.projectId === selectedProjectId && po.status !== "Closed PO" && po.status !== "Received" && !pendingActionStatuses.includes(po.status))
+        .map((po) => {
+          const vendor = vendors.find((v) => v.id === po.vendorId);
+          const prIds = getPoRefPrIds(po);
+          const prNos = prIds.map(id => prs.find(p => p.id === id)?.prNo || "-").join(", ");
+          const firstDesc = po.items && po.items.length > 0 ? po.items[0].description : "-";
+          const descSummary = po.items && po.items.length > 1 ? `${firstDesc} (+${po.items.length - 1})` : firstDesc;
+          const vendorName = vendor?.name || "-";
+          const creatorName = getPoCreatorDisplayName(po);
+          return { po, vendorName, prNos, descSummary, creatorName };
+        });
+
+      const filtered = !q
+        ? base
+        : base.filter(({ po, vendorName, prNos, descSummary, creatorName }) => {
+            const blob = [
+              po.poNo,
+              po.poType,
+              po.status,
+              po.projectId,
+              po.requiredDate,
+              po.poDate,
+              po.receiveType,
+              po.location,
+              po.reason,
+              po.note,
+              prNos,
+              descSummary,
+              vendorName,
+              creatorName,
+              po.items?.length,
+              po.amount,
+            ].filter(Boolean).join(" ").toLowerCase();
+            return blob.includes(q);
+          });
+
+      if (!poSortConfig.key) return filtered;
+
+      const { key, direction } = poSortConfig;
+      return [...filtered].sort((a, b) => {
+        const av = getPoSortValue(a, key);
+        const bv = getPoSortValue(b, key);
+        if (typeof av === "number" || typeof bv === "number") {
+          const na = Number(av) || 0;
+          const nb = Number(bv) || 0;
+          return direction === "asc" ? na - nb : nb - na;
+        }
+        return direction === "asc"
+          ? String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: "base" })
+          : String(bv).localeCompare(String(av), undefined, { numeric: true, sensitivity: "base" });
+      });
+    }, [pos, selectedProjectId, vendors, prs, getPoRefPrIds, getPoCreatorDisplayName, poTableSearchText, poSortConfig, getPoSortValue]);
+
+    const renderPoHeaderCells = () => (
+      <>
+        {isColumnVisible("po", "poNo") && <ResizableTh tableId="po" colKey="poNo" className="py-2 px-3 cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.poNo} onClick={() => requestPoSort("poNo")}>{L.docNo} <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("poNo")}</span></ResizableTh>}
+        {isColumnVisible("po", "poType") && <ResizableTh tableId="po" colKey="poType" className="py-2 px-3 text-center cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.poType} onClick={() => requestPoSort("poType")}>Type <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("poType")}</span></ResizableTh>}
+        {isColumnVisible("po", "prNos") && <ResizableTh tableId="po" colKey="prNos" className="py-2 px-3 cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.prNos} onClick={() => requestPoSort("prNos")}>Ref PR No. <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("prNos")}</span></ResizableTh>}
+        {isColumnVisible("po", "description") && <ResizableTh tableId="po" colKey="description" className="py-2 px-3 cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.description} onClick={() => requestPoSort("description")}>Description PR <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("description")}</span></ResizableTh>}
+        {isColumnVisible("po", "vendor") && <ResizableTh tableId="po" colKey="vendor" className="py-2 px-3 cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.vendor} onClick={() => requestPoSort("vendor")}>Vendor <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("vendor")}</span></ResizableTh>}
+        {isColumnVisible("po", "creator") && <ResizableTh tableId="po" colKey="creator" className="py-2 px-3 cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.creator} onClick={() => requestPoSort("creator")}>ผู้เปิด/สร้าง PO <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("creator")}</span></ResizableTh>}
+        {isColumnVisible("po", "items") && <ResizableTh tableId="po" colKey="items" className="py-2 px-3 text-center cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.items} onClick={() => requestPoSort("items")}>Item <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("items")}</span></ResizableTh>}
+        {isColumnVisible("po", "amount") && <ResizableTh tableId="po" colKey="amount" className="py-2 px-3 text-right cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.amount} onClick={() => requestPoSort("amount")}>Amount <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("amount")}</span></ResizableTh>}
+        {isColumnVisible("po", "status") && <ResizableTh tableId="po" colKey="status" className="py-2 px-3 text-center cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.status} onClick={() => requestPoSort("status")}>Status <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("status")}</span></ResizableTh>}
+        {isColumnVisible("po", "actions") && <th className="py-2 px-3 text-right" style={{ width: poMainLayout.scaled.actions }}>Action</th>}
+      </>
+    );
 
     return (
       <div className="space-y-4">
@@ -1896,6 +2119,16 @@ const POView = React.memo(() => {
           </div>
 
           <div className="flex items-center gap-2">
+            <div className="relative">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="ค้นหา PO ได้ทุกคอลัมน์ (PO, Vendor, Ref PR...)"
+                value={poTableSearchText}
+                onChange={(e) => setPoTableSearchText(e.target.value)}
+                className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-300 w-72"
+              />
+            </div>
             {canUseFunction("po", "create") && (
               <Button
                 className="bg-amber-500 hover:bg-amber-600 text-white shadow-md shadow-amber-100 border-none rounded-xl px-4 py-2 text-sm font-bold flex items-center gap-2 transition-all active:scale-95"
@@ -1931,36 +2164,243 @@ const POView = React.memo(() => {
           </div>
         </div>
 
+        {/* ── ตารางบนสุด: รายการรอ Action (รอ Approve / รอแก้ไข) ── */}
+        {displayedPOsPending.length > 0 && (
+          <Card className="overflow-hidden w-full min-w-0 border-t-4 border-t-amber-500">
+            <div className="px-3 py-2 bg-amber-50 border-b border-amber-200 flex items-center gap-2">
+              <AlertCircle size={15} className="text-amber-700" />
+              <h3 className="text-xs font-bold text-amber-900 uppercase tracking-wide">
+                PO — รอดำเนินการ (รอ Approve / รอแก้ไข)
+              </h3>
+            </div>
+            <div ref={poTableRef} className="w-full min-w-0">
+              <table className="w-full text-left text-xs text-slate-600 table-fixed">
+                <thead className="bg-amber-100/60 text-slate-900 uppercase font-semibold">
+                  <tr>
+                    {renderPoHeaderCells()}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {displayedPOsPending
+                    .map(({ po, vendorName, prNos, descSummary, creatorName }) => {
+                      return (
+                        <React.Fragment key={po.id}>
+                          <tr
+                            className="hover:bg-amber-50 cursor-pointer transition-colors border-b odd:bg-white even:bg-amber-50/25"
+                            onClick={() => setViewingPO(po)}
+                          >
+                            {isColumnVisible("po", "poNo") && <td className="py-2 px-3 font-medium text-blue-700" title={po.poNo}><span className="cell-text">{po.poNo}</span></td>}
+                            {isColumnVisible("po", "poType") && <td className="py-2 px-3 text-center">
+                              {po.poType && (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 whitespace-nowrap">
+                                  {po.poType}
+                                </span>
+                              )}
+                            </td>}
+                            {isColumnVisible("po", "prNos") && <td className="py-2 px-3 text-xs" title={prNos}><span className="cell-text">{prNos}</span></td>}
+                            {isColumnVisible("po", "description") && <td className="py-2 px-3 text-xs text-slate-600" title={descSummary}><span className="cell-text">{descSummary}</span></td>}
+                            {isColumnVisible("po", "vendor") && <td className="py-2 px-3" title={vendorName || "-"}><span className="cell-text">{vendorName || "-"}</span></td>}
+                            {isColumnVisible("po", "creator") && (() => {
+                              return (
+                                <td className="py-2 px-3 text-xs" title={creatorName}>
+                                  <span className="cell-text">{creatorName}</span>
+                                </td>
+                              );
+                            })()}
+                            {isColumnVisible("po", "items") && <td className="py-2 px-3 text-center">{po.items ? po.items.length : 1}</td>}
+                            {isColumnVisible("po", "amount") && <td className="py-2 px-3 text-right font-semibold">{formatCurrency(po.amount)}</td>}
+                            {isColumnVisible("po", "status") && <td className="py-2 px-3 text-center">
+                              <div className="flex flex-col items-center">
+                                <Badge status={po.status} />
+                                {po.poEditRevisionReason && (po.status === PO_REVISION_PENDING_PCM || po.status === PO_REVISION_PENDING_GM) && (
+                                  <span className="text-[9px] text-amber-700 mt-0.5 max-w-[100px] truncate" title={po.poEditRevisionReason}>
+                                    เหตุผลขอแก้: {po.poEditRevisionReason}
+                                  </span>
+                                )}
+                                {po.rejectReason && (
+                                  <span className="text-[10px] text-red-500 mt-1 max-w-[100px] truncate" title={po.rejectReason}>
+                                    {po.rejectReason}
+                                  </span>
+                                )}
+                              </div>
+                            </td>}
+                            {isColumnVisible("po", "actions") && <td
+                              className="py-2 px-3 text-right flex justify-end gap-1 flex-wrap"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {/* ขอแก้ไข PO — ตามสถานะส่งไป PCM หรือ GM */}
+                              {canUseFunction("po", "requestRevision") &&
+                                getPORevisionFlow(po.status) &&
+                                po.status !== PO_REVISION_PENDING_PCM &&
+                                po.status !== PO_REVISION_PENDING_GM && (
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center justify-center p-1 rounded text-orange-600 hover:text-orange-800 hover:bg-orange-50 transition-colors"
+                                  title={L.revisionTooltip}
+                                  onClick={() => {
+                                    setPoRevisionPoId(po.id);
+                                    setPoRevisionReason("");
+                                    setIsPoRevisionModalOpen(true);
+                                  }}
+                                >
+                                  <RefreshCw size={15} />
+                                </button>
+                              )}
+                              {/* อนุญาต / ไม่อนุญาต แก้ไข PO */}
+                              {canUseFunction("po", "approve") && po.status === PO_REVISION_PENDING_PCM && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
+                                <>
+                                  <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionAllow(po.id)}>อนุญาตแก้ไข</Button>
+                                  <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionDeny(po.id)}>ไม่อนุญาต</Button>
+                                </>
+                              )}
+                              {canUseFunction("po", "approve") && po.status === PO_REVISION_PENDING_GM && (userRoles.includes("GM") || userRoles.includes("Administrator")) && (
+                                <>
+                                  <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionAllow(po.id)}>อนุญาตแก้ไข</Button>
+                                  <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionDeny(po.id)}>ไม่อนุญาต</Button>
+                                </>
+                              )}
+                              {/* Approval Buttons */}
+                              {canUseFunction("po", "approve") && po.status === "Pending PCM" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && !isPoApproveInFlight(po) && (
+                                <>
+                                  <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(po.id, "approve")}>PCM Approve</Button>
+                                  <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>
+                                </>
+                              )}
+                              {canUseFunction("po", "approve") && po.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator")) && !isPoApproveInFlight(po) && (
+                                <>
+                                  <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(po.id, "approve")}>GM Approve</Button>
+                                  <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>
+                                </>
+                              )}
+                              {canUseFunction("po", "edit") && (po.status === "Rejected" || po.status === "Draft") && (userRoles.includes("Procurement") || userRoles.includes("Administrator")) && (
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  className="px-2 py-0.5 text-[10px]"
+                                  onClick={() => {
+                                    // เตรียมฟอร์มสำหรับแก้ไข PO ที่ถูก Reject
+                                    const prIdsFromItems = getPoRefPrIds(po);
+                                    const poOpenDateVal = po.poDate ? (po.poDate.split("T")[0] || new Date().toISOString().split("T")[0]) : new Date().toISOString().split("T")[0];
+                                    setPoPendingFiles([]);
+                                    setPoSavedAttachments(
+                                      Array.isArray(po.attachments)
+                                        ? po.attachments.filter((a: any) => a?.url).map((a: any) => ({ url: a.url, name: a.name || "ไฟล์" }))
+                                        : []
+                                    );
+                                    setFormData({
+                                      poNo: po.poNo || "",
+                                      poType: po.poType || "",
+                                      receiveType: po.receiveType || "",
+                                      vendorId: po.vendorId || "",
+                                      requiredDate: po.requiredDate || "",
+                                      poOpenDate: poOpenDateVal,
+                                      vatType: po.vatType || "ex-vat",
+                                      selectedPrIds: Array.isArray(po.selectedPrIds) && po.selectedPrIds.length > 0 ? po.selectedPrIds : prIdsFromItems,
+                                      items: (po.items || []).map((it, idx) => ((it.prId == null || it.prId === "") && !it.id) ? { ...it, id: `free-${idx}-${Date.now()}` } : it),
+                                      reason: po.reason || "",
+                                      note: po.note || "",
+                                      discount: po.discount ?? 0,
+                                      location: po.location || "",
+                                    });
+                                    if (po.location && !DELIVERY_LOCATIONS.includes(po.location)) {
+                                      setLocationOptions(prev => prev.includes(po.location) ? prev : [...prev, po.location]);
+                                    }
+                                    setManualVatOverride(po.manualVat != null ? Number(po.manualVat) : null);
+                                    setVatEditOpen(false);
+                                    setVatEditValue("");
+                                    setDiscountEnabled((po.discount ?? 0) > 0);
+                                    setEditingPoId(po.id);
+                                    setIsModalOpen(true);
+                                    setIsFullScreenModalOpen(true);
+                                  }}
+                                >
+                                  Edit
+                                </Button>
+                              )}
+
+                              {/* Step 3: PDF view button — always shows latest stamped PDF */}
+                              {po.pdfUrl && (
+                                <a
+                                  href={po.pdfUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center justify-center p-1 rounded text-red-600 hover:text-red-800 hover:bg-red-50 transition-colors"
+                                  title="ดู PDF"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <FileOutput size={15} />
+                                </a>
+                              )}
+
+                              {canUseFunction("po", "delete") && (
+                                <button
+                                  className="text-red-500 hover:text-red-700 p-1"
+                                  onClick={() => {
+                                    openConfirm("ยืนยันการลบ", `คุณต้องการลบ ${L.docName} นี้ใช่หรือไม่?`, async () => {
+                                      const prIds = getPoRefPrIds(po);
+                                      if (po.pdfUrl) {
+                                        const safePONo = (po.poNo || po.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
+                                        const safeProjId = po.projectId || "unknown";
+                                        await deleteGeneratedPdf(`generated/pos/${safeProjId}/${safePONo}.pdf`);
+                                      }
+                                      const deleted = await deleteData("pos", po.id);
+                                      if (deleted && prIds.length > 0) {
+                                        for (const prId of prIds) {
+                                          const stillUsedByOtherPO = pos.some((p: any) => p.id !== po.id && p.items?.some((i: any) => i.prId === prId));
+                                          if (!stillUsedByOtherPO) {
+                                            await updateData("prs", prId, { status: "Approved" });
+                                          }
+                                        }
+                                      }
+                                    }, "danger");
+                                  }}
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              )}
+                              {/* ยืนยัน Close PO — เฉพาะสถานะ Pending Close PO */}
+                              {po.status === "Pending Close PO" && (
+                                <Button
+                                  variant="success"
+                                  size="sm"
+                                  className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                                  onClick={() => {
+                                    openConfirm(
+                                      "ยืนยันการปิด PO",
+                                      `คุณต้องการปิด ${L.docName} ${po.poNo} ใช่หรือไม่?`,
+                                      async () => {
+                                        await updateData("pos", po.id, { status: "Closed PO" });
+                                      },
+                                      "success"
+                                    );
+                                  }}
+                                >
+                                  ยืนยัน Close
+                                </Button>
+                              )}
+                            </td>}
+                          </tr>
+                        </React.Fragment>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )}
+
+        {/* ── ตารางกลาง: รายการปกติ (ไม่รอ Action) ── */}
         <Card className="overflow-hidden w-full min-w-0">
           <div ref={poTableRef} className="w-full min-w-0">
           <table className="w-full text-left text-xs text-slate-600 table-fixed">
             <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
               <tr>
-                {isColumnVisible("po", "poNo") && <ResizableTh tableId="po" colKey="poNo" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.poNo}>{L.docNo}</ResizableTh>}
-                {isColumnVisible("po", "poType") && <ResizableTh tableId="po" colKey="poType" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.poType}>Type</ResizableTh>}
-                {isColumnVisible("po", "prNos") && <ResizableTh tableId="po" colKey="prNos" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.prNos}>Ref PR No.</ResizableTh>}
-                {isColumnVisible("po", "description") && <ResizableTh tableId="po" colKey="description" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.description}>Description PR</ResizableTh>}
-                {isColumnVisible("po", "vendor") && <ResizableTh tableId="po" colKey="vendor" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.vendor}>Vendor</ResizableTh>}
-                {isColumnVisible("po", "creator") && <ResizableTh tableId="po" colKey="creator" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.creator}>ผู้เปิด/สร้าง PO</ResizableTh>}
-                {isColumnVisible("po", "items") && <ResizableTh tableId="po" colKey="items" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.items}>Item</ResizableTh>}
-                {isColumnVisible("po", "amount") && <ResizableTh tableId="po" colKey="amount" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.amount}>Amount</ResizableTh>}
-                {isColumnVisible("po", "status") && <ResizableTh tableId="po" colKey="status" className="py-2 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.status}>Status</ResizableTh>}
-                {isColumnVisible("po", "actions") && <th className="py-2 px-3 text-right" style={{ width: poMainLayout.scaled.actions }}>Action</th>}
+                {renderPoHeaderCells()}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {pos
-                .filter((po) => po.projectId === selectedProjectId && po.status !== "Closed PO" && po.status !== "Received")
-                .map((po) => {
-                  const vendor = vendors.find((v) => v.id === po.vendorId);
-                  // Count PRs and get details
-                  const prIds = po.items ? [...new Set(po.items.map(i => i.prId))] : (po.prRefId ? [po.prRefId] : []);
-                  const prNos = prIds.map(id => prs.find(p => p.id === id)?.prNo || "-").join(", ");
-
-                  // Description: Use first item description + count if multiple
-                  const firstDesc = po.items && po.items.length > 0 ? po.items[0].description : "-";
-                  const descSummary = po.items && po.items.length > 1 ? `${firstDesc} (+${po.items.length - 1})` : firstDesc;
-
+              {displayedPOsNormal
+                .map(({ po, vendorName, prNos, descSummary, creatorName }) => {
                   return (
                     <React.Fragment key={po.id}>
                       <tr
@@ -1977,13 +2417,11 @@ const POView = React.memo(() => {
                         </td>}
                         {isColumnVisible("po", "prNos") && <td className="py-2 px-3 text-xs" title={prNos}><span className="cell-text">{prNos}</span></td>}
                         {isColumnVisible("po", "description") && <td className="py-2 px-3 text-xs text-slate-600" title={descSummary}><span className="cell-text">{descSummary}</span></td>}
-                        {isColumnVisible("po", "vendor") && <td className="py-2 px-3" title={vendor?.name || "-"}><span className="cell-text">{vendor?.name || "-"}</span></td>}
+                        {isColumnVisible("po", "vendor") && <td className="py-2 px-3" title={vendorName || "-"}><span className="cell-text">{vendorName || "-"}</span></td>}
                         {isColumnVisible("po", "creator") && (() => {
-                          const nameFromFirstLast = [po.createdByFirstName, po.createdByLastName].filter(Boolean).join(" ");
-                          const displayName = po.createdByName || nameFromFirstLast || (po.createdByUid ? `${String(po.createdByUid).slice(0, 8)}…` : "—");
                           return (
-                            <td className="py-2 px-3 text-xs" title={displayName}>
-                              <span className="cell-text">{displayName}</span>
+                            <td className="py-2 px-3 text-xs" title={creatorName}>
+                              <span className="cell-text">{creatorName}</span>
                             </td>
                           );
                         })()}
@@ -2059,7 +2497,7 @@ const POView = React.memo(() => {
                               className="px-2 py-0.5 text-[10px]"
                               onClick={() => {
                                 // เตรียมฟอร์มสำหรับแก้ไข PO ที่ถูก Reject
-                                const prIdsFromItems = po.items ? [...new Set(po.items.map(i => i.prId).filter(Boolean))] : (po.prRefId ? [po.prRefId] : []);
+                                const prIdsFromItems = getPoRefPrIds(po);
                                 const poOpenDateVal = po.poDate ? (po.poDate.split("T")[0] || new Date().toISOString().split("T")[0]) : new Date().toISOString().split("T")[0];
                                 setPoPendingFiles([]);
                                 setPoSavedAttachments(
@@ -2117,7 +2555,7 @@ const POView = React.memo(() => {
                               className="text-red-500 hover:text-red-700 p-1"
                               onClick={() => {
                                 openConfirm("ยืนยันการลบ", `คุณต้องการลบ ${L.docName} นี้ใช่หรือไม่?`, async () => {
-                                  const prIds = po.items ? [...new Set(po.items.map((i: any) => i.prId).filter(Boolean))] : (po.prRefId ? [po.prRefId] : []);
+                                  const prIds = getPoRefPrIds(po);
                                   if (po.pdfUrl) {
                                     const safePONo = (po.poNo || po.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
                                     const safeProjId = po.projectId || "unknown";
@@ -2137,6 +2575,26 @@ const POView = React.memo(() => {
                             >
                               <Trash2 size={14} />
                             </button>
+                          )}
+                          {/* ยืนยัน Close PO — เฉพาะสถานะ Pending Close PO */}
+                          {po.status === "Pending Close PO" && (
+                            <Button
+                              variant="success"
+                              size="sm"
+                              className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                              onClick={() => {
+                                openConfirm(
+                                  "ยืนยันการปิด PO",
+                                  `คุณต้องการปิด ${L.docName} ${po.poNo} ใช่หรือไม่?`,
+                                  async () => {
+                                    await updateData("pos", po.id, { status: "Closed PO" });
+                                  },
+                                  "success"
+                                );
+                              }}
+                            >
+                              ยืนยัน Close
+                            </Button>
                           )}
                         </td>}
                       </tr>
@@ -2162,9 +2620,8 @@ const POView = React.memo(() => {
                 </td>
                 <td className="px-3 py-2 text-right text-sm font-bold text-slate-800">
                   {formatCurrency(
-                    pos
-                      .filter((po) => po.projectId === selectedProjectId && po.status !== "Closed PO" && po.status !== "Received")
-                      .reduce((total, po) => {
+                    [...displayedPOsPending, ...displayedPOsNormal]
+                      .reduce((total, { po }) => {
                         // Calculate amount ex VAT for each PO
                         let subtotal = 0;
                         if (po.items && po.items.length > 0) {
@@ -2195,9 +2652,8 @@ const POView = React.memo(() => {
                 </td>
                 <td className="px-3 py-2 text-right text-sm font-bold text-slate-900">
                   {formatCurrency(
-                    pos
-                      .filter((po) => po.projectId === selectedProjectId && po.status !== "Closed PO" && po.status !== "Received")
-                      .reduce((total, po) => {
+                    [...displayedPOsPending, ...displayedPOsNormal]
+                      .reduce((total, { po }) => {
                         return total + Number(po.grandTotal || po.amount || po.totalAmount || 0);
                       }, 0)
                   )}
@@ -2213,7 +2669,7 @@ const POView = React.memo(() => {
         {/* PO View Modal — ดูข้อมูล + Approve/Reject */}
         {viewingPO && (() => {
           const poVendor = vendors.find((v: any) => v.id === viewingPO.vendorId);
-          const poPrIds = viewingPO.items ? [...new Set(viewingPO.items.map((i: any) => i.prId).filter(Boolean))] : (viewingPO.prRefId ? [viewingPO.prRefId] : []);
+          const poPrIds = getPoRefPrIds(viewingPO);
           const poPrNos = poPrIds.map((id: string) => prs.find((p: any) => p.id === id)?.prNo || "-").join(", ");
           const subtotal = (viewingPO.items || []).reduce((s: number, i: any) => s + Number(i.quantity) * Number(i.price), 0);
           return (
