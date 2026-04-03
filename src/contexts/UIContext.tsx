@@ -4,7 +4,7 @@
  * แยก UI state ออกจาก data state เพื่อป้องกัน re-render ที่ไม่จำเป็น.
  */
 import React, {
-  createContext, useContext, useState, useCallback, useMemo, useRef,
+  createContext, useContext, useState, useCallback, useMemo, useRef, startTransition,
 } from "react";
 
 const UIContext = createContext(null);
@@ -39,14 +39,18 @@ export const UIProvider = ({ children, logAction }) => {
   };
 
   const handleMenuChange = useCallback((menu) => {
-    setActiveMenu(menu);
+    startTransition(() => {
+      setActiveMenu(menu);
+    });
     setIsBellOpen(false);
     const label = menuLabelMap[menu] || menu;
     if (logAction) logAction("Navigate", `เปิดเมนู: ${label}`);
   }, [logAction]);
 
   const handleProjectChange = useCallback((projectId, projects = []) => {
-    setSelectedProjectId(projectId);
+    startTransition(() => {
+      setSelectedProjectId(projectId);
+    });
     if (projectId && logAction) {
       const project = projects.find((p) => p.id === projectId);
       const name = project ? `${project.jobNo} - ${project.name}` : projectId;

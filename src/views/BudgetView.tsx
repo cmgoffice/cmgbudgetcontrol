@@ -1369,6 +1369,24 @@ const BudgetView = React.memo(() => {
       });
     };
 
+    const categorySummary = useMemo(() => getCategorySummary(), [
+      budgets,
+      selectedProjectId,
+      prs,
+      pos,
+      invoices,
+      userRole,
+      userRoles,
+    ]);
+
+    const categorySummaryTotals = useMemo(() => ({
+      budget: categorySummary.reduce((sum, c) => sum + c.budget, 0),
+      invoice: categorySummary.reduce((sum, c) => sum + c.invoice, 0),
+      balance: categorySummary.reduce((sum, c) => sum + c.balance, 0),
+      pr: categorySummary.reduce((sum, c) => sum + c.pr, 0),
+      po: categorySummary.reduce((sum, c) => sum + c.po, 0),
+    }), [categorySummary]);
+
     const handleSaveBudget = async (newStatus = null) => {
       if (newStatus === "Wait MD Approve" && !canUseFunction("budget", "submit")) {
         showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
@@ -2184,7 +2202,7 @@ const BudgetView = React.memo(() => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {getCategorySummary().map((cat) => (
+                  {categorySummary.map((cat) => (
                     <tr key={cat.code} className="hover:bg-slate-50">
                       <td className="py-2 px-4 border-r font-bold text-center bg-slate-50">
                         {cat.code}
@@ -2220,33 +2238,27 @@ const BudgetView = React.memo(() => {
                     </td>
                     <td className="py-2 px-3 text-right">
                       {formatCurrency(
-                        getCategorySummary().reduce((sum, c) => sum + c.budget, 0)
+                        categorySummaryTotals.budget
                       )}
                     </td>
                     <td className="py-2 px-3 text-right text-orange-300">
                       {formatCurrency(
-                        getCategorySummary().reduce(
-                          (sum, c) => sum + c.invoice,
-                          0
-                        )
+                        categorySummaryTotals.invoice
                       )}
                     </td>
                     <td className="py-2 px-3 text-right">
                       {formatCurrency(
-                        getCategorySummary().reduce(
-                          (sum, c) => sum + c.balance,
-                          0
-                        )
+                        categorySummaryTotals.balance
                       )}
                     </td>
                     <td className="py-2 px-3 text-right text-slate-300">
                       {formatCurrency(
-                        getCategorySummary().reduce((sum, c) => sum + c.pr, 0)
+                        categorySummaryTotals.pr
                       )}
                     </td>
                     <td className="py-2 px-3 text-right text-slate-300 border-r-0">
                       {formatCurrency(
-                        getCategorySummary().reduce((sum, c) => sum + c.po, 0)
+                        categorySummaryTotals.po
                       )}
                     </td>
                   </tr>

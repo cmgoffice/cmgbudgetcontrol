@@ -441,7 +441,7 @@ const AppShell = () => {
                           className="w-full text-left px-4 py-3 hover:bg-blue-50 transition-colors"
                           onClick={() => {
                             setSelectedProjectId(item.projectId);
-                            setActiveMenu("budget");
+                            handleMenuChange("budget");
                             setBudgetCategory("OVERVIEW");
                             setScrollToPendingAfterRender(true);
                             setIsBellOpen(false);
@@ -506,7 +506,7 @@ const AppShell = () => {
                       type="button"
                       className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50"
                       onClick={() => {
-                        setActiveMenu("profile");
+                        handleMenuChange("profile");
                         setProfileDropdownOpen(false);
                       }}
                     >
@@ -554,15 +554,17 @@ const AppShell = () => {
             transition={{ duration: 0.28, ease: [0.25, 0.46, 0.45, 0.94] }}
           >
             <div data-menu-page="dashboard" style={{ display: activeMenu === "dashboard" ? undefined : "none" }}>
-              <DashboardView />
+              {activeMenu === "dashboard" && <DashboardView />}
             </div>
             <div data-menu-page="projects" style={{ display: activeMenu === "projects" ? undefined : "none" }}>
-              <ProjectsView />
+              {activeMenu === "projects" && <ProjectsView />}
             </div>
             <div data-menu-page="budget" style={{ display: activeMenu === "budget" ? undefined : "none" }}>
-              <BudgetView />
+              {activeMenu === "budget" && <BudgetView />}
             </div>
             <div data-menu-page="pr" style={{ display: activeMenu === "pr" ? undefined : "none" }}>
+              {activeMenu === "pr" && (
+              <>
               <div className="flex items-center gap-1 mb-4 bg-white rounded-xl shadow-sm border border-slate-200 p-1 w-fit">
                 <button
                   type="button"
@@ -606,8 +608,12 @@ const AppShell = () => {
                   selectedProjectId={selectedProjectId}
                 />
               )}
+              </>
+              )}
             </div>
             <div data-menu-page="po" style={{ display: activeMenu === "po" ? undefined : "none" }}>
+              {activeMenu === "po" && (
+              <>
               <div className="flex items-center gap-1 mb-4 bg-white rounded-xl shadow-sm border border-slate-200 p-1 w-fit">
                 <button
                   type="button"
@@ -651,8 +657,12 @@ const AppShell = () => {
                   selectedProjectId={selectedProjectId}
                 />
               )}
+              </>
+              )}
             </div>
             <div data-menu-page="payment-subcontract" style={{ display: activeMenu === "payment-subcontract" ? undefined : "none" }}>
+              {activeMenu === "payment-subcontract" && (
+              <>
               <div className="flex items-center gap-1 mb-4 bg-white rounded-xl shadow-sm border border-slate-200 p-1 w-fit">
                 <button
                   type="button"
@@ -679,18 +689,20 @@ const AppShell = () => {
               </div>
               {paymentSubTab === "system" && <PaymentView />}
               {paymentSubTab === "table" && <PaymentTableView />}
+              </>
+              )}
             </div>
             <div data-menu-page="vendor" style={{ display: activeMenu === "vendor" ? undefined : "none" }}>
-              <VendorView />
+              {activeMenu === "vendor" && <VendorView />}
             </div>
             <div data-menu-page="material" style={{ display: activeMenu === "material" ? undefined : "none" }}>
-              <MaterialView />
+              {activeMenu === "material" && <MaterialView />}
             </div>
             <div data-menu-page="invoice" style={{ display: activeMenu === "invoice" ? undefined : "none" }}>
-              <InvoiceView menuType="invoice" />
+              {activeMenu === "invoice" && <InvoiceView menuType="invoice" />}
             </div>
             <div data-menu-page="receive" style={{ display: activeMenu === "receive" ? undefined : "none" }}>
-              <ReceiveView />
+              {activeMenu === "receive" && <ReceiveView />}
             </div>
             {activeMenu === "profile" && (
               <div data-menu-page="profile">

@@ -212,6 +212,13 @@ export const AppDataProvider = ({
   );
   const [rolePermissionsReady, setRolePermissionsReady] = useState(false);
 
+  const hasModuleAccessForCurrentRoles = useCallback((menuId) => {
+    const allowed = rolePermissions[menuId];
+    if (roles.includes("Administrator")) return true;
+    if (!allowed || allowed.length === 0) return false;
+    return roles.some((r) => allowed.includes(r));
+  }, [roles, rolePermissions]);
+
   // ── Column widths (admin-controlled, synced to Firestore) ─────────────────
   const [columnWidths, setColumnWidths] = useState({});
   const colSaveTimer = useRef(null);
@@ -229,6 +236,12 @@ export const AppDataProvider = ({
   const projectsLoadedRef  = useRef(false);
 
   const loadVendors = useCallback(async () => {
+    if (!rolePermissionsReady) return;
+    if (!hasModuleAccessForCurrentRoles("vendor")) {
+      vendorsLoadedRef.current = false;
+      setVendors([]);
+      return;
+    }
     if (vendorsLoadedRef.current) return;
     vendorsLoadedRef.current = true;
     setVendorsLoading(true);
@@ -241,9 +254,15 @@ export const AppDataProvider = ({
     } finally {
       setVendorsLoading(false);
     }
-  }, []);
+  }, [rolePermissionsReady, hasModuleAccessForCurrentRoles]);
 
   const loadMaterials = useCallback(async () => {
+    if (!rolePermissionsReady) return;
+    if (!hasModuleAccessForCurrentRoles("material")) {
+      materialsLoadedRef.current = false;
+      setMaterials([]);
+      return;
+    }
     if (materialsLoadedRef.current) return;
     materialsLoadedRef.current = true;
     setMaterialsLoading(true);
@@ -256,7 +275,7 @@ export const AppDataProvider = ({
     } finally {
       setMaterialsLoading(false);
     }
-  }, []);
+  }, [rolePermissionsReady, hasModuleAccessForCurrentRoles]);
 
   const loadProjects = useCallback(async () => {
     if (projectsLoadedRef.current) return;
@@ -278,6 +297,9 @@ export const AppDataProvider = ({
     projectsLoadedRef.current = false;
     await loadProjects();
   }, [loadProjects]);
+
+  const canSyncInvoice = rolePermissionsReady && hasModuleAccessForCurrentRoles("invoice");
+  const canSyncReceive = rolePermissionsReady && hasModuleAccessForCurrentRoles("receive");
 
   // ── Firebase sync (realtime ผ่าน onSnapshot — แก้ไขที่ใดก็ตามจะอัปเดตทุกที่โดยไม่ต้องรีเฟรช) ─
   useEffect(() => {
@@ -319,10 +341,18 @@ export const AppDataProvider = ({
       syncCollection("budgets",   setBudgets),
       syncCollection("prs",       setPrs),
       syncCollection("pos",       setPos),
-      syncCollection("invoices",  setInvoices),
       syncCollection("payments",  setPayments),
-      syncCollection("receives",  setReceives),
     ];
+    if (canSyncInvoice) {
+      unsubs.push(syncCollection("invoices", setInvoices));
+    } else {
+      setInvoices([]);
+    }
+    if (canSyncReceive) {
+      unsubs.push(syncCollection("receives", setReceives));
+    } else {
+      setReceives([]);
+    }
 
     // Per-user column visibility
     let unsubColVis = () => {};
@@ -344,7 +374,7 @@ export const AppDataProvider = ({
       if (colSaveTimer.current) clearTimeout(colSaveTimer.current);
       if (colVisSaveTimer.current) clearTimeout(colVisSaveTimer.current);
     };
-  }, [user?.uid, loadProjects]);
+  }, [user?.uid, loadProjects, canSyncInvoice, canSyncReceive]);
 
   // ── Column resize ──────────────────────────────────────────────────────────
   const handleColumnResize = useCallback((tableId, colKey, width) => {
@@ -467,12 +497,9 @@ export const AppDataProvider = ({
     }
   }, [logAction, showAlert, projects, budgets, prs, pos, payments, invoices, vendors, materials]);
 
-  const canAccessModule = useCallback((menuId) => {
-    const allowed = rolePermissions[menuId];
-    if (roles.includes("Administrator")) return true;
-    if (!allowed || allowed.length === 0) return false;
-    return roles.some((r) => allowed.includes(r));
-  }, [roles, rolePermissions]);
+  const canAccessModule = useCallback((menuId) => (
+    hasModuleAccessForCurrentRoles(menuId)
+  ), [hasModuleAccessForCurrentRoles]);
 
   const saveRolePermissions = useCallback(async (newPermissions: Record<string, string[]>) => {
     try {

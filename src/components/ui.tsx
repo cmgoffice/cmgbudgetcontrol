@@ -120,7 +120,7 @@ export const ProjectSelect = ({ projects, selectedId, onChange }: any) => (
   </div>
 );
 
-export const SidebarItem = ({ icon, label, active, onClick, collapsed, badge }: any) => (
+export const SidebarItem = React.memo(({ icon, label, active, onClick, collapsed, badge }: any) => (
   <motion.button
     onClick={onClick}
     title={collapsed ? label : undefined}
@@ -159,7 +159,12 @@ export const SidebarItem = ({ icon, label, active, onClick, collapsed, badge }: 
       )}
     </span>
   </motion.button>
-);
+), (prev, next) => (
+  prev.label === next.label &&
+  prev.active === next.active &&
+  prev.collapsed === next.collapsed &&
+  prev.badge === next.badge
+));
 
 export const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB" }).format(amount || 0);
