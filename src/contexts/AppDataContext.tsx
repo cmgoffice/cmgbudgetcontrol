@@ -14,6 +14,7 @@ import {
 import { db, appId } from "../lib/firebase";
 import {
   MODULE_ACCESS,
+  USER_ROLES,
   mergeFunctionPermissionsWithDefaults,
   PO_REVISION_PENDING_PCM,
   PO_REVISION_PENDING_GM,
@@ -23,6 +24,15 @@ import {
 // Firestore document paths for dynamic permissions
 const ROLE_PERMISSIONS_DOC = ["artifacts", appId, "public", "data", "settings", "rolePermissions"];
 const FUNC_PERMISSIONS_DOC = ["artifacts", appId, "public", "data", "settings", "functionPermissions"];
+const USER_ROLES_DOC = ["artifacts", appId, "public", "data", "settings", "userRoles"];
+
+function normalizeRoleNames(nextRoles) {
+  const base = Array.isArray(nextRoles) ? nextRoles : [];
+  const cleaned = base
+    .map((role) => String(role || "").trim())
+    .filter(Boolean);
+  return [...new Set([...USER_ROLES, ...cleaned])];
+}
 
 function truncateLogDetail(s, max = 100) {
   if (s == null || s === "") return "";
@@ -177,6 +187,22 @@ function buildDeleteLogDetails(collectionName, id, lists) {
   return `Deleted ${singular} ID: ${id}`;
 }
 
+function deriveLogProjectId(collectionName, id, data, lists) {
+  if (data?.projectId) return data.projectId;
+  if (collectionName === "projects") return id || data?.id || null;
+  const sourceMap = {
+    budgets: lists.budgets,
+    prs: lists.prs,
+    pos: lists.pos,
+    payments: lists.payments,
+    invoices: lists.invoices,
+    receives: lists.receives,
+  };
+  const source = sourceMap[collectionName];
+  if (!Array.isArray(source)) return null;
+  return source.find((item) => item.id === id)?.projectId || null;
+}
+
 // ─── Context Shape ────────────────────────────────────────────────────────────
 const AppDataContext = createContext(null);
 export const useAppData = () => useContext(AppDataContext);
@@ -203,6 +229,7 @@ export const AppDataProvider = ({
   const [invoices,  setInvoices]  = useState([]);
   const [payments,  setPayments]  = useState([]);
   const [receives,  setReceives]  = useState([]);
+  const [availableRoles, setAvailableRoles] = useState<string[]>(() => normalizeRoleNames(USER_ROLES));
 
   // ── Role permissions (admin-controlled, synced to Firestore) ─────────────
   const [rolePermissions, setRolePermissions] = useState<Record<string, string[]>>(MODULE_ACCESS);
@@ -327,6 +354,12 @@ export const AppDataProvider = ({
       setRolePermissionsReady(true);
     });
 
+    const userRolesRef = doc(db, ...USER_ROLES_DOC);
+    const unsubUserRoles = onSnapshot(userRolesRef, (snap) => {
+      const nextRoles = snap.exists() ? snap.data()?.roles : USER_ROLES;
+      setAvailableRoles(normalizeRoleNames(nextRoles));
+    });
+
     const funcPermRef = doc(db, ...FUNC_PERMISSIONS_DOC);
     const unsubFuncPerms = onSnapshot(funcPermRef, (snap) => {
       const raw = snap.exists() ? (snap.data() as Record<string, Record<string, string[]>>) : {};
@@ -369,6 +402,7 @@ export const AppDataProvider = ({
       unsubs.forEach((u) => u());
       unsubColWidths();
       unsubRolePerms();
+      unsubUserRoles();
       unsubFuncPerms();
       unsubColVis();
       if (colSaveTimer.current) clearTimeout(colSaveTimer.current);
@@ -438,14 +472,21 @@ export const AppDataProvider = ({
         if (collectionName === "projects")  setProjects((prev)  => [...prev, { id: docRef.id, ...data }]);
       }
       if (!skipLog) {
-        await logAction("Create", buildCreateLogDetails(collectionName, data, newId));
+        const listBundle = {
+          projects, budgets, prs, pos, payments, invoices, vendors, materials, receives,
+        };
+        await logAction(
+          "Create",
+          buildCreateLogDetails(collectionName, data, newId),
+          deriveLogProjectId(collectionName, newId, data, listBundle)
+        );
       }
       return true;
     } catch (e) {
       showAlert("Error", "เกิดข้อผิดพลาดในการบันทึกข้อมูล: " + e.message, "error");
       return false;
     }
-  }, [logAction, showAlert]);
+  }, [logAction, showAlert, projects, budgets, prs, pos, payments, invoices, vendors, materials, receives]);
 
   const updateData = useCallback(async (collectionName, id, data, options = {}) => {
     const { skipLog = false } = options || {};
@@ -457,7 +498,7 @@ export const AppDataProvider = ({
     pendingUpdatesRef.current.add(key);
     const payload = { ...data, updatedAt: new Date().toISOString() };
     const listBundle = {
-      projects, budgets, prs, pos, payments, invoices, vendors, materials,
+      projects, budgets, prs, pos, payments, invoices, vendors, materials, receives,
     };
     try {
       await updateDoc(doc(db, "artifacts", appId, "public", "data", collectionName, id), payload);
@@ -466,7 +507,7 @@ export const AppDataProvider = ({
       if (collectionName === "projects")  setProjects((prev)  => prev.map((p) => (p.id === id ? { ...p, ...payload } : p)));
       if (!skipLog) {
         const details = buildUpdateLogDetails(collectionName, id, payload, listBundle);
-        await logAction("Update", details);
+        await logAction("Update", details, deriveLogProjectId(collectionName, id, payload, listBundle));
       }
       return true;
     } catch (e) {
@@ -475,12 +516,12 @@ export const AppDataProvider = ({
     } finally {
       pendingUpdatesRef.current.delete(key);
     }
-  }, [logAction, showAlert, projects, budgets, prs, pos, payments, invoices, vendors, materials]);
+  }, [logAction, showAlert, projects, budgets, prs, pos, payments, invoices, vendors, materials, receives]);
 
   const deleteData = useCallback(async (collectionName, id, options = {}) => {
     const { skipLog = false } = options || {};
     const listBundle = {
-      projects, budgets, prs, pos, payments, invoices, vendors, materials,
+      projects, budgets, prs, pos, payments, invoices, vendors, materials, receives,
     };
     try {
       await deleteDoc(doc(db, "artifacts", appId, "public", "data", collectionName, id));
@@ -488,14 +529,18 @@ export const AppDataProvider = ({
       if (collectionName === "materials") setMaterials((prev) => prev.filter((m) => m.id !== id));
       if (collectionName === "projects")  setProjects((prev)  => prev.filter((p) => p.id !== id));
       if (!skipLog) {
-        await logAction("Delete", buildDeleteLogDetails(collectionName, id, listBundle));
+        await logAction(
+          "Delete",
+          buildDeleteLogDetails(collectionName, id, listBundle),
+          deriveLogProjectId(collectionName, id, null, listBundle)
+        );
       }
       return true;
     } catch (e) {
       showAlert("Error", "เกิดข้อผิดพลาดในการลบข้อมูล: " + e.message, "error");
       return false;
     }
-  }, [logAction, showAlert, projects, budgets, prs, pos, payments, invoices, vendors, materials]);
+  }, [logAction, showAlert, projects, budgets, prs, pos, payments, invoices, vendors, materials, receives]);
 
   const canAccessModule = useCallback((menuId) => (
     hasModuleAccessForCurrentRoles(menuId)
@@ -528,6 +573,17 @@ export const AppDataProvider = ({
       return true;
     } catch (e) {
       console.error("Error saving function permissions:", e);
+      return false;
+    }
+  }, []);
+
+  const saveAvailableRoles = useCallback(async (nextRoles: string[]) => {
+    try {
+      const normalized = normalizeRoleNames(nextRoles);
+      await setDoc(doc(db, ...USER_ROLES_DOC), { roles: normalized });
+      return true;
+    } catch (e) {
+      console.error("Error saving user roles:", e);
       return false;
     }
   }, []);
@@ -666,9 +722,14 @@ export const AppDataProvider = ({
     if (newStatus !== pr.status) {
       const payload = { status: newStatus };
       if (action === "approve") payload.rejectReason = "";
-      await updateData("prs", id, payload);
+      const ok = await updateData("prs", id, payload, { skipLog: true });
+      if (ok) {
+        const actionLabel = action === "approve" ? "Approve" : "Reject";
+        const detailPrefix = action === "approve" ? "Approve PR" : "Reject PR";
+        await logAction(actionLabel, `${detailPrefix} ${pr.prNo || id}: ${pr.status} → ${newStatus}`, pr.projectId);
+      }
     }
-  }, [prs, roles, updateData]);
+  }, [prs, roles, updateData, logAction]);
 
   const handlePOAction = useCallback(async (id, action) => {
     const po = pos.find((p) => p.id === id);
@@ -693,9 +754,14 @@ export const AppDataProvider = ({
       if (newStatus === "Received") payload.statusNow = "Received";
       if (newStatus === "Wait Invoice") payload.statusNow = "Wait Invoice";
       if (action === "approve") payload.rejectReason = "";
-      await updateData("pos", id, payload);
+      const ok = await updateData("pos", id, payload, { skipLog: true });
+      if (ok) {
+        const actionLabel = action === "approve" ? "Approve" : "Reject";
+        const detailPrefix = action === "approve" ? "Approve PO" : "Reject PO";
+        await logAction(actionLabel, `${detailPrefix} ${po.poNo || id}: ${po.status} → ${newStatus}`, po.projectId);
+      }
     }
-  }, [pos, roles, updateData]);
+  }, [pos, roles, updateData, logAction]);
 
   /** อนุญาตแก้ไข PO หลังขอแก้ — ลบ PDF + สถานะเป็น Draft */
   const handlePORevisionAllow = useCallback(async (id) => {
@@ -796,6 +862,7 @@ export const AppDataProvider = ({
     showAlert, openConfirm, logAction,
     userRole, userRoles: roles, userData, user,
     canAccessModule,
+    availableRoles, saveAvailableRoles,
     rolePermissions, rolePermissionsReady, saveRolePermissions,
     functionPermissions, canUseFunction, saveFunctionPermissions,
     // raw Firebase (for views that need direct Firestore access)
@@ -815,7 +882,7 @@ export const AppDataProvider = ({
     handlePRAction, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,
     showAlert, openConfirm, logAction,
     userRole, roles, userData, user,
-    canAccessModule, rolePermissions, rolePermissionsReady, saveRolePermissions,
+    canAccessModule, availableRoles, saveAvailableRoles, rolePermissions, rolePermissionsReady, saveRolePermissions,
     functionPermissions, canUseFunction, saveFunctionPermissions,
   ]);
 

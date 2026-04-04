@@ -37,6 +37,7 @@ const ReceiveView = React.memo(() => {
   } = useAppData();
   const { selectedProjectId } = useUI();
   const { user, userData } = useContext(AuthContext);
+  const canViewReceiveHistory = canUseFunction("receive", "viewHistory");
 
   // ไม่โหลด vendors ตอน mount — โหลดเมื่อ user เปิด PO detail จริงๆ (ลด Firebase reads)
 
@@ -60,6 +61,12 @@ const ReceiveView = React.memo(() => {
   const [poVendorSearch, setPoVendorSearch] = useState("");
   const [histPOSearch, setHistPOSearch] = useState("");
   const [histVendorSearch, setHistVendorSearch] = useState("");
+
+  useEffect(() => {
+    if (!canViewReceiveHistory && activeTab === "history") {
+      setActiveTab("po");
+    }
+  }, [activeTab, canViewReceiveHistory]);
 
   const currentProject = projects.find((p) => p.id === selectedProjectId);
 
@@ -653,31 +660,33 @@ const ReceiveView = React.memo(() => {
               <Package size={13} />
               รับของ
             </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("history")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                activeTab === "history"
-                  ? "bg-white text-emerald-600 shadow-sm ring-1 ring-emerald-200"
-                  : "text-emerald-400 hover:text-emerald-600 hover:bg-white/50"
-              }`}
-            >
-              <List size={13} />
-              รายการ Receive
-              {sortedReceiveHistory.length > 0 && (
-                <span className={`text-[9px] font-bold rounded-full px-1 py-0.5 min-w-[16px] text-center ${
-                  activeTab === "history" ? "bg-emerald-100 text-emerald-600" : "bg-emerald-50 text-emerald-400"
-                }`}>
-                  {sortedReceiveHistory.length}
-                </span>
-              )}
-            </button>
+            {canViewReceiveHistory && (
+              <button
+                type="button"
+                onClick={() => setActiveTab("history")}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  activeTab === "history"
+                    ? "bg-white text-emerald-600 shadow-sm ring-1 ring-emerald-200"
+                    : "text-emerald-400 hover:text-emerald-600 hover:bg-white/50"
+                }`}
+              >
+                <List size={13} />
+                รายการ Receive
+                {sortedReceiveHistory.length > 0 && (
+                  <span className={`text-[9px] font-bold rounded-full px-1 py-0.5 min-w-[16px] text-center ${
+                    activeTab === "history" ? "bg-emerald-100 text-emerald-600" : "bg-emerald-50 text-emerald-400"
+                  }`}>
+                    {sortedReceiveHistory.length}
+                  </span>
+                )}
+              </button>
+            )}
           </div>
         </div>
       </div>
 
       {/* ── Tab: รายการ Receive ── */}
-      {activeTab === "history" && (
+      {canViewReceiveHistory && activeTab === "history" && (
         <Card className="overflow-hidden">
           {/* Toolbar */}
           <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50/60">

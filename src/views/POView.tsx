@@ -68,6 +68,10 @@ const POView = React.memo(() => {
           showAlert, openConfirm, logAction, userRole, userRoles, columnWidths, handleColumnResize,
           visibleProjects, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,
           userData, user, canUseFunction, canAccessModule, isColumnVisible } = useAppData();
+  const canApprovePO = canUseFunction("po", "approve");
+  const canRejectPO = canUseFunction("po", "reject");
+  const canAllowPORevision = canUseFunction("po", "allowRevision");
+  const canDenyPORevision = canUseFunction("po", "denyRevision");
   const { selectedProjectId,
           isFullScreenModalOpen, setIsFullScreenModalOpen,
           expandedPrRows } = useUI();
@@ -1622,6 +1626,14 @@ const POView = React.memo(() => {
     const handleAction = async (poId, action, reason = "") => {
       const po = pos.find(p => p.id === poId);
       if (!po) return;
+      if (action === "approve" && !canApprovePO) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุมัติ PO", "warning");
+        return;
+      }
+      if (action === "reject" && !canRejectPO) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธ PO", "warning");
+        return;
+      }
       if (po.status === PO_REVISION_PENDING_PCM || po.status === PO_REVISION_PENDING_GM) return;
 
       let newStatus = po.status;
@@ -2247,29 +2259,29 @@ const POView = React.memo(() => {
                                 </button>
                               )}
                               {/* อนุญาต / ไม่อนุญาต แก้ไข PO */}
-                              {canUseFunction("po", "approve") && po.status === PO_REVISION_PENDING_PCM && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
+                              {po.status === PO_REVISION_PENDING_PCM && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
                                 <>
-                                  <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionAllow(po.id)}>อนุญาตแก้ไข</Button>
-                                  <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionDeny(po.id)}>ไม่อนุญาต</Button>
+                                  {canAllowPORevision && <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionAllow(po.id)}>อนุญาตแก้ไข</Button>}
+                                  {canDenyPORevision && <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionDeny(po.id)}>ไม่อนุญาต</Button>}
                                 </>
                               )}
-                              {canUseFunction("po", "approve") && po.status === PO_REVISION_PENDING_GM && (userRoles.includes("GM") || userRoles.includes("Administrator")) && (
+                              {po.status === PO_REVISION_PENDING_GM && (userRoles.includes("GM") || userRoles.includes("Administrator")) && (
                                 <>
-                                  <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionAllow(po.id)}>อนุญาตแก้ไข</Button>
-                                  <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionDeny(po.id)}>ไม่อนุญาต</Button>
+                                  {canAllowPORevision && <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionAllow(po.id)}>อนุญาตแก้ไข</Button>}
+                                  {canDenyPORevision && <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionDeny(po.id)}>ไม่อนุญาต</Button>}
                                 </>
                               )}
                               {/* Approval Buttons */}
-                              {canUseFunction("po", "approve") && po.status === "Pending PCM" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && !isPoApproveInFlight(po) && (
+                              {canApprovePO && po.status === "Pending PCM" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && !isPoApproveInFlight(po) && (
                                 <>
                                   <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(po.id, "approve")}>PCM Approve</Button>
-                                  <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>
+                                  {canRejectPO && <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>}
                                 </>
                               )}
-                              {canUseFunction("po", "approve") && po.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator")) && !isPoApproveInFlight(po) && (
+                              {canApprovePO && po.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator")) && !isPoApproveInFlight(po) && (
                                 <>
                                   <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(po.id, "approve")}>GM Approve</Button>
-                                  <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>
+                                  {canRejectPO && <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>}
                                 </>
                               )}
                               {canUseFunction("po", "edit") && (po.status === "Rejected" || po.status === "Draft") && (userRoles.includes("Procurement") || userRoles.includes("Administrator")) && (
@@ -2359,7 +2371,7 @@ const POView = React.memo(() => {
                                 </button>
                               )}
                               {/* ยืนยัน Close PO — เฉพาะสถานะ Pending Close PO */}
-                              {po.status === "Pending Close PO" && (
+                              {canUseFunction("po", "closePO") && po.status === "Pending Close PO" && (
                                 <Button
                                   variant="success"
                                   size="sm"
@@ -2465,29 +2477,29 @@ const POView = React.memo(() => {
                             </button>
                           )}
                           {/* อนุญาต / ไม่อนุญาต แก้ไข PO */}
-                          {canUseFunction("po", "approve") && po.status === PO_REVISION_PENDING_PCM && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
+                          {po.status === PO_REVISION_PENDING_PCM && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
                             <>
-                              <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionAllow(po.id)}>อนุญาตแก้ไข</Button>
-                              <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionDeny(po.id)}>ไม่อนุญาต</Button>
+                              {canAllowPORevision && <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionAllow(po.id)}>อนุญาตแก้ไข</Button>}
+                              {canDenyPORevision && <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionDeny(po.id)}>ไม่อนุญาต</Button>}
                             </>
                           )}
-                          {canUseFunction("po", "approve") && po.status === PO_REVISION_PENDING_GM && (userRoles.includes("GM") || userRoles.includes("Administrator")) && (
+                          {po.status === PO_REVISION_PENDING_GM && (userRoles.includes("GM") || userRoles.includes("Administrator")) && (
                             <>
-                              <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionAllow(po.id)}>อนุญาตแก้ไข</Button>
-                              <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionDeny(po.id)}>ไม่อนุญาต</Button>
+                              {canAllowPORevision && <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionAllow(po.id)}>อนุญาตแก้ไข</Button>}
+                              {canDenyPORevision && <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handlePORevisionDeny(po.id)}>ไม่อนุญาต</Button>}
                             </>
                           )}
                           {/* Approval Buttons */}
-                          {canUseFunction("po", "approve") && po.status === "Pending PCM" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && !isPoApproveInFlight(po) && (
+                          {canApprovePO && po.status === "Pending PCM" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && !isPoApproveInFlight(po) && (
                             <>
                               <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(po.id, "approve")}>PCM Approve</Button>
-                              <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>
+                              {canRejectPO && <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>}
                             </>
                           )}
-                          {canUseFunction("po", "approve") && po.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator")) && !isPoApproveInFlight(po) && (
+                          {canApprovePO && po.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator")) && !isPoApproveInFlight(po) && (
                             <>
                               <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(po.id, "approve")}>GM Approve</Button>
-                              <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>
+                              {canRejectPO && <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>}
                             </>
                           )}
                           {canUseFunction("po", "edit") && (po.status === "Rejected" || po.status === "Draft") && (userRoles.includes("Procurement") || userRoles.includes("Administrator")) && (
@@ -2577,7 +2589,7 @@ const POView = React.memo(() => {
                             </button>
                           )}
                           {/* ยืนยัน Close PO — เฉพาะสถานะ Pending Close PO */}
-                          {po.status === "Pending Close PO" && (
+                          {canUseFunction("po", "closePO") && po.status === "Pending Close PO" && (
                             <Button
                               variant="success"
                               size="sm"
@@ -2967,27 +2979,27 @@ const POView = React.memo(() => {
                     <XCircle size={15} /> ปิด
                   </button>
                   <div className="flex items-center gap-2 flex-wrap justify-end">
-                    {canUseFunction("po", "approve") && viewingPO.status === PO_REVISION_PENDING_PCM && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
+                    {viewingPO.status === PO_REVISION_PENDING_PCM && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
                       <>
-                        <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { handlePORevisionDeny(viewingPO.id); setViewingPO(null); }}>ไม่อนุญาต</Button>
-                        <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handlePORevisionAllow(viewingPO.id); setViewingPO(null); }}>อนุญาตแก้ไข</Button>
+                        {canDenyPORevision && <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { handlePORevisionDeny(viewingPO.id); setViewingPO(null); }}>ไม่อนุญาต</Button>}
+                        {canAllowPORevision && <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handlePORevisionAllow(viewingPO.id); setViewingPO(null); }}>อนุญาตแก้ไข</Button>}
                       </>
                     )}
-                    {canUseFunction("po", "approve") && viewingPO.status === PO_REVISION_PENDING_GM && (userRoles.includes("GM") || userRoles.includes("Administrator")) && (
+                    {viewingPO.status === PO_REVISION_PENDING_GM && (userRoles.includes("GM") || userRoles.includes("Administrator")) && (
                       <>
-                        <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { handlePORevisionDeny(viewingPO.id); setViewingPO(null); }}>ไม่อนุญาต</Button>
-                        <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handlePORevisionAllow(viewingPO.id); setViewingPO(null); }}>อนุญาตแก้ไข</Button>
+                        {canDenyPORevision && <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { handlePORevisionDeny(viewingPO.id); setViewingPO(null); }}>ไม่อนุญาต</Button>}
+                        {canAllowPORevision && <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handlePORevisionAllow(viewingPO.id); setViewingPO(null); }}>อนุญาตแก้ไข</Button>}
                       </>
                     )}
-                    {canUseFunction("po", "approve") && viewingPO.status === "Pending PCM" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && !isPoApproveInFlight(viewingPO) && (
+                    {canApprovePO && viewingPO.status === "Pending PCM" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && !isPoApproveInFlight(viewingPO) && (
                       <>
-                        <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setRejectPoId(viewingPO.id); setRejectReason(""); setViewingPO(null); }}>Reject</Button>
+                        {canRejectPO && <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setRejectPoId(viewingPO.id); setRejectReason(""); setViewingPO(null); }}>Reject</Button>}
                         <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(viewingPO.id, "approve"); setViewingPO(null); }}>PCM Approve</Button>
                       </>
                     )}
-                    {canUseFunction("po", "approve") && viewingPO.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator")) && !isPoApproveInFlight(viewingPO) && (
+                    {canApprovePO && viewingPO.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator")) && !isPoApproveInFlight(viewingPO) && (
                       <>
-                        <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setRejectPoId(viewingPO.id); setRejectReason(""); setViewingPO(null); }}>Reject</Button>
+                        {canRejectPO && <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setRejectPoId(viewingPO.id); setRejectReason(""); setViewingPO(null); }}>Reject</Button>}
                         <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(viewingPO.id, "approve"); setViewingPO(null); }}>GM Approve</Button>
                       </>
                     )}

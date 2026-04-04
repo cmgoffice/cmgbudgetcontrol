@@ -23,7 +23,7 @@ import { Card, Button, InputGroup, Badge, formatCurrency } from "./components/ui
 import ResizableTh from "./components/ResizableTh";
 import { useProportionalTableLayout, chainTableResizeHandlers } from "./hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "./lib/tableLayoutDefaults";
-import { USER_ROLES, MODULE_ACCESS, MODULE_FUNCTIONS } from "./lib/constants";
+import { MODULE_ACCESS, MODULE_FUNCTIONS } from "./lib/constants";
 import { AuthContext } from "./auth/AuthContext";
 import { useAppData } from "./contexts/AppDataContext";
 import { useUI } from "./contexts/UIContext";
@@ -1376,50 +1376,60 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                               )}
                             </button>
                           )}
-                          {canUseFunction(tableModule, "closePR") && isPR && r.status !== "Closed PR" && r.status !== "Closed PR Auto" && r.status !== "Pending Close" && r.status !== "Pending Active PR" && (
+                          {canUseFunction(tableModule, "requestClosePR") && isPR && r.status !== "Closed PR" && r.status !== "Closed PR Auto" && r.status !== "Pending Close" && r.status !== "Pending Active PR" && (
                             <button type="button" className="p-1 rounded hover:bg-amber-100 text-amber-700" title="ขอปิด PR (รอ PCM ยืนยัน)" onClick={() => openConfirm?.("ขอปิด PR", "เมื่อ PCM ยืนยันแล้ว สถานะจะเป็น Closed PR", async () => {
-                              await updateData?.("prs", r.id, { status: "Pending Close", preCloseStatus: r.status, closeRequestedAt: new Date().toISOString() });
+                              await updateData?.("prs", r.id, { status: "Pending Close", preCloseStatus: r.status, closeRequestedAt: new Date().toISOString() }, { skipLog: true });
+                              await logAction?.("Submit", `Request Close PR ${r.prNo || r.id}: ${r.status} → Pending Close`, r.projectId);
                               showAlert?.("ส่งคำขอแล้ว", "รอ PCM ยืนยันการปิด PR", "info");
                             })}>
                               <XCircle size={13} />
                             </button>
                           )}
-                          {canUseFunction(tableModule, "closePR") && isPR && r.status === "Pending Close" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
+                          {canUseFunction("pr", "closePR") && isPR && r.status === "Pending Close" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
                             <button type="button" className="p-1 rounded hover:bg-emerald-100 text-emerald-700 text-[10px] font-medium" title="ยืนยันปิด PR" onClick={() => openConfirm?.("ยืนยันปิด PR", "สถานะจะเปลี่ยนเป็น Closed PR", async () => {
-                              await updateData?.("prs", r.id, { status: "Closed PR", preCloseStatus: r.preCloseStatus || r.status });
+                              await updateData?.("prs", r.id, { status: "Closed PR", preCloseStatus: r.preCloseStatus || r.status }, { skipLog: true });
+                              await logAction?.("Approve", `Confirm Close PR ${r.prNo || r.id}: ${r.status} → Closed PR`, r.projectId);
                               showAlert?.("สำเร็จ", "ปิด PR เรียบร้อย", "success");
                             })}>
                               ยืนยันปิด
                             </button>
                           )}
                           {/* ขอ Active PR (Procurement/PCM) เมื่อ PR ถูกปิดแล้ว */}
-                          {isPR && (r.status === "Closed PR" || r.status === "Closed PR Auto") && (userRoles.includes("Procurement") || userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
+                          {canUseFunction(tableModule, "requestActivePR") && isPR && (r.status === "Closed PR" || r.status === "Closed PR Auto") && (userRoles.includes("Procurement") || userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
                             <button type="button" className="p-1.5 rounded hover:bg-teal-100 text-teal-700" title="ขอ Active PR คืน (รอ PCM อนุมัติ)" onClick={() => openConfirm?.("ขอ Active PR", "ส่งคำขอให้ PCM อนุมัติ Active PR คืน", async () => {
-                              await updateData?.("prs", r.id, { status: "Pending Active PR", activeRequestedAt: new Date().toISOString() });
-                              logAction?.("Request Active PR", `ขอ Active PR ${r.prNo || r.id}`);
+                              await updateData?.("prs", r.id, { status: "Pending Active PR", activeRequestedAt: new Date().toISOString() }, { skipLog: true });
+                              logAction?.("Request Active PR", `ขอ Active PR ${r.prNo || r.id}`, r.projectId);
                               showAlert?.("ส่งคำขอแล้ว", "รอ PCM อนุมัติ Active PR", "info");
                             })}>
                               <CheckCircle size={14} />
                             </button>
                           )}
                           {/* PCM อนุมัติ Active PR */}
-                          {isPR && r.status === "Pending Active PR" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
+                          {canUseFunction(tableModule, "approveActivePR") && isPR && r.status === "Pending Active PR" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
                             <button type="button" className="p-1.5 rounded hover:bg-emerald-100 text-emerald-700 text-[10px] font-medium" title="อนุมัติ Active PR" onClick={() => openConfirm?.("อนุมัติ Active PR", "PR จะกลับไปสถานะก่อนถูกปิด", async () => {
                               const resume = r.preCloseStatus || "Approved";
-                              await updateData?.("prs", r.id, { status: resume, preCloseStatus: null, activeRequestedAt: null });
-                              logAction?.("Approved Active PR", `อนุมัติ Active PR ${r.prNo || r.id} → ${resume}`);
+                              await updateData?.("prs", r.id, { status: resume, preCloseStatus: null, activeRequestedAt: null }, { skipLog: true });
+                              logAction?.("Approved Active PR", `อนุมัติ Active PR ${r.prNo || r.id} → ${resume}`, r.projectId);
                               showAlert?.("สำเร็จ", `PR กลับสถานะ ${resume} แล้ว`, "success");
                             })}>
                               Active PR
                             </button>
                           )}
-                          {canUseFunction(tableModule, "closePO") && !isPR && r.status !== "Closed PO" && r.status !== "Pending Close PO" && r.status !== "Received" && (
-                            <button type="button" className="p-1.5 rounded hover:bg-amber-100 text-amber-700" title="ขอปิด PO (รอ PCM ยืนยัน)" onClick={() => openConfirm?.("ขอปิด PO", "เมื่อ PCM ยืนยันแล้ว สถานะจะเป็น Closed PO", async () => { await updateData?.("pos", r.id, { status: "Pending Close PO", closeRequestedAt: new Date().toISOString() }); showAlert?.("ส่งคำขอแล้ว", "รอ PCM ยืนยันการปิด PO", "info"); })}>
+                          {canUseFunction(tableModule, "requestClosePO") && !isPR && r.status !== "Closed PO" && r.status !== "Pending Close PO" && r.status !== "Received" && (
+                            <button type="button" className="p-1.5 rounded hover:bg-amber-100 text-amber-700" title="ขอปิด PO (รอ PCM ยืนยัน)" onClick={() => openConfirm?.("ขอปิด PO", "เมื่อ PCM ยืนยันแล้ว สถานะจะเป็น Closed PO", async () => {
+                              await updateData?.("pos", r.id, { status: "Pending Close PO", closeRequestedAt: new Date().toISOString() }, { skipLog: true });
+                              await logAction?.("Submit", `Request Close PO ${r.poNo || r.id}: ${r.status} → Pending Close PO`, r.projectId);
+                              showAlert?.("ส่งคำขอแล้ว", "รอ PCM ยืนยันการปิด PO", "info");
+                            })}>
                               <XCircle size={14} />
                             </button>
                           )}
-                          {canUseFunction(tableModule, "closePO") && !isPR && r.status === "Pending Close PO" && (userRole === "PCM" || userRole === "Administrator") && (
-                            <button type="button" className="p-1.5 rounded hover:bg-emerald-100 text-emerald-700 text-[10px] font-medium" title="ยืนยันปิด PO" onClick={() => openConfirm?.("ยืนยันปิด PO", "สถานะจะเปลี่ยนเป็น Closed PO", async () => { await updateData?.("pos", r.id, { status: "Closed PO" }); showAlert?.("สำเร็จ", "ปิด PO เรียบร้อย", "success"); })}>
+                          {canUseFunction("po", "closePO") && !isPR && r.status === "Pending Close PO" && (userRole === "PCM" || userRole === "Administrator") && (
+                            <button type="button" className="p-1.5 rounded hover:bg-emerald-100 text-emerald-700 text-[10px] font-medium" title="ยืนยันปิด PO" onClick={() => openConfirm?.("ยืนยันปิด PO", "สถานะจะเปลี่ยนเป็น Closed PO", async () => {
+                              await updateData?.("pos", r.id, { status: "Closed PO" }, { skipLog: true });
+                              await logAction?.("Approve", `Confirm Close PO ${r.poNo || r.id}: ${r.status} → Closed PO`, r.projectId);
+                              showAlert?.("สำเร็จ", "ปิด PO เรียบร้อย", "success");
+                            })}>
                               ยืนยันปิด
                             </button>
                           )}
@@ -1531,7 +1541,11 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 const UserProfile = () => {
   const { user, userData, resetPassword, showAlert, logAction, refreshUserData } =
     useContext(AuthContext);
-  const { userRoles = [] } = useAppData();
+  const { userRoles = [], canUseFunction } = useAppData();
+  const canEditProfile = canUseFunction?.("profile", "editProfile");
+  const canResetPassword = canUseFunction?.("profile", "resetPassword");
+  const canUploadSignature = canUseFunction?.("profile", "uploadSignature");
+  const canRemoveSignature = canUseFunction?.("profile", "removeSignature");
   const [editMode, setEditMode] = useState(false);
   const [formData, setFormData] = useState({
     firstName: userData?.firstName || "",
@@ -1579,6 +1593,7 @@ const UserProfile = () => {
   }, [user?.uid, userData?.signatureUrl, userData?.signatureDataUrl]);
 
   const handleUpdate = async () => {
+    if (!canEditProfile) return;
     try {
       await updateDoc(
         doc(db, "artifacts", appId, "public", "data", "users", user.uid),
@@ -1596,6 +1611,7 @@ const UserProfile = () => {
   };
 
   const handlePasswordReset = async () => {
+    if (!canResetPassword) return;
     if (confirm(`ส่งลิงก์เปลี่ยนรหัสผ่านไปที่ ${user.email} หรือไม่?`)) {
       await resetPassword(user.email);
       await logAction("Update", "Requested password reset");
@@ -1608,6 +1624,7 @@ const UserProfile = () => {
   };
 
   const handleSignatureUpload = async (e) => {
+    if (!canUploadSignature) return;
     const file = e.target.files?.[0];
     if (!file) return;
     if (!file.type.startsWith("image/")) {
@@ -1664,6 +1681,7 @@ const UserProfile = () => {
   };
 
   const handleRemoveSignature = async () => {
+    if (!canRemoveSignature) return;
     if (!confirm("ต้องการลบลายเซ็นหรือไม่?")) return;
     try {
       await updateDoc(
@@ -1738,14 +1756,18 @@ const UserProfile = () => {
             />
           </InputGroup>
           <div className="flex justify-between items-center pt-4">
-            <button
-              onClick={handlePasswordReset}
-              className="text-sm text-red-500 hover:text-red-700 flex items-center gap-1"
-            >
-              <Key size={14} /> รีเซ็ตรหัสผ่าน
-            </button>
+            {canResetPassword ? (
+              <button
+                onClick={handlePasswordReset}
+                className="text-sm text-red-500 hover:text-red-700 flex items-center gap-1"
+              >
+                <Key size={14} /> รีเซ็ตรหัสผ่าน
+              </button>
+            ) : (
+              <span />
+            )}
             <div className="flex gap-2">
-              {editMode ? (
+              {canEditProfile && editMode ? (
                 <>
                   <Button
                     variant="secondary"
@@ -1755,11 +1777,11 @@ const UserProfile = () => {
                   </Button>
                   <Button onClick={handleUpdate}>บันทึกการเปลี่ยนแปลง</Button>
                 </>
-              ) : (
+              ) : canEditProfile ? (
                 <Button variant="outline" onClick={() => setEditMode(true)}>
                   <Edit size={14} /> แก้ไขข้อมูล
                 </Button>
-              )}
+              ) : null}
             </div>
           </div>
         </div>
@@ -1783,27 +1805,37 @@ const UserProfile = () => {
                 className="h-16 object-contain"
               />
             </div>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => signatureInputRef.current?.click()}
-                disabled={uploadingSignature}
-              >
-                <Upload size={14} /> เปลี่ยนลายเซ็น
-              </Button>
-              <button
-                className="text-sm text-red-500 hover:text-red-700 flex items-center gap-1"
-                onClick={handleRemoveSignature}
-              >
-                <Trash2 size={13} /> ลบ
-              </button>
-            </div>
+            {(canUploadSignature || canRemoveSignature) && (
+              <div className="flex gap-2">
+                {canUploadSignature && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => signatureInputRef.current?.click()}
+                    disabled={uploadingSignature}
+                  >
+                    <Upload size={14} /> เปลี่ยนลายเซ็น
+                  </Button>
+                )}
+                {canRemoveSignature && (
+                  <button
+                    className="text-sm text-red-500 hover:text-red-700 flex items-center gap-1"
+                    onClick={handleRemoveSignature}
+                  >
+                    <Trash2 size={13} /> ลบ
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <div
-            className="border-2 border-dashed border-slate-300 rounded-xl p-6 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/40 transition-colors"
-            onClick={() => signatureInputRef.current?.click()}
+            className={`border-2 border-dashed rounded-xl p-6 text-center transition-colors ${
+              canUploadSignature
+                ? "border-slate-300 cursor-pointer hover:border-blue-400 hover:bg-blue-50/40"
+                : "border-slate-200 cursor-not-allowed bg-slate-50"
+            }`}
+            onClick={() => canUploadSignature && signatureInputRef.current?.click()}
           >
             {uploadingSignature ? (
               <div className="flex flex-col items-center gap-2 text-slate-500">
@@ -1824,6 +1856,7 @@ const UserProfile = () => {
           type="file"
           accept="image/png,image/jpeg,image/webp"
           className="hidden"
+          disabled={!canUploadSignature}
           onChange={handleSignatureUpload}
         />
       </Card>
@@ -1870,7 +1903,12 @@ function normalizePartialFunctionPermissions(
 
 const AdminDashboard = () => {
   const { showAlert, logAction, userData } = useContext(AuthContext);
-  const { columnWidths, handleColumnResize, rolePermissions, saveRolePermissions, functionPermissions, saveFunctionPermissions, isColumnVisible } = useAppData();
+  const {
+    columnWidths, handleColumnResize,
+    rolePermissions, saveRolePermissions,
+    functionPermissions, saveFunctionPermissions,
+    isColumnVisible, availableRoles, saveAvailableRoles,
+  } = useAppData();
   const userRole = userData?.role || "Staff";
   const adminUsersTableRef = useRef(null);
   const [activeTab, setActiveTab] = useState("users"); // 'users' | 'logs' | 'roles'
@@ -1899,6 +1937,12 @@ const AdminDashboard = () => {
   const [localFunctionPermissions, setLocalFunctionPermissions] = useState<Record<string, Record<string, string[]>>>({});
   const [savingRoles, setSavingRoles] = useState(false);
   const [openFuncDropdown, setOpenFuncDropdown] = useState<string | null>(null); // "moduleKey:role"
+  const [newRoleName, setNewRoleName] = useState("");
+  const [savingNewRole, setSavingNewRole] = useState(false);
+  const managedRoles = useMemo(
+    () => [...new Set([...availableRoles, ...users.map((u) => String(u.role || "").trim()).filter(Boolean)])],
+    [availableRoles, users]
+  );
 
   useEffect(() => {
     const qUsers = query(
@@ -1922,7 +1966,11 @@ const AdminDashboard = () => {
       limit(250)
     );
     const unsubLogs = onSnapshot(qLogs, (snapshot) => {
-      setLogs(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+      setLogs(
+        snapshot.docs
+          .map((doc) => ({ id: doc.id, ...doc.data() }))
+          .filter((log) => log.action !== "Navigate")
+      );
     });
 
     return () => {
@@ -1991,6 +2039,31 @@ const AdminDashboard = () => {
       }
     } finally {
       setSavingRoles(false);
+    }
+  };
+
+  const handleAddRole = async () => {
+    const nextRole = newRoleName.trim();
+    if (!nextRole) {
+      showAlert("ข้อมูลไม่ครบ", "กรุณาระบุชื่อ Role", "warning");
+      return;
+    }
+    if (managedRoles.some((role) => role.toLowerCase() === nextRole.toLowerCase())) {
+      showAlert("Role ซ้ำ", `มี Role "${nextRole}" อยู่แล้ว`, "warning");
+      return;
+    }
+    setSavingNewRole(true);
+    try {
+      const ok = await saveAvailableRoles([...managedRoles, nextRole]);
+      if (!ok) {
+        showAlert("เกิดข้อผิดพลาด", "ไม่สามารถเพิ่ม Role ใหม่ได้", "error");
+        return;
+      }
+      setNewRoleName("");
+      await logAction("Create", `Created Role ${nextRole}`);
+      showAlert("เพิ่มสำเร็จ", `เพิ่ม Role ${nextRole} แล้ว`, "success");
+    } finally {
+      setSavingNewRole(false);
     }
   };
 
@@ -2399,15 +2472,39 @@ const AdminDashboard = () => {
                 <strong>อ่าน</strong> = แสดงเมนูใน Sidebar &nbsp;|&nbsp; <strong>เขียน</strong> = เลือกฟังก์ชันที่ใช้ได้ในเมนูนั้น
               </p>
             </div>
-            <Button
-              variant="primary"
-              onClick={handleSaveRolePermissions}
-              disabled={savingRoles}
-              className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white"
-            >
-              <Save size={14} />
-              {savingRoles ? "กำลังบันทึก..." : "บันทึก"}
-            </Button>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newRoleName}
+                onChange={(e) => setNewRoleName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleAddRole();
+                  }
+                }}
+                placeholder="เพิ่ม Role ใหม่"
+                className="w-44 border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"
+              />
+              <Button
+                variant="outline"
+                onClick={handleAddRole}
+                disabled={savingNewRole}
+                className="flex items-center gap-2"
+              >
+                <Plus size={14} />
+                {savingNewRole ? "กำลังเพิ่ม..." : "เพิ่ม Role"}
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleSaveRolePermissions}
+                disabled={savingRoles}
+                className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white"
+              >
+                <Save size={14} />
+                {savingRoles ? "กำลังบันทึก..." : "บันทึก"}
+              </Button>
+            </div>
           </div>
 
           <Card className="overflow-auto">
@@ -2441,7 +2538,7 @@ const AdminDashboard = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {USER_ROLES.map((role, idx) => {
+                {managedRoles.map((role, idx) => {
                   const isAdminRole = role === "Administrator";
                   const rowBg = idx % 2 === 0 ? "bg-white" : "bg-slate-50/50";
                   return (
@@ -2579,7 +2676,7 @@ const AdminDashboard = () => {
                       setEditForm({ ...editForm, role: e.target.value })
                     }
                   >
-                    {USER_ROLES.map((r) => (
+                    {managedRoles.map((r) => (
                       <option key={r} value={r}>
                         {r}
                       </option>

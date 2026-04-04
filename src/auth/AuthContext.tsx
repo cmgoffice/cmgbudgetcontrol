@@ -62,11 +62,43 @@ export const AuthProvider = ({ children }) => {
   const logAction = useCallback(
     async (action, details, projectId = null) => {
       if (!user) return;
+      if (action === "Navigate") return;
       try {
+        const rawAction = String(action || "").trim();
+        const rawDetails = String(details || "").trim();
+        const normalizeRules = [
+          { match: /^Create\b|^Added\b|^Start Next Period\b/i, base: "Create" },
+          { match: /^Update\b|^Save Draft\b|^Hold\b|^Recalculate\b/i, base: "Update" },
+          { match: /^Delete\b|^Cleared\b/i, base: "Delete" },
+          { match: /^Approve\b|^Allow\b|^Allowed\b|^PO Revision Allowed\b/i, base: "Approve" },
+          { match: /^Reject\b|^Denied\b|^PO Revision Denied\b/i, base: "Reject" },
+          { match: /^Submit\b|^Request\b/i, base: "Submit" },
+          { match: /^Import\b/i, base: "Import" },
+        ];
+        let normalizedAction = rawAction || "Update";
+        let normalizedDetails = rawDetails;
+        for (const rule of normalizeRules) {
+          if (rule.match.test(rawAction)) {
+            normalizedAction = rule.base;
+            normalizedDetails = rawDetails ? `${rawAction} — ${rawDetails}` : rawAction;
+            break;
+          }
+        }
+        if (rawAction === "Bulk") {
+          const detailsLower = rawDetails.toLowerCase();
+          if (detailsLower.includes("approve")) normalizedAction = "Approve";
+          else if (detailsLower.includes("reject")) normalizedAction = "Reject";
+          else if (detailsLower.includes("delete")) normalizedAction = "Delete";
+          else if (detailsLower.includes("submit") || detailsLower.includes("sent")) normalizedAction = "Submit";
+          else if (detailsLower.includes("import")) normalizedAction = "Import";
+          else if (detailsLower.includes("create") || detailsLower.includes("added")) normalizedAction = "Create";
+          else normalizedAction = "Update";
+          normalizedDetails = rawDetails ? `${rawAction} — ${rawDetails}` : rawAction;
+        }
         const logData: Record<string, any> = {
           timestamp: new Date().toISOString(),
-          action: action,
-          details: details,
+          action: normalizedAction,
+          details: normalizedDetails,
           user: userData
             ? `${userData.firstName} ${userData.lastName}`
             : user.email,

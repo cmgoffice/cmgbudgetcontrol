@@ -43,8 +43,6 @@ export const UIProvider = ({ children, logAction }) => {
       setActiveMenu(menu);
     });
     setIsBellOpen(false);
-    const label = menuLabelMap[menu] || menu;
-    if (logAction) logAction("Navigate", `เปิดเมนู: ${label}`);
   }, [logAction]);
 
   const handleProjectChange = useCallback((projectId, projects = []) => {

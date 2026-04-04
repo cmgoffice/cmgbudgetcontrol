@@ -38,38 +38,60 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
     { key: "add",    label: "ตั้งงบประมาณ" },
     { key: "edit",   label: "แก้ไขงบประมาณ" },
     { key: "delete", label: "ลบงบประมาณ" },
+    { key: "clearAll", label: "ล้างงบทั้งหมวด" },
     { key: "import", label: "Import CSV" },
+    { key: "recalculate", label: "คำนวณยอดใหม่" },
     { key: "submit", label: "ส่งขออนุมัติ" },
     { key: "requestRevision", label: "ขอแก้ไข (Revise)" },
-    { key: "approve",label: "อนุมัติ / ปฏิเสธ" },
+    { key: "approve",label: "อนุมัติงบประมาณ" },
+    { key: "reject", label: "ปฏิเสธงบประมาณ" },
+    { key: "allowEdit", label: "อนุญาตแก้ไขงบ" },
+    { key: "rejectRevision", label: "ปฏิเสธคำขอแก้ไขงบ" },
+    { key: "addSubItem", label: "เพิ่มรายการย่อย" },
+    { key: "editSubItem", label: "แก้ไขรายการย่อย" },
+    { key: "deleteSubItem", label: "ลบรายการย่อย" },
+    { key: "submitSubItem", label: "ส่งอนุมัติรายการย่อย" },
+    { key: "requestRevisionSubItem", label: "ขอแก้ไขรายการย่อย" },
+    { key: "approveSubItem", label: "อนุมัติรายการย่อย" },
+    { key: "rejectSubItem", label: "ปฏิเสธรายการย่อย" },
+    { key: "allowEditSubItem", label: "อนุญาตแก้ไขรายการย่อย" },
+    { key: "rejectRevisionSubItem", label: "ปฏิเสธคำขอแก้ไขรายการย่อย" },
   ],
   pr: [
     { key: "create",     label: "สร้าง PR" },
     { key: "edit",       label: "แก้ไข PR" },
     { key: "delete",     label: "ลบ PR" },
-    { key: "approve",    label: "อนุมัติ / ปฏิเสธ PR" },
+    { key: "approve",    label: "อนุมัติ PR" },
+    { key: "reject",     label: "ปฏิเสธ PR" },
     { key: "editBudget", label: "Edit Budget PR" },
+    { key: "closePR",    label: "ยืนยัน Close PR" },
   ],
   "pr-table": [
     { key: "export",  label: "Export CSV" },
     { key: "email",   label: "ส่ง Email PDF" },
     { key: "download",label: "Download PDF" },
-    { key: "closePR", label: "ขอปิด / ยืนยันปิด PR" },
+    { key: "requestClosePR", label: "ขอปิด PR" },
+    { key: "requestActivePR", label: "ขอ Active PR" },
+    { key: "approveActivePR", label: "อนุมัติ Active PR" },
   ],
   po: [
     { key: "create",  label: "สร้าง PO" },
     { key: "edit",    label: "แก้ไข PO" },
     { key: "delete",  label: "ลบ PO" },
     { key: "requestRevision", label: "ขอแก้ไข PO (รออนุญาต)" },
-    { key: "approve", label: "อนุมัติ / ปฏิเสธ PO" },
+    { key: "approve", label: "อนุมัติ PO" },
+    { key: "reject", label: "ปฏิเสธ PO" },
+    { key: "allowRevision", label: "อนุญาตแก้ไข PO" },
+    { key: "denyRevision", label: "ไม่อนุญาตแก้ไข PO" },
     { key: "manualPoOverride", label: "แก้ไขเลข PO ด้วยตนเอง" },
+    { key: "closePO", label: "ยืนยัน Close PO" },
   ],
   "po-table": [
     { key: "export",  label: "Export CSV" },
     { key: "email",   label: "ส่ง Email PDF" },
     { key: "download",label: "Download PDF" },
     { key: "delete",  label: "ลบ PO" },
-    { key: "closePO", label: "ขอปิด / ยืนยันปิด PO" },
+    { key: "requestClosePO", label: "ขอปิด PO" },
   ],
   vendor: [
     { key: "add",    label: "เพิ่ม Vendor" },
@@ -98,11 +120,24 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
     { key: "edit",            label: "แก้ไข Payment" },
     { key: "delete",          label: "ลบ Payment" },
     { key: "submit",          label: "ส่งให้ CM ตรวจสอบ" },
-    { key: "approveFlow",     label: "อนุมัติ / ปฏิเสธ (CM/PM)" },
-    { key: "pay",             label: "จ่ายเงิน (Pay / Hold)" },
+    { key: "approveFlow",     label: "อนุมัติ Payment" },
+    { key: "rejectFlow",      label: "ปฏิเสธ Payment" },
     { key: "requestRevision", label: "ขอแก้ไข (ส่งกลับ)" },
+    { key: "approveRevision", label: "อนุมัติคำขอแก้ไข" },
+    { key: "rejectRevision",  label: "ปฏิเสธคำขอแก้ไข" },
+    { key: "savePeriodDraft", label: "บันทึก Draft งวดงาน" },
+    { key: "submitPeriod",    label: "บันทึกงวดงานส่งอนุมัติ" },
+    { key: "approvePeriod",   label: "อนุมัติงวดงาน" },
+    { key: "pay",             label: "จ่ายเงิน (Pay)" },
+    { key: "hold",            label: "Hold Payment" },
+    { key: "startNextPeriod", label: "เปิดงวดถัดไป" },
   ],
-  profile: [],
+  profile: [
+    { key: "editProfile",     label: "แก้ไขข้อมูลโปรไฟล์" },
+    { key: "resetPassword",   label: "รีเซ็ตรหัสผ่าน" },
+    { key: "uploadSignature", label: "อัปโหลดลายเซ็น" },
+    { key: "removeSignature", label: "ลบลายเซ็น" },
+  ],
 };
 
 export const USER_ROLES = [
@@ -138,22 +173,95 @@ export const MODULE_ACCESS: Record<string, string[]> = {
 
 /**
  * รวมข้อมูล functionPermissions จาก Firestore กับกฎสิทธิ์เขียน
- * - เมนูที่ยังไม่มีใน Firestore → ทุกฟังก์ชันได้สิทธิ์เท่า Role ที่มีสิทธิ์อ่าน (MODULE_ACCESS) เหมือนระบบเก่า
- * - เมนูที่บันทึกใน Firestore แล้ว → ฟังก์ชันที่มี key ใช้ค่าจริง; ฟังก์ชันที่ไม่มี key = [] (ไม่เห็นปุ่ม)
+ * - เมนูที่ยังไม่มีใน Firestore → ใช้ default ตามฟังก์ชัน
+ * - เมนูที่บันทึกใน Firestore แล้ว → ฟังก์ชันที่มี key ใช้ค่าจริง; ฟังก์ชันที่ไม่มี key = default/fallback
+ * - รองรับ migration key เก่า closePR/closePO จาก pr-table/po-table → requestClosePR/requestClosePO
  */
 export function mergeFunctionPermissionsWithDefaults(
   raw: Record<string, Record<string, string[] | undefined> | undefined>
 ): Record<string, Record<string, string[]>> {
   const out: Record<string, Record<string, string[]>> = {};
+  const pickFallbackRoles = (
+    moduleKey: string,
+    candidates: string[] = []
+  ): string[] | undefined => {
+    const rawModule = raw[moduleKey];
+    if (rawModule == null || typeof rawModule !== "object") return undefined;
+    for (const candidate of candidates) {
+      if (Object.prototype.hasOwnProperty.call(rawModule, candidate)) {
+        const value = rawModule[candidate];
+        return Array.isArray(value) ? [...value] : [];
+      }
+    }
+    return undefined;
+  };
+  const defaultByModuleAndKey: Record<string, Record<string, string[]>> = {
+    pr: {
+      closePR: ["PCM"],
+    },
+    po: {
+      closePO: ["PCM"],
+    },
+    "pr-table": {
+      requestClosePR: ["Procurement"],
+      requestActivePR: ["Procurement", "PCM"],
+      approveActivePR: ["PCM"],
+    },
+    "po-table": {
+      requestClosePO: ["Procurement"],
+    },
+  };
+  const fallbackKeyByModuleAndKey: Record<string, Record<string, string[]>> = {
+    budget: {
+      clearAll: ["delete"],
+      recalculate: ["edit"],
+      reject: ["approve"],
+      allowEdit: ["approve"],
+      rejectRevision: ["approve"],
+      addSubItem: ["add"],
+      editSubItem: ["edit"],
+      deleteSubItem: ["delete"],
+      submitSubItem: ["submit"],
+      requestRevisionSubItem: ["requestRevision"],
+      approveSubItem: ["approve"],
+      rejectSubItem: ["approve"],
+      allowEditSubItem: ["approve"],
+      rejectRevisionSubItem: ["approve"],
+    },
+    pr: {
+      reject: ["approve"],
+    },
+    "pr-table": {
+      requestClosePR: ["closePR"],
+    },
+    po: {
+      reject: ["approve"],
+      allowRevision: ["approve"],
+      denyRevision: ["approve"],
+    },
+    "po-table": {
+      requestClosePO: ["closePO"],
+    },
+    "payment-subcontract": {
+      rejectFlow: ["approveFlow"],
+      approveRevision: ["approveFlow", "requestRevision"],
+      rejectRevision: ["approveFlow", "requestRevision"],
+      savePeriodDraft: ["submit"],
+      submitPeriod: ["submit"],
+      approvePeriod: ["approveFlow"],
+      hold: ["pay"],
+      startNextPeriod: ["submit"],
+    },
+  };
   Object.keys(MODULE_FUNCTIONS).forEach((moduleKey) => {
     const funcList = MODULE_FUNCTIONS[moduleKey];
     if (!funcList?.length) return;
-    const readRoles = [...(MODULE_ACCESS[moduleKey] || [])];
     const rawMod = raw[moduleKey];
     out[moduleKey] = {};
     if (rawMod == null || typeof rawMod !== "object") {
       funcList.forEach(({ key }) => {
-        out[moduleKey][key] = [...readRoles];
+        const defaultRoles = defaultByModuleAndKey[moduleKey]?.[key] || MODULE_ACCESS[moduleKey] || [];
+        out[moduleKey][key] = [...defaultRoles];
       });
       return;
     }
@@ -162,7 +270,9 @@ export function mergeFunctionPermissionsWithDefaults(
         const v = rawMod[key];
         out[moduleKey][key] = Array.isArray(v) ? [...v] : [];
       } else {
-        out[moduleKey][key] = [];
+        const fallback = pickFallbackRoles(moduleKey, fallbackKeyByModuleAndKey[moduleKey]?.[key] || []);
+        const defaultRoles = defaultByModuleAndKey[moduleKey]?.[key] || MODULE_ACCESS[moduleKey] || [];
+        out[moduleKey][key] = Array.isArray(fallback) ? [...fallback] : [...defaultRoles];
       }
     });
   });

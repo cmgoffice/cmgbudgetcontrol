@@ -28,6 +28,27 @@ const BudgetView = React.memo(() => {
           showAlert, openConfirm, logAction, userRole, userRoles, userData, columnWidths, handleColumnResize,
           visibleProjects, handlePRAction, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,
           db, appId, canUseFunction, isColumnVisible } = useAppData();
+  const canSubmitBudget = canUseFunction("budget", "submit");
+  const canRequestBudgetRevision = canUseFunction("budget", "requestRevision");
+  const canApproveBudget = canUseFunction("budget", "approve");
+  const canRejectBudget = canUseFunction("budget", "reject");
+  const canAllowEditBudget = canUseFunction("budget", "allowEdit");
+  const canRejectBudgetRevision = canUseFunction("budget", "rejectRevision");
+  const canAddSubItem = canUseFunction("budget", "addSubItem");
+  const canEditSubItem = canUseFunction("budget", "editSubItem");
+  const canDeleteSubItem = canUseFunction("budget", "deleteSubItem");
+  const canSubmitSubItem = canUseFunction("budget", "submitSubItem");
+  const canRequestSubItemRevision = canUseFunction("budget", "requestRevisionSubItem");
+  const canApproveSubItem = canUseFunction("budget", "approveSubItem");
+  const canRejectSubItem = canUseFunction("budget", "rejectSubItem");
+  const canAllowEditSubItem = canUseFunction("budget", "allowEditSubItem");
+  const canRejectSubItemRevision = canUseFunction("budget", "rejectRevisionSubItem");
+  const canClearAllBudgets = canUseFunction("budget", "clearAll");
+  const canRecalculateBudget = canUseFunction("budget", "recalculate");
+  const canApprovePoFromBudget = canUseFunction("po", "approve");
+  const canRejectPoFromBudget = canUseFunction("po", "reject");
+  const canAllowPoRevisionFromBudget = canUseFunction("po", "allowRevision");
+  const canDenyPoRevisionFromBudget = canUseFunction("po", "denyRevision");
   const { selectedProjectId,
           budgetCategory, setBudgetCategory,
           expandedBudgetRows, setExpandedBudgetRows,
@@ -1388,7 +1409,15 @@ const BudgetView = React.memo(() => {
     }), [categorySummary]);
 
     const handleSaveBudget = async (newStatus = null) => {
-      if (newStatus === "Wait MD Approve" && !canUseFunction("budget", "submit")) {
+      if (editingBudgetId && !canUseFunction("budget", "edit")) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์แก้ไขงบประมาณ", "warning");
+        return;
+      }
+      if (!editingBudgetId && !canUseFunction("budget", "add")) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ตั้งงบประมาณ", "warning");
+        return;
+      }
+      if (newStatus === "Wait MD Approve" && !canSubmitBudget) {
         showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
         return;
       }
@@ -1454,6 +1483,10 @@ const BudgetView = React.memo(() => {
     };
 
     const handleDeleteBudget = async (id) => {
+      if (!canUseFunction("budget", "delete")) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ลบงบประมาณ", "warning");
+        return;
+      }
       openConfirm(
         "ยืนยันการลบ",
         "คุณต้องการลบรายการงบประมาณนี้ใช่หรือไม่?",
@@ -1483,6 +1516,10 @@ const BudgetView = React.memo(() => {
     };
 
     const handleClearAllBudgets = () => {
+      if (!canClearAllBudgets) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ล้างงบทั้งหมวด", "warning");
+        return;
+      }
       openConfirm(
         "⚠️ ล้างข้อมูลทั้งหมด",
         `คุณต้องการลบข้อมูลงบประมาณทั้งหมดในหน้านี้ (${currentBudgets.length} รายการ) ใช่หรือไม่?\nการดำเนินการนี้ไม่สามารถย้อนกลับได้`,
@@ -1524,6 +1561,10 @@ const BudgetView = React.memo(() => {
     };
 
     const handleApproveBudget = async (budgetId) => {
+      if (!canApproveBudget) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุมัติงบประมาณ", "warning");
+        return;
+      }
       const b = budgets.find((x) => x.id === budgetId);
       await updateDoc(
         doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
@@ -1544,7 +1585,7 @@ const BudgetView = React.memo(() => {
     };
 
     const handleSubmitBudget = async (id) => {
-      if (!canUseFunction("budget", "submit")) {
+      if (!canSubmitBudget) {
         showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
         return;
       }
@@ -1584,7 +1625,7 @@ const BudgetView = React.memo(() => {
     }, [budgetCategory]);
 
     const handleBulkSubmitBudgets = () => {
-      if (!canUseFunction("budget", "submit")) {
+      if (!canSubmitBudget) {
         showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
         return;
       }
@@ -1623,6 +1664,10 @@ const BudgetView = React.memo(() => {
     };
 
     const handleBulkDeleteBudgets = () => {
+      if (!canUseFunction("budget", "delete")) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ลบงบประมาณ", "warning");
+        return;
+      }
       setActionDropdownOpen(false);
       if (selectedBudgetIds.length === 0) {
         showAlert("กรุณาเลือกรายการ", "กรุณาเลือกรายการที่ต้องการลบก่อน (ติ๊กถูกหน้าบรรทัด)", "warning");
@@ -1659,6 +1704,10 @@ const BudgetView = React.memo(() => {
     };
 
     const handleBulkApprovePendingBudgets = async () => {
+      if (!canApproveBudget) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุมัติงบประมาณ", "warning");
+        return;
+      }
       setPendingActionDropdownOpen(false);
       if (pendingSelectedBudgetIds.length === 0) {
         showAlert("กรุณาเลือกรายการ", "กรุณาเลือกรายการงบที่ต้องการ Approve ก่อน (ติ๊กถูกหน้าบรรทัด)", "warning");
@@ -1689,6 +1738,10 @@ const BudgetView = React.memo(() => {
     };
 
     const handleBulkRejectPendingBudgets = () => {
+      if (!canRejectBudget) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธงบประมาณ", "warning");
+        return;
+      }
       setPendingActionDropdownOpen(false);
       if (pendingSelectedBudgetIds.length === 0) {
         showAlert("กรุณาเลือกรายการ", "กรุณาเลือกรายการงบที่ต้องการ Reject ก่อน (ติ๊กถูกหน้าบรรทัด)", "warning");
@@ -1726,7 +1779,7 @@ const BudgetView = React.memo(() => {
     };
 
     const handleRequestRevision = async () => {
-      if (!canUseFunction("budget", "requestRevision")) {
+      if (!canRequestBudgetRevision) {
         showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ขอแก้ไขงบประมาณ", "warning");
         return;
       }
@@ -1754,6 +1807,10 @@ const BudgetView = React.memo(() => {
     };
 
     const handleAllowEdit = async (budgetId) => {
+      if (!canAllowEditBudget) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุญาตแก้ไขงบประมาณ", "warning");
+        return;
+      }
       const b = budgets.find((x) => x.id === budgetId);
       await updateDoc(
         doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
@@ -1773,6 +1830,10 @@ const BudgetView = React.memo(() => {
     };
 
     const handleRejectRevision = async (budgetId) => {
+      if (!canRejectBudgetRevision) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธคำขอแก้ไขงบประมาณ", "warning");
+        return;
+      }
       const b = budgets.find((x) => x.id === budgetId);
       await updateDoc(
         doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
@@ -1799,6 +1860,10 @@ const BudgetView = React.memo(() => {
 
     const handleRejectBudget = async () => {
       if (!selectedBudget || !rejectReason) return;
+      if (!canRejectBudget) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธงบประมาณ", "warning");
+        return;
+      }
       await updateDoc(
         doc(db, "artifacts", appId, "public", "data", "budgets", selectedBudget.id),
         { status: "Rejected", rejectReason: rejectReason }
@@ -1817,6 +1882,10 @@ const BudgetView = React.memo(() => {
     };
 
     const handleApproveSubItem = async (budgetId, subItemId) => {
+      if (!canApproveSubItem) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุมัติรายการย่อย", "warning");
+        return;
+      }
       const budget = budgets.find(b => b.id === budgetId);
       if (!budget) return;
 
@@ -1833,7 +1902,7 @@ const BudgetView = React.memo(() => {
     };
 
     const handleRequestRevisionSubItem = async (budgetId, subItemId, reason) => {
-      if (!canUseFunction("budget", "requestRevision")) {
+      if (!canRequestSubItemRevision) {
         showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ขอแก้ไขงบประมาณ", "warning");
         return;
       }
@@ -1851,6 +1920,10 @@ const BudgetView = React.memo(() => {
     };
 
     const handleAllowEditSubItem = async (budgetId, subItemId) => {
+      if (!canAllowEditSubItem) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุญาตแก้ไขรายการย่อย", "warning");
+        return;
+      }
       const budget = budgets.find(b => b.id === budgetId);
       if (!budget) return;
       const newSubItems = budget.subItems.map(sub =>
@@ -1865,6 +1938,10 @@ const BudgetView = React.memo(() => {
     };
 
     const handleRejectRevisionSubItem = async (budgetId, subItemId) => {
+      if (!canRejectSubItemRevision) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธคำขอแก้ไขรายการย่อย", "warning");
+        return;
+      }
       const budget = budgets.find(b => b.id === budgetId);
       if (!budget) return;
       const newSubItems = budget.subItems.map(sub =>
@@ -1879,6 +1956,10 @@ const BudgetView = React.memo(() => {
     };
 
     const handleRecalculateTotals = async () => {
+      if (!canRecalculateBudget) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์คำนวณยอดใหม่", "warning");
+        return;
+      }
       if (!selectedProjectId) {
         showAlert("แจ้งเตือน", "กรุณาเลือกโครงการก่อน", "warning");
         return;
@@ -1909,7 +1990,7 @@ const BudgetView = React.memo(() => {
       const { budgetId, subItemId } = reasonModalContext;
       if (!reasonModalValue.trim()) return;
       if (reasonModalType === "revision") {
-        if (!canUseFunction("budget", "requestRevision")) {
+        if (!canRequestSubItemRevision) {
           showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ขอแก้ไขงบประมาณ", "warning");
           return;
         }
@@ -1922,7 +2003,7 @@ const BudgetView = React.memo(() => {
     };
 
     const handleSubmitSubItem = async (budgetId, subItemId) => {
-      if (!canUseFunction("budget", "submit")) {
+      if (!canSubmitSubItem) {
         showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
         return;
       }
@@ -1943,6 +2024,10 @@ const BudgetView = React.memo(() => {
     };
 
     const handleRejectSubItem = async (budgetId, subItemId, reason) => {
+      if (!canRejectSubItem) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธรายการย่อย", "warning");
+        return;
+      }
       const budget = budgets.find(b => b.id === budgetId);
       if (!budget) return;
 
@@ -1963,6 +2048,10 @@ const BudgetView = React.memo(() => {
     };
 
     const openSubItemModal = (item) => {
+      if (!canAddSubItem) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์เพิ่มรายการย่อย", "warning");
+        return;
+      }
       setSelectedBudget(item);
       setEditingSubItem(null);
       setPendingSubAttachments([]);
@@ -1973,6 +2062,10 @@ const BudgetView = React.memo(() => {
     };
 
     const openEditSubItemModal = (mainItem, subItem) => {
+      if (!canEditSubItem) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์แก้ไขรายการย่อย", "warning");
+        return;
+      }
       setSelectedBudget(mainItem);
       setPendingSubAttachments([]);
       setEditingSubItem(subItem);
@@ -1989,7 +2082,7 @@ const BudgetView = React.memo(() => {
     };
 
     const handleResubmitSubItemFromModal = async () => {
-      if (!canUseFunction("budget", "submit")) {
+      if (!canSubmitSubItem) {
         showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
         return;
       }
@@ -2024,6 +2117,14 @@ const BudgetView = React.memo(() => {
 
     const handleSaveSubItem = async () => {
       if (!selectedBudget) return;
+      if (editingSubItem && !canEditSubItem) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์แก้ไขรายการย่อย", "warning");
+        return;
+      }
+      if (!editingSubItem && !canAddSubItem) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์เพิ่มรายการย่อย", "warning");
+        return;
+      }
       if (!subItemData.description.trim()) return showAlert("ข้อมูลไม่ครบ", "กรุณากรอกชื่อรายการ", "warning");
       const amountToAdd = Number(subItemData.quantity) * Number(subItemData.unitPrice);
       const newSubItem = {
@@ -2095,6 +2196,10 @@ const BudgetView = React.memo(() => {
     };
 
     const handleDeleteSubItem = async (mainId, subId) => {
+      if (!canDeleteSubItem) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ลบรายการย่อย", "warning");
+        return;
+      }
       openConfirm(
         "ยืนยันการลบ",
         "ต้องการลบรายการย่อยนี้หรือไม่?",
@@ -2301,7 +2406,7 @@ const BudgetView = React.memo(() => {
                           </button>
                           {pendingActionDropdownOpen && (
                             <div className="absolute right-0 top-full mt-1 z-20 py-1 bg-white border border-slate-200 rounded-lg shadow-lg min-w-[220px]">
-                              {canUseFunction("budget", "approve") && (
+                              {canApproveBudget && (
                                 <button
                                   type="button"
                                   className="w-full text-left px-3 py-2 text-xs hover:bg-green-50 text-green-700 flex items-center gap-2"
@@ -2310,7 +2415,7 @@ const BudgetView = React.memo(() => {
                                   Approve ({pendingSelectedBudgetIds.length} รายการ)
                                 </button>
                               )}
-                              {canUseFunction("budget", "approve") && (
+                              {canRejectBudget && (
                                 <button
                                   type="button"
                                   className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 text-red-700 flex items-center gap-2"
@@ -2381,40 +2486,40 @@ const BudgetView = React.memo(() => {
                               </td>
                               <td className="py-2 px-3 text-center">
                                 <div className="flex justify-center gap-1">
-                                  {canUseFunction("budget", "approve") && !isRevisionPending && (
+                                  {!isRevisionPending && (canApproveBudget || canRejectBudget) && (
                                     <>
-                                      <Button
+                                      {canApproveBudget && <Button
                                         variant="success"
                                         className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                         onClick={() => handleApproveBudget(b.id)}
                                       >
                                         <CheckCircle size={11} /> Approve
-                                      </Button>
-                                      <Button
+                                      </Button>}
+                                      {canRejectBudget && <Button
                                         variant="danger"
                                         className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                         onClick={() => openRejectModal(b)}
                                       >
                                         <XCircle size={11} /> Reject
-                                      </Button>
+                                      </Button>}
                                     </>
                                   )}
-                                  {canUseFunction("budget", "approve") && isRevisionPending && (
+                                  {isRevisionPending && (canAllowEditBudget || canRejectBudgetRevision) && (
                                     <>
-                                      <Button
+                                      {canAllowEditBudget && <Button
                                         variant="warning"
                                         className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                         onClick={() => handleAllowEdit(b.id)}
                                       >
                                         อนุญาตแก้ไข
-                                      </Button>
-                                      <Button
+                                      </Button>}
+                                      {canRejectBudgetRevision && <Button
                                         variant="secondary"
                                         className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                         onClick={() => handleRejectRevision(b.id)}
                                       >
                                         ไม่อนุญาตแก้ไข
-                                      </Button>
+                                      </Button>}
                                     </>
                                   )}
                                 </div>
@@ -2506,23 +2611,23 @@ const BudgetView = React.memo(() => {
                                     </td>
                                     <td className="py-1 px-3 text-center border-b border-slate-100">
                                       <div className="flex justify-center gap-1">
-                                        {canUseFunction("budget", "approve") && sub.status === "Revision Pending" ? (
+                                        {(canAllowEditSubItem || canRejectSubItemRevision) && sub.status === "Revision Pending" ? (
                                           <>
-                                            <Button variant="warning" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAllowEditSubItem(b.id, sub.id)}>
+                                            {canAllowEditSubItem && <Button variant="warning" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAllowEditSubItem(b.id, sub.id)}>
                                               อนุญาตแก้ไข
-                                            </Button>
-                                            <Button variant="secondary" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleRejectRevisionSubItem(b.id, sub.id)}>
+                                            </Button>}
+                                            {canRejectSubItemRevision && <Button variant="secondary" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleRejectRevisionSubItem(b.id, sub.id)}>
                                               ไม่อนุญาตแก้ไข
-                                            </Button>
+                                            </Button>}
                                           </>
-                                        ) : canUseFunction("budget", "approve") ? (
+                                        ) : (canApproveSubItem || canRejectSubItem) ? (
                                           <>
-                                            <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleApproveSubItem(b.id, sub.id)}>
+                                            {canApproveSubItem && <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleApproveSubItem(b.id, sub.id)}>
                                               <CheckCircle size={11} /> Approve
-                                            </Button>
-                                            <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => openReasonModal("reject", b.id, sub.id)}>
+                                            </Button>}
+                                            {canRejectSubItem && <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => openReasonModal("reject", b.id, sub.id)}>
                                               <XCircle size={11} /> Reject
-                                            </Button>
+                                            </Button>}
                                           </>
                                         ) : null}
                                       </div>
@@ -2711,39 +2816,39 @@ const BudgetView = React.memo(() => {
                               </td>
                               <td className="py-2 px-3 text-center">
                                 <div className="flex justify-center gap-1 flex-wrap">
-                                  {canUseFunction("po", "approve") && (isPoRevPcm || isPoRevGm) ? (
+                                  {(canAllowPoRevisionFromBudget || canDenyPoRevisionFromBudget) && (isPoRevPcm || isPoRevGm) ? (
                                     <>
-                                      <Button
+                                      {canAllowPoRevisionFromBudget && <Button
                                         variant="success"
                                         className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                         onClick={() => handlePORevisionAllow(po.id)}
                                       >
                                         <CheckCircle size={11} /> อนุญาตแก้ไข
-                                      </Button>
-                                      <Button
+                                      </Button>}
+                                      {canDenyPoRevisionFromBudget && <Button
                                         variant="danger"
                                         className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                         onClick={() => handlePORevisionDeny(po.id)}
                                       >
                                         <XCircle size={11} /> ไม่อนุญาต
-                                      </Button>
+                                      </Button>}
                                     </>
-                                  ) : canUseFunction("po", "approve") ? (
+                                  ) : (canApprovePoFromBudget || canRejectPoFromBudget) ? (
                                     <>
-                                      <Button
+                                      {canApprovePoFromBudget && <Button
                                         variant="success"
                                         className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                         onClick={() => handlePOAction(po.id, "approve")}
                                       >
                                         <CheckCircle size={11} /> {approveLabel}
-                                      </Button>
-                                      <Button
+                                      </Button>}
+                                      {canRejectPoFromBudget && <Button
                                         variant="danger"
                                         className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                         onClick={() => handlePOAction(po.id, "reject")}
                                       >
                                         <XCircle size={11} /> Reject
-                                      </Button>
+                                      </Button>}
                                     </>
                                   ) : null}
                                 </div>
@@ -2778,7 +2883,7 @@ const BudgetView = React.memo(() => {
                       <div
                         className="absolute left-0 top-full mt-1 z-[20] py-1 bg-white border border-slate-200 rounded-lg shadow-lg min-w-[220px]"
                       >
-                        {canUseFunction("budget", "submit") && (
+                              {canSubmitBudget && (
                           <button
                             type="button"
                             className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 text-blue-700 flex items-center gap-2 font-medium"
@@ -2819,7 +2924,7 @@ const BudgetView = React.memo(() => {
               </div>
 
               <div className="flex gap-2 flex-wrap">
-              {canUseFunction("budget", "delete") && (
+              {canClearAllBudgets && (
                 <Button
                   variant="outline"
                   onClick={handleClearAllBudgets}
@@ -2830,7 +2935,7 @@ const BudgetView = React.memo(() => {
                 </Button>
               )}
               
-              {(userRole === "Administrator" || userRole === "MD") && (
+              {(userRole === "Administrator" || userRole === "MD") && canRecalculateBudget && (
                 <Button
                   variant="outline"
                   onClick={handleRecalculateTotals}
@@ -2985,7 +3090,7 @@ const BudgetView = React.memo(() => {
                                   </span>
                                 )}
                               </div>
-                              {b.status === "Approved" && canUseFunction("budget", "add") && (
+                              {b.status === "Approved" && canAddSubItem && (
                                 <button
                                   onClick={() => openSubItemModal(b)}
                                   className="text-slate-300 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-all ml-2"
@@ -3075,41 +3180,41 @@ const BudgetView = React.memo(() => {
                           )}
                           {isColumnVisible("budget", "actions") && <td className="py-1 px-3 text-right">
                             <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              {canUseFunction("budget", "approve") && (userRole === "MD" || userRole === "Administrator") &&
+                              {(canApproveBudget || canRejectBudget) && (userRole === "MD" || userRole === "Administrator") &&
                                 b.status === "Wait MD Approve" && (
                                   <>
-                                    <Button
+                                    {canApproveBudget && <Button
                                       variant="success"
                                       className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                       onClick={() => handleApproveBudget(b.id)}
                                     >
                                       Approve
-                                    </Button>
-                                    <Button
+                                    </Button>}
+                                    {canRejectBudget && <Button
                                       variant="danger"
                                       className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                       onClick={() => openRejectModal(b)}
                                     >
                                       Reject
-                                    </Button>
+                                    </Button>}
                                   </>
                                 )}
-                              {canUseFunction("budget", "approve") && isRevisionPending && (userRole === "MD" || userRole === "Administrator") && (
+                              {(canAllowEditBudget || canRejectBudgetRevision) && isRevisionPending && (userRole === "MD" || userRole === "Administrator") && (
                                 <>
-                                  <Button
+                                  {canAllowEditBudget && <Button
                                     variant="warning"
                                     className="px-2 py-0.5 text-[10px]"
                                     onClick={(e) => { e.stopPropagation(); handleAllowEdit(b.id); }}
                                   >
                                     อนุญาตแก้ไข
-                                  </Button>
-                                  <Button
+                                  </Button>}
+                                  {canRejectBudgetRevision && <Button
                                     variant="secondary"
                                     className="px-2 py-0.5 text-[10px]"
                                     onClick={(e) => { e.stopPropagation(); handleRejectRevision(b.id); }}
                                   >
                                     ไม่อนุญาตแก้ไข
-                                  </Button>
+                                  </Button>}
                                 </>
                               )}
                               {canEdit && (
@@ -3132,7 +3237,7 @@ const BudgetView = React.memo(() => {
                                   )}
                                 </>
                               )}
-                              {canUseFunction("budget", "requestRevision") && b.status === "Approved" && (
+                              {canRequestBudgetRevision && b.status === "Approved" && (
                                 <button
                                   className="text-orange-500 hover:text-orange-700 p-1 hover:bg-orange-50 rounded"
                                   title="ขอแก้ไข (Revise)"
@@ -3144,7 +3249,7 @@ const BudgetView = React.memo(() => {
                                   <RefreshCw size={14} />
                                 </button>
                               )}
-                              {canUseFunction("budget", "submit") && b.status === "Draft" && (
+                              {canSubmitBudget && b.status === "Draft" && (
                                 <button
                                   className="text-green-500 hover:text-green-700 p-1 hover:bg-green-50 rounded"
                                   title="ส่งขออนุมัติ"
@@ -3247,7 +3352,7 @@ const BudgetView = React.memo(() => {
                                 })())}</td>}
                                 {isColumnVisible("budget", "actions") && <td className="py-0.5 px-3 text-right border-b border-slate-100">
                                   <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    {(sub.status === "Rejected" && (userRole === "PM" || userRole === "CM" || userRole === "MD" || userRole === "Administrator")) && (
+                                    {(sub.status === "Rejected" && canEditSubItem && (userRole === "PM" || userRole === "CM" || userRole === "MD" || userRole === "Administrator")) && (
                                       <button
                                         className="text-blue-500 hover:text-blue-700 p-1 hover:bg-blue-50 rounded"
                                         title="แก้ไขรายการที่ถูกปฏิเสธ"
@@ -3258,7 +3363,7 @@ const BudgetView = React.memo(() => {
                                     )}
                                     {sub.status === "Draft" && (
                                       <>
-                                        {canUseFunction("budget", "edit") && (
+                                        {canEditSubItem && (
                                           <button
                                             className="text-blue-500 hover:text-blue-700 p-1 hover:bg-blue-50 rounded"
                                             title="แก้ไข"
@@ -3267,7 +3372,7 @@ const BudgetView = React.memo(() => {
                                             <Edit size={14} />
                                           </button>
                                         )}
-                                        {canUseFunction("budget", "delete") && (
+                                        {canDeleteSubItem && (
                                           <button
                                             className="text-red-500 hover:text-red-700 p-1 hover:bg-red-50 rounded"
                                             title="ลบ"
@@ -3276,7 +3381,7 @@ const BudgetView = React.memo(() => {
                                             <Trash2 size={14} />
                                           </button>
                                         )}
-                                        {canUseFunction("budget", "submit") && b.status === "Approved" && (
+                                        {canSubmitSubItem && b.status === "Approved" && (
                                           <button
                                             className="text-green-500 hover:text-green-700 p-1 hover:bg-green-50 rounded"
                                             title="ส่งขออนุมัติ"
@@ -3287,7 +3392,7 @@ const BudgetView = React.memo(() => {
                                         )}
                                       </>
                                     )}
-                                    {canUseFunction("budget", "requestRevision") && sub.status === "Approved" && (
+                                    {canRequestSubItemRevision && sub.status === "Approved" && (
                                       <button
                                         className="text-orange-500 hover:text-orange-700 p-1 hover:bg-orange-50 rounded"
                                         title="ขอแก้ไข (Revise)"
@@ -3296,28 +3401,28 @@ const BudgetView = React.memo(() => {
                                         <RefreshCw size={14} />
                                       </button>
                                     )}
-                                    {canUseFunction("budget", "approve") && (userRole === "MD" || userRole === "Administrator") && sub.status === "Revision Pending" && (
+                                    {(canAllowEditSubItem || canRejectSubItemRevision) && (userRole === "MD" || userRole === "Administrator") && sub.status === "Revision Pending" && (
                                       <>
-                                        <Button
+                                        {canAllowEditSubItem && <Button
                                           variant="warning"
                                           className="px-2 py-0.5 text-[10px]"
                                           onClick={(e) => { e.stopPropagation(); handleAllowEditSubItem(b.id, sub.id); }}
                                         >
                                           อนุญาตแก้ไข
-                                        </Button>
-                                        <Button
+                                        </Button>}
+                                        {canRejectSubItemRevision && <Button
                                           variant="secondary"
                                           className="px-2 py-0.5 text-[10px]"
                                           onClick={(e) => { e.stopPropagation(); handleRejectRevisionSubItem(b.id, sub.id); }}
                                         >
                                           ไม่อนุญาตแก้ไข
-                                        </Button>
+                                        </Button>}
                                       </>
                                     )}
-                                    {canUseFunction("budget", "approve") && (userRole === "MD" || userRole === "Administrator") && sub.status === "Wait MD Approve" && (
+                                    {(canApproveSubItem || canRejectSubItem) && (userRole === "MD" || userRole === "Administrator") && sub.status === "Wait MD Approve" && (
                                       <>
-                                        <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleApproveSubItem(b.id, sub.id)}>Approve</Button>
-                                        <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={(e) => { e.stopPropagation(); openReasonModal("reject", b.id, sub.id); }}>Reject</Button>
+                                        {canApproveSubItem && <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleApproveSubItem(b.id, sub.id)}>Approve</Button>}
+                                        {canRejectSubItem && <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={(e) => { e.stopPropagation(); openReasonModal("reject", b.id, sub.id); }}>Reject</Button>}
                                       </>
                                     )}
                                   </div>
@@ -3642,7 +3747,7 @@ const BudgetView = React.memo(() => {
                   <>
                     <Button variant="secondary" onClick={closeBudgetModal}>ยกเลิก (Cancel)</Button>
                     <Button variant="warning" onClick={() => handleSaveBudget("Draft")}>บันทึก (Draft)</Button>
-                    {canUseFunction("budget", "submit") && (
+                    {canSubmitBudget && (
                       <Button variant="primary" onClick={() => handleSaveBudget("Wait MD Approve")}>ส่งขออนุมัติ (Resubmit)</Button>
                     )}
                   </>
@@ -3887,7 +3992,7 @@ const BudgetView = React.memo(() => {
                   <>
                     <Button variant="secondary" onClick={() => { setEditingSubItem(null); closeSubItemModal(); }}>ยกเลิก</Button>
                     <Button variant="secondary" onClick={handleSaveSubItem}>บันทึก</Button>
-                    {canUseFunction("budget", "submit") && (
+                    {canSubmitSubItem && (
                       <Button onClick={handleResubmitSubItemFromModal}>ขออนุมัติ</Button>
                     )}
                   </>

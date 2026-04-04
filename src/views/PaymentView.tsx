@@ -162,21 +162,31 @@ const PaymentView = React.memo(() => {
   // helper: ถ้า function key ยังไม่ได้กำหนดค่าใน Firestore (empty []) → fallback ให้ใช้ role check เดิม
   const funcConfigured = (key: string) => {
     const roles = functionPermissions?.["payment-subcontract"]?.[key];
-    return Array.isArray(roles) && roles.length > 0;
+    return Array.isArray(roles);
   };
-  const canHandleWaitPay = myRoles.includes("Administrator") || (
-    myRoles.some((r) => ["Procurement", "PCM"].includes(r))
-    && (!funcConfigured("pay") || canUseFunction?.("payment-subcontract", "pay") !== false)
-  );
-  const canApproveFlow = myRoles.includes("Administrator") || (
-    !funcConfigured("approveFlow") || canUseFunction?.("payment-subcontract", "approveFlow") !== false
-  );
-  const canSubmitPeriod = myRoles.includes("Administrator") || (
-    !funcConfigured("submit") || canUseFunction?.("payment-subcontract", "submit") !== false
-  );
+  const canCreatePayment = canUseFunction?.("payment-subcontract", "create") !== false;
+  const canEditPayment = canUseFunction?.("payment-subcontract", "edit") !== false;
+  const canDeletePayment = canUseFunction?.("payment-subcontract", "delete") !== false;
+  const canSubmitPayment = canUseFunction?.("payment-subcontract", "submit") !== false;
+  const canApproveFlow = myRoles.includes("Administrator") || canUseFunction?.("payment-subcontract", "approveFlow") !== false;
+  const canRejectFlow = myRoles.includes("Administrator") || canUseFunction?.("payment-subcontract", "rejectFlow") !== false;
+  const canApproveRevision = myRoles.includes("Administrator") || canUseFunction?.("payment-subcontract", "approveRevision") !== false;
+  const canRejectRevision = myRoles.includes("Administrator") || canUseFunction?.("payment-subcontract", "rejectRevision") !== false;
+  const canSavePeriodDraft = myRoles.includes("Administrator") || canUseFunction?.("payment-subcontract", "savePeriodDraft") !== false;
+  const canSubmitPeriod = myRoles.includes("Administrator") || canUseFunction?.("payment-subcontract", "submitPeriod") !== false;
+  const canApprovePeriod = myRoles.includes("Administrator") || canUseFunction?.("payment-subcontract", "approvePeriod") !== false;
   const canRequestRevision = myRoles.includes("Administrator") || (
     !funcConfigured("requestRevision") || canUseFunction?.("payment-subcontract", "requestRevision") !== false
   );
+  const canPayPayment = myRoles.includes("Administrator") || (
+    myRoles.some((r) => ["Procurement", "PCM"].includes(r))
+    && canUseFunction?.("payment-subcontract", "pay") !== false
+  );
+  const canHoldPayment = myRoles.includes("Administrator") || (
+    myRoles.some((r) => ["Procurement", "PCM"].includes(r))
+    && canUseFunction?.("payment-subcontract", "hold") !== false
+  );
+  const canStartNextPeriod = myRoles.includes("Administrator") || canUseFunction?.("payment-subcontract", "startNextPeriod") !== false;
   // ── aliases ที่ชัดเจนเพื่อส่งให้ ResizableTh (ใช้ handleColumnResize จาก AppDataContext)
   const handlePaymentMainColResize = handleColumnResize;
   const handlePayItemColResize = handleColumnResize;
@@ -316,6 +326,8 @@ const PaymentView = React.memo(() => {
 
   // ─── Save ────────────────────────────────────────────────────────────────────
   const handleSave = async () => {
+    if (editingId && !canEditPayment) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์แก้ไข Payment", "warning");
+    if (!editingId && !canCreatePayment) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์สร้าง Payment", "warning");
     if (!form.paymentType) return showAlert("ข้อมูลไม่ครบ", "กรุณาเลือก Payment Type", "warning");
     if (!form.paymentNo.trim()) return showAlert("ข้อมูลไม่ครบ", "กรุณาระบุ Payment No.", "warning");
     if (!form.contractorId) return showAlert("ข้อมูลไม่ครบ", "กรุณาเลือกผู้รับเหมา", "warning");
@@ -380,6 +392,7 @@ const PaymentView = React.memo(() => {
 
   // ─── Delete ──────────────────────────────────────────────────────────────────
   const handleDelete = (p: any) => {
+    if (!canDeletePayment) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ลบ Payment", "warning");
     openConfirm("ยืนยันการลบ", `ต้องการลบ Payment ${p.paymentNo} ใช่หรือไม่?`, async () => {
       await deleteData("payments", p.id, { skipLog: true });
       await logAction("Delete Payment", `ลบ Payment ${p.paymentNo}`, selectedProjectId);
@@ -389,6 +402,7 @@ const PaymentView = React.memo(() => {
   // ─── Approval Actions ────────────────────────────────────────────────────────
 
   const handleSubmit = async (p: any) => {
+    if (!canSubmitPayment) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ส่ง Payment", "warning");
     const firstStatus = getFirstPendingStatus(myRoles);
     setActioning(true);
     try {
@@ -406,6 +420,7 @@ const PaymentView = React.memo(() => {
   };
 
   const handleApprove = async (p: any) => {
+    if (!canApproveFlow) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุมัติ Payment", "warning");
     const next = getNextStatus(p.status);
     const label = p.status === "Pending Procurement" ? "Active" : next;
     setActioning(true);
@@ -425,6 +440,7 @@ const PaymentView = React.memo(() => {
 
   const handleRejectConfirm = async () => {
     if (!rejectModalPayment) return;
+    if (!canRejectFlow) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธ Payment", "warning");
     setActioning(true);
     try {
       await updateData("payments", rejectModalPayment.id, {
@@ -445,6 +461,7 @@ const PaymentView = React.memo(() => {
 
   const handleRequestRevision = async () => {
     if (!revisionModalPayment) return;
+    if (!canRequestRevision) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ขอแก้ไข Payment", "warning");
     const p = revisionModalPayment;
     const targetRole = p.status === "Active" ? "MD" : p.status.replace("Pending ", "");
     setActioning(true);
@@ -467,6 +484,7 @@ const PaymentView = React.memo(() => {
   };
 
   const handleApproveRevision = async (p: any) => {
+    if (!canApproveRevision) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุมัติคำขอแก้ไข", "warning");
     setActioning(true);
     try {
       await updateData("payments", p.id, {
@@ -483,6 +501,7 @@ const PaymentView = React.memo(() => {
   };
 
   const handleRejectRevision = async (p: any) => {
+    if (!canRejectRevision) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธคำขอแก้ไข", "warning");
     setActioning(true);
     try {
       await updateData("payments", p.id, {
@@ -519,6 +538,8 @@ const PaymentView = React.memo(() => {
   };
 
   const handleSaveActiveQty = async (p: any, finalize = false) => {
+    if (finalize && !canSubmitPeriod) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์บันทึกงวดงานส่งอนุมัติ", "warning");
+    if (!finalize && !canSavePeriodDraft) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์บันทึก Draft งวดงาน", "warning");
     // validate ก่อน map — ห้าม throw ใน .map()
     for (const it of (p.items || [])) {
       const key = `${it.prId}_${it.prItemIndex}`;
@@ -584,6 +605,7 @@ const PaymentView = React.memo(() => {
 
   // ─── Period (งวดงาน) Approve ─────────────────────────────────────────────────
   const handlePeriodApprove = async (p: any) => {
+    if (!canApprovePeriod) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุมัติงวดงาน", "warning");
     const isCheckStep = p.status === "งวดงาน Pending CM";
     const nextStatus = isCheckStep ? "งวดงาน Pending PM" : "Wait Pay";
     const sigField = isCheckStep ? "periodCheckedBy" : "periodApprovedBy";
@@ -607,6 +629,7 @@ const PaymentView = React.memo(() => {
 
   const handlePayConfirm = async () => {
     if (!waitPayModalPayment) return;
+    if (!canPayPayment) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์จ่าย Payment", "warning");
     if (!paySlipFile) {
       showAlert("ข้อมูลไม่ครบ", "กรุณาอัปโหลดไฟล์ Payin/สลิปก่อนกด Pay", "warning");
       return;
@@ -648,6 +671,7 @@ const PaymentView = React.memo(() => {
 
   const handleHoldConfirm = async () => {
     if (!holdModalPayment) return;
+    if (!canHoldPayment) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ Hold Payment", "warning");
     if (!holdReasonInput.trim()) {
       showAlert("ข้อมูลไม่ครบ", "กรุณาระบุเหตุผล Hold", "warning");
       return;
@@ -688,6 +712,7 @@ const PaymentView = React.memo(() => {
 
   // ─── Start next period (Paid → Active, archive current period) ──────────────
   const handleStartNextPeriod = async (p: any) => {
+    if (!canStartNextPeriod) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์เปิดงวดถัดไป", "warning");
     setActioning(true);
     try {
       const existingPeriods = p.periods || [];
@@ -835,7 +860,7 @@ const PaymentView = React.memo(() => {
         </div>
 
         <div className="flex items-center gap-2">
-          {canUseFunction?.("payment-subcontract", "create") !== false && (
+          {canCreatePayment && (
             <Button
               onClick={openCreate}
               className="bg-orange-500 hover:bg-orange-600 text-white shadow-md shadow-orange-100 border-none rounded-xl px-4 py-2 text-sm font-bold flex items-center gap-2 transition-all active:scale-95"
@@ -1004,7 +1029,7 @@ const PaymentView = React.memo(() => {
                       >
                         <div className="flex justify-end gap-1 flex-wrap">
                           {/* Period flow approve */}
-                          {isPeriodFlow(p.status) && isPeriodPendingForMe(p.status, myRoles) && (
+                          {canApprovePeriod && isPeriodFlow(p.status) && isPeriodPendingForMe(p.status, myRoles) && (
                             <Button
                               variant="success"
                               size="sm"
@@ -1015,7 +1040,7 @@ const PaymentView = React.memo(() => {
                             </Button>
                           )}
                           {/* Draft → Submit */}
-                          {(p.status || "Draft") === "Draft" && canUseFunction?.("payment-subcontract", "create") !== false && (
+                          {(p.status || "Draft") === "Draft" && canSubmitPayment && (
                             <button
                               title="ส่งอนุมัติ"
                               className="p-1 rounded text-orange-500 hover:text-orange-700 hover:bg-orange-50 transition-colors"
@@ -1030,9 +1055,9 @@ const PaymentView = React.memo(() => {
                               <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleApprove(p)}>
                                 Approve
                               </Button>
-                              <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectModalPayment(p); setRejectReason(""); }}>
+                              {canRejectFlow && <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectModalPayment(p); setRejectReason(""); }}>
                                 Reject
-                              </Button>
+                              </Button>}
                             </>
                           )}
                           {/* Pending Procurement → Active + Reject */}
@@ -1041,20 +1066,20 @@ const PaymentView = React.memo(() => {
                               <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleApprove(p)}>
                                 Active
                               </Button>
-                              <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectModalPayment(p); setRejectReason(""); }}>
+                              {canRejectFlow && <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectModalPayment(p); setRejectReason(""); }}>
                                 Reject
-                              </Button>
+                              </Button>}
                             </>
                           )}
                           {/* Revision request pending — for current approver */}
-                          {canApproveFlow && p.revisionRequested && isPendingForMe(p.status === "Active" ? "Pending MD" : p.status, myRoles) && (
+                          {p.revisionRequested && isPendingForMe(p.status === "Active" ? "Pending MD" : p.status, myRoles) && (
                             <>
-                              <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleApproveRevision(p)}>
+                              {canApproveRevision && <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleApproveRevision(p)}>
                                 Approve Rev
-                              </Button>
-                              <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleRejectRevision(p)}>
+                              </Button>}
+                              {canRejectRevision && <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleRejectRevision(p)}>
                                 Reject Rev
-                              </Button>
+                              </Button>}
                             </>
                           )}
                           {/* Revision request button (orange circle) */}
@@ -1068,35 +1093,35 @@ const PaymentView = React.memo(() => {
                             </button>
                           )}
                           {/* Edit (Draft or Rejected) */}
-                          {["Draft", "Rejected"].includes(p.status || "Draft") && canUseFunction?.("payment-subcontract", "edit") !== false && (
+                          {["Draft", "Rejected"].includes(p.status || "Draft") && canEditPayment && (
                             <button title="แก้ไข" className={`p-1 rounded transition-colors ${p.status === "Rejected" ? "text-red-500 hover:text-red-700 hover:bg-red-50" : "text-blue-500 hover:text-blue-700 hover:bg-blue-50"}`} onClick={() => openEdit(p)}>
                               <Edit size={13} />
                             </button>
                           )}
                           {/* Delete (Draft only) */}
-                          {(p.status || "Draft") === "Draft" && canUseFunction?.("payment-subcontract", "delete") !== false && (
+                          {(p.status || "Draft") === "Draft" && canDeletePayment && (
                             <button title="ลบ" className="p-1 rounded text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors" onClick={() => handleDelete(p)}>
                               <Trash2 size={13} />
                             </button>
                           )}
-                          {p.status === "Wait Pay" && canHandleWaitPay && (
+                          {p.status === "Wait Pay" && (canPayPayment || canHoldPayment) && (
                             <>
-                              <Button
+                              {canPayPayment && <Button
                                 variant="success"
                                 size="sm"
                                 className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                 onClick={() => { setWaitPayModalPayment(p); setPaySlipFile(null); }}
                               >
                                 Pay
-                              </Button>
-                              <Button
+                              </Button>}
+                              {canHoldPayment && <Button
                                 variant="danger"
                                 size="sm"
                                 className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                 onClick={() => { setHoldModalPayment(p); setHoldReasonInput(""); setHoldDecision("keepHold"); }}
                               >
                                 Hold
-                              </Button>
+                              </Button>}
                             </>
                           )}
                         </div>
@@ -1508,7 +1533,7 @@ const PaymentView = React.memo(() => {
                 {/* Left: action buttons based on status */}
                 <div className="flex items-center gap-2 flex-wrap">
                   {/* Submit (Draft) */}
-                  {(vp.status || "Draft") === "Draft" && canUseFunction?.("payment-subcontract", "create") !== false && (
+                  {(vp.status || "Draft") === "Draft" && canSubmitPayment && (
                     <button
                       disabled={actioning}
                       onClick={() => handleSubmit(vp)}
@@ -1527,13 +1552,13 @@ const PaymentView = React.memo(() => {
                       >
                         <ThumbsUp size={14} /> อนุมัติ
                       </button>
-                      <button
+                      {canRejectFlow && <button
                         disabled={actioning}
                         onClick={() => { setRejectModalPayment(vp); setRejectReason(""); }}
                         className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium flex items-center gap-2 disabled:opacity-60"
                       >
                         <ThumbsDown size={14} /> ปฏิเสธ
-                      </button>
+                      </button>}
                     </>
                   )}
                   {/* Pending Procurement → Active + Reject */}
@@ -1546,36 +1571,36 @@ const PaymentView = React.memo(() => {
                       >
                         <ThumbsUp size={14} /> Active
                       </button>
-                      <button
+                      {canRejectFlow && <button
                         disabled={actioning}
                         onClick={() => { setRejectModalPayment(vp); setRejectReason(""); }}
                         className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium flex items-center gap-2 disabled:opacity-60"
                       >
                         <ThumbsDown size={14} /> Reject
-                      </button>
+                      </button>}
                     </>
                   )}
                   {/* Revision pending — for current approver */}
-                  {canApproveFlow && vp.revisionRequested && isPendingForMe(vp.status === "Active" ? "Pending MD" : vp.status, myRoles) && (
+                  {vp.revisionRequested && isPendingForMe(vp.status === "Active" ? "Pending MD" : vp.status, myRoles) && (
                     <>
-                      <button
+                      {canApproveRevision && <button
                         disabled={actioning}
                         onClick={() => handleApproveRevision(vp)}
                         className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium flex items-center gap-2 disabled:opacity-60"
                       >
                         <ShieldCheck size={14} /> อนุมัติขอแก้ไข
-                      </button>
-                      <button
+                      </button>}
+                      {canRejectRevision && <button
                         disabled={actioning}
                         onClick={() => handleRejectRevision(vp)}
                         className="px-4 py-2 rounded-lg border border-red-300 text-red-600 text-sm font-medium flex items-center gap-2 hover:bg-red-50 disabled:opacity-60"
                       >
                         <XCircle size={14} /> ปฏิเสธขอแก้ไข
-                      </button>
+                      </button>}
                     </>
                   )}
                   {/* งวดงาน Period Approve */}
-                  {canApproveFlow && isPeriodFlow(vp.status) && isPeriodPendingForMe(vp.status, myRoles) && (
+                  {canApprovePeriod && isPeriodFlow(vp.status) && isPeriodPendingForMe(vp.status, myRoles) && (
                     <button
                       disabled={actioning}
                       onClick={() => handlePeriodApprove(vp)}
@@ -1618,39 +1643,39 @@ const PaymentView = React.memo(() => {
                               บันทึกงวดงาน
                             </button>
                           )}
-                          <button
+                          {canSavePeriodDraft && <button
                             disabled={savingActiveQty}
                             onClick={() => handleSaveActiveQty(vp, false)}
                             className="px-4 py-2 rounded-lg border border-green-400 text-green-700 hover:bg-green-50 text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
                           >
                             {savingActiveQty ? <span className="animate-spin w-3 h-3 border-2 border-green-500 border-t-transparent rounded-full" /> : <Save size={14} />}
                             Save Draft
-                          </button>
+                          </button>}
                         </>
                       )}
                     </>
                   )}
                   {/* Wait Pay → Pay/Hold (Procurement, PCM, Admin) */}
-                  {vp.status === "Wait Pay" && canHandleWaitPay && (
+                  {vp.status === "Wait Pay" && (canPayPayment || canHoldPayment) && (
                     <>
-                      <button
+                      {canPayPayment && <button
                         disabled={actioning}
                         onClick={() => { setWaitPayModalPayment(vp); setPaySlipFile(null); }}
                         className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
                       >
                         <Upload size={14} /> Pay
-                      </button>
-                      <button
+                      </button>}
+                      {canHoldPayment && <button
                         disabled={actioning}
                         onClick={() => { setHoldModalPayment(vp); setHoldReasonInput(""); setHoldDecision("keepHold"); }}
                         className="px-4 py-2 rounded-lg border border-amber-400 text-amber-700 hover:bg-amber-50 text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
                       >
                         <Clock size={14} /> Hold
-                      </button>
+                      </button>}
                     </>
                   )}
                   {/* Paid → ใส่ปริมาณ (start next period) — ซ่อนเมื่อครบ 100% ทุกรายการ หรือ Procurement */}
-                  {vp.status === "Paid" && !isViewingOldPeriod && !allItemsComplete && !myRoles.some(r => r === "Procurement") && (
+                  {vp.status === "Paid" && !isViewingOldPeriod && !allItemsComplete && !myRoles.some(r => r === "Procurement") && canStartNextPeriod && (
                     <button
                       disabled={actioning}
                       onClick={() => handleStartNextPeriod(vp)}
@@ -1672,7 +1697,7 @@ const PaymentView = React.memo(() => {
                     </button>
                   )}
                   {/* Edit (Draft or Rejected) */}
-                  {["Draft", "Rejected"].includes(vp.status || "Draft") && !isViewingOldPeriod && canUseFunction?.("payment-subcontract", "edit") !== false && (
+                  {["Draft", "Rejected"].includes(vp.status || "Draft") && !isViewingOldPeriod && canEditPayment && (
                     <button
                       onClick={() => { setViewingPayment(null); openEdit(viewingPayment); }}
                       className={`px-4 py-2 rounded-lg text-white text-sm font-medium flex items-center gap-2 ${vp.status === "Rejected" ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"}`}
@@ -2282,19 +2307,21 @@ const PaymentView = React.memo(() => {
                   <Button variant="secondary" size="sm" onClick={closeModal} className="px-4 rounded-lg">
                     ยกเลิก
                   </Button>
-                  <Button
-                    size="sm"
-                    className="px-5 rounded-lg flex items-center gap-1.5 bg-orange-600 hover:bg-orange-700 text-white text-xs font-semibold"
-                    onClick={handleSave}
-                    disabled={saving}
-                  >
-                    {saving ? (
-                      <span className="animate-spin inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full" />
-                    ) : (
-                      <Save size={13} />
-                    )}
-                    {saving ? "กำลังบันทึก..." : "บันทึก Payment"}
-                  </Button>
+                  {(editingId ? canEditPayment : canCreatePayment) && (
+                    <Button
+                      size="sm"
+                      className="px-5 rounded-lg flex items-center gap-1.5 bg-orange-600 hover:bg-orange-700 text-white text-xs font-semibold"
+                      onClick={handleSave}
+                      disabled={saving}
+                    >
+                      {saving ? (
+                        <span className="animate-spin inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full" />
+                      ) : (
+                        <Save size={13} />
+                      )}
+                      {saving ? "กำลังบันทึก..." : "บันทึก Payment"}
+                    </Button>
+                  )}
                 </div>
               </div>
             </motion.div>
