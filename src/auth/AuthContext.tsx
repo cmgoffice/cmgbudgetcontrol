@@ -27,6 +27,9 @@ export const AuthProvider = ({ children }) => {
     message: "",
     onConfirm: () => { },
     variant: "primary",
+    requireText: "",
+    requireTextLabel: "",
+    requireTextPlaceholder: "",
   });
 
   // Global Alert Functions
@@ -39,7 +42,15 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const openConfirm = useCallback(
-    (title, message, onConfirm, variant = "primary") => {
+    (title, message, onConfirm, variant = "primary", options = {}) => {
+      const resolvedOptions =
+        variant && typeof variant === "object"
+          ? variant
+          : options;
+      const resolvedVariant =
+        typeof variant === "string"
+          ? variant
+          : resolvedOptions?.variant || "primary";
       setConfirmState({
         isOpen: true,
         title,
@@ -48,7 +59,10 @@ export const AuthProvider = ({ children }) => {
           onConfirm();
           setConfirmState((prev) => ({ ...prev, isOpen: false }));
         },
-        variant,
+        variant: resolvedVariant,
+        requireText: resolvedOptions?.requireText || "",
+        requireTextLabel: resolvedOptions?.requireTextLabel || "",
+        requireTextPlaceholder: resolvedOptions?.requireTextPlaceholder || "",
       });
     },
     []
@@ -402,6 +416,9 @@ export const AuthProvider = ({ children }) => {
         onConfirm={confirmState.onConfirm}
         onCancel={closeConfirm}
         variant={confirmState.variant}
+        requireText={confirmState.requireText}
+        requireTextLabel={confirmState.requireTextLabel}
+        requireTextPlaceholder={confirmState.requireTextPlaceholder}
       />
     </AuthContext.Provider>
   );

@@ -48,11 +48,7 @@ function buildUpdateLogDetails(collectionName, id, data, lists) {
     existing && typeof existing === "object" ? { ...existing, ...data } : { ...data };
 
   if (collectionName === "pos") {
-    const po = pos.find((p) => p.id === id);
-    const m = merge(po);
-    const label = m.poNo || id;
-    const vendor = m.vendorName ? truncateLogDetail(m.vendorName, 80) : "";
-    return vendor ? `Updated PO ${label} — ${vendor}` : `Updated PO ${label}`;
+    return null;
   }
   if (collectionName === "prs") {
     const pr = prs.find((p) => p.id === id);
@@ -507,7 +503,9 @@ export const AppDataProvider = ({
       if (collectionName === "projects")  setProjects((prev)  => prev.map((p) => (p.id === id ? { ...p, ...payload } : p)));
       if (!skipLog) {
         const details = buildUpdateLogDetails(collectionName, id, payload, listBundle);
-        await logAction("Update", details, deriveLogProjectId(collectionName, id, payload, listBundle));
+        if (details) {
+          await logAction("Update", details, deriveLogProjectId(collectionName, id, payload, listBundle));
+        }
       }
       return true;
     } catch (e) {

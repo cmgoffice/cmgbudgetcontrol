@@ -112,6 +112,7 @@ const POView = React.memo(() => {
       const from = poApproveFlightFromStatus[po?.id];
       return from != null && po?.status === from;
     };
+
     const [poRevisionReason, setPoRevisionReason] = useState("");
     const [poRevisionPoId, setPoRevisionPoId] = useState<string | null>(null);
 
@@ -1870,7 +1871,13 @@ const POView = React.memo(() => {
       const pendingActionStatuses = ["Pending PCM", "Pending GM", PO_REVISION_PENDING_PCM, PO_REVISION_PENDING_GM, "Rejected", "Draft", "Pending Close PO"];
 
       const base = pos
-        .filter((po) => po.projectId === selectedProjectId && po.status !== "Closed PO" && po.status !== "Received" && !pendingActionStatuses.includes(po.status))
+        .filter((po) =>
+          po.projectId === selectedProjectId &&
+          po.status !== "Received" &&
+          po.status !== "Closed PO" &&
+          po.status !== "Invoice Issue" &&
+          !pendingActionStatuses.includes(po.status)
+        )
         .map((po) => {
           const vendor = vendors.find((v) => v.id === po.vendorId);
           const prIds = getPoRefPrIds(po);

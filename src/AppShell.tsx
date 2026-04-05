@@ -8,7 +8,7 @@ import {
   XCircle, Key, Save, RefreshCw, Hash, FileOutput, Search, ListFilter,
   Clock, Package, Tag, ClipboardList, CheckSquare, Square,
   Paperclip, Mail, Flame, MapPinned, CircleDot, Zap, Building2, MapPin,
-  DollarSign, Calendar, PlusCircle, ChevronRight, ChevronLeft, ChevronUp, Play, BarChart3,
+  DollarSign, Calendar, PlusCircle, ChevronRight, ChevronLeft, ChevronUp, Play, BarChart3, Menu,
   FileSpreadsheet, Download, Upload, CreditCard
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -90,13 +90,51 @@ const AppShell = () => {
       return v !== null ? v === "true" : true;
     } catch { return true; }
   });
+  const [isCompactViewport, setIsCompactViewport] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.innerWidth < 1024;
+  });
+  const [isSidebarOpenMobile, setIsSidebarOpenMobile] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const mediaQuery = window.matchMedia("(max-width: 1023px)");
+    const updateViewport = (event) => {
+      const matches = typeof event?.matches === "boolean" ? event.matches : mediaQuery.matches;
+      setIsCompactViewport(matches);
+      setIsSidebarOpenMobile(false);
+      if (matches) setSidebarCollapsed(false);
+      else {
+        try {
+          const stored = localStorage.getItem("cmgbudget_sidebarCollapsed");
+          setSidebarCollapsed(stored !== null ? stored === "true" : true);
+        } catch {
+          setSidebarCollapsed(true);
+        }
+      }
+    };
+    updateViewport();
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", updateViewport);
+      return () => mediaQuery.removeEventListener("change", updateViewport);
+    }
+    mediaQuery.addListener(updateViewport);
+    return () => mediaQuery.removeListener(updateViewport);
+  }, []);
+
   const toggleSidebar = () => {
+    if (isCompactViewport) {
+      setIsSidebarOpenMobile((open) => !open);
+      return;
+    }
     setSidebarCollapsed((c) => {
       const next = !c;
       try { localStorage.setItem("cmgbudget_sidebarCollapsed", String(next)); } catch (_) {}
       return next;
     });
   };
+  const closeMobileSidebar = useCallback(() => {
+    if (isCompactViewport) setIsSidebarOpenMobile(false);
+  }, [isCompactViewport]);
 
   const {
     activeMenu, setActiveMenu, handleMenuChange,
@@ -147,13 +185,43 @@ const AppShell = () => {
     if (activeMenu === "po" || activeMenu === "po-table" || activeMenu === "vendor") loadVendors();
   }, [activeMenu, loadVendors]);
 
+  useEffect(() => {
+    closeMobileSidebar();
+  }, [activeMenu, closeMobileSidebar]);
+
+  const changeMenu = useCallback((menu) => {
+    handleMenuChange(menu);
+    if (isCompactViewport) {
+      setProfileDropdownOpen(false);
+      setIsBellOpen(false);
+    }
+  }, [handleMenuChange, isCompactViewport, setIsBellOpen]);
+
+  const sidebarDense = isCompactViewport;
+  const shouldShowSidebar = !isFullScreenModalOpen;
+  const moduleMenus = ["budget","pr","po","payment-subcontract","invoice","receive"].includes(activeMenu);
+
   return (
-    <div className="flex h-screen bg-slate-100 font-sans">
-      {!isFullScreenModalOpen && (
-      <aside className={`${sidebarCollapsed ? "w-[4.5rem]" : "w-64"} bg-slate-900 text-white flex flex-col shadow-xl z-20 transition-[width] duration-200 ease-out overflow-hidden`}>
-        <div className={`border-b border-slate-800 bg-slate-950 shrink-0 ${sidebarCollapsed ? "p-2" : "p-4"}`}>
-          <div className={`rounded-xl bg-slate-800/80 border border-slate-700 ${sidebarCollapsed ? "p-2" : "p-3"}`}>
-            <div className={`flex items-center ${sidebarCollapsed ? "justify-center" : "gap-3"}`}>
+    <div className="app-shell-root relative flex overflow-hidden bg-slate-100 font-sans">
+      {shouldShowSidebar && isCompactViewport && isSidebarOpenMobile && (
+        <button
+          type="button"
+          aria-label="ปิดเมนู"
+          onClick={closeMobileSidebar}
+          className="fixed inset-0 z-30 bg-slate-950/45 backdrop-blur-[2px] lg:hidden"
+        />
+      )}
+      {shouldShowSidebar && (
+      <aside
+        className={`${
+          isCompactViewport
+            ? `fixed inset-y-0 left-0 z-40 w-[17rem] max-w-[85vw] transform transition-transform duration-200 ease-out ${isSidebarOpenMobile ? "translate-x-0" : "-translate-x-full"}`
+            : `${sidebarCollapsed ? "w-[4.5rem]" : "w-64"} relative z-20 transition-[width] duration-200 ease-out`
+        } bg-slate-900 text-white flex flex-col shadow-xl overflow-hidden`}
+      >
+        <div className={`border-b border-slate-800 bg-slate-950 shrink-0 ${sidebarCollapsed && !isCompactViewport ? "p-2" : isCompactViewport ? "p-3" : "p-4"}`}>
+          <div className={`rounded-xl bg-slate-800/80 border border-slate-700 ${sidebarCollapsed && !isCompactViewport ? "p-2" : isCompactViewport ? "p-2.5" : "p-3"}`}>
+            <div className={`flex items-center ${sidebarCollapsed && !isCompactViewport ? "justify-center" : "gap-3"}`}>
               <ProfileAvatar
                 src={userData?.profilePhotoUrl || user?.photoURL}
                 className="w-11 h-11 rounded-full object-cover border-2 border-slate-600 shadow-md flex-shrink-0"
@@ -163,9 +231,9 @@ const AppShell = () => {
                   </div>
                 }
               />
-              {!sidebarCollapsed && (
+              {(!sidebarCollapsed || isCompactViewport) && (
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-bold text-white truncate">
+                  <p className={`font-bold text-white truncate ${isCompactViewport ? "text-[13px]" : "text-sm"}`}>
                     {userData?.firstName} {userData?.lastName}
                   </p>
                   <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wide flex flex-wrap gap-0.5">
@@ -176,18 +244,19 @@ const AppShell = () => {
             </div>
           </div>
         </div>
-        <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto custom-scrollbar">
+        <nav className={`flex-1 overflow-y-auto custom-scrollbar ${isCompactViewport ? "p-2.5 space-y-1" : "p-2 space-y-0.5"}`}>
           {canAccessModule("dashboard") && (
             <SidebarItem
               icon={<LayoutDashboard size={20} />}
               label="ภาพรวม"
               active={activeMenu === "dashboard"}
-              onClick={() => handleMenuChange("dashboard")}
+              onClick={() => changeMenu("dashboard")}
               collapsed={sidebarCollapsed}
+              dense={sidebarDense}
             />
           )}
-          {!sidebarCollapsed && (
-            <div className="pt-4 pb-2 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">
+          {(!sidebarCollapsed || isCompactViewport) && (
+            <div className={`font-bold text-slate-500 uppercase tracking-wider ${isCompactViewport ? "pt-3 pb-1.5 px-3 text-[10px]" : "pt-4 pb-2 px-4 text-xs"}`}>
               Modules
             </div>
           )}
@@ -196,8 +265,9 @@ const AppShell = () => {
               icon={<Briefcase size={20} className="text-amber-300" />}
               label="จัดการโครงการ"
               active={activeMenu === "projects"}
-              onClick={() => handleMenuChange("projects")}
+              onClick={() => changeMenu("projects")}
               collapsed={sidebarCollapsed}
+              dense={sidebarDense}
             />
           )}
           {(() => {
@@ -215,9 +285,10 @@ const AppShell = () => {
                     icon={<Wallet size={20} className="text-emerald-300" />}
                     label="Project Budget"
                     active={activeMenu === "budget"}
-                    onClick={() => handleMenuChange("budget")}
+                    onClick={() => changeMenu("budget")}
                     collapsed={sidebarCollapsed}
                     badge={projBadge.budget}
+                    dense={sidebarDense}
                   />
                 )}
                 {(canAccessModule("pr") || canAccessModule("pr-table")) && (
@@ -225,9 +296,10 @@ const AppShell = () => {
                     icon={<FileText size={20} className="text-sky-300" />}
                     label="Purchase Request (PR)"
                     active={activeMenu === "pr"}
-                    onClick={() => handleMenuChange("pr")}
+                    onClick={() => changeMenu("pr")}
                     collapsed={sidebarCollapsed}
                     badge={projBadge.pr}
+                    dense={sidebarDense}
                   />
                 )}
                 {(canAccessModule("po") || canAccessModule("po-table")) && (
@@ -235,9 +307,10 @@ const AppShell = () => {
                     icon={<ShoppingCart size={20} className="text-rose-300" />}
                     label="Purchase Order (PO)"
                     active={activeMenu === "po"}
-                    onClick={() => handleMenuChange("po")}
+                    onClick={() => changeMenu("po")}
                     collapsed={sidebarCollapsed}
                     badge={projBadge.po}
+                    dense={sidebarDense}
                   />
                 )}
                 {canAccessModule("payment-subcontract") && (
@@ -245,9 +318,10 @@ const AppShell = () => {
                     icon={<CreditCard size={20} className="text-orange-300" />}
                     label="Payment Subcontract"
                     active={activeMenu === "payment-subcontract"}
-                    onClick={() => handleMenuChange("payment-subcontract")}
+                    onClick={() => changeMenu("payment-subcontract")}
                     collapsed={sidebarCollapsed}
                     badge={projBadge["payment-subcontract"]}
+                    dense={sidebarDense}
                   />
                 )}
               </>
@@ -258,8 +332,9 @@ const AppShell = () => {
               icon={<FileInput size={20} />}
               label="Receive"
               active={activeMenu === "receive"}
-              onClick={() => handleMenuChange("receive")}
+              onClick={() => changeMenu("receive")}
               collapsed={sidebarCollapsed}
+              dense={sidebarDense}
             />
           )}
           {canAccessModule("invoice") && (
@@ -267,13 +342,14 @@ const AppShell = () => {
               icon={<FileText size={20} />}
               label="Invoice"
               active={activeMenu === "invoice"}
-              onClick={() => handleMenuChange("invoice")}
+              onClick={() => changeMenu("invoice")}
               collapsed={sidebarCollapsed}
+              dense={sidebarDense}
             />
           )}
 
-          {!sidebarCollapsed && (
-            <div className="pt-4 pb-2 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">
+          {(!sidebarCollapsed || isCompactViewport) && (
+            <div className={`font-bold text-slate-500 uppercase tracking-wider ${isCompactViewport ? "pt-3 pb-1.5 px-3 text-[10px]" : "pt-4 pb-2 px-4 text-xs"}`}>
               Database
             </div>
           )}
@@ -282,8 +358,9 @@ const AppShell = () => {
               icon={<Building2 size={20} className="text-violet-300" />}
               label="Vendor Management"
               active={activeMenu === "vendor"}
-              onClick={() => handleMenuChange("vendor")}
+              onClick={() => changeMenu("vendor")}
               collapsed={sidebarCollapsed}
+              dense={sidebarDense}
             />
           )}
           {canAccessModule("material") && (
@@ -291,13 +368,14 @@ const AppShell = () => {
               icon={<Package size={20} className="text-teal-300" />}
               label="Material"
               active={activeMenu === "material"}
-              onClick={() => handleMenuChange("material")}
+              onClick={() => changeMenu("material")}
               collapsed={sidebarCollapsed}
+              dense={sidebarDense}
             />
           )}
 
-          {!sidebarCollapsed && (
-            <div className="pt-4 pb-2 px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">
+          {(!sidebarCollapsed || isCompactViewport) && (
+            <div className={`font-bold text-slate-500 uppercase tracking-wider ${isCompactViewport ? "pt-3 pb-1.5 px-3 text-[10px]" : "pt-4 pb-2 px-4 text-xs"}`}>
               System
             </div>
           )}
@@ -306,8 +384,9 @@ const AppShell = () => {
               icon={<User size={20} />}
               label="ข้อมูลส่วนตัว (Profile)"
               active={activeMenu === "profile"}
-              onClick={() => handleMenuChange("profile")}
+              onClick={() => changeMenu("profile")}
               collapsed={sidebarCollapsed}
+              dense={sidebarDense}
             />
           )}
           {canAccessModule("admin") && (
@@ -315,31 +394,42 @@ const AppShell = () => {
               icon={<Shield size={20} />}
               label="ผู้ดูแลระบบ (Admin)"
               active={activeMenu === "admin"}
-              onClick={() => handleMenuChange("admin")}
+              onClick={() => changeMenu("admin")}
               collapsed={sidebarCollapsed}
+              dense={sidebarDense}
             />
           )}
         </nav>
-        <div className={`border-t border-slate-800 shrink-0 flex items-center justify-center gap-1 ${sidebarCollapsed ? "py-2 px-1" : "p-4"}`}>
+        <div className={`border-t border-slate-800 shrink-0 flex items-center justify-center gap-1 ${isCompactViewport ? "p-3" : sidebarCollapsed ? "py-2 px-1" : "p-4"}`}>
           <button
             type="button"
             onClick={toggleSidebar}
             className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-            title={sidebarCollapsed ? "ขยายแถบเมนู" : "ย่อแถบเมนู"}
+            title={isCompactViewport ? "ปิดแถบเมนู" : sidebarCollapsed ? "ขยายแถบเมนู" : "ย่อแถบเมนู"}
           >
-            {sidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+            {isCompactViewport ? <ChevronLeft size={18} /> : sidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
           </button>
-          {!sidebarCollapsed && (
+          {(!sidebarCollapsed || isCompactViewport) && (
             <span className="text-[10px] text-slate-500 text-center flex-1">CMG Budget Control V.20</span>
           )}
         </div>
       </aside>
       )}
 
-      <main className="flex-1 overflow-y-auto bg-slate-50/50">
+      <main className="app-shell-main min-w-0 flex-1 overflow-y-auto bg-slate-50/50">
         {!isFullScreenModalOpen && (
-        <header className="bg-white/80 backdrop-blur-md shadow-sm px-8 py-4 flex items-center gap-4 sticky top-0 z-20 border-b border-slate-100">
-          <h1 className="text-xl font-bold text-slate-800 flex items-center gap-2 shrink-0">
+        <header className="bg-white/80 backdrop-blur-md shadow-sm px-3 py-2 md:px-5 md:py-2.5 flex flex-wrap items-center gap-2 md:gap-3 sticky top-0 z-20 border-b border-slate-100">
+          {isCompactViewport && (
+            <button
+              type="button"
+              onClick={toggleSidebar}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors hover:bg-slate-100 lg:hidden"
+              title="เปิดเมนู"
+            >
+              <Menu size={16} />
+            </button>
+          )}
+          <h1 className="min-w-0 flex-1 text-[15px] font-bold text-slate-800 flex items-center gap-2 md:flex-none md:text-lg">
             {activeMenu === "dashboard"
               ? "Dashboard"
               : activeMenu === "projects"
@@ -364,12 +454,12 @@ const AppShell = () => {
                                   ? "Admin Dashboard"
                                   : "Module View"}
           </h1>
-          {/* Spacer — ดัน project cards + bell + profile ไปชิดขวา */}
-          <div className="flex-1" />
+          {!isCompactViewport && <div className="flex-1" />}
 
           {/* Project Cards — อยู่ขวา ก่อนกระดิ่ง ขยายออกซ้ายเมื่อมีโครงการเพิ่ม */}
-          {["budget","pr","po","payment-subcontract","invoice","receive"].includes(activeMenu) && visibleProjects.length > 0 && (
-            <div className="flex items-center gap-1.5 shrink-0">
+          {moduleMenus && visibleProjects.length > 0 && (
+            <div className={`${isCompactViewport ? "order-3 flex w-full overflow-x-auto no-scrollbar pb-0.5" : "flex items-center gap-1.5 shrink-0"}`}>
+              <div className={`${isCompactViewport ? "flex min-w-max items-center gap-1.5" : "flex items-center gap-1.5 shrink-0"}`}>
               {visibleProjects.map((p) => {
                 const projPending = pendingByProject?.find((x) => x.projectId === p.id);
                 const pendingTotal = projPending?.total || 0;
@@ -379,7 +469,9 @@ const AppShell = () => {
                     type="button"
                     onClick={() => setSelectedProjectId(p.id)}
                     title={p.name}
-                    className={`relative flex-shrink-0 w-10 h-10 rounded-lg text-[10px] font-extrabold transition-all text-center flex items-center justify-center px-0.5 break-all ${
+                    className={`relative flex-shrink-0 rounded-lg font-extrabold transition-all text-center flex items-center justify-center break-all ${
+                      isCompactViewport ? "w-8 h-8 px-0.5 text-[9px]" : "w-9 h-9 px-0.5 text-[10px]"
+                    } ${
                       selectedProjectId === p.id
                         ? "bg-orange-500 text-white shadow-md scale-105"
                         : "bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200"
@@ -394,18 +486,19 @@ const AppShell = () => {
                   </button>
                 );
               })}
+              </div>
             </div>
           )}
 
-          <div className="flex items-center gap-3 shrink-0">
+          <div className={`flex items-center gap-2 shrink-0 ${isCompactViewport ? "ml-auto" : "gap-2.5"}`}>
             {/* Bell notification button */}
             <div className="relative">
               <button
                 onClick={() => setIsBellOpen(!isBellOpen)}
-                className="relative p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                className={`relative text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors ${isCompactViewport ? "p-2" : "p-1.5"}`}
                 title="รายการรออนุมัติ"
               >
-                <Bell size={20} />
+                <Bell size={18} />
                 {totalPendingCount > 0 && (
                   <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-[9px] font-bold rounded-full min-w-[16px] h-4 flex items-center justify-center px-1 shadow-md animate-pulse">
                     {totalPendingCount > 99 ? "99+" : totalPendingCount}
@@ -479,19 +572,21 @@ const AppShell = () => {
               <button
                 type="button"
                 onClick={() => setProfileDropdownOpen((o) => !o)}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200/80 transition-colors"
+                className={`flex items-center rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200/80 transition-colors ${
+                  isCompactViewport ? "gap-1.5 px-2 py-1.5" : "gap-2 px-2.5 py-1"
+                }`}
                 title="โปรไฟล์"
               >
                 <ProfileAvatar
                   src={userData?.profilePhotoUrl || user?.photoURL}
-                  className="w-8 h-8 rounded-full object-cover border border-slate-300"
+                  className={`${isCompactViewport ? "w-8 h-8" : "w-7 h-7"} rounded-full object-cover border border-slate-300`}
                   fallback={
-                    <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-xs shadow-md">
+                    <div className={`${isCompactViewport ? "w-8 h-8" : "w-7 h-7"} bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-xs shadow-md`}>
                       {userData?.firstName?.charAt(0) || user?.email?.charAt(0) || "?"}
                     </div>
                   }
                 />
-                <ChevronDown size={16} className="text-slate-500" />
+                <ChevronDown size={14} className="text-slate-500" />
               </button>
               <AnimatePresence>
                 {profileDropdownOpen && (
@@ -506,7 +601,7 @@ const AppShell = () => {
                       type="button"
                       className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50"
                       onClick={() => {
-                        handleMenuChange("profile");
+                        changeMenu("profile");
                         setProfileDropdownOpen(false);
                       }}
                     >
@@ -530,13 +625,13 @@ const AppShell = () => {
         </header>
         )}
         <div
-          className={
+          className={`app-shell-content ${
             ["projects", "budget", "pr", "po", "payment-subcontract", "vendor", "material", "invoice", "receive", "admin"].includes(
               activeMenu
             )
-              ? "p-4 md:p-6 w-full max-w-none min-w-0"
-              : "p-8 max-w-[1600px] mx-auto"
-          }
+              ? "p-3 md:p-6 w-full max-w-none min-w-0"
+              : "p-3 md:p-8 max-w-[1600px] mx-auto"
+          }`}
         >
           {!rolePermissionsReady ? (
             <div className="flex items-center justify-center h-64 text-slate-400 gap-3">
@@ -885,7 +980,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   openConfirm?: (title: string, message: string, onConfirm: () => void | Promise<void>, variant?: string) => void;
   selectedProjectId?: string | null;
 }) => {
-  const { canUseFunction, userRoles = [], logAction, isColumnVisible } = useAppData();
+  const { canUseFunction, userRoles = [], logAction, isColumnVisible, invoices = [], receives = [] } = useAppData();
   const tableModule = mode === "pr" ? "pr-table" : "po-table";
   const tblId = mode === "pr" ? "pr-table" : "po-table";
   const [searchTerm, setSearchTerm] = React.useState("");
@@ -902,6 +997,68 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   const [pdfPreviewUrl, setPdfPreviewUrl] = React.useState<string | null>(null);
 
   const isPR = mode === "pr";
+
+  const getRelatedInvoicesForPo = React.useCallback((po: any) => {
+    if (!po) return [];
+    const poNo = String(po.poNo || "").trim();
+    return invoices.filter((inv: any) =>
+      inv?.poId === po.id ||
+      (poNo && [inv?.poNo, inv?.poRef].some((value) => String(value || "").trim() === poNo))
+    );
+  }, [invoices]);
+
+  const getRelatedReceivesForPo = React.useCallback((po: any) => {
+    if (!po) return [];
+    const poNo = String(po.poNo || "").trim();
+    return receives.filter((rcv: any) =>
+      rcv?.poId === po.id ||
+      (poNo && String(rcv?.poNo || "").trim() === poNo)
+    );
+  }, [receives]);
+
+  const handleActivePO = React.useCallback(async (po: any) => {
+    if (!po || po.status !== "Closed PO") return false;
+    try {
+      const relatedInvoices = getRelatedInvoicesForPo(po);
+      const relatedReceives = getRelatedReceivesForPo(po);
+
+      for (const receive of relatedReceives) {
+        if (receive?.pdfPath) await deleteGeneratedPdf(receive.pdfPath);
+      }
+
+      for (const invoice of relatedInvoices) {
+        const deleted = await deleteData?.("invoices", invoice.id, { skipLog: true });
+        if (!deleted) throw new Error(`ลบ Invoice ${invoice.invNo || invoice.id} ไม่สำเร็จ`);
+      }
+
+      for (const receive of relatedReceives) {
+        const deleted = await deleteData?.("receives", receive.id, { skipLog: true });
+        if (!deleted) throw new Error(`ลบ Receive ${receive.rpNo || receive.receiveNo || receive.id} ไม่สำเร็จ`);
+      }
+
+      const resumed = await updateData?.("pos", po.id, {
+        status: "Approved",
+        statusNow: "Approved",
+        closeRequestedAt: null,
+      }, { skipLog: true });
+      if (!resumed) throw new Error(`คืนสถานะ PO ${po.poNo || po.id} ไม่สำเร็จ`);
+
+      await logAction?.(
+        "Approve Active PO",
+        `คืนสถานะ PO ${po.poNo || po.id}: Closed PO → Approved, ลบ ${relatedInvoices.length} Invoice และ ${relatedReceives.length} Receive`,
+        po.projectId
+      );
+      showAlert?.(
+        "สำเร็จ",
+        `PO ${po.poNo || po.id} กลับเป็น Approved แล้ว และลบ ${relatedInvoices.length} Invoice / ${relatedReceives.length} Receive เรียบร้อย`,
+        "success"
+      );
+      return true;
+    } catch (e: any) {
+      showAlert?.("คืนสถานะ PO ไม่สำเร็จ", errMsg(e), "error");
+      return false;
+    }
+  }, [deleteData, getRelatedInvoicesForPo, getRelatedReceivesForPo, logAction, showAlert, updateData]);
 
   const prPoTableWrapRef = React.useRef(null);
   const resizeFn = handleColumnResize || ((_tid: string, _k: string, _w: number) => {});
@@ -1431,6 +1588,32 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                               showAlert?.("สำเร็จ", "ปิด PO เรียบร้อย", "success");
                             })}>
                               ยืนยันปิด
+                            </button>
+                          )}
+                          {!isPR && userRoles.includes("Administrator") && r.status === "Closed PO" && (
+                            <button
+                              type="button"
+                              className="p-1.5 rounded hover:bg-teal-100 text-teal-700"
+                              title="Active PO"
+                              onClick={() => {
+                                const relatedInvoices = getRelatedInvoicesForPo(r);
+                                const relatedReceives = getRelatedReceivesForPo(r);
+                                openConfirm?.(
+                                  "Active PO",
+                                  `การคืนสถานะ PO ${r.poNo || r.id} จะเปลี่ยนสถานะกลับเป็น Approved\n\nระบบจะลบข้อมูลต่อไปนี้ถาวร:\n- Invoice ที่ผูกกับ PO นี้ ${relatedInvoices.length} รายการ\n- Receive ที่ผูกกับ PO นี้ ${relatedReceives.length} รายการ\n- PDF ของ Receive ที่อยู่ใน Firebase Storage\n\nหากต้องการดำเนินการต่อ ให้พิมพ์ Confirm`,
+                                  async () => {
+                                    await handleActivePO(r);
+                                  },
+                                  "danger",
+                                  {
+                                    requireText: "Confirm",
+                                    requireTextLabel: "พิมพ์ Confirm เพื่อยืนยันการคืนสถานะ PO",
+                                    requireTextPlaceholder: "Confirm",
+                                  }
+                                );
+                              }}
+                            >
+                              <CheckCircle size={14} />
                             </button>
                           )}
                           {canUseFunction(tableModule, "delete") && !isPR && (
@@ -1963,7 +2146,7 @@ const AdminDashboard = () => {
     const qLogs = query(
       collection(db, "artifacts", appId, "public", "data", "logs"),
       orderBy("timestamp", "desc"),
-      limit(250)
+      limit(1000)
     );
     const unsubLogs = onSnapshot(qLogs, (snapshot) => {
       setLogs(
@@ -2389,10 +2572,10 @@ const AdminDashboard = () => {
       )}
 
       {activeTab === "logs" && (
-        <Card className="overflow-hidden animate-in fade-in slide-in-from-bottom-2">
-          <div className="p-4 border-b flex justify-between items-center bg-slate-50">
+        <Card className="overflow-hidden animate-in fade-in slide-in-from-bottom-2 flex flex-col min-h-[calc(100vh-220px)]">
+          <div className="px-3 py-2.5 border-b flex justify-between items-center bg-slate-50">
             <h3 className="font-bold text-slate-700 text-sm">
-              System Logs (Last 250 activities)
+              System Logs (Last 1000 activities)
             </h3>
             <Button
               variant="outline"
@@ -2402,15 +2585,15 @@ const AdminDashboard = () => {
               <FileSpreadsheet size={14} /> Export CSV
             </Button>
           </div>
-          <div className="max-h-[600px] overflow-y-auto">
-            <table className="w-full text-left text-sm">
+          <div className="flex-1 overflow-y-auto">
+            <table className="w-full text-left text-xs">
               <thead className="bg-slate-100 text-slate-700 font-semibold sticky top-0 z-10 shadow-sm">
                 <tr>
-                  <th className="p-3 w-40">Timestamp</th>
-                  <th className="p-3 w-44">User</th>
-                  <th className="p-3 w-28">Action</th>
-                  <th className="p-3 w-52">โครงการ</th>
-                  <th className="p-3">Details</th>
+                  <th className="px-2.5 py-2 w-40">Timestamp</th>
+                  <th className="px-2.5 py-2 w-44">User</th>
+                  <th className="px-2.5 py-2 w-28">Action</th>
+                  <th className="px-2.5 py-2 w-52">โครงการ</th>
+                  <th className="px-2.5 py-2">Details</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -2421,28 +2604,28 @@ const AdminDashboard = () => {
                       key={log.id}
                       className="hover:bg-slate-50 transition-colors"
                     >
-                      <td className="p-3 text-xs text-slate-500 font-mono whitespace-nowrap">
+                      <td className="px-2.5 py-2 text-[11px] text-slate-500 font-mono whitespace-nowrap align-top">
                         {new Date(log.timestamp).toLocaleString("th-TH")}
                       </td>
-                      <td className="p-3">
-                        <div className="text-xs font-bold text-slate-700">
+                      <td className="px-2.5 py-2 align-top">
+                        <div className="text-[11px] font-bold text-slate-700 leading-tight">
                           {log.user}
                         </div>
-                        <div className="text-[10px] text-slate-400">
+                        <div className="text-[10px] text-slate-400 leading-tight">
                           {log.role}
                         </div>
                       </td>
-                      <td className="p-3">{getActionBadge(log.action)}</td>
-                      <td className="p-3">
+                      <td className="px-2.5 py-2 align-top">{getActionBadge(log.action)}</td>
+                      <td className="px-2.5 py-2 align-top">
                         {projectName ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-cyan-700 bg-cyan-50 border border-cyan-200 rounded px-2 py-0.5 break-words max-w-[200px]">
+                          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-cyan-700 bg-cyan-50 border border-cyan-200 rounded px-1.5 py-0.5 break-words max-w-[200px] leading-tight">
                             {projectName}
                           </span>
                         ) : (
                           <span className="text-[10px] text-slate-300">—</span>
                         )}
                       </td>
-                      <td className="p-3 text-xs text-slate-600 break-words max-w-xs">
+                      <td className="px-2.5 py-2 text-[11px] text-slate-600 break-words max-w-xs leading-tight align-top">
                         {cleanLogDetails(log.details || "")}
                       </td>
                     </tr>

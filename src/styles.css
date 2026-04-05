@@ -13,6 +13,18 @@
   text-align: center;
 }
 
+.app-shell-root {
+  height: 100vh;
+}
+
+.app-shell-main {
+  min-height: 0;
+}
+
+.app-shell-content {
+  padding-bottom: 1rem;
+}
+
 /* =============================
    Page / Menu Transitions — OPACITY ONLY (no transform to avoid breaking fixed positioning)
    ============================= */
@@ -303,4 +315,51 @@ textarea {
    ============================= */
 input[type="checkbox"] {
   transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+@media (max-width: 1023px) {
+  .app-shell-content {
+    padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  div.fixed.inset-0 {
+    padding-top: 56px;
+    padding-left: 12px;
+    padding-right: 12px;
+    align-items: flex-start;
+  }
+
+  nav button {
+    animation: none;
+  }
+}
+
+@supports (height: 100dvh) {
+  .app-shell-root {
+    height: 100dvh;
+  }
+}
+
+@media (max-width: 767px) {
+  html,
+  body,
+  #root {
+    overflow-x: hidden;
+  }
+
+  thead th {
+    height: 32px;
+    font-size: 11px;
+  }
+
+  tbody td {
+    height: 32px;
+    font-size: 11px;
+  }
+
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
 }

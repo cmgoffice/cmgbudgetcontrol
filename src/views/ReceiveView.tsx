@@ -36,7 +36,7 @@ const ReceiveView = React.memo(() => {
     visibleProjects, loadVendors,
   } = useAppData();
   const { selectedProjectId } = useUI();
-  const { user, userData } = useContext(AuthContext);
+  const { user, userData, logAction } = useContext(AuthContext);
   const canViewReceiveHistory = canUseFunction("receive", "viewHistory");
 
   // ไม่โหลด vendors ตอน mount — โหลดเมื่อ user เปิด PO detail จริงๆ (ลด Firebase reads)
@@ -520,12 +520,18 @@ const ReceiveView = React.memo(() => {
         ...(totalPhotos > 0 ? { totalPhotos } : {}),
       };
 
-      const success = await addData("receives", receiveData);
+      const success = await addData("receives", receiveData, null, { skipLog: true });
       if (!success) {
         setSaving(false);
         setSavingStep("");
         return;
       }
+
+      await logAction?.(
+        "Create Receive",
+        `สร้าง Receive ${receiveNo} สำหรับ PO ${po.poNo || po.id}${resolvedPrNo ? ` / PR ${resolvedPrNo}` : ""}`,
+        selectedProjectId
+      );
 
       // Check if all items are now fully received
       const summary = { ...(receiveSummary[po.id] || {}) };
@@ -545,7 +551,8 @@ const ReceiveView = React.memo(() => {
           po.id,
           isPayBeforeReceive
             ? { status: "Closed PO", statusNow: "Closed PO" }
-            : { status: "Received", statusNow: "Received" }
+            : { status: "Received", statusNow: "Received" },
+          { skipLog: true }
         );
         showAlert(
           "รับของครบ",
@@ -555,7 +562,7 @@ const ReceiveView = React.memo(() => {
           "success"
         );
       } else {
-        await updateData("pos", po.id, { statusNow: "Partial Receive" });
+        await updateData("pos", po.id, { statusNow: "Partial Receive" }, { skipLog: true });
         showAlert("สำเร็จ", `บันทึกรับของ ${receiveNo} เรียบร้อย`, "success");
       }
 

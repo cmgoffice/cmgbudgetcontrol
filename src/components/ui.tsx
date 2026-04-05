@@ -120,11 +120,13 @@ export const ProjectSelect = ({ projects, selectedId, onChange }: any) => (
   </div>
 );
 
-export const SidebarItem = React.memo(({ icon, label, active, onClick, collapsed, badge }: any) => (
+export const SidebarItem = React.memo(({ icon, label, active, onClick, collapsed, badge, dense = false }: any) => (
   <motion.button
     onClick={onClick}
     title={collapsed ? label : undefined}
-    className={`relative w-full flex items-center rounded-lg overflow-hidden group ${collapsed ? "justify-center p-3" : "gap-3 px-4 py-3"} ${active ? "text-white" : "text-slate-400 hover:text-white hover:bg-slate-800/80"}`}
+    className={`relative w-full flex items-center rounded-lg overflow-hidden group ${
+      collapsed ? "justify-center p-3" : dense ? "gap-2.5 px-3 py-2.5" : "gap-3 px-4 py-3"
+    } ${active ? "text-white" : "text-slate-400 hover:text-white hover:bg-slate-800/80"}`}
     whileHover={{ scale: 1.02 }}
     whileTap={{ scale: 0.98 }}
     transition={{ type: "spring", stiffness: 400, damping: 25 }}
@@ -137,7 +139,7 @@ export const SidebarItem = React.memo(({ icon, label, active, onClick, collapsed
         transition={{ type: "spring", stiffness: 350, damping: 30 }}
       />
     )}
-    <span className={`relative z-10 flex items-center ${collapsed ? "justify-center" : "gap-3"} w-full`}>
+      <span className={`relative z-10 flex items-center ${collapsed ? "justify-center" : "gap-3"} w-full`}>
       <span className="flex-shrink-0 relative">
         {icon}
         {/* badge บน icon เมื่อ collapsed */}
@@ -148,7 +150,7 @@ export const SidebarItem = React.memo(({ icon, label, active, onClick, collapsed
         )}
       </span>
       {!collapsed && (
-        <span className="font-medium text-sm flex-1 flex items-center justify-between">
+        <span className={`font-medium flex-1 flex items-center justify-between ${dense ? "text-[13px]" : "text-sm"}`}>
           {label}
           {badge > 0 && (
             <span className="ml-2 bg-red-500 text-white text-[9px] font-bold rounded-full min-w-[16px] h-4 flex items-center justify-center px-1 shadow animate-pulse">
@@ -163,7 +165,8 @@ export const SidebarItem = React.memo(({ icon, label, active, onClick, collapsed
   prev.label === next.label &&
   prev.active === next.active &&
   prev.collapsed === next.collapsed &&
-  prev.badge === next.badge
+  prev.badge === next.badge &&
+  prev.dense === next.dense
 ));
 
 export const formatCurrency = (amount: number) =>

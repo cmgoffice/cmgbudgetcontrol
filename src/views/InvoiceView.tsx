@@ -58,6 +58,7 @@ const InvoiceView = React.memo(() => {
     pos,
     vendors,
     invoices,
+    receives,
     addData,
     updateData,
     deleteData,
@@ -84,12 +85,64 @@ const InvoiceView = React.memo(() => {
   const [histSearch, setHistSearch] = useState("");
 
   const getVendorName = useCallback(
-    (vendorId: string) => {
+    (vendorId: string, fallbackName?: string) => {
       const v = vendors.find((vd) => vd.id === vendorId);
-      return v ? v.name : "-";
+      return v?.name || fallbackName || "-";
     },
     [vendors]
   );
+
+  const getPoVendorName = useCallback(
+    (po: any) =>
+      getVendorName(
+        po?.vendorId,
+        po?.vendorName || po?.vendor || po?.supplierName || po?.supplier
+      ),
+    [getVendorName]
+  );
+
+  const projectReceives = useMemo(
+    () => receives.filter((rcv) => rcv.projectId === selectedProjectId),
+    [receives, selectedProjectId]
+  );
+
+  const receiveDocsByPoId = useMemo(() => {
+    const map: Record<string, any[]> = {};
+    projectReceives.forEach((rcv) => {
+      if (!rcv?.poId) return;
+      if (!map[rcv.poId]) map[rcv.poId] = [];
+      map[rcv.poId].push(rcv);
+    });
+
+    Object.values(map).forEach((list) => {
+      list.sort((a: any, b: any) => {
+        const aDate = new Date(a.receivedDate || a.createdAt || 0).getTime();
+        const bDate = new Date(b.receivedDate || b.createdAt || 0).getTime();
+        return bDate - aDate;
+      });
+    });
+
+    return map;
+  }, [projectReceives]);
+
+  const formatDate = useCallback((value?: string) => {
+    if (!value) return "-";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleDateString("th-TH");
+  }, []);
+
+  const getPoAmountExVat = useCallback((po: any) => {
+    let subtotal = 0;
+    if (Array.isArray(po?.items) && po.items.length > 0) {
+      subtotal = po.items.reduce(
+        (sum: number, item: any) => sum + Number(item.amount || 0),
+        0
+      );
+    }
+    const discount = Number(po?.discount || 0);
+    return Math.max(0, subtotal - discount);
+  }, []);
 
   // POs eligible for invoice entry for this project
   // - Normal flow: Received
@@ -110,12 +163,12 @@ const InvoiceView = React.memo(() => {
         (po.poNo || "").toLowerCase().includes(poPOSearch.toLowerCase());
       const vendorOk =
         !poVendorSearch ||
-        getVendorName(po.vendorId)
+        getPoVendorName(po)
           .toLowerCase()
           .includes(poVendorSearch.toLowerCase());
       return poNoOk && vendorOk;
     });
-  }, [invoiceEligiblePOs, poPOSearch, poVendorSearch, getVendorName]);
+  }, [invoiceEligiblePOs, poPOSearch, poVendorSearch, getPoVendorName]);
 
   const groupedPOs = useMemo(() => {
     const groups: Record<string, any[]> = {};
@@ -195,9 +248,15 @@ const InvoiceView = React.memo(() => {
         status: "Pending PM",
         createdBy:
           `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim(),
-      });
+      }, null, { skipLog: true });
 
       if (success) {
+        await logAction(
+          "Create Invoice",
+          `สร้าง Invoice ${invoiceForm.invNo.trim()} สำหรับ PO ${viewingPO.poNo || viewingPO.id}`,
+          selectedProjectId
+        );
+
         const isPayBeforeReceive =
           viewingPO.receiveType === "Pay before receive" || viewingPO.status === "Wait Invoice";
 
@@ -212,7 +271,8 @@ const InvoiceView = React.memo(() => {
             : {
                 status: "Invoice Issue",
                 statusNow: "Invoice Issue",
-              }
+              },
+          { skipLog: true }
         );
         setViewingPO(null);
         showAlert("สำเร็จ", "บันทึกใบแจ้งหนี้เรียบร้อยแล้ว", "success");
@@ -282,6 +342,17 @@ const InvoiceView = React.memo(() => {
           0
         ),
     [invoiceForm.items]
+  );
+
+  const invoiceListTotals = useMemo(
+    () => ({
+      exVat: filteredPOs.reduce((sum, po) => sum + getPoAmountExVat(po), 0),
+      grand: filteredPOs.reduce(
+        (sum, po) => sum + Number(po.grandTotal || po.amount || po.totalAmount || 0),
+        0
+      ),
+    }),
+    [filteredPOs, getPoAmountExVat]
   );
 
   return (
@@ -457,48 +528,78 @@ const InvoiceView = React.memo(() => {
                         <tr>
                           <th className="py-1.5 px-3">PO No.</th>
                           <th className="py-1.5 px-3">Vendor</th>
+                          <th className="py-1.5 px-3">วันที่ PO</th>
                           <th className="py-1.5 px-3">รายละเอียด</th>
+                          <th className="py-1.5 px-3 text-center">ใบตรวจรับ</th>
                           <th className="py-1.5 px-3 text-right">ยอดรวม</th>
                           <th className="py-1.5 px-3 text-center">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {poList.map((po) => (
-                          <tr
-                            key={po.id}
-                            className={`${c.rowHover} cursor-pointer transition-colors`}
-                            onClick={() => openPODetail(po)}
-                          >
-                            <td
-                              className={`py-1.5 px-3 font-semibold ${c.poNo}`}
-                            >
-                              {po.poNo}
-                            </td>
-                            <td className="py-1.5 px-3">
-                              {getVendorName(po.vendorId)}
-                            </td>
-                            <td
-                              className="py-1.5 px-3 max-w-[260px] truncate"
-                              title={poDescription(po)}
-                            >
-                              {poDescription(po)}
-                            </td>
-                            <td className="py-1.5 px-3 text-right font-semibold">
-                              {formatCurrency(po.amount)}
-                            </td>
-                            <td className="py-1.5 px-3 text-center">
-                              <button
-                                type="button"
-                                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[10px] font-medium transition-colors ${c.btn}`}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openPODetail(po);
-                                }}
+                          (() => {
+                            const receiveDocs = receiveDocsByPoId[po.id] || [];
+                            const latestReceiveWithPdf = receiveDocs.find((rcv) => rcv?.pdfUrl);
+                            return (
+                              <tr
+                                key={po.id}
+                                className={`${c.rowHover} cursor-pointer transition-colors`}
+                                onClick={() => openPODetail(po)}
                               >
-                                <FileText size={11} /> ลงข้อมูลใบแจ้งหนี้
-                              </button>
-                            </td>
-                          </tr>
+                                <td
+                                  className={`py-1.5 px-3 font-semibold ${c.poNo}`}
+                                >
+                                  {po.poNo}
+                                </td>
+                                <td className="py-1.5 px-3" title={getPoVendorName(po)}>
+                                  {getPoVendorName(po)}
+                                </td>
+                                <td className="py-1.5 px-3 whitespace-nowrap">
+                                  {formatDate(po.poDate || po.poOpenDate)}
+                                </td>
+                                <td
+                                  className="py-1.5 px-3 max-w-[260px] truncate"
+                                  title={poDescription(po)}
+                                >
+                                  {poDescription(po)}
+                                </td>
+                                <td className="py-1.5 px-3 text-center">
+                                  {latestReceiveWithPdf ? (
+                                    <button
+                                      type="button"
+                                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[10px] font-medium transition-colors ${c.btn}`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        window.open(latestReceiveWithPdf.pdfUrl, "_blank", "noopener,noreferrer");
+                                      }}
+                                      title={latestReceiveWithPdf.rpNo || latestReceiveWithPdf.receiveNo || "เปิดใบตรวจรับสินค้า"}
+                                    >
+                                      <Eye size={11} />
+                                      {latestReceiveWithPdf.rpNo || latestReceiveWithPdf.receiveNo || "ดูใบตรวจรับ"}
+                                      {receiveDocs.length > 1 ? ` +${receiveDocs.length - 1}` : ""}
+                                    </button>
+                                  ) : (
+                                    <span className="text-slate-300">-</span>
+                                  )}
+                                </td>
+                                <td className="py-1.5 px-3 text-right font-semibold">
+                                  {formatCurrency(po.grandTotal || po.amount || po.totalAmount || 0)}
+                                </td>
+                                <td className="py-1.5 px-3 text-center">
+                                  <button
+                                    type="button"
+                                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[10px] font-medium transition-colors ${c.btn}`}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openPODetail(po);
+                                    }}
+                                  >
+                                    <FileText size={11} /> ลงข้อมูลใบแจ้งหนี้
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })()
                         ))}
                       </tbody>
                     </table>
@@ -507,6 +608,29 @@ const InvoiceView = React.memo(() => {
               );
             })
           )}
+
+          <Card className="overflow-hidden border-slate-200">
+            <table className="w-full text-left text-xs text-slate-600">
+              <tfoot className="border-t-2 border-slate-300">
+                <tr className="bg-slate-50">
+                  <td className="px-3 py-2 text-right text-xs font-semibold text-slate-600">
+                    ยอดรวมทั้งหมด (Ex VAT):
+                  </td>
+                  <td className="px-3 py-2 text-right text-sm font-bold text-slate-800 w-40">
+                    {formatCurrency(invoiceListTotals.exVat)}
+                  </td>
+                </tr>
+                <tr className="bg-slate-100">
+                  <td className="px-3 py-2 text-right text-xs font-semibold text-slate-700">
+                    ยอดรวมทั้งหมด:
+                  </td>
+                  <td className="px-3 py-2 text-right text-sm font-bold text-slate-900">
+                    {formatCurrency(invoiceListTotals.grand)}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </Card>
 
           {/* Pending invoice list stays in PO tab until paid */}
           <Card className="overflow-hidden border-violet-100">

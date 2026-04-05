@@ -41,10 +41,23 @@ export const CustomAlert = ({ isOpen, onClose, title, message, type = "info" }: 
 export const CustomConfirmModal = ({
   isOpen, title, message, onConfirm, onCancel,
   confirmText = "ยืนยัน", cancelText = "ยกเลิก", variant = "primary",
+  requireText = "", requireTextLabel = "พิมพ์เพื่อยืนยัน", requireTextPlaceholder = "",
 }: any) => {
+  const [typedText, setTypedText] = React.useState("");
+
+  React.useEffect(() => {
+    if (!isOpen) {
+      setTypedText("");
+      return;
+    }
+    setTypedText("");
+  }, [isOpen, requireText]);
+
   if (!isOpen) return null;
   const overlayClasses = "fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[10020]";
   const modalClasses = "bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm border border-slate-100";
+  const needsTypedConfirm = Boolean(requireText);
+  const isTypedConfirmValid = !needsTypedConfirm || typedText === requireText;
   return (
     <motion.div className={overlayClasses} initial="hidden" animate="visible" variants={modalOverlayVariants} transition={overlayTransition}>
       <motion.div className={modalClasses} initial="hidden" animate="visible" variants={modalContentVariants} transition={modalTransition}>
@@ -53,14 +66,32 @@ export const CustomConfirmModal = ({
             <AlertCircle size={24} strokeWidth={2.5} />
           </div>
           <h3 className="text-lg font-bold text-slate-800 mb-2">{title}</h3>
-          <p className="text-sm text-slate-500 leading-relaxed">{message}</p>
+          <p className="text-sm text-slate-500 leading-relaxed whitespace-pre-line">{message}</p>
         </div>
+        {needsTypedConfirm && (
+          <div className="mb-4">
+            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+              {requireTextLabel}
+            </label>
+            <input
+              type="text"
+              value={typedText}
+              onChange={(e) => setTypedText(e.target.value)}
+              placeholder={requireTextPlaceholder || requireText}
+              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
+            />
+            <p className="mt-1.5 text-[11px] text-slate-400">
+              ต้องพิมพ์ <span className="font-semibold text-slate-600">{requireText}</span> ให้ตรงก่อนยืนยัน
+            </p>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <button onClick={onCancel} className="py-2.5 px-4 rounded-xl border border-slate-200 text-slate-600 font-semibold text-sm hover:bg-slate-50 transition-colors">
             {cancelText}
           </button>
           <button
             onClick={onConfirm}
+            disabled={!isTypedConfirmValid}
             className={`py-2.5 px-4 rounded-xl text-white font-semibold text-sm shadow-md transition-all active:scale-95 ${variant === "danger" ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"}`}
           >
             {confirmText}
