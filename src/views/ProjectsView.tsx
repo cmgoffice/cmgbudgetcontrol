@@ -8,7 +8,7 @@ import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 import { useProportionalTableLayout } from "../hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 const ProjectsView = React.memo(() => {
-  const { visibleProjects, updateData, deleteData, showAlert, openConfirm, userRole, userData, columnWidths, handleColumnResize, logAction, canUseFunction, isColumnVisible } = useAppData();
+  const { visibleProjects, addData, updateData, deleteData, showAlert, openConfirm, userRole, userData, columnWidths, handleColumnResize, logAction, canUseFunction, isColumnVisible } = useAppData();
   const projectTableRef = useRef(null);
   const projectTableLayout = useProportionalTableLayout({
     tableId: "project",
@@ -57,18 +57,8 @@ const ProjectsView = React.memo(() => {
         showAlert("สำเร็จ", "แก้ไขข้อมูลโครงการเรียบร้อย", "success");
       }
     } else {
-      try {
-        const ref = doc(
-          db,
-          "artifacts",
-          appId,
-          "public",
-          "data",
-          "projects",
-          formData.jobNo
-        );
-        await setDoc(ref, formData);
-        await logAction("Create", `Created Project: ${formData.jobNo}`);
+      const success = await addData("projects", formData, formData.jobNo);
+      if (success) {
         setIsModalOpen(false);
         setFormData({
           jobNo: "",
@@ -81,12 +71,6 @@ const ProjectsView = React.memo(() => {
           cmName: "",
         });
         showAlert("สำเร็จ", "เพิ่มโครงการใหม่เรียบร้อยแล้ว", "success");
-      } catch (e) {
-        showAlert(
-          "Error",
-          "เกิดข้อผิดพลาดในการบันทึกข้อมูล: " + e.message,
-          "error"
-        );
       }
     }
   };

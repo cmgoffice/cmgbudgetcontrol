@@ -346,14 +346,19 @@ const POView = React.memo(() => {
       const typeCode = poTypeCode || formData.poType;
       if (!typeCode) throw new Error("กรุณาเลือก PO Type");
 
-      // YY = 2 ตัวท้าย ค.ศ.
+      // YY = 2 ตัวท้ายของปี ค.ศ. เช่น 2026 → "26"
       const yy = String(new Date().getFullYear()).slice(-2);
 
-      // JXX = Job No. ไม่มีขีด เช่น J-01 → J01
+      // เอา segment สุดท้ายของ Job No. และย่อให้สั้น
+      // PRJ-2026-J-072 → "072" → strip 1 leading zero → "72" → "J72"
+      // PRJ-2026-J-001 → "001" → strip 1 leading zero → "01" → "J01"
+      // PRJ-2026-J-02A → "02A" → keep as-is               → "J02A"
       const jobRaw = String(currentProject.jobNo).trim();
-      const jxx = jobRaw.replace(/-/g, "");
+      const lastSeg = jobRaw.split("-").pop() || "";
+      const compactSeg = /^0\d{2}$/.test(lastSeg) ? lastSeg.slice(1) : lastSeg;
+      const jxx = "J" + compactSeg; // e.g. "J72", "J01", "J02A"
 
-      // prefix คือส่วนที่ใช้นับ running number ของ type นี้
+      // prefix รูปแบบ: PO{YY}{jobShort}-{typeCode} เช่น PO26J72-CR
       const prefix = `PO${yy}${jxx}-${typeCode}`;
 
       // If manual PO number is provided, validate and use it
@@ -504,7 +509,12 @@ const POView = React.memo(() => {
         setReservedPoNo(newPoNo);
         
         // Store counter reference for potential rollback
-        const prefix = `PO${String(new Date().getFullYear()).slice(-2)}${String(currentProject.jobNo).trim().replace(/-/g, "")}-${typeCode}`;
+        const jobRaw2 = String(currentProject.jobNo).trim();
+        const lastSeg2 = jobRaw2.split("-").pop() || "";
+        const compactSeg2 = /^0\d{2}$/.test(lastSeg2) ? lastSeg2.slice(1) : lastSeg2;
+        const jxx2 = "J" + compactSeg2;
+        const yy2 = String(new Date().getFullYear()).slice(-2);
+        const prefix = `PO${yy2}${jxx2}-${typeCode}`;
         const counterId = `${selectedProjectId}__${prefix.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
         const counterRef = doc(db, "artifacts", appId, "public", "data", "settings", "poRunningNo", "poCountersByPrefix", counterId);
         setReservedCounterRef(counterRef);
@@ -549,14 +559,16 @@ const POView = React.memo(() => {
       const typeCode = poTypeCode || formData.poType;
       if (!typeCode) return "";
 
-      // YY = 2 ตัวท้าย ค.ศ.
+      // YY = 2 ตัวท้ายของปี ค.ศ. เช่น 2026 → "26"
       const yy = String(new Date().getFullYear()).slice(-2);
 
-      // JXX = Job No. ไม่มีขีด เช่น J-01 → J01
+      // เอา segment สุดท้ายของ Job No. และย่อให้สั้น
       const jobRaw = String(currentProject.jobNo).trim();
-      const jxx = jobRaw.replace(/-/g, "");
+      const lastSeg = jobRaw.split("-").pop() || "";
+      const compactSeg = /^0\d{2}$/.test(lastSeg) ? lastSeg.slice(1) : lastSeg;
+      const jxx = "J" + compactSeg;
 
-      // prefix คือส่วนที่ใช้นับ running number ของ type นี้
+      // prefix รูปแบบ: PO{YY}{jobShort}-{typeCode} เช่น PO26J72-CR
       const prefix = `PO${yy}${jxx}-${typeCode}`;
       
       return `${prefix}XXXX`; // Preview only - actual number assigned on save

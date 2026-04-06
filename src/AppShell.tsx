@@ -477,7 +477,14 @@ const AppShell = () => {
                         : "bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200"
                     }`}
                   >
-                    {p.jobNo || (p.name || "?").slice(0, 4)}
+                    {(() => {
+                      if (!p.jobNo) return (p.name || "?").slice(0, 4);
+                      const segs = String(p.jobNo).trim().split("-");
+                      const last = segs.pop() || "";
+                      // 3-digit pure number (e.g. "072") → strip 1 leading zero → "72"
+                      const compact = /^0\d{2}$/.test(last) ? last.slice(1) : last;
+                      return "J" + compact;
+                    })()}
                     {pendingTotal > 0 && (
                       <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[8px] font-bold rounded-full min-w-[14px] h-3.5 flex items-center justify-center px-0.5 shadow animate-pulse">
                         {pendingTotal > 99 ? "99+" : pendingTotal}

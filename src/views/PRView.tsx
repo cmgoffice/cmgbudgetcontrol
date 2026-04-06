@@ -241,7 +241,14 @@ const PRView = React.memo(() => {
       if (!selectedProjectId) return "";
       const currentProject = projects.find((p) => p.id === selectedProjectId);
       if (!currentProject) return "";
-      const jobNoClean = (currentProject.jobNo || "").replace(/-/g, "");
+      const rawJobNo = (currentProject.jobNo || "").trim();
+      // เอา segment สุดท้ายของ Job No. และย่อให้สั้น
+      // PRJ-2026-J-072 → "072" → strip 1 leading zero → "72" → "J72"
+      // PRJ-2026-J-001 → "001" → strip 1 leading zero → "01" → "J01"
+      // PRJ-2026-J-02A → "02A" → keep as-is               → "J02A"
+      const lastSeg = rawJobNo.split("-").pop() || "";
+      const compactSeg = /^0\d{2}$/.test(lastSeg) ? lastSeg.slice(1) : lastSeg;
+      const jobNoClean = "J" + compactSeg; // e.g. "J72", "J01", "J02A"
       let prefix = "";
       if (purchaseType === PURCHASE_TYPE_EQUIPMENT) {
         prefix = `${jobNoClean}-EQM-`;
