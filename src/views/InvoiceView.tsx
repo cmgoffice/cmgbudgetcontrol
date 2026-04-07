@@ -147,12 +147,13 @@ const InvoiceView = React.memo(() => {
   // POs eligible for invoice entry for this project
   // - Normal flow: Received
   // - Pay before receive flow: Wait Invoice
+  // - Payment Subcontractor flow: Wait Pay (เมื่อ Payment ถูกอนุมัติเป็น Wait Pay)
   const invoiceEligiblePOs = useMemo(() => {
     if (!selectedProjectId) return [];
     return pos.filter(
       (po) =>
         po.projectId === selectedProjectId &&
-        (po.status === "Received" || po.status === "Wait Invoice")
+        (po.status === "Received" || po.status === "Wait Invoice" || po.status === "Wait Pay")
     );
   }, [pos, selectedProjectId]);
 
@@ -484,7 +485,7 @@ const InvoiceView = React.memo(() => {
                 ไม่พบ PO ที่พร้อมวางบิล
               </p>
               <p className="text-xs text-slate-400 mt-1">
-                แสดง PO สถานะ Received (โฟลวปกติ) และ Wait Invoice (Pay before receive)
+                แสดง PO สถานะ Received (โฟลวปกติ), Wait Invoice (Pay before receive), Wait Pay (Payment Subcontractor)
               </p>
             </Card>
           ) : (

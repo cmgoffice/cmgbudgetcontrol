@@ -1686,7 +1686,7 @@ const POView = React.memo(() => {
         // Auto-receive PO: after final approval, skip "Approved" and go directly to "Received"
         // Pay before receive: after final approval, wait invoice before returning to Approved for Receive flow
         if (isReceiveAutoType) newStatus = "Received";
-        else if (isPayBeforeReceiveType) newStatus = "Wait Invoice";
+        else if (isPayBeforeReceiveType) newStatus = "Wait Pay";
         else newStatus = "Approved";
       }
 
@@ -1757,7 +1757,7 @@ const POView = React.memo(() => {
         const ok = await updateData("pos", poId, {
           status: newStatus,
           ...(newStatus === "Received" ? { statusNow: "Received" } : {}),
-          ...(newStatus === "Wait Invoice" ? { statusNow: "Wait Invoice" } : {}),
+          ...(newStatus === "Wait Pay" ? { statusNow: "Wait Pay" } : {}),
           rejectReason: "",
           ...(isPCMApprove ? { pcmApprovedAt: nowIso } : {}),
           ...(isGMApprove  ? { gmApprovedAt:  nowIso } : {}),

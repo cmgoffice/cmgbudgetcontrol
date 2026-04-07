@@ -617,6 +617,21 @@ const PaymentView = React.memo(() => {
         [sigField]: userData?.name || user?.email || "",
         [dateField]: new Date().toISOString(),
       }, { skipLog: true });
+
+      // เมื่อสถานะเปลี่ยนเป็น Wait Pay → ให้ PO ใน selectedPrIds เปลี่ยนเป็น "Wait Pay" ด้วย
+      if (nextStatus === "Wait Pay") {
+        const selectedPrIds = p.selectedPrIds || [];
+        for (const poId of selectedPrIds) {
+          const po = (pos || []).find((x: any) => x.id === poId);
+          if (po && po.status !== "Wait Pay") {
+            await updateData("pos", poId, {
+              status: "Wait Pay",
+              statusNow: "Wait Pay",
+            }, { skipLog: true });
+          }
+        }
+      }
+
       await logAction("Approve งวดงาน", `${isCheckStep ? "CM Check" : "PM Approve"} Payment ${p.paymentNo} → ${nextStatus}`, selectedProjectId);
       showAlert("อนุมัติสำเร็จ",
         isCheckStep ? "CM ตรวจสอบแล้ว ส่งให้ PM อนุมัติ" : "PM อนุมัติแล้ว สถานะเปลี่ยนเป็น Wait Pay",

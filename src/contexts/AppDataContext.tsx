@@ -741,7 +741,7 @@ export const AppDataProvider = ({
       if (po.status === "Pending PCM" && (roles.includes("PCM") || roles.includes("Administrator"))) newStatus = "Pending GM";
       else if (po.status === "Pending GM" && (roles.includes("GM") || roles.includes("Administrator"))) {
         if (isReceiveAutoType) newStatus = "Received";
-        else if (isPayBeforeReceiveType) newStatus = "Wait Invoice";
+        else if (isPayBeforeReceiveType) newStatus = "Wait Pay";
         else newStatus = "Approved";
       }
     } else if (action === "reject") {
@@ -750,7 +750,7 @@ export const AppDataProvider = ({
     if (newStatus !== po.status) {
       const payload: any = { status: newStatus };
       if (newStatus === "Received") payload.statusNow = "Received";
-      if (newStatus === "Wait Invoice") payload.statusNow = "Wait Invoice";
+      if (newStatus === "Wait Pay") payload.statusNow = "Wait Pay";
       if (action === "approve") payload.rejectReason = "";
       const ok = await updateData("pos", id, payload, { skipLog: true });
       if (ok) {
