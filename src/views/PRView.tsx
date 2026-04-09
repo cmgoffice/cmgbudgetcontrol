@@ -27,7 +27,8 @@ import { appId, db, storage } from "../lib/firebase";
 const PRView = React.memo(() => {
   const { prs, pos, projects, budgets, vendors, materials, addData, updateData, deleteData,
           showAlert, openConfirm, userRole, userRoles, userData, user, columnWidths, handleColumnResize,
-          visibleProjects, handlePRAction, canUseFunction, isColumnVisible } = useAppData();
+          visibleProjects, handlePRAction, canUseFunction, isColumnVisible, getAllowedPRTypes } = useAppData();
+  const allowedPRTypes = getAllowedPRTypes();
   const canApprovePR = canUseFunction("pr", "approve");
   const canRejectPR = canUseFunction("pr", "reject");
   const canEditBudgetPR = canUseFunction("pr", "editBudget");
@@ -995,8 +996,11 @@ const PRView = React.memo(() => {
       const isGMApprove = pr.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator"));
       const isMDApprove = pr.status === "Pending MD" && (userRoles.includes("MD") || userRoles.includes("Administrator"));
 
+      const isContractPR = ["จ้างเหมา > DL"].includes(pr.purchaseType || "");
       if (isCMApprove) newStatus = "Pending PM";
-      else if (isPMApprove) newStatus = "Approved";
+      else if (isPMApprove) {
+        newStatus = isContractPR ? "Pending MD" : "Approved";
+      }
       else if (isGMApprove) newStatus = "Pending MD";
       else if (isMDApprove) newStatus = "Approved";
 
@@ -1177,19 +1181,23 @@ const PRView = React.memo(() => {
     /** ตารางบนสุด: รายการรอ Action (รอ Approve หรือ รอแก้ไข หรือ รอปิด) */
     const pendingActionStatuses = ["Pending CM", "Pending PM", "Pending GM", "Pending MD", "Edit Budget", "Rejected", "Pending Close"];
     const groupedPrEntriesPending = useMemo(() => {
-      const list = prs.filter(
+      let list = prs.filter(
         (pr) =>
           pr.projectId === selectedProjectId &&
           pendingActionStatuses.includes(pr.status)
       );
+      // Filter by allowed PR Types (if configured)
+      if (allowedPRTypes && allowedPRTypes.length > 0) {
+        list = list.filter((pr) => allowedPRTypes.includes(pr.purchaseType));
+      }
       const filtered = list.filter(isPrMatchSearch);
       const sorted = sortPrList(filtered);
       return Object.entries(groupPrsByPurchaseType(sorted));
-    }, [prs, selectedProjectId, isPrMatchSearch, sortPrList]);
+    }, [prs, selectedProjectId, isPrMatchSearch, sortPrList, allowedPRTypes]);
 
     /** ตารางกลาง: ทุกสถานะยกเว้น Closed PR, Closed PR Auto, PO Issued และรอ Action */
     const groupedPrEntriesMain = useMemo(() => {
-      const list = prs.filter(
+      let list = prs.filter(
         (pr) =>
           pr.projectId === selectedProjectId &&
           pr.status !== "Closed PR" &&
@@ -1197,18 +1205,26 @@ const PRView = React.memo(() => {
           pr.status !== "PO Issued" &&
           !pendingActionStatuses.includes(pr.status)
       );
+      // Filter by allowed PR Types (if configured)
+      if (allowedPRTypes && allowedPRTypes.length > 0) {
+        list = list.filter((pr) => allowedPRTypes.includes(pr.purchaseType));
+      }
       const filtered = list.filter(isPrMatchSearch);
       const sorted = sortPrList(filtered);
       return Object.entries(groupPrsByPurchaseType(sorted));
-    }, [prs, selectedProjectId, isPrMatchSearch, sortPrList]);
+    }, [prs, selectedProjectId, isPrMatchSearch, sortPrList, allowedPRTypes]);
 
     const showPendingActionTable = groupedPrEntriesPending.length > 0 && groupedPrEntriesPending.some(([, prs]) => prs.length > 0);
 
     /** ตารางล่าง C: เฉพาะ PO Issued — รวมทุกประเภท เรียงตามเลข PR */
     const flatPoIssuedPrs = useMemo(() => {
-      const list = prs.filter(
+      let list = prs.filter(
         (pr) => pr.projectId === selectedProjectId && pr.status === "PO Issued"
       );
+      // Filter by allowed PR Types (if configured)
+      if (allowedPRTypes && allowedPRTypes.length > 0) {
+        list = list.filter((pr) => allowedPRTypes.includes(pr.purchaseType));
+      }
       const filtered = list.filter(isPrMatchSearch);
       if (!prSortConfig.key) {
         return [...filtered].sort((a, b) =>
@@ -1216,7 +1232,7 @@ const PRView = React.memo(() => {
         );
       }
       return sortPrList(filtered);
-    }, [prs, selectedProjectId, isPrMatchSearch, sortPrList, prSortConfig.key]);
+    }, [prs, selectedProjectId, isPrMatchSearch, sortPrList, prSortConfig.key, allowedPRTypes]);
 
     const showPoIssuedPrTable = flatPoIssuedPrs.length > 0;
 

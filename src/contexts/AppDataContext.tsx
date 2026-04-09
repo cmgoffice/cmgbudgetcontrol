@@ -565,6 +565,32 @@ export const AppDataProvider = ({
     return roles.some((r) => allowedRoles.includes(r));
   }, [roles, functionPermissions]);
 
+  // ── Get allowed PR Types per role (stored in functionPermissions.pr.viewPRTypeByRole) ──
+  const getAllowedPRTypes = useCallback((): string[] | null => {
+    if (roles.includes("Administrator")) {
+      console.log("[getAllowedPRTypes] User is Administrator → see all (null)");
+      return null; // null = see all
+    }
+    const viewPRTypeByRole = functionPermissions?.pr?.viewPRTypeByRole || {};
+    console.log("[getAllowedPRTypes] viewPRTypeByRole from Firestore:", JSON.stringify(viewPRTypeByRole));
+    console.log("[getAllowedPRTypes] User roles:", roles);
+    // Collect all PR types that any of the user's roles can see
+    const allowedTypes = new Set<string>();
+    roles.forEach((role) => {
+      const typesForRole = viewPRTypeByRole[role] || [];
+      console.log(`[getAllowedPRTypes] Role "${role}" has types:`, typesForRole);
+      typesForRole.forEach((t) => allowedTypes.add(t));
+    });
+    // If no types are configured for any role, default to showing all
+    if (allowedTypes.size === 0) {
+      console.log("[getAllowedPRTypes] No types configured → see all (null)");
+      return null;
+    }
+    const result = Array.from(allowedTypes);
+    console.log("[getAllowedPRTypes] Returning allowed types:", result);
+    return result;
+  }, [roles, functionPermissions]);
+
   const saveFunctionPermissions = useCallback(async (newFuncPerms: Record<string, Record<string, string[]>>) => {
     try {
       await setDoc(doc(db, ...FUNC_PERMISSIONS_DOC), newFuncPerms);
@@ -710,8 +736,11 @@ export const AppDataProvider = ({
     if (!pr) return;
     let newStatus = pr.status;
     if (action === "approve") {
+      const isContractPR = ["จ้างเหมา > DL"].includes(pr.purchaseType || "");
       if (pr.status === "Pending CM" && (roles.includes("CM") || roles.includes("Administrator"))) newStatus = "Pending PM";
-      else if (pr.status === "Pending PM" && (roles.includes("PM") || roles.includes("Administrator"))) newStatus = "Approved";
+      else if (pr.status === "Pending PM" && (roles.includes("PM") || roles.includes("Administrator"))) {
+        newStatus = isContractPR ? "Pending MD" : "Approved";
+      }
       else if (pr.status === "Pending GM" && (roles.includes("GM") || roles.includes("Administrator"))) newStatus = "Pending MD";
       else if (pr.status === "Pending MD" && (roles.includes("MD") || roles.includes("Administrator"))) newStatus = "Approved";
     } else if (action === "reject") {
@@ -863,6 +892,7 @@ export const AppDataProvider = ({
     availableRoles, saveAvailableRoles,
     rolePermissions, rolePermissionsReady, saveRolePermissions,
     functionPermissions, canUseFunction, saveFunctionPermissions,
+    getAllowedPRTypes,
     // raw Firebase (for views that need direct Firestore access)
     db, appId,
   }), [
@@ -882,6 +912,7 @@ export const AppDataProvider = ({
     userRole, roles, userData, user,
     canAccessModule, availableRoles, saveAvailableRoles, rolePermissions, rolePermissionsReady, saveRolePermissions,
     functionPermissions, canUseFunction, saveFunctionPermissions,
+    getAllowedPRTypes,
   ]);
 
   return (

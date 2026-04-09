@@ -1,3 +1,5 @@
+// @ts-nocheck
+// Node.js script – run with: node refactor_1.js
 const fs = require('fs');
 
 const path = 'src/lib/pdfForms.ts';

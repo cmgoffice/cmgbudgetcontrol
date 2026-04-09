@@ -74,7 +74,7 @@ const ReceiveView = React.memo(() => {
   const approvedPOs = useMemo(() => {
     if (!selectedProjectId) return [];
     return pos.filter(
-      (po) => po.projectId === selectedProjectId && po.status === "Approved"
+      (po) => po.projectId === selectedProjectId && po.status === "Approved" && po.poType !== "SP" && po.poType !== "DC"
     );
   }, [pos, selectedProjectId]);
 

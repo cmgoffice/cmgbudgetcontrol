@@ -59,6 +59,7 @@ const InvoiceView = React.memo(() => {
     vendors,
     invoices,
     receives,
+    payments,
     addData,
     updateData,
     deleteData,
@@ -66,9 +67,15 @@ const InvoiceView = React.memo(() => {
     canUseFunction,
     userRoles,
     logAction,
+    loadVendors,
   } = useAppData();
   const { selectedProjectId } = useUI();
   const { userData } = useContext(AuthContext);
+
+  // โหลด vendors เมื่อเข้าหน้า Invoice (vendor ข้อมูลจาก PO ต้องใช้ vendors)
+  React.useEffect(() => {
+    loadVendors?.();
+  }, [loadVendors]);
 
   const [activeTab, setActiveTab] = useState<"po" | "history">("po");
   const [viewingPO, setViewingPO] = useState<any>(null);
@@ -92,13 +99,30 @@ const InvoiceView = React.memo(() => {
     [vendors]
   );
 
+  // หา contractorId จาก Payment ที่เชื่อมโยงกับ PO นี้
   const getPoVendorName = useCallback(
-    (po: any) =>
-      getVendorName(
+    (po: any) => {
+      // พยายามหาจาก PO ก่อน
+      const directVendorName = getVendorName(
         po?.vendorId,
         po?.vendorName || po?.vendor || po?.supplierName || po?.supplier
-      ),
-    [getVendorName]
+      );
+      if (directVendorName !== "-") return directVendorName;
+
+      // ถ้าไม่พบ ให้หาจาก Payment ที่มี selectedPrIds ประกอบด้วย po.id นี้
+      const linkedPayment = (payments || []).find(
+        (pay: any) =>
+          pay.projectId === selectedProjectId &&
+          Array.isArray(pay.selectedPrIds) &&
+          pay.selectedPrIds.includes(po.id)
+      );
+      if (linkedPayment?.contractorId) {
+        return getVendorName(linkedPayment.contractorId);
+      }
+
+      return "-";
+    },
+    [getVendorName, payments, selectedProjectId]
   );
 
   const projectReceives = useMemo(
@@ -150,12 +174,48 @@ const InvoiceView = React.memo(() => {
   // - Payment Subcontractor flow: Wait Pay (เมื่อ Payment ถูกอนุมัติเป็น Wait Pay)
   const invoiceEligiblePOs = useMemo(() => {
     if (!selectedProjectId) return [];
-    return pos.filter(
+    
+    // โฟลวปกติ และ Pay before receive
+    const validPOs = pos.filter(
       (po) =>
         po.projectId === selectedProjectId &&
-        (po.status === "Received" || po.status === "Wait Invoice" || po.status === "Wait Pay")
+        (po.status === "Received" || po.status === "Wait Invoice")
     );
-  }, [pos, selectedProjectId]);
+
+    // ดึงข้อมูลจากรายการ Payment เฉพาะสถานะ Wait Pay (กรองอันที่มีใบแจ้งหนี้แล้วออก)
+    const validPayments = (payments || [])
+      .filter(
+        (p: any) =>
+          p.projectId === selectedProjectId &&
+          p.status === "Wait Pay" &&
+          !invoices.some((inv: any) => inv.poId === p.id)
+      )
+      .map((p: any) => ({
+        ...p,
+        isPaymentSubcontract: true,
+        poNo: p.paymentNo,
+        poType: p.paymentType || "SP",
+        vendorId: p.contractorId,
+        poDate: p.openDate,
+        poOpenDate: p.openDate,
+        receiveType: "Payment Subcontractor",
+        grandTotal: p.amount,
+        amount: p.amount,
+        description: `Payment งวด ${p.periodNo || ""} - ${p.paymentNo}`,
+        items: Array.isArray(p.items)
+          ? p.items.map((it: any, idx: number) => ({
+              ...it,
+              description: it.description || "งานจ้างเหมา/ค่าแรง",
+              unit: "งวด",
+              quantity: 1,
+              price: Number(it.thisPeriodAmount) || 0,
+              amount: Number(it.thisPeriodAmount) || 0,
+            }))
+          : [],
+      }));
+
+    return [...validPOs, ...validPayments];
+  }, [pos, payments, invoices, selectedProjectId]);
 
   const filteredPOs = useMemo(() => {
     return invoiceEligiblePOs.filter((po) => {
@@ -261,20 +321,23 @@ const InvoiceView = React.memo(() => {
         const isPayBeforeReceive =
           viewingPO.receiveType === "Pay before receive" || viewingPO.status === "Wait Invoice";
 
-        await updateData(
-          "pos",
-          viewingPO.id,
-          isPayBeforeReceive
-            ? {
-                status: "Approved",
-                statusNow: "Approved",
-              }
-            : {
-                status: "Invoice Issue",
-                statusNow: "Invoice Issue",
-              },
-          { skipLog: true }
-        );
+        if (!viewingPO.isPaymentSubcontract) {
+          await updateData(
+            "pos",
+            viewingPO.id,
+            isPayBeforeReceive
+              ? {
+                  status: "Approved",
+                  statusNow: "Approved",
+                }
+              : {
+                  status: "Invoice Issue",
+                  statusNow: "Invoice Issue",
+                },
+            { skipLog: true }
+          );
+        }
+        
         setViewingPO(null);
         showAlert("สำเร็จ", "บันทึกใบแจ้งหนี้เรียบร้อยแล้ว", "success");
       }

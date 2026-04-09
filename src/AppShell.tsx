@@ -23,7 +23,7 @@ import { Card, Button, InputGroup, Badge, formatCurrency } from "./components/ui
 import ResizableTh from "./components/ResizableTh";
 import { useProportionalTableLayout, chainTableResizeHandlers } from "./hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "./lib/tableLayoutDefaults";
-import { MODULE_ACCESS, MODULE_FUNCTIONS } from "./lib/constants";
+import { MODULE_ACCESS, MODULE_FUNCTIONS, PURCHASE_TYPES } from "./lib/constants";
 import { AuthContext } from "./auth/AuthContext";
 import { useAppData } from "./contexts/AppDataContext";
 import { useUI } from "./contexts/UIContext";
@@ -2125,6 +2125,9 @@ const AdminDashboard = () => {
   // Set Role tab state
   const [localPermissions, setLocalPermissions] = useState<Record<string, string[]>>(MODULE_ACCESS);
   const [localFunctionPermissions, setLocalFunctionPermissions] = useState<Record<string, Record<string, string[]>>>({});
+  // PR Type visibility per role: { "CM": ["จัดซื้อ > WA, ST, ML, CS, SA", "จ้างเหมา > DL"], ... }
+  const [localPRTypePermissions, setLocalPRTypePermissions] = useState<Record<string, string[]>>({});
+  const [openPRTypeDropdown, setOpenPRTypeDropdown] = useState<string | null>(null);
   const [savingRoles, setSavingRoles] = useState(false);
   const [openFuncDropdown, setOpenFuncDropdown] = useState<string | null>(null); // "moduleKey:role"
   const [newRoleName, setNewRoleName] = useState("");
@@ -2179,6 +2182,40 @@ const AdminDashboard = () => {
     setLocalFunctionPermissions(functionPermissions);
   }, [functionPermissions]);
 
+  // Sync PR Type permissions from Firestore (stored in functionPermissions.pr.viewPRTypeByRole)
+  useEffect(() => {
+    if (!functionPermissions || Object.keys(functionPermissions).length === 0) return;
+    const stored = functionPermissions?.pr?.viewPRTypeByRole || {};
+    console.log("[AppShell] Syncing PR Type permissions from Firestore:", JSON.stringify(stored));
+    const prTypeMap: Record<string, string[]> = {};
+    managedRoles.forEach((role) => {
+      prTypeMap[role] = stored[role] || [];
+    });
+    setLocalPRTypePermissions(prTypeMap);
+  }, [functionPermissions, managedRoles]);
+
+  const handlePRTypeToggle = (role: string, prType: string) => {
+    setLocalPRTypePermissions((prev) => {
+      const current = prev[role] || [];
+      const hasType = current.includes(prType);
+      return {
+        ...prev,
+        [role]: hasType ? current.filter((t) => t !== prType) : [...current, prType],
+      };
+    });
+  };
+
+  const handlePRTypeAllToggle = (role: string) => {
+    setLocalPRTypePermissions((prev) => {
+      const current = prev[role] || [];
+      const allSelected = current.length === PURCHASE_TYPES.length;
+      return {
+        ...prev,
+        [role]: allSelected ? [] : [...PURCHASE_TYPES],
+      };
+    });
+  };
+
   const handleRolePermissionToggle = (moduleKey: string, role: string) => {
     setLocalPermissions((prev) => {
       const current = prev[moduleKey] || [];
@@ -2217,13 +2254,17 @@ const AdminDashboard = () => {
     setSavingRoles(true);
     try {
       const funcPayload = normalizePartialFunctionPermissions(localFunctionPermissions);
+      // เพิ่ม PR Type permissions เข้าไปใน functionPermissions
+      funcPayload.pr = funcPayload.pr || {};
+      funcPayload.pr.viewPRTypeByRole = { ...localPRTypePermissions };
+
       const [okModule, okFunc] = await Promise.all([
         saveRolePermissions(localPermissions),
         saveFunctionPermissions(funcPayload),
       ]);
       if (okModule && okFunc) {
-        showAlert("บันทึกสำเร็จ", "อัปเดตสิทธิ์ Role เรียบร้อยแล้ว", "success");
-        await logAction("Update", "Updated role permissions (read + write)");
+        showAlert("บันทึกสำเร็จ", "อัปเดตสิทธิ์ Role และ PR Type เรียบร้อยแล้ว", "success");
+        await logAction("Update", "Updated role permissions + PR Type visibility");
       } else {
         showAlert("เกิดข้อผิดพลาด", "ไม่สามารถบันทึกสิทธิ์ได้ กรุณาลองใหม่", "error");
       }
@@ -2713,6 +2754,9 @@ const AdminDashboard = () => {
                       <span className="text-xs">{m.label}</span>
                     </th>
                   ))}
+                  <th className="p-2 text-center font-semibold text-slate-600 border-b border-slate-200 border-l border-slate-100">
+                    <span className="text-xs">PR Type ที่มองเห็น</span>
+                  </th>
                 </tr>
                 <tr className="bg-slate-50 border-b border-slate-200 text-[10px] text-slate-500">
                   {SIDEBAR_MODULES.map((m) => (
@@ -2725,6 +2769,7 @@ const AdminDashboard = () => {
                       <th key={m.key} className="px-2 py-1 text-center font-medium border-l border-slate-100 text-orange-500">อ่าน</th>
                     )
                   ))}
+                  <th className="px-2 py-1 text-center font-medium border-l border-slate-100 text-purple-500">เลือก PR Type</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -2823,6 +2868,54 @@ const AdminDashboard = () => {
                           </React.Fragment>
                         );
                       })}
+                      {/* PR Type column */}
+                      <td className="p-2 text-center border-l border-slate-100 relative">
+                        <div className="relative inline-block" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => setOpenPRTypeDropdown(openPRTypeDropdown === role ? null : role)}
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold border transition-colors ${
+                              (localPRTypePermissions[role] || []).length > 0
+                                ? "bg-purple-50 text-purple-600 border-purple-200 hover:bg-purple-100"
+                                : "bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100"
+                            }`}
+                          >
+                            {(localPRTypePermissions[role] || []).length}/{PURCHASE_TYPES.length} ▾
+                          </button>
+                          {openPRTypeDropdown === role && (
+                            <div className="absolute z-50 top-full left-1/2 -translate-x-1/2 mt-1 w-64 bg-white border border-slate-200 rounded-lg shadow-xl py-1 max-h-60 overflow-y-auto">
+                              <div className="px-3 py-1.5 border-b border-slate-100 text-[10px] font-bold text-slate-500 uppercase tracking-wide sticky top-0 bg-white">
+                                PR Type — {role}
+                              </div>
+                              <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer border-b border-slate-100">
+                                <input
+                                  type="checkbox"
+                                  checked={(localPRTypePermissions[role] || []).length === PURCHASE_TYPES.length}
+                                  onChange={() => handlePRTypeAllToggle(role)}
+                                  className="w-3.5 h-3.5 rounded border-slate-300 accent-purple-500"
+                                />
+                                <span className="text-xs text-slate-700 font-semibold">All Types</span>
+                              </label>
+                              {PURCHASE_TYPES.map((pt) => {
+                                const isChecked = (localPRTypePermissions[role] || []).includes(pt);
+                                return (
+                                  <label
+                                    key={pt}
+                                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={isChecked}
+                                      onChange={() => handlePRTypeToggle(role, pt)}
+                                      className="w-3.5 h-3.5 rounded border-slate-300 accent-purple-500"
+                                    />
+                                    <span className="text-xs text-slate-700">{pt}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </td>
                     </tr>
                   );
                 })}

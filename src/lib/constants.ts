@@ -65,6 +65,7 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
     { key: "reject",     label: "ปฏิเสธ PR" },
     { key: "editBudget", label: "Edit Budget PR" },
     { key: "closePR",    label: "ยืนยัน Close PR" },
+    { key: "viewPRType", label: "กำหนด PR Type ที่มองเห็น" },
   ],
   "pr-table": [
     { key: "export",  label: "Export CSV" },
@@ -151,6 +152,7 @@ export const USER_ROLES = [
   "Procurement",
   "Staff",
   "Admin Site",
+  "Admin Center",
 ];
 
 /** สิทธิ์เข้าเมนูตาม role — ถ้ามีหลาย role ได้สิทธิ์รวมทุก role */
@@ -276,6 +278,20 @@ export function mergeFunctionPermissionsWithDefaults(
       }
     });
   });
+
+  // Preserve custom keys that are not in MODULE_FUNCTIONS (e.g., viewPRTypeByRole)
+  Object.keys(raw).forEach((moduleKey) => {
+    const rawMod = raw[moduleKey];
+    if (rawMod == null || typeof rawMod !== "object") return;
+    if (!out[moduleKey]) out[moduleKey] = {};
+    Object.keys(rawMod).forEach((key) => {
+      // Skip keys already processed above
+      if (Object.prototype.hasOwnProperty.call(out[moduleKey], key)) return;
+      const v = rawMod[key];
+      out[moduleKey][key] = Array.isArray(v) ? [...v] : [];
+    });
+  });
+
   return out;
 }
 
