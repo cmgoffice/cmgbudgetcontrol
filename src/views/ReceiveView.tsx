@@ -11,7 +11,8 @@ import { AuthContext } from "../auth/AuthContext";
 import { Card, Button, Badge, formatCurrency } from "../components/ui";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
 import { uploadAttachment } from "../lib/uploadAttachment";
-import { generateRPPdfBytes, uploadGeneratedPdf, deleteGeneratedPdf } from "../lib/pdfForms";
+import { generateRPPdfBytes, uploadGeneratedPdf, deleteGeneratedPdf, generatePOPdfBytes } from "../lib/pdfForms";
+import { PDFDocument } from "pdf-lib";
 import { combineImagesToPdf, createPdfThumbnail, generateCombinedPdfFilename } from "../lib/imageToPdf";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 
@@ -474,6 +475,19 @@ const ReceiveView = React.memo(() => {
 
         const signatureUrl = userData?.signatureUrl || null;
         let rpPdfBytes = await generateRPPdfBytes(rpData, { signatureUrl });
+
+        // Merge PO PDF into the RP PDF
+        try {
+          setSavingStep("กำลังรวมหน้าใบสั่งซื้อ (PO)...");
+          const poPdfBytes = await generatePOPdfBytes(po, { vendor: vendorObj, project: currentProject });
+          const mergedPdf = await PDFDocument.load(rpPdfBytes);
+          const poDoc = await PDFDocument.load(poPdfBytes);
+          const copiedPages = await mergedPdf.copyPages(poDoc, poDoc.getPageIndices());
+          copiedPages.forEach((page) => mergedPdf.addPage(page));
+          rpPdfBytes = await mergedPdf.save();
+        } catch (poMergeErr) {
+          console.warn("[ReceiveView] Failed to merge PO to RP PDF:", poMergeErr);
+        }
 
         // If there are photos, append them to the RP PDF
         if (allPhotoFiles.length > 0) {

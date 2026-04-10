@@ -26,8 +26,8 @@ import { ref, getDownloadURL } from "firebase/storage";
 import { appId, db, storage } from "../lib/firebase";
 const PRView = React.memo(() => {
   const { prs, pos, projects, budgets, vendors, materials, addData, updateData, deleteData,
-          showAlert, openConfirm, userRole, userRoles, userData, user, columnWidths, handleColumnResize,
-          visibleProjects, handlePRAction, canUseFunction, isColumnVisible, getAllowedPRTypes } = useAppData();
+    showAlert, openConfirm, userRole, userRoles, userData, user, columnWidths, handleColumnResize,
+    visibleProjects, handlePRAction, canUseFunction, isColumnVisible, getAllowedPRTypes } = useAppData();
   const allowedPRTypes = getAllowedPRTypes();
   const canApprovePR = canUseFunction("pr", "approve");
   const canRejectPR = canUseFunction("pr", "reject");
@@ -59,7 +59,7 @@ const PRView = React.memo(() => {
   // Helper function to get reference document info based on PR status
   const getRefDocInfo = (pr) => {
     if (!pr) return { docNo: "-", pdfUrl: null, docType: "PR" };
-    
+
     const status = pr.status;
     let docType = "PR";
     let docNo = pr.prNo || "-";
@@ -102,229 +102,338 @@ const PRView = React.memo(() => {
     }
   };
   const { selectedProjectId,
-          isFullScreenModalOpen, setIsFullScreenModalOpen,
-          expandedPrRows, setExpandedPrRows, togglePrRow } = useUI();
-    const prTableRef = useRef(null);
-    const prTableLayout = useProportionalTableLayout({
-      tableId: "pr",
-      defaultWeights: TABLE_LAYOUT_DEFAULTS.pr,
-      savedWidths: columnWidths.pr,
-      containerRef: prTableRef,
-      enabled: true,
-      driftKey: "description",
-      handleColumnResize,
+    isFullScreenModalOpen, setIsFullScreenModalOpen,
+    expandedPrRows, setExpandedPrRows, togglePrRow } = useUI();
+  const prTableRef = useRef(null);
+  const prTableLayout = useProportionalTableLayout({
+    tableId: "pr",
+    defaultWeights: TABLE_LAYOUT_DEFAULTS.pr,
+    savedWidths: columnWidths.pr,
+    containerRef: prTableRef,
+    enabled: true,
+    driftKey: "description",
+    handleColumnResize,
+  });
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [savePrProgress, setSavePrProgress] = useState<{ show: boolean; pct: number; step: string }>({ show: false, pct: 0, step: "" });
+  const [isPrRejectModalOpen, setIsPrRejectModalOpen] = useState(false);
+  const [prRejectReason, setPrRejectReason] = useState("");
+  const [isEditBudgetModalOpen, setIsEditBudgetModalOpen] = useState(false);
+  const [selectedPrForEditBudget, setSelectedPrForEditBudget] = useState(null);
+  const [editBudgetReason, setEditBudgetReason] = useState("");
+  const [viewingPR, setViewingPR] = useState(null); // PR View Modal
+  /** ขณะรอ Approve: ค่า = สถานะ PR ตอนกด — ซ่อนปุ่มจน snapshot เปลี่ยนสถานะ หรือล้างเมื่อ update ล้มเหลว */
+  const [prApproveFlightFromStatus, setPrApproveFlightFromStatus] = useState({});
+
+  useEffect(() => {
+    setPrApproveFlightFromStatus((prev) => {
+      const next = { ...prev };
+      for (const id of Object.keys(prev)) {
+        const from = prev[id];
+        const p = prs.find((x: any) => x.id === id);
+        if (!p || p.status !== from) delete next[id];
+      }
+      return next;
     });
-    const [isModalOpen, setIsModalOpen] = useState(false);
-    const [savePrProgress, setSavePrProgress] = useState<{ show: boolean; pct: number; step: string }>({ show: false, pct: 0, step: "" });
-    const [isPrRejectModalOpen, setIsPrRejectModalOpen] = useState(false);
-    const [prRejectReason, setPrRejectReason] = useState("");
-    const [isEditBudgetModalOpen, setIsEditBudgetModalOpen] = useState(false);
-    const [selectedPrForEditBudget, setSelectedPrForEditBudget] = useState(null);
-    const [editBudgetReason, setEditBudgetReason] = useState("");
-    const [viewingPR, setViewingPR] = useState(null); // PR View Modal
-    /** ขณะรอ Approve: ค่า = สถานะ PR ตอนกด — ซ่อนปุ่มจน snapshot เปลี่ยนสถานะ หรือล้างเมื่อ update ล้มเหลว */
-    const [prApproveFlightFromStatus, setPrApproveFlightFromStatus] = useState({});
+  }, [prs]);
 
-    useEffect(() => {
-      setPrApproveFlightFromStatus((prev) => {
-        const next = { ...prev };
-        for (const id of Object.keys(prev)) {
-          const from = prev[id];
-          const p = prs.find((x: any) => x.id === id);
-          if (!p || p.status !== from) delete next[id];
-        }
-        return next;
-      });
-    }, [prs]);
+  const isPrApproveInFlight = (pr: any) => {
+    const from = prApproveFlightFromStatus[pr?.id];
+    return from != null && pr?.status === from;
+  };
+  const [prPdfReadyUrl, setPrPdfReadyUrl] = useState<string | null>(null);
 
-    const isPrApproveInFlight = (pr: any) => {
-      const from = prApproveFlightFromStatus[pr?.id];
-      return from != null && pr?.status === from;
-    };
-    const [prPdfReadyUrl, setPrPdfReadyUrl] = useState<string | null>(null);
+  const [selectedPrForReject, setSelectedPrForReject] = useState(null);
+  const [expandedBudgetIdsInModal, setExpandedBudgetIdsInModal] = useState({});
 
-    const [selectedPrForReject, setSelectedPrForReject] = useState(null);
-    const [expandedBudgetIdsInModal, setExpandedBudgetIdsInModal] = useState({});
+  const toggleBudgetInModal = (id) => {
+    setExpandedBudgetIdsInModal(prev => ({ ...prev, [id]: !prev[id] }));
+  };
 
-    const toggleBudgetInModal = (id) => {
-      setExpandedBudgetIdsInModal(prev => ({ ...prev, [id]: !prev[id] }));
-    };
-
-    const handleRejectPrConfirm = async () => {
-      if (!selectedPrForReject || !prRejectReason) return;
-      if (!canRejectPR) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธ PR", "warning");
-        return;
-      }
-      await updateData("prs", selectedPrForReject.id, {
-        status: "Rejected",
-        rejectReason: prRejectReason,
-      });
-      // Rejected PR ไม่นับงบ → recompute และ save กลับ budget document
-      setTimeout(() => {
-        recomputeBudgetUsed(
-          selectedPrForReject.budgetId || "",
-          selectedPrForReject.costCode || "",
-          selectedPrForReject.projectId || ""
-        );
-      }, 1500);
-      setIsPrRejectModalOpen(false);
-      setPrRejectReason("");
-      setSelectedPrForReject(null);
-    };
-
-    const handleEditBudgetConfirm = async () => {
-      if (!selectedPrForEditBudget || !editBudgetReason.trim()) return;
-      if (!canEditBudgetPR) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ส่ง PR กลับไปแก้ไข Budget", "warning");
-        return;
-      }
-      await updateData("prs", selectedPrForEditBudget.id, {
-        status: "Edit Budget",
-        editBudgetReason: editBudgetReason.trim(),
-        editBudgetBy: userData ? `${userData.firstName || ""} ${userData.lastName || ""}`.trim() : userRole,
-        editBudgetAt: new Date().toISOString(),
-      });
-      setIsEditBudgetModalOpen(false);
-      setEditBudgetReason("");
-      setSelectedPrForEditBudget(null);
-      showAlert("ส่งคำขอแก้ไขแล้ว", "PR ถูกตั้งสถานะ Edit Budget — ผู้เปิด PR ต้องแก้ไขและส่งอนุมัติใหม่", "info");
-    };
-
-    // ให้ PR Modal อัปเดตข้อมูลตามรายการล่าสุดเสมอ (แก้ปัญหา preview PDF ค้างเป็นไฟล์เก่า)
-    useEffect(() => {
-      if (!viewingPR?.id) return;
-      const latest = prs.find((p: any) => p.id === viewingPR.id);
-      if (latest && latest !== viewingPR) setViewingPR(latest);
-    }, [prs, viewingPR?.id]);
-
-    // โหลด fresh URL ทันทีที่เปิด Modal — เพื่อให้ปุ่มเปิดดูเป็น synchronous click (กัน popup blocker)
-    useEffect(() => {
-      const pr = viewingPR ? (prs.find((p: any) => p.id === viewingPR.id) || viewingPR) : null;
-      if (!pr) { setPrPdfReadyUrl(null); return; }
-      if (!pr.pdfPath) { setPrPdfReadyUrl(pr.pdfUrl || null); return; }
-      let cancelled = false;
-      (async () => {
-        try {
-          const freshUrl = await getDownloadURL(ref(storage, pr.pdfPath));
-          if (!cancelled) setPrPdfReadyUrl(freshUrl);
-        } catch (_) {
-          if (!cancelled) setPrPdfReadyUrl(pr.pdfUrl || null);
-        }
-      })();
-      return () => { cancelled = true; };
-    }, [viewingPR?.id, viewingPR?.pdfUpdatedAt, viewingPR?.status]);
-
-    // เปิดดู PDF — synchronous click (ใช้ prPdfReadyUrl ที่โหลดไว้แล้วตอนเปิด Modal)
-    const openLatestPrPdf = useCallback(() => {
-      if (prPdfReadyUrl) {
-        window.open(prPdfReadyUrl, "_blank", "noopener,noreferrer");
-      }
-    }, [prPdfReadyUrl]);
-    const [headerData, setHeaderData] = useState({
-      prNo: "",
-      subCode: "",
-      requestDate: new Date().toISOString().split("T")[0],
-      requestor: "",
-      requestorEmail: "",
-      costCode: "",
-      selectedBudgetId: "", // รหัสงบที่เลือก (ใช้แสดงยอดคงเหลือที่ตรงรายการ)
-      selectedSubItemId: "", // id ของ sub-item ที่เลือก
-      urgency: "Normal",
-      purchaseType: "",
-      deliveryLocation: "",
-      attachment: null as File | null,
-      attachmentUrl: "" as string | undefined,
-      attachmentName: "" as string | undefined,
+  const handleRejectPrConfirm = async () => {
+    if (!selectedPrForReject || !prRejectReason) return;
+    if (!canRejectPR) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธ PR", "warning");
+      return;
+    }
+    await updateData("prs", selectedPrForReject.id, {
+      status: "Rejected",
+      rejectReason: prRejectReason,
     });
+    // Rejected PR ไม่นับงบ → recompute และ save กลับ budget document
+    setTimeout(() => {
+      recomputeBudgetUsed(
+        selectedPrForReject.budgetId || "",
+        selectedPrForReject.costCode || "",
+        selectedPrForReject.projectId || ""
+      );
+    }, 1500);
+    setIsPrRejectModalOpen(false);
+    setPrRejectReason("");
+    setSelectedPrForReject(null);
+  };
 
-    const buildPrPrefix = useCallback((subCode, purchaseType) => {
-      if (!selectedProjectId) return "";
-      const currentProject = projects.find((p) => p.id === selectedProjectId);
-      if (!currentProject) return "";
-      const rawJobNo = (currentProject.jobNo || "").trim();
-      // เอา segment สุดท้ายของ Job No. และย่อให้สั้น
-      // PRJ-2026-J-072 → "072" → strip 1 leading zero → "72" → "J72"
-      // PRJ-2026-J-001 → "001" → strip 1 leading zero → "01" → "J01"
-      // PRJ-2026-J-02A → "02A" → keep as-is               → "J02A"
-      const lastSeg = rawJobNo.split("-").pop() || "";
-      const compactSeg = /^0\d{2}$/.test(lastSeg) ? lastSeg.slice(1) : lastSeg;
-      const jobNoClean = "J" + compactSeg; // e.g. "J72", "J01", "J02A"
-      let prefix = "";
-      if (purchaseType === PURCHASE_TYPE_EQUIPMENT) {
-        prefix = `${jobNoClean}-EQM-`;
-      } else if (purchaseType === PURCHASE_TYPE_RENTAL_LABEL) {
-        prefix = `${jobNoClean}-RE-`;
-      } else {
-        if (!subCode) return "";
-        prefix = `${jobNoClean}-${subCode}-`;
+  const handleEditBudgetConfirm = async () => {
+    if (!selectedPrForEditBudget || !editBudgetReason.trim()) return;
+    if (!canEditBudgetPR) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ส่ง PR กลับไปแก้ไข Budget", "warning");
+      return;
+    }
+    await updateData("prs", selectedPrForEditBudget.id, {
+      status: "Edit Budget",
+      editBudgetReason: editBudgetReason.trim(),
+      editBudgetBy: userData ? `${userData.firstName || ""} ${userData.lastName || ""}`.trim() : userRole,
+      editBudgetAt: new Date().toISOString(),
+    });
+    setIsEditBudgetModalOpen(false);
+    setEditBudgetReason("");
+    setSelectedPrForEditBudget(null);
+    showAlert("ส่งคำขอแก้ไขแล้ว", "PR ถูกตั้งสถานะ Edit Budget — ผู้เปิด PR ต้องแก้ไขและส่งอนุมัติใหม่", "info");
+  };
+
+  // ให้ PR Modal อัปเดตข้อมูลตามรายการล่าสุดเสมอ (แก้ปัญหา preview PDF ค้างเป็นไฟล์เก่า)
+  useEffect(() => {
+    if (!viewingPR?.id) return;
+    const latest = prs.find((p: any) => p.id === viewingPR.id);
+    if (latest && latest !== viewingPR) setViewingPR(latest);
+  }, [prs, viewingPR?.id]);
+
+  // โหลด fresh URL ทันทีที่เปิด Modal — เพื่อให้ปุ่มเปิดดูเป็น synchronous click (กัน popup blocker)
+  useEffect(() => {
+    const pr = viewingPR ? (prs.find((p: any) => p.id === viewingPR.id) || viewingPR) : null;
+    if (!pr) { setPrPdfReadyUrl(null); return; }
+    if (!pr.pdfPath) { setPrPdfReadyUrl(pr.pdfUrl || null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const freshUrl = await getDownloadURL(ref(storage, pr.pdfPath));
+        if (!cancelled) setPrPdfReadyUrl(freshUrl);
+      } catch (_) {
+        if (!cancelled) setPrPdfReadyUrl(pr.pdfUrl || null);
       }
-      return prefix;
-    }, [selectedProjectId, projects]);
+    })();
+    return () => { cancelled = true; };
+  }, [viewingPR?.id, viewingPR?.pdfUpdatedAt, viewingPR?.status]);
 
-    // Generate PR No. for UI preview only (เลขจริงจะจองด้วย transaction ตอนบันทึก)
-    const generatePrNo = (subCode, purchaseType) => {
-      const prefix = buildPrPrefix(subCode, purchaseType);
-      if (!prefix) return "";
-      const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const existingMaxSeq = prs.reduce((max, pr) => {
-        if (typeof pr?.prNo !== "string") return max;
-        const m = pr.prNo.match(new RegExp(`^${escapedPrefix}(\\d+)$`));
+  // เปิดดู PDF — synchronous click (ใช้ prPdfReadyUrl ที่โหลดไว้แล้วตอนเปิด Modal)
+  const openLatestPrPdf = useCallback(() => {
+    if (prPdfReadyUrl) {
+      window.open(prPdfReadyUrl, "_blank", "noopener,noreferrer");
+    }
+  }, [prPdfReadyUrl]);
+  const [headerData, setHeaderData] = useState({
+    prNo: "",
+    subCode: "",
+    requestDate: new Date().toISOString().split("T")[0],
+    requestor: "",
+    requestorEmail: "",
+    costCode: "",
+    selectedBudgetId: "", // รหัสงบที่เลือก (ใช้แสดงยอดคงเหลือที่ตรงรายการ)
+    selectedSubItemId: "", // id ของ sub-item ที่เลือก
+    urgency: "Normal",
+    purchaseType: "",
+    deliveryLocation: "",
+    attachment: null as File | null,
+    attachmentUrl: "" as string | undefined,
+    attachmentName: "" as string | undefined,
+  });
+
+  const buildPrPrefix = useCallback((subCode, purchaseType) => {
+    if (!selectedProjectId) return "";
+    const currentProject = projects.find((p) => p.id === selectedProjectId);
+    if (!currentProject) return "";
+    const rawJobNo = (currentProject.jobNo || "").trim();
+    // เอา segment สุดท้ายของ Job No. และย่อให้สั้น
+    // PRJ-2026-J-072 → "072" → strip 1 leading zero → "72" → "J72"
+    // PRJ-2026-J-001 → "001" → strip 1 leading zero → "01" → "J01"
+    // PRJ-2026-J-02A → "02A" → keep as-is               → "J02A"
+    const lastSeg = rawJobNo.split("-").pop() || "";
+    const compactSeg = /^0\d{2}$/.test(lastSeg) ? lastSeg.slice(1) : lastSeg;
+    const jobNoClean = "J" + compactSeg; // e.g. "J72", "J01", "J02A"
+    let prefix = "";
+    if (purchaseType === PURCHASE_TYPE_EQUIPMENT) {
+      prefix = `${jobNoClean}-EQM-`;
+    } else if (purchaseType === PURCHASE_TYPE_RENTAL_LABEL) {
+      prefix = `${jobNoClean}-RE-`;
+    } else {
+      if (!subCode) return "";
+      prefix = `${jobNoClean}-${subCode}-`;
+    }
+    return prefix;
+  }, [selectedProjectId, projects]);
+
+  // Generate PR No. for UI preview only (เลขจริงจะจองด้วย transaction ตอนบันทึก)
+  const generatePrNo = (subCode, purchaseType) => {
+    const prefix = buildPrPrefix(subCode, purchaseType);
+    if (!prefix) return "";
+    const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const existingMaxSeq = prs.reduce((max, pr) => {
+      if (typeof pr?.prNo !== "string") return max;
+      const m = pr.prNo.match(new RegExp(`^${escapedPrefix}(\\d+)$`));
+      if (!m) return max;
+      const n = Number(m[1]);
+      return Number.isFinite(n) ? Math.max(max, n) : max;
+    }, 0);
+    const nextNo = String(existingMaxSeq + 1).padStart(3, "0");
+    return `${prefix}${nextNo}`;
+  };
+
+  const reserveNextPrNo = useCallback(async (subCode, purchaseType) => {
+    if (!selectedProjectId) throw new Error("กรุณาเลือกโครงการก่อนสร้าง PR");
+    const prefix = buildPrPrefix(subCode, purchaseType);
+    if (!prefix) throw new Error("ไม่สามารถสร้างเลข PR ได้: prefix ไม่ถูกต้อง");
+    const existingMaxSeq = prs
+      .filter((pr) => typeof pr.prNo === "string" && pr.prNo.startsWith(prefix))
+      .reduce((max, pr) => {
+        const m = pr.prNo.match(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\d+)$`));
         if (!m) return max;
         const n = Number(m[1]);
         return Number.isFinite(n) ? Math.max(max, n) : max;
       }, 0);
-      const nextNo = String(existingMaxSeq + 1).padStart(3, "0");
-      return `${prefix}${nextNo}`;
-    };
-
-    const reserveNextPrNo = useCallback(async (subCode, purchaseType) => {
-      if (!selectedProjectId) throw new Error("กรุณาเลือกโครงการก่อนสร้าง PR");
-      const prefix = buildPrPrefix(subCode, purchaseType);
-      if (!prefix) throw new Error("ไม่สามารถสร้างเลข PR ได้: prefix ไม่ถูกต้อง");
-      const existingMaxSeq = prs
-        .filter((pr) => typeof pr.prNo === "string" && pr.prNo.startsWith(prefix))
-        .reduce((max, pr) => {
-          const m = pr.prNo.match(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\d+)$`));
-          if (!m) return max;
-          const n = Number(m[1]);
-          return Number.isFinite(n) ? Math.max(max, n) : max;
-        }, 0);
-      const counterId = `${selectedProjectId}__${prefix.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
-      const counterRef = doc(
-        db,
-        "artifacts",
-        appId,
-        "public",
-        "data",
-        "settings",
-        "prRunningNo",
-        "prCountersByPrefix",
-        counterId
+    const counterId = `${selectedProjectId}__${prefix.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+    const counterRef = doc(
+      db,
+      "artifacts",
+      appId,
+      "public",
+      "data",
+      "settings",
+      "prRunningNo",
+      "prCountersByPrefix",
+      counterId
+    );
+    const nextPrNo = await runTransaction(db, async (tx) => {
+      const snap = await tx.get(counterRef);
+      const current = Number(
+        snap.exists()
+          ? snap.data()?.lastSeq || 0
+          : existingMaxSeq
       );
-      const nextPrNo = await runTransaction(db, async (tx) => {
-        const snap = await tx.get(counterRef);
-        const current = Number(
-          snap.exists()
-            ? snap.data()?.lastSeq || 0
-            : existingMaxSeq
-        );
-        const next = current + 1;
-        tx.set(
-          counterRef,
-          {
-            projectId: selectedProjectId,
-            prefix,
-            lastSeq: next,
-            updatedAt: new Date().toISOString(),
-          },
-          { merge: true }
-        );
-        return `${prefix}${String(next).padStart(3, "0")}`;
+      const next = current + 1;
+      tx.set(
+        counterRef,
+        {
+          projectId: selectedProjectId,
+          prefix,
+          lastSeq: next,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+      return `${prefix}${String(next).padStart(3, "0")}`;
+    });
+    return nextPrNo;
+  }, [selectedProjectId, buildPrPrefix]);
+  const [newItem, setNewItem] = useState({
+    description: "",
+    quantity: 1,
+    unit: "Job",
+    price: 0,
+    requiredDate: "",
+    note: "",
+  });
+  const [lineItems, setLineItems] = useState([]);
+  const [editingItemId, setEditingItemId] = useState(null);
+  const [editingPRId, setEditingPRId] = useState(null);
+  const [isCostCodeModalOpen, setIsCostCodeModalOpen] = useState(false);
+  const [budgetSearchText, setBudgetSearchText] = useState("");
+  const [selectedSubItemsForPR, setSelectedSubItemsForPR] = useState([]); // Multi-select state
+  const [prTableSearchText, setPrTableSearchText] = useState("");
+  const [prSortConfig, setPrSortConfig] = useState<{ key: string | null; direction: "asc" | "desc" }>({ key: null, direction: "asc" });
+  const [isContractPrModalOpen, setIsContractPrModalOpen] = useState(false);
+  const [contractEditingPRId, setContractEditingPRId] = useState(null);
+  const [contractHeaderData, setContractHeaderData] = useState({
+    prNo: "",
+    subCode: "",
+    requestDate: new Date().toISOString().split("T")[0],
+    requestor: "",
+    requestorEmail: "",
+    costCode: "",
+    selectedBudgetId: "",
+    selectedSubItemId: "",
+    urgency: "Normal",
+    purchaseType: "",
+    deliveryLocation: "",
+    attachment: null as File | null,
+    attachmentUrl: "" as string | undefined,
+    attachmentName: "" as string | undefined,
+  });
+  const [contractLineItems, setContractLineItems] = useState([]);
+  const [isContractCostCodeModalOpen, setIsContractCostCodeModalOpen] = useState(false);
+  const [contractBudgetSearchText, setContractBudgetSearchText] = useState("");
+  const [selectedSubItemsForContractPR, setSelectedSubItemsForContractPR] = useState([]);
+
+  const projectBudgets = budgets.filter(
+    (b) => b.projectId === selectedProjectId
+  );
+  const calculateTotal = () =>
+    lineItems.reduce((sum, item) => sum + item.quantity * item.price, 0);
+
+  const availableBudgets = useMemo(() => {
+    const approved = budgets.filter(
+      (b) => b.projectId === selectedProjectId && b.status === "Approved"
+    );
+    return approved
+      .map((b) => {
+        // ถ้า budget document มี usedAmount ที่ recompute ไว้แล้ว (เหมือน statusNow บน PO) ให้ใช้ค่านั้นก่อน
+        // หากยังไม่มี ให้ compute จาก PRs โดยจับคู่ทั้ง budgetId และ costCode (deduped) เพื่อไม่ให้หล่น
+        let usedAmount: number;
+        if (b.usedAmount != null && !isNaN(Number(b.usedAmount))) {
+          usedAmount = Number(b.usedAmount);
+        } else {
+          const seen = new Set<string>();
+          usedAmount = prs
+            .filter((p) => {
+              if (p.projectId !== selectedProjectId || p.status === "Rejected") return false;
+              const matchById = b.id && p.budgetId === b.id;
+              const matchByCode = b.code && p.costCode === b.code;
+              if (!(matchById || matchByCode)) return false;
+              if (seen.has(p.id)) return false;
+              seen.add(p.id);
+              return true;
+            })
+            .reduce((sum, p) => sum + (Number(p.totalAmount) || 0), 0);
+        }
+        const budgetAmount = Number(b.amount);
+        return {
+          ...b,
+          budgetAmount,
+          usedAmount,
+          remainingBalance: budgetAmount - usedAmount,
+        };
+      })
+      .filter((b) => {
+        // If budget has sub-items, always show it so sub-items can be individually selected.
+        if (b.subItems && b.subItems.length > 0) return true;
+        // For budgets without sub-items: แสดงจนกว่าคงเหลือจะหมด (เปิด PR ซ้ำได้จนงบหมด)
+        return b.remainingBalance > 0;
       });
-      return nextPrNo;
-    }, [selectedProjectId, buildPrPrefix]);
-    const [newItem, setNewItem] = useState({
+  }, [budgets, prs, selectedProjectId]);
+
+  const handleAddItem = () => {
+    if (!newItem.description || newItem.quantity <= 0)
+      return showAlert(
+        "ข้อมูลไม่ครบ",
+        "กรุณากรอกรายละเอียดและจำนวนให้ถูกต้อง",
+        "warning"
+      );
+    if (editingItemId) {
+      setLineItems(
+        lineItems.map((item) =>
+          item.id === editingItemId ? { ...newItem, id: editingItemId } : item
+        )
+      );
+      setEditingItemId(null);
+    } else {
+      setLineItems([...lineItems, {
+        ...newItem,
+        id: crypto.randomUUID(),
+        subItemId: headerData.selectedSubItemId || null,
+        budgetId: headerData.selectedBudgetId || null,
+        budgetSubItemId: headerData.selectedSubItemId || null,
+      }]);
+    }
+    setNewItem({
       description: "",
       quantity: 1,
       unit: "Job",
@@ -332,107 +441,16 @@ const PRView = React.memo(() => {
       requiredDate: "",
       note: "",
     });
-    const [lineItems, setLineItems] = useState([]);
-    const [editingItemId, setEditingItemId] = useState(null);
-    const [editingPRId, setEditingPRId] = useState(null);
-    const [isCostCodeModalOpen, setIsCostCodeModalOpen] = useState(false);
-    const [budgetSearchText, setBudgetSearchText] = useState("");
-    const [selectedSubItemsForPR, setSelectedSubItemsForPR] = useState([]); // Multi-select state
-    const [prTableSearchText, setPrTableSearchText] = useState("");
-    const [prSortConfig, setPrSortConfig] = useState<{ key: string | null; direction: "asc" | "desc" }>({ key: null, direction: "asc" });
-    const [isContractPrModalOpen, setIsContractPrModalOpen] = useState(false);
-    const [contractEditingPRId, setContractEditingPRId] = useState(null);
-    const [contractHeaderData, setContractHeaderData] = useState({
-      prNo: "",
-      subCode: "",
-      requestDate: new Date().toISOString().split("T")[0],
-      requestor: "",
-      requestorEmail: "",
-      costCode: "",
-      selectedBudgetId: "",
-      selectedSubItemId: "",
-      urgency: "Normal",
-      purchaseType: "",
-      deliveryLocation: "",
-      attachment: null as File | null,
-      attachmentUrl: "" as string | undefined,
-      attachmentName: "" as string | undefined,
-    });
-    const [contractLineItems, setContractLineItems] = useState([]);
-    const [isContractCostCodeModalOpen, setIsContractCostCodeModalOpen] = useState(false);
-    const [contractBudgetSearchText, setContractBudgetSearchText] = useState("");
-    const [selectedSubItemsForContractPR, setSelectedSubItemsForContractPR] = useState([]);
+  };
 
-    const projectBudgets = budgets.filter(
-      (b) => b.projectId === selectedProjectId
-    );
-    const calculateTotal = () =>
-      lineItems.reduce((sum, item) => sum + item.quantity * item.price, 0);
-
-      const availableBudgets = useMemo(() => {
-      const approved = budgets.filter(
-        (b) => b.projectId === selectedProjectId && b.status === "Approved"
-      );
-      return approved
-        .map((b) => {
-          // ถ้า budget document มี usedAmount ที่ recompute ไว้แล้ว (เหมือน statusNow บน PO) ให้ใช้ค่านั้นก่อน
-          // หากยังไม่มี ให้ compute จาก PRs โดยจับคู่ทั้ง budgetId และ costCode (deduped) เพื่อไม่ให้หล่น
-          let usedAmount: number;
-          if (b.usedAmount != null && !isNaN(Number(b.usedAmount))) {
-            usedAmount = Number(b.usedAmount);
-          } else {
-            const seen = new Set<string>();
-            usedAmount = prs
-              .filter((p) => {
-                if (p.projectId !== selectedProjectId || p.status === "Rejected") return false;
-                const matchById = b.id && p.budgetId === b.id;
-                const matchByCode = b.code && p.costCode === b.code;
-                if (!(matchById || matchByCode)) return false;
-                if (seen.has(p.id)) return false;
-                seen.add(p.id);
-                return true;
-              })
-              .reduce((sum, p) => sum + (Number(p.totalAmount) || 0), 0);
-          }
-          const budgetAmount = Number(b.amount);
-          return {
-            ...b,
-            budgetAmount,
-            usedAmount,
-            remainingBalance: budgetAmount - usedAmount,
-          };
-        })
-        .filter((b) => {
-          // If budget has sub-items, always show it so sub-items can be individually selected.
-          if (b.subItems && b.subItems.length > 0) return true;
-          // For budgets without sub-items: แสดงจนกว่าคงเหลือจะหมด (เปิด PR ซ้ำได้จนงบหมด)
-          return b.remainingBalance > 0;
-        });
-    }, [budgets, prs, selectedProjectId]);
-
-    const handleAddItem = () => {
-      if (!newItem.description || newItem.quantity <= 0)
-        return showAlert(
-          "ข้อมูลไม่ครบ",
-          "กรุณากรอกรายละเอียดและจำนวนให้ถูกต้อง",
-          "warning"
-        );
-      if (editingItemId) {
-        setLineItems(
-          lineItems.map((item) =>
-            item.id === editingItemId ? { ...newItem, id: editingItemId } : item
-          )
-        );
-        setEditingItemId(null);
-      } else {
-        setLineItems([...lineItems, {
-          ...newItem,
-          id: crypto.randomUUID(),
-          subItemId: headerData.selectedSubItemId || null,
-          budgetId: headerData.selectedBudgetId || null,
-          budgetSubItemId: headerData.selectedSubItemId || null,
-        }]);
-      }
+  const handleEditItem = (item) => {
+    setNewItem(item);
+    setEditingItemId(item.id);
+  };
+  const handleRemoveItem = (itemId) => {
+    setLineItems(lineItems.filter((item) => item.id !== itemId));
+    if (editingItemId === itemId) {
+      setEditingItemId(null);
       setNewItem({
         description: "",
         quantity: 1,
@@ -441,1188 +459,1170 @@ const PRView = React.memo(() => {
         requiredDate: "",
         note: "",
       });
-    };
+    }
+  };
 
-    const handleEditItem = (item) => {
-      setNewItem(item);
-      setEditingItemId(item.id);
-    };
-    const handleRemoveItem = (itemId) => {
-      setLineItems(lineItems.filter((item) => item.id !== itemId));
-      if (editingItemId === itemId) {
-        setEditingItemId(null);
-        setNewItem({
-          description: "",
-          quantity: 1,
-          unit: "Job",
-          price: 0,
-          requiredDate: "",
-          note: "",
-        });
-      }
-    };
+  const handleEditClick = (pr) => {
+    setEditingPRId(pr.id);
+    setHeaderData({
+      prNo: pr.prNo,
+      subCode: pr.subCode || "",
+      requestDate: pr.requestDate || new Date().toISOString().split("T")[0],
+      requestor: pr.requestor,
+      requestorEmail: pr.requestorEmail || "",
+      costCode: pr.costCode,
+      selectedBudgetId: pr.budgetId || "",
+      selectedSubItemId: pr.subItemId || "",
+      urgency: pr.urgency || "Normal",
+      purchaseType: pr.purchaseType || "",
+      deliveryLocation: pr.deliveryLocation || "",
+      attachment: null,
+      attachmentUrl: pr.attachmentUrl || "",
+      attachmentName: pr.attachmentName || "",
+    });
+    setLineItems(pr.items || []);
+    setIsModalOpen(true);
+    setIsFullScreenModalOpen(true);
+  };
 
-    const handleEditClick = (pr) => {
-      setEditingPRId(pr.id);
-      setHeaderData({
-        prNo: pr.prNo,
-        subCode: pr.subCode || "",
-        requestDate: pr.requestDate || new Date().toISOString().split("T")[0],
-        requestor: pr.requestor,
-        requestorEmail: pr.requestorEmail || "",
-        costCode: pr.costCode,
-        selectedBudgetId: pr.budgetId || "",
-        selectedSubItemId: pr.subItemId || "",
-        urgency: pr.urgency || "Normal",
-        purchaseType: pr.purchaseType || "",
-        deliveryLocation: pr.deliveryLocation || "",
-        attachment: null,
-        attachmentUrl: pr.attachmentUrl || "",
-        attachmentName: pr.attachmentName || "",
-      });
-      setLineItems(pr.items || []);
-      setIsModalOpen(true);
-      setIsFullScreenModalOpen(true);
-    };
-
-    const handleSavePR = async () => {
-      let resolvedPrNo = headerData.prNo;
-      const isNewPR = !editingPRId;
-      if (isNewPR) {
-        try {
-          resolvedPrNo = await reserveNextPrNo(headerData.subCode, headerData.purchaseType);
-          setHeaderData((prev) => ({ ...prev, prNo: resolvedPrNo }));
-        } catch (e) {
-          return showAlert("สร้างเลข PR ไม่สำเร็จ", e?.message || "ไม่สามารถจองเลข PR ใหม่ได้", "error");
-        }
-      }
-      if (
-        !resolvedPrNo ||
-        !headerData.costCode ||
-        !headerData.requestDate ||
-        !headerData.purchaseType ||
-        !headerData.deliveryLocation ||
-        lineItems.length === 0
-      ) {
-        return showAlert(
-          "ข้อมูลไม่ครบ",
-          "กรุณากรอกข้อมูลให้ครบถ้วน ทุกช่อง รวมถึงรายการสินค้าอย่างน้อย 1 รายการ",
-          "warning"
-        );
-      }
-
-      const budgetItem = headerData.selectedBudgetId
-        ? budgets.find((b) => b.id === headerData.selectedBudgetId && b.projectId === selectedProjectId)
-        : budgets.find((b) => b.code === headerData.costCode && b.projectId === selectedProjectId);
-      if (!budgetItem)
-        return showAlert(
-          "ไม่พบ Cost Code",
-          "กรุณาเลือก Cost Code ที่ถูกต้อง",
-          "error"
-        );
-
-      // ตรวจสอบว่า Budget ที่เลือกยังได้รับการ Approve อยู่
-      if (budgetItem.status !== "Approved")
-        return showAlert(
-          "Budget ไม่ได้รับการ Approve",
-          `Cost Code ${budgetItem.code} ยังไม่ได้รับการ Approve กรุณาเลือก Cost Code ที่ Approved แล้ว`,
-          "error"
-        );
-
-      // ตรวจสอบว่า Sub-item ที่เลือกยังคง Approved อยู่ และยอดไม่เกิน (กรณีที่ budget มี sub-items)
-      if (budgetItem.subItems && budgetItem.subItems.length > 0) {
-        // หา sub-item ที่ตรงกับ selectedSubItemId → subItemId ใน lineItem → description ใน lineItem
-        const firstLineSubId = lineItems.length > 0 && lineItems[0].subItemId ? lineItems[0].subItemId : "";
-        const firstLineDesc = lineItems.length > 0 ? (lineItems[0].description || "").trim() : "";
-        const resolvedSubId = headerData.selectedSubItemId || firstLineSubId;
-
-        let selectedSub = resolvedSubId
-          ? budgetItem.subItems.find(s => s.id === resolvedSubId)
-          : firstLineDesc
-            ? budgetItem.subItems.find(s => s.description?.trim() === firstLineDesc)
-            : null;
-
-        if (selectedSub) {
-          if (selectedSub.status !== "Approved")
-            return showAlert(
-              "รายการยังไม่ได้รับการ Approve",
-              `รายการ "${selectedSub.description}" มีสถานะ "${selectedSub.status}" ซึ่งยังไม่ได้รับการ Approve\nกรุณากลับไปเลือกรายการที่ Approved แล้ว`,
-              "error"
-            );
-
-          // ตรวจสอบยอดคงเหลือของ sub-item (ไม่นับ PR ปัจจุบันที่กำลังแก้ไข)
-          const subUsed = prs
-            .filter(p => p.projectId === selectedProjectId && p.costCode === budgetItem.code && p.status !== "Rejected" && p.id !== editingPRId)
-            .reduce((sum, p) => {
-              const matchItems = (p.items || []).filter(i => {
-                // Only match items that have proper sub-item IDs to avoid counting legacy records incorrectly
-                if (selectedSub.id && (i.subItemId === selectedSub.id || i.budgetSubItemId === selectedSub.id)) {
-                  return true;
-                }
-                // For legacy records without subItemId, only match if this is the only sub-item with this exact description
-                // and the PR was created before sub-item system (no subItemId on any items)
-                if (!i.subItemId && !i.budgetSubItemId && i.description?.trim() === selectedSub.description?.trim()) {
-                  // Check if this PR has any items with subItemId - if yes, it's not a legacy PR
-                  const hasAnySubItemId = (p.items || []).some(item => item.subItemId || item.budgetSubItemId);
-                  return !hasAnySubItemId;
-                }
-                return false;
-              });
-              return sum + matchItems.reduce((s, i) => s + (i.quantity * i.price), 0);
-            }, 0);
-          const subBalance = selectedSub.amount - subUsed;
-          const thisPrTotalCheck = calculateTotal();
-          if (thisPrTotalCheck > subBalance) {
-            return showAlert(
-              "งบประมาณไม่พอ",
-              `รายการ "${selectedSub.description}"\nงบที่ได้รับ: ${formatCurrency(selectedSub.amount)}\nใช้ไปแล้ว: ${formatCurrency(subUsed)}\nคงเหลือ: ${formatCurrency(subBalance)}\nขอซื้อครั้งนี้: ${formatCurrency(thisPrTotalCheck)}`,
-              "error"
-            );
-          }
-        }
-      }
-
-      // Use deduplication but keep original matching logic to avoid counting all PRs with same costCode
-      const currentPrTotal = (() => {
-        const seen = new Set<string>();
-        return prs
-          .filter((pr) => {
-            if (pr.projectId !== selectedProjectId || pr.status === "Rejected" || pr.id === editingPRId) return false;
-            // Keep original matching logic: budgetId match OR legacy costCode match (for PRs without budgetId)
-            const matchById = budgetItem.id && pr.budgetId === budgetItem.id;
-            const matchByCodeLegacy = !pr.budgetId && pr.costCode === budgetItem.code;
-            if (!(matchById || matchByCodeLegacy)) return false;
-            // Add deduplication to prevent double counting
-            if (seen.has(pr.id)) return false;
-            seen.add(pr.id);
-            return true;
-          })
-          .reduce((sum, pr) => sum + Number(pr.totalAmount), 0);
-      })();
-      const thisPrTotal = calculateTotal();
-      const totalBudget =
-        budgetItem.subItems && budgetItem.subItems.length > 0
-          ? budgetItem.subItems.reduce((sum, s) => sum + s.amount, 0)
-          : budgetItem.amount;
-
-      // Skip main budget validation if budget has sub-items and we have a selected sub-item
-      // because sub-item validation above is more accurate and specific
-      const hasSubItemSelected = budgetItem.subItems && budgetItem.subItems.length > 0 && 
-        (headerData.selectedSubItemId || (lineItems.length > 0 && lineItems[0].subItemId));
-      
-      if (!hasSubItemSelected && currentPrTotal + thisPrTotal > totalBudget) {
-        return showAlert(
-          "งบประมาณไม่พอ",
-          `งบทั้งหมด: ${formatCurrency(
-            totalBudget
-          )} \nใช้ไปแล้ว: ${formatCurrency(
-            currentPrTotal
-          )} \nขอซื้อครั้งนี้: ${formatCurrency(
-            thisPrTotal
-          )} \nคงเหลือจริง: ${formatCurrency(totalBudget - currentPrTotal)}`,
-          "error"
-        );
-      }
-
-      const setProgress = (pct: number, step: string) => setSavePrProgress({ show: true, pct, step });
-      setProgress(5, "เตรียมข้อมูล...");
-
-      let success = false;
-      const editingPR = editingPRId ? prs.find(p => p.id === editingPRId) : null;
-      const wasEditBudget = editingPR?.status === "Edit Budget";
-
-      // อัปโหลดไฟล์แนบ
-      setProgress(10, "อัปโหลดไฟล์แนบ...");
-      let attachmentUrl = headerData.attachmentUrl || null;
-      let attachmentName = headerData.attachmentName || null;
-      if (headerData.attachment && typeof headerData.attachment === "object" && (headerData.attachment as File).name) {
-        try {
-          const file = headerData.attachment as File;
-          const res = await uploadAttachment(file, {
-            type: "pr",
-            projectId: selectedProjectId || undefined,
-            prNo: resolvedPrNo || undefined,
-          });
-          attachmentUrl = res.url;
-          attachmentName = res.name;
-        } catch (err) {
-          setSavePrProgress({ show: false, pct: 0, step: "" });
-          return showAlert("อัปโหลดไฟล์แนบไม่สำเร็จ", err?.message || "ไม่สามารถอัปโหลดไฟล์ได้", "error");
-        }
-      }
-
-      const { attachment: _omitFile, ...headerWithoutFile } = headerData;
-      const prPayload = {
-        ...headerWithoutFile,
-        prNo: resolvedPrNo,
-        attachmentUrl: attachmentUrl || null,
-        attachmentName: attachmentName || null,
-        budgetId: headerData.selectedBudgetId || null,
-        projectId: selectedProjectId,
-        items: lineItems,
-        totalAmount: thisPrTotal,
-        status: "Pending CM",
-        ...(wasEditBudget ? { editBudgetReason: null, editBudgetBy: null, editBudgetAt: null } : {}),
-      };
-
-      // สร้าง PDF + stamp + upload
-      let pdfUrl: string | undefined;
-      let pdfError: string | null = null;
+  const handleSavePR = async () => {
+    let resolvedPrNo = headerData.prNo;
+    const isNewPR = !editingPRId;
+    if (isNewPR) {
       try {
-        const project = projects.find((p: any) => p.id === selectedProjectId) || null;
-        const safePRNo = (resolvedPrNo || "unknown").replace(/[^a-zA-Z0-9\-_]/g, "_");
-        const safeProjId = selectedProjectId || "unknown";
-        // Prefer dataURL to avoid CORS on Storage URL
-        const creatorSignatureUrl = userData?.signatureDataUrl || userData?.signatureUrl || null;
+        resolvedPrNo = await reserveNextPrNo(headerData.subCode, headerData.purchaseType);
+        setHeaderData((prev) => ({ ...prev, prNo: resolvedPrNo }));
+      } catch (e) {
+        return showAlert("สร้างเลข PR ไม่สำเร็จ", e?.message || "ไม่สามารถจองเลข PR ใหม่ได้", "error");
+      }
+    }
+    if (
+      !resolvedPrNo ||
+      !headerData.costCode ||
+      !headerData.requestDate ||
+      !headerData.purchaseType ||
+      !headerData.deliveryLocation ||
+      lineItems.length === 0
+    ) {
+      return showAlert(
+        "ข้อมูลไม่ครบ",
+        "กรุณากรอกข้อมูลให้ครบถ้วน ทุกช่อง รวมถึงรายการสินค้าอย่างน้อย 1 รายการ",
+        "warning"
+      );
+    }
 
-        setProgress(20, "กำลังสร้าง PDF...");
-        let bytes = await generatePRPdfBytes(prPayload, {
+    const budgetItem = headerData.selectedBudgetId
+      ? budgets.find((b) => b.id === headerData.selectedBudgetId && b.projectId === selectedProjectId)
+      : budgets.find((b) => b.code === headerData.costCode && b.projectId === selectedProjectId);
+    if (!budgetItem)
+      return showAlert(
+        "ไม่พบ Cost Code",
+        "กรุณาเลือก Cost Code ที่ถูกต้อง",
+        "error"
+      );
+
+    // ตรวจสอบว่า Budget ที่เลือกยังได้รับการ Approve อยู่
+    if (budgetItem.status !== "Approved")
+      return showAlert(
+        "Budget ไม่ได้รับการ Approve",
+        `Cost Code ${budgetItem.code} ยังไม่ได้รับการ Approve กรุณาเลือก Cost Code ที่ Approved แล้ว`,
+        "error"
+      );
+
+    // ตรวจสอบว่า Sub-item ที่เลือกยังคง Approved อยู่ และยอดไม่เกิน (กรณีที่ budget มี sub-items)
+    if (budgetItem.subItems && budgetItem.subItems.length > 0) {
+      // หา sub-item ที่ตรงกับ selectedSubItemId → subItemId ใน lineItem → description ใน lineItem
+      const firstLineSubId = lineItems.length > 0 && lineItems[0].subItemId ? lineItems[0].subItemId : "";
+      const firstLineDesc = lineItems.length > 0 ? (lineItems[0].description || "").trim() : "";
+      const resolvedSubId = headerData.selectedSubItemId || firstLineSubId;
+
+      let selectedSub = resolvedSubId
+        ? budgetItem.subItems.find(s => s.id === resolvedSubId)
+        : firstLineDesc
+          ? budgetItem.subItems.find(s => s.description?.trim() === firstLineDesc)
+          : null;
+
+      if (selectedSub) {
+        if (selectedSub.status !== "Approved")
+          return showAlert(
+            "รายการยังไม่ได้รับการ Approve",
+            `รายการ "${selectedSub.description}" มีสถานะ "${selectedSub.status}" ซึ่งยังไม่ได้รับการ Approve\nกรุณากลับไปเลือกรายการที่ Approved แล้ว`,
+            "error"
+          );
+
+        // ตรวจสอบยอดคงเหลือของ sub-item (ไม่นับ PR ปัจจุบันที่กำลังแก้ไข)
+        const subUsed = prs
+          .filter(p => p.projectId === selectedProjectId && p.costCode === budgetItem.code && p.status !== "Rejected" && p.id !== editingPRId)
+          .reduce((sum, p) => {
+            const matchItems = (p.items || []).filter(i => {
+              // Only match items that have proper sub-item IDs to avoid counting legacy records incorrectly
+              if (selectedSub.id && (i.subItemId === selectedSub.id || i.budgetSubItemId === selectedSub.id)) {
+                return true;
+              }
+              // For legacy records without subItemId, only match if this is the only sub-item with this exact description
+              // and the PR was created before sub-item system (no subItemId on any items)
+              if (!i.subItemId && !i.budgetSubItemId && i.description?.trim() === selectedSub.description?.trim()) {
+                // Check if this PR has any items with subItemId - if yes, it's not a legacy PR
+                const hasAnySubItemId = (p.items || []).some(item => item.subItemId || item.budgetSubItemId);
+                return !hasAnySubItemId;
+              }
+              return false;
+            });
+            return sum + matchItems.reduce((s, i) => s + (i.quantity * i.price), 0);
+          }, 0);
+        const subBalance = selectedSub.amount - subUsed;
+        const thisPrTotalCheck = calculateTotal();
+        if (thisPrTotalCheck > subBalance) {
+          return showAlert(
+            "งบประมาณไม่พอ",
+            `รายการ "${selectedSub.description}"\nงบที่ได้รับ: ${formatCurrency(selectedSub.amount)}\nใช้ไปแล้ว: ${formatCurrency(subUsed)}\nคงเหลือ: ${formatCurrency(subBalance)}\nขอซื้อครั้งนี้: ${formatCurrency(thisPrTotalCheck)}`,
+            "error"
+          );
+        }
+      }
+    }
+
+    // Use deduplication but keep original matching logic to avoid counting all PRs with same costCode
+    const currentPrTotal = (() => {
+      const seen = new Set<string>();
+      return prs
+        .filter((pr) => {
+          if (pr.projectId !== selectedProjectId || pr.status === "Rejected" || pr.id === editingPRId) return false;
+          // Keep original matching logic: budgetId match OR legacy costCode match (for PRs without budgetId)
+          const matchById = budgetItem.id && pr.budgetId === budgetItem.id;
+          const matchByCodeLegacy = !pr.budgetId && pr.costCode === budgetItem.code;
+          if (!(matchById || matchByCodeLegacy)) return false;
+          // Add deduplication to prevent double counting
+          if (seen.has(pr.id)) return false;
+          seen.add(pr.id);
+          return true;
+        })
+        .reduce((sum, pr) => sum + Number(pr.totalAmount), 0);
+    })();
+    const thisPrTotal = calculateTotal();
+    const totalBudget =
+      budgetItem.subItems && budgetItem.subItems.length > 0
+        ? budgetItem.subItems.reduce((sum, s) => sum + s.amount, 0)
+        : budgetItem.amount;
+
+    // Skip main budget validation if budget has sub-items and we have a selected sub-item
+    // because sub-item validation above is more accurate and specific
+    const hasSubItemSelected = budgetItem.subItems && budgetItem.subItems.length > 0 &&
+      (headerData.selectedSubItemId || (lineItems.length > 0 && lineItems[0].subItemId));
+
+    if (!hasSubItemSelected && currentPrTotal + thisPrTotal > totalBudget) {
+      return showAlert(
+        "งบประมาณไม่พอ",
+        `งบทั้งหมด: ${formatCurrency(
+          totalBudget
+        )} \nใช้ไปแล้ว: ${formatCurrency(
+          currentPrTotal
+        )} \nขอซื้อครั้งนี้: ${formatCurrency(
+          thisPrTotal
+        )} \nคงเหลือจริง: ${formatCurrency(totalBudget - currentPrTotal)}`,
+        "error"
+      );
+    }
+
+    const setProgress = (pct: number, step: string) => setSavePrProgress({ show: true, pct, step });
+    setProgress(5, "เตรียมข้อมูล...");
+
+    let success = false;
+    const editingPR = editingPRId ? prs.find(p => p.id === editingPRId) : null;
+    const wasEditBudget = editingPR?.status === "Edit Budget";
+
+    // อัปโหลดไฟล์แนบ
+    setProgress(10, "อัปโหลดไฟล์แนบ...");
+    let attachmentUrl = headerData.attachmentUrl || null;
+    let attachmentName = headerData.attachmentName || null;
+    if (headerData.attachment && typeof headerData.attachment === "object" && (headerData.attachment as File).name) {
+      try {
+        const file = headerData.attachment as File;
+        const res = await uploadAttachment(file, {
+          type: "pr",
+          projectId: selectedProjectId || undefined,
+          prNo: resolvedPrNo || undefined,
+        });
+        attachmentUrl = res.url;
+        attachmentName = res.name;
+      } catch (err) {
+        setSavePrProgress({ show: false, pct: 0, step: "" });
+        return showAlert("อัปโหลดไฟล์แนบไม่สำเร็จ", err?.message || "ไม่สามารถอัปโหลดไฟล์ได้", "error");
+      }
+    }
+
+    const { attachment: _omitFile, ...headerWithoutFile } = headerData;
+    const prPayload = {
+      ...headerWithoutFile,
+      prNo: resolvedPrNo,
+      attachmentUrl: attachmentUrl || null,
+      attachmentName: attachmentName || null,
+      budgetId: headerData.selectedBudgetId || null,
+      projectId: selectedProjectId,
+      items: lineItems,
+      totalAmount: thisPrTotal,
+      status: "Pending CM",
+      ...(wasEditBudget ? { editBudgetReason: null, editBudgetBy: null, editBudgetAt: null } : {}),
+    };
+
+    // สร้าง PDF + stamp + upload
+    let pdfUrl: string | undefined;
+    let pdfError: string | null = null;
+    try {
+      const project = projects.find((p: any) => p.id === selectedProjectId) || null;
+      const safePRNo = (resolvedPrNo || "unknown").replace(/[^a-zA-Z0-9\-_]/g, "_");
+      const safeProjId = selectedProjectId || "unknown";
+      // Prefer dataURL to avoid CORS on Storage URL
+      const creatorSignatureUrl = userData?.signatureDataUrl || userData?.signatureUrl || null;
+
+      setProgress(20, "กำลังสร้าง PDF...");
+      let bytes = await generatePRPdfBytes(prPayload, {
+        projectName: project?.name || "",
+        budgetDesc: "",
+      });
+
+      // PR: ไม่ stamp Signature1 (ผู้สร้าง) ตาม requirement — ให้แสดงเฉพาะตอน Approve (Signature2/3) แทน
+
+      setProgress(70, "อัปโหลด PDF ขึ้น Cloud...");
+      const pdfPath = `generated/prs/${safeProjId}/${safePRNo}.pdf`;
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("PDF timeout")), 15000)
+      );
+      pdfUrl = await Promise.race([
+        (async () => {
+          // ลบไฟล์เดิมก่อนอัปโหลดใหม่ เพื่ออัปเดตข้อมูล PDF (กรณี Reject → แก้ไข → บันทึกใหม่)
+          await deleteGeneratedPdf(pdfPath);
+          return await uploadGeneratedPdf(bytes, pdfPath);
+        })(),
+        timeout,
+      ]);
+    } catch (e) {
+      console.warn("[PR Save] PDF generation/upload failed:", e);
+      const msg = e?.message || String(e);
+      pdfError = /permission|unauthorized|403|rules/i.test(msg)
+        ? "ไม่มีสิทธิ์เขียน Storage — กรุณาตั้งค่า Storage Rules ใน Firebase Console"
+        : msg;
+    }
+
+    setProgress(85, "บันทึกข้อมูล PR...");
+    if (pdfUrl) {
+      prPayload.pdfUrl = pdfUrl;
+      prPayload.pdfPath = `generated/prs/${(selectedProjectId || "unknown")}/${(resolvedPrNo || "unknown").replace(/[^a-zA-Z0-9\-_]/g, "_")}.pdf`;
+      prPayload.pdfUpdatedAt = new Date().toISOString();
+    }
+
+    if (editingPRId) {
+      success = await updateData("prs", editingPRId, prPayload);
+    } else {
+      success = await addData("prs", prPayload, prPayload.prNo);
+    }
+
+    if (success) {
+      // อัปเดต usedAmount บน budget document (เหมือน statusNow บน PO) ให้ยอดคงเหลือ dropdown ตรงเสมอ
+      // ต้องรอ Firestore listener อัปเดต prs ก่อนถึงจะ count รายการใหม่ถูก
+      setTimeout(() => {
+        recomputeBudgetUsed(
+          headerData.selectedBudgetId || prPayload.budgetId || "",
+          headerData.costCode || prPayload.costCode || "",
+          selectedProjectId
+        );
+      }, 1500);
+
+      setProgress(100, "เสร็จสิ้น!");
+      await new Promise(r => setTimeout(r, 600));
+      setSavePrProgress({ show: false, pct: 0, step: "" });
+
+      setIsModalOpen(false);
+      setIsFullScreenModalOpen(false);
+      setHeaderData({
+        prNo: "",
+        subCode: "",
+        requestDate: new Date().toISOString().split("T")[0],
+        requestor: "",
+        requestorEmail: "",
+        costCode: "",
+        selectedBudgetId: "",
+        selectedSubItemId: "",
+        urgency: "Normal",
+        purchaseType: "",
+        deliveryLocation: "",
+        attachment: null,
+        attachmentUrl: "",
+        attachmentName: "",
+      });
+      setLineItems([]);
+      setEditingItemId(null);
+      setEditingPRId(null);
+
+      if (wasEditBudget) {
+        showAlert("ส่งอนุมัติใหม่แล้ว", "PR ถูกส่งให้ CM/PM อนุมัติใหม่เรียบร้อย", "success");
+      } else if (pdfUrl) {
+        showAlert("สำเร็จ", "บันทึก PR และสร้าง PDF เรียบร้อย", "success");
+      } else if (pdfError) {
+        showAlert("บันทึก PR เรียบร้อย แต่ PDF ไม่บันทึกลง Storage", pdfError, "warning");
+      } else {
+        showAlert("สำเร็จ", editingPRId ? "แก้ไขใบขอซื้อ (PR) เรียบร้อยแล้ว" : "บันทึกใบขอซื้อ (PR) เรียบร้อยแล้ว", "success");
+      }
+    } else {
+      setSavePrProgress({ show: false, pct: 0, step: "" });
+    }
+  };
+
+  const handleToggleSubItem = (sub, budgetCode, budgetId) => {
+    setSelectedSubItemsForPR((prev) => {
+      const withBudgetId = { ...sub, parentCode: budgetCode, parentBudgetId: budgetId || (typeof sub.id === "string" && sub.id.startsWith("main-") ? sub.id.replace("main-", "") : null) };
+      // เลือกได้เพียง 1 รายการเท่านั้น: ถ้ากดซ้ำบนรายการเดิมให้ยกเลิก ถ้ากดรายการใหม่ให้แทนที่
+      const alreadySelected = prev.length === 1 && prev[0].id === sub.id;
+      if (alreadySelected) return [];
+      return [withBudgetId];
+    });
+  };
+
+  const handleAddSelectedSubItems = () => {
+    if (selectedSubItemsForPR.length === 0) return;
+    const first = selectedSubItemsForPR[0];
+    const budgetCode = first.parentCode;
+    const budgetId = first.parentBudgetId || (first.id && String(first.id).startsWith("main-") ? String(first.id).replace("main-", "") : null);
+
+    // เก็บทั้ง budget ID และ sub-item ID เพื่อแสดงยอดคงเหลือของ sub-item ที่เลือก
+    const isMainItem = typeof first.id === 'string' && first.id.startsWith('main-');
+    const subItemId = isMainItem ? "" : (first.id || "");
+    setHeaderData((prev) => ({ ...prev, costCode: budgetCode, selectedBudgetId: budgetId || "", selectedSubItemId: subItemId }));
+
+    // Add Items
+    const newItems = selectedSubItemsForPR.map((sub) => {
+      const isMainItem = typeof sub.id === 'string' && sub.id.startsWith('main-');
+      return {
+        id: crypto.randomUUID(),
+        subItemId: isMainItem ? null : sub.id,
+        budgetId: budgetId || null,
+        budgetSubItemId: isMainItem ? null : (sub.id || null),
+        description: sub.description,
+        quantity: sub.quantity || 1,
+        unit: sub.unit || "Job",
+        price: sub.unitPrice || 0,
+        requiredDate: new Date().toISOString().split("T")[0],
+        note: "",
+      };
+    });
+    setLineItems((prev) => [...prev, ...newItems]);
+    setSelectedSubItemsForPR([]);
+    setIsCostCodeModalOpen(false);
+  };
+
+  // ─── Contract PR helpers ───────────────────────────────────────────────────
+  const updateContractLineItem = (id, field, value) => {
+    setContractLineItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
+  };
+  const removeContractLineItem = (id) => {
+    setContractLineItems(prev => prev.filter(item => item.id !== id));
+  };
+  const addNewContractLineItem = () => {
+    setContractLineItems(prev => [...prev, {
+      id: crypto.randomUUID(),
+      description: "",
+      unit: "Job",
+      quantity: 0,
+      price: 0,
+      note: "",
+      subItemId: null,
+      budgetId: contractHeaderData.selectedBudgetId || null,
+      budgetSubItemId: contractHeaderData.selectedSubItemId || null,
+      budgetCode: "",
+    }]);
+  };
+
+  const handleToggleSubItemContract = (sub, budgetCode, budgetId) => {
+    setSelectedSubItemsForContractPR((prev) => {
+      const withBudgetId = { ...sub, parentCode: budgetCode, parentBudgetId: budgetId || null };
+      const exists = prev.find(i => i.id === sub.id);
+      if (exists) return prev.filter(i => i.id !== sub.id);
+      return [...prev, withBudgetId];
+    });
+  };
+
+  const handleAddSelectedSubItemsForContract = () => {
+    if (selectedSubItemsForContractPR.length === 0) return;
+    const first = selectedSubItemsForContractPR[0];
+    const budgetCode = first.parentCode;
+    const budgetId = first.parentBudgetId || null;
+    const subItemId = first.id || "";
+    setContractHeaderData((prev) => ({
+      ...prev,
+      costCode: budgetCode,
+      selectedBudgetId: budgetId || "",
+      selectedSubItemId: subItemId,
+    }));
+    const newItems = selectedSubItemsForContractPR.map((sub) => ({
+      id: crypto.randomUUID(),
+      subItemId: sub.id || null,
+      budgetId: sub.parentBudgetId || null,
+      budgetSubItemId: sub.id || null,
+      description: sub.description || "",
+      quantity: 0,
+      unit: sub.unit || "Job",
+      price: 0,
+      note: "",
+      budgetCode: sub.parentCode || "",
+    }));
+    setContractLineItems((prev) => [...prev, ...newItems]);
+    setSelectedSubItemsForContractPR([]);
+    setIsContractCostCodeModalOpen(false);
+  };
+
+  const handleSaveContractPR = async () => {
+    let resolvedPrNo = contractHeaderData.prNo;
+    try {
+      resolvedPrNo = await reserveNextPrNo(contractHeaderData.subCode, contractHeaderData.purchaseType);
+      setContractHeaderData((prev) => ({ ...prev, prNo: resolvedPrNo }));
+    } catch (e) {
+      return showAlert("สร้างเลข PR ไม่สำเร็จ", e?.message || "ไม่สามารถจองเลข PR ใหม่ได้", "error");
+    }
+    if (
+      !resolvedPrNo ||
+      !contractHeaderData.costCode ||
+      !contractHeaderData.requestDate ||
+      !contractHeaderData.purchaseType ||
+      !contractHeaderData.deliveryLocation ||
+      contractLineItems.length === 0
+    ) {
+      return showAlert("ข้อมูลไม่ครบ", "กรุณากรอกข้อมูลให้ครบถ้วน ทุกช่อง รวมถึงรายการสินค้าอย่างน้อย 1 รายการ", "warning");
+    }
+    const budgetItem = contractHeaderData.selectedBudgetId
+      ? budgets.find((b) => b.id === contractHeaderData.selectedBudgetId && b.projectId === selectedProjectId)
+      : budgets.find((b) => b.code === contractHeaderData.costCode && b.projectId === selectedProjectId);
+    if (!budgetItem)
+      return showAlert("ไม่พบ Cost Code", "กรุณาเลือก Cost Code ที่ถูกต้อง", "error");
+    if (budgetItem.status !== "Approved")
+      return showAlert("Budget ไม่ได้รับการ Approve", `Cost Code ${budgetItem.code} ยังไม่ได้รับการ Approve`, "error");
+
+    const contractTotal = contractLineItems.reduce((sum, item) => sum + (Number(item.quantity) || 0) * (Number(item.price) || 0), 0);
+    const setProgress = (pct: number, step: string) => setSavePrProgress({ show: true, pct, step });
+    setProgress(5, "เตรียมข้อมูล...");
+
+    let attachmentUrl = contractHeaderData.attachmentUrl || null;
+    let attachmentName = contractHeaderData.attachmentName || null;
+    setProgress(10, "อัปโหลดไฟล์แนบ...");
+    if (contractHeaderData.attachment && typeof contractHeaderData.attachment === "object" && (contractHeaderData.attachment as File).name) {
+      try {
+        const file = contractHeaderData.attachment as File;
+        const res = await uploadAttachment(file, {
+          type: "pr",
+          projectId: selectedProjectId || undefined,
+          prNo: resolvedPrNo || undefined,
+        });
+        attachmentUrl = res.url;
+        attachmentName = res.name;
+      } catch (err) {
+        setSavePrProgress({ show: false, pct: 0, step: "" });
+        return showAlert("อัปโหลดไฟล์แนบไม่สำเร็จ", err?.message || "ไม่สามารถอัปโหลดไฟล์ได้", "error");
+      }
+    }
+
+    const { attachment: _omitFile, ...headerWithoutFile } = contractHeaderData;
+    const prPayload = {
+      ...headerWithoutFile,
+      prNo: resolvedPrNo,
+      attachmentUrl: attachmentUrl || null,
+      attachmentName: attachmentName || null,
+      budgetId: contractHeaderData.selectedBudgetId || null,
+      projectId: selectedProjectId,
+      items: contractLineItems,
+      totalAmount: contractTotal,
+      status: "Pending CM",
+      prType: "contract",
+    };
+
+    let pdfUrl: string | undefined;
+    try {
+      const project = projects.find((p: any) => p.id === selectedProjectId) || null;
+      const safePRNo = (resolvedPrNo || "unknown").replace(/[^a-zA-Z0-9\-_]/g, "_");
+      const safeProjId = selectedProjectId || "unknown";
+      setProgress(20, "กำลังสร้าง PDF...");
+      let bytes = await generatePRPdfBytes(prPayload, { projectName: project?.name || "", budgetDesc: "" });
+      setProgress(70, "อัปโหลด PDF ขึ้น Cloud...");
+      const pdfPath = `generated/prs/${safeProjId}/${safePRNo}.pdf`;
+      const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("PDF timeout")), 15000));
+      pdfUrl = await Promise.race([
+        (async () => {
+          await deleteGeneratedPdf(pdfPath);
+          return await uploadGeneratedPdf(bytes, pdfPath);
+        })(),
+        timeout,
+      ]);
+      setProgress(85, "บันทึกข้อมูล...");
+      await addData("prs", { ...prPayload, pdfUrl, pdfPath, pdfUpdatedAt: new Date().toISOString() });
+      setProgress(100, "บันทึกสำเร็จ!");
+      setTimeout(() => {
+        setSavePrProgress({ show: false, pct: 0, step: "" });
+        setIsContractPrModalOpen(false);
+        setIsFullScreenModalOpen(false);
+      }, 600);
+      showAlert("บันทึก PR จ้าง/เหมา สำเร็จ", `PR No. ${resolvedPrNo} ถูกสร้างแล้ว`, "success");
+    } catch (e) {
+      setSavePrProgress({ show: false, pct: 0, step: "" });
+      console.warn("[Contract PR] Save failed:", e);
+      try {
+        await addData("prs", prPayload);
+        setIsContractPrModalOpen(false);
+        setIsFullScreenModalOpen(false);
+        showAlert("บันทึก PR จ้าง/เหมา สำเร็จ", `PR No. ${resolvedPrNo} ถูกสร้างแล้ว (ไม่มี PDF)`, "success");
+      } catch (e2) {
+        showAlert("บันทึกไม่สำเร็จ", e2?.message || "เกิดข้อผิดพลาด", "error");
+      }
+    }
+  };
+
+  const handleAction = async (id, action) => {
+    const pr = prs.find((p) => p.id === id);
+    if (!pr) return;
+    if (action === "approve" && !canApprovePR) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุมัติ PR", "warning");
+      return;
+    }
+    if (action === "reject" && !canRejectPR) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธ PR", "warning");
+      return;
+    }
+    if (action === "reject") {
+      setSelectedPrForReject(pr);
+      setPrRejectReason("");
+      setIsPrRejectModalOpen(true);
+      return;
+    }
+    let newStatus = pr.status;
+    const isCMApprove = pr.status === "Pending CM" && (userRoles.includes("CM") || userRoles.includes("PM") || userRoles.includes("Administrator"));
+    const isPMApprove = pr.status === "Pending PM" && (userRoles.includes("PM") || userRoles.includes("Administrator"));
+    const isGMApprove = pr.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator"));
+    const isMDApprove = pr.status === "Pending MD" && (userRoles.includes("MD") || userRoles.includes("Administrator"));
+
+    const isContractPR = ["จ้างเหมา > DL"].includes(pr.purchaseType || "");
+    if (isCMApprove) newStatus = "Pending PM";
+    else if (isPMApprove) {
+      newStatus = isContractPR ? "Pending MD" : "Approved";
+    }
+    else if (isGMApprove) newStatus = "Pending MD";
+    else if (isMDApprove) newStatus = "Approved";
+
+    if (newStatus !== pr.status) {
+      setPrApproveFlightFromStatus((s) => ({ ...s, [id]: pr.status }));
+      const emailField = isCMApprove ? "cmApproverEmail" : isPMApprove ? "pmApproverEmail" : null;
+      const approverEmail = userData?.email || user?.email || "";
+      const approverSig = userData?.signatureDataUrl || userData?.signatureUrl;
+      const stampField = isCMApprove ? "Signature2" : isPMApprove ? "Signature3" : null;
+
+      let updatedPdfUrl: string | undefined;
+      let newPdfPath: string | undefined;
+
+      try {
+        const safePRNo = (pr.prNo || pr.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
+        const safeProjId = pr.projectId || "unknown";
+        const project = projects.find((p: any) => p.id === pr.projectId) || null;
+
+        // สร้าง PR data อัปเดตพร้อม email ผู้ approve ปัจจุบัน
+        // (ถ้า PM approve จะมี cmApproverEmail จาก Firestore อยู่แล้ว + เพิ่ม pmApproverEmail)
+        const updatedPrData = {
+          ...pr,
+          ...(emailField && approverEmail ? { [emailField]: approverEmail } : {}),
+        };
+
+        // Regenerate PDF จาก template ใหม่ทั้งหมด (เพื่อให้ prcm/prpm ติดถูกต้องแน่นอน)
+        let bytes = await generatePRPdfBytes(updatedPrData, {
           projectName: project?.name || "",
           budgetDesc: "",
         });
 
-        // PR: ไม่ stamp Signature1 (ผู้สร้าง) ตาม requirement — ให้แสดงเฉพาะตอน Approve (Signature2/3) แทน
-
-        setProgress(70, "อัปโหลด PDF ขึ้น Cloud...");
-        const pdfPath = `generated/prs/${safeProjId}/${safePRNo}.pdf`;
-        const timeout = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("PDF timeout")), 15000)
-        );
-        pdfUrl = await Promise.race([
-          (async () => {
-            // ลบไฟล์เดิมก่อนอัปโหลดใหม่ เพื่ออัปเดตข้อมูล PDF (กรณี Reject → แก้ไข → บันทึกใหม่)
-            await deleteGeneratedPdf(pdfPath);
-            return await uploadGeneratedPdf(bytes, pdfPath);
-          })(),
-          timeout,
-        ]);
-      } catch (e) {
-        console.warn("[PR Save] PDF generation/upload failed:", e);
-        const msg = e?.message || String(e);
-        pdfError = /permission|unauthorized|403|rules/i.test(msg)
-          ? "ไม่มีสิทธิ์เขียน Storage — กรุณาตั้งค่า Storage Rules ใน Firebase Console"
-          : msg;
-      }
-
-      setProgress(85, "บันทึกข้อมูล PR...");
-      if (pdfUrl) {
-        prPayload.pdfUrl = pdfUrl;
-        prPayload.pdfPath = `generated/prs/${(selectedProjectId || "unknown")}/${(resolvedPrNo || "unknown").replace(/[^a-zA-Z0-9\-_]/g, "_")}.pdf`;
-        prPayload.pdfUpdatedAt = new Date().toISOString();
-      }
-
-      if (editingPRId) {
-        success = await updateData("prs", editingPRId, prPayload);
-      } else {
-        success = await addData("prs", prPayload, prPayload.prNo);
-      }
-
-      if (success) {
-        // อัปเดต usedAmount บน budget document (เหมือน statusNow บน PO) ให้ยอดคงเหลือ dropdown ตรงเสมอ
-        // ต้องรอ Firestore listener อัปเดต prs ก่อนถึงจะ count รายการใหม่ถูก
-        setTimeout(() => {
-          recomputeBudgetUsed(
-            headerData.selectedBudgetId || prPayload.budgetId || "",
-            headerData.costCode || prPayload.costCode || "",
-            selectedProjectId
-          );
-        }, 1500);
-
-        setProgress(100, "เสร็จสิ้น!");
-        await new Promise(r => setTimeout(r, 600));
-        setSavePrProgress({ show: false, pct: 0, step: "" });
-
-        setIsModalOpen(false);
-        setIsFullScreenModalOpen(false);
-        setHeaderData({
-          prNo: "",
-          subCode: "",
-          requestDate: new Date().toISOString().split("T")[0],
-          requestor: "",
-          requestorEmail: "",
-          costCode: "",
-          selectedBudgetId: "",
-          selectedSubItemId: "",
-          urgency: "Normal",
-          purchaseType: "",
-          deliveryLocation: "",
-          attachment: null,
-          attachmentUrl: "",
-          attachmentName: "",
-        });
-        setLineItems([]);
-        setEditingItemId(null);
-        setEditingPRId(null);
-
-        if (wasEditBudget) {
-          showAlert("ส่งอนุมัติใหม่แล้ว", "PR ถูกส่งให้ CM/PM อนุมัติใหม่เรียบร้อย", "success");
-        } else if (pdfUrl) {
-          showAlert("สำเร็จ", "บันทึก PR และสร้าง PDF เรียบร้อย", "success");
-        } else if (pdfError) {
-          showAlert("บันทึก PR เรียบร้อย แต่ PDF ไม่บันทึกลง Storage", pdfError, "warning");
-        } else {
-          showAlert("สำเร็จ", editingPRId ? "แก้ไขใบขอซื้อ (PR) เรียบร้อยแล้ว" : "บันทึกใบขอซื้อ (PR) เรียบร้อยแล้ว", "success");
-        }
-      } else {
-        setSavePrProgress({ show: false, pct: 0, step: "" });
-      }
-    };
-
-    const handleToggleSubItem = (sub, budgetCode, budgetId) => {
-      setSelectedSubItemsForPR((prev) => {
-        const withBudgetId = { ...sub, parentCode: budgetCode, parentBudgetId: budgetId || (typeof sub.id === "string" && sub.id.startsWith("main-") ? sub.id.replace("main-", "") : null) };
-        // เลือกได้เพียง 1 รายการเท่านั้น: ถ้ากดซ้ำบนรายการเดิมให้ยกเลิก ถ้ากดรายการใหม่ให้แทนที่
-        const alreadySelected = prev.length === 1 && prev[0].id === sub.id;
-        if (alreadySelected) return [];
-        return [withBudgetId];
-      });
-    };
-
-    const handleAddSelectedSubItems = () => {
-      if (selectedSubItemsForPR.length === 0) return;
-      const first = selectedSubItemsForPR[0];
-      const budgetCode = first.parentCode;
-      const budgetId = first.parentBudgetId || (first.id && String(first.id).startsWith("main-") ? String(first.id).replace("main-", "") : null);
-
-      // เก็บทั้ง budget ID และ sub-item ID เพื่อแสดงยอดคงเหลือของ sub-item ที่เลือก
-      const isMainItem = typeof first.id === 'string' && first.id.startsWith('main-');
-      const subItemId = isMainItem ? "" : (first.id || "");
-      setHeaderData((prev) => ({ ...prev, costCode: budgetCode, selectedBudgetId: budgetId || "", selectedSubItemId: subItemId }));
-
-      // Add Items
-      const newItems = selectedSubItemsForPR.map((sub) => {
-        const isMainItem = typeof sub.id === 'string' && sub.id.startsWith('main-');
-        return {
-          id: crypto.randomUUID(),
-          subItemId: isMainItem ? null : sub.id,
-          budgetId: budgetId || null,
-          budgetSubItemId: isMainItem ? null : (sub.id || null),
-          description: sub.description,
-          quantity: sub.quantity || 1,
-          unit: sub.unit || "Job",
-          price: sub.unitPrice || 0,
-          requiredDate: new Date().toISOString().split("T")[0],
-          note: "",
-        };
-      });
-      setLineItems((prev) => [...prev, ...newItems]);
-      setSelectedSubItemsForPR([]);
-      setIsCostCodeModalOpen(false);
-    };
-
-    // ─── Contract PR helpers ───────────────────────────────────────────────────
-    const updateContractLineItem = (id, field, value) => {
-      setContractLineItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
-    };
-    const removeContractLineItem = (id) => {
-      setContractLineItems(prev => prev.filter(item => item.id !== id));
-    };
-    const addNewContractLineItem = () => {
-      setContractLineItems(prev => [...prev, {
-        id: crypto.randomUUID(),
-        description: "",
-        unit: "Job",
-        quantity: 0,
-        price: 0,
-        note: "",
-        subItemId: null,
-        budgetId: contractHeaderData.selectedBudgetId || null,
-        budgetSubItemId: contractHeaderData.selectedSubItemId || null,
-        budgetCode: "",
-      }]);
-    };
-
-    const handleToggleSubItemContract = (sub, budgetCode, budgetId) => {
-      setSelectedSubItemsForContractPR((prev) => {
-        const withBudgetId = { ...sub, parentCode: budgetCode, parentBudgetId: budgetId || null };
-        const exists = prev.find(i => i.id === sub.id);
-        if (exists) return prev.filter(i => i.id !== sub.id);
-        return [...prev, withBudgetId];
-      });
-    };
-
-    const handleAddSelectedSubItemsForContract = () => {
-      if (selectedSubItemsForContractPR.length === 0) return;
-      const first = selectedSubItemsForContractPR[0];
-      const budgetCode = first.parentCode;
-      const budgetId = first.parentBudgetId || null;
-      const subItemId = first.id || "";
-      setContractHeaderData((prev) => ({
-        ...prev,
-        costCode: budgetCode,
-        selectedBudgetId: budgetId || "",
-        selectedSubItemId: subItemId,
-      }));
-      const newItems = selectedSubItemsForContractPR.map((sub) => ({
-        id: crypto.randomUUID(),
-        subItemId: sub.id || null,
-        budgetId: sub.parentBudgetId || null,
-        budgetSubItemId: sub.id || null,
-        description: sub.description || "",
-        quantity: 0,
-        unit: sub.unit || "Job",
-        price: 0,
-        note: "",
-        budgetCode: sub.parentCode || "",
-      }));
-      setContractLineItems((prev) => [...prev, ...newItems]);
-      setSelectedSubItemsForContractPR([]);
-      setIsContractCostCodeModalOpen(false);
-    };
-
-    const handleSaveContractPR = async () => {
-      let resolvedPrNo = contractHeaderData.prNo;
-      try {
-        resolvedPrNo = await reserveNextPrNo(contractHeaderData.subCode, contractHeaderData.purchaseType);
-        setContractHeaderData((prev) => ({ ...prev, prNo: resolvedPrNo }));
-      } catch (e) {
-        return showAlert("สร้างเลข PR ไม่สำเร็จ", e?.message || "ไม่สามารถจองเลข PR ใหม่ได้", "error");
-      }
-      if (
-        !resolvedPrNo ||
-        !contractHeaderData.costCode ||
-        !contractHeaderData.requestDate ||
-        !contractHeaderData.purchaseType ||
-        !contractHeaderData.deliveryLocation ||
-        contractLineItems.length === 0
-      ) {
-        return showAlert("ข้อมูลไม่ครบ", "กรุณากรอกข้อมูลให้ครบถ้วน ทุกช่อง รวมถึงรายการสินค้าอย่างน้อย 1 รายการ", "warning");
-      }
-      const budgetItem = contractHeaderData.selectedBudgetId
-        ? budgets.find((b) => b.id === contractHeaderData.selectedBudgetId && b.projectId === selectedProjectId)
-        : budgets.find((b) => b.code === contractHeaderData.costCode && b.projectId === selectedProjectId);
-      if (!budgetItem)
-        return showAlert("ไม่พบ Cost Code", "กรุณาเลือก Cost Code ที่ถูกต้อง", "error");
-      if (budgetItem.status !== "Approved")
-        return showAlert("Budget ไม่ได้รับการ Approve", `Cost Code ${budgetItem.code} ยังไม่ได้รับการ Approve`, "error");
-
-      const contractTotal = contractLineItems.reduce((sum, item) => sum + (Number(item.quantity) || 0) * (Number(item.price) || 0), 0);
-      const setProgress = (pct: number, step: string) => setSavePrProgress({ show: true, pct, step });
-      setProgress(5, "เตรียมข้อมูล...");
-
-      let attachmentUrl = contractHeaderData.attachmentUrl || null;
-      let attachmentName = contractHeaderData.attachmentName || null;
-      setProgress(10, "อัปโหลดไฟล์แนบ...");
-      if (contractHeaderData.attachment && typeof contractHeaderData.attachment === "object" && (contractHeaderData.attachment as File).name) {
-        try {
-          const file = contractHeaderData.attachment as File;
-          const res = await uploadAttachment(file, {
-            type: "pr",
-            projectId: selectedProjectId || undefined,
-            prNo: resolvedPrNo || undefined,
-          });
-          attachmentUrl = res.url;
-          attachmentName = res.name;
-        } catch (err) {
-          setSavePrProgress({ show: false, pct: 0, step: "" });
-          return showAlert("อัปโหลดไฟล์แนบไม่สำเร็จ", err?.message || "ไม่สามารถอัปโหลดไฟล์ได้", "error");
-        }
-      }
-
-      const { attachment: _omitFile, ...headerWithoutFile } = contractHeaderData;
-      const prPayload = {
-        ...headerWithoutFile,
-        prNo: resolvedPrNo,
-        attachmentUrl: attachmentUrl || null,
-        attachmentName: attachmentName || null,
-        budgetId: contractHeaderData.selectedBudgetId || null,
-        projectId: selectedProjectId,
-        items: contractLineItems,
-        totalAmount: contractTotal,
-        status: "Pending CM",
-        prType: "contract",
-      };
-
-      let pdfUrl: string | undefined;
-      try {
-        const project = projects.find((p: any) => p.id === selectedProjectId) || null;
-        const safePRNo = (resolvedPrNo || "unknown").replace(/[^a-zA-Z0-9\-_]/g, "_");
-        const safeProjId = selectedProjectId || "unknown";
-        setProgress(20, "กำลังสร้าง PDF...");
-        let bytes = await generatePRPdfBytes(prPayload, { projectName: project?.name || "", budgetDesc: "" });
-        setProgress(70, "อัปโหลด PDF ขึ้น Cloud...");
-        const pdfPath = `generated/prs/${safeProjId}/${safePRNo}.pdf`;
-        const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("PDF timeout")), 15000));
-        pdfUrl = await Promise.race([
-          (async () => {
-            await deleteGeneratedPdf(pdfPath);
-            return await uploadGeneratedPdf(bytes, pdfPath);
-          })(),
-          timeout,
-        ]);
-        setProgress(85, "บันทึกข้อมูล...");
-        await addData("prs", { ...prPayload, pdfUrl, pdfPath, pdfUpdatedAt: new Date().toISOString() });
-        setProgress(100, "บันทึกสำเร็จ!");
-        setTimeout(() => {
-          setSavePrProgress({ show: false, pct: 0, step: "" });
-          setIsContractPrModalOpen(false);
-          setIsFullScreenModalOpen(false);
-        }, 600);
-        showAlert("บันทึก PR จ้าง/เหมา สำเร็จ", `PR No. ${resolvedPrNo} ถูกสร้างแล้ว`, "success");
-      } catch (e) {
-        setSavePrProgress({ show: false, pct: 0, step: "" });
-        console.warn("[Contract PR] Save failed:", e);
-        try {
-          await addData("prs", prPayload);
-          setIsContractPrModalOpen(false);
-          setIsFullScreenModalOpen(false);
-          showAlert("บันทึก PR จ้าง/เหมา สำเร็จ", `PR No. ${resolvedPrNo} ถูกสร้างแล้ว (ไม่มี PDF)`, "success");
-        } catch (e2) {
-          showAlert("บันทึกไม่สำเร็จ", e2?.message || "เกิดข้อผิดพลาด", "error");
-        }
-      }
-    };
-
-    const handleAction = async (id, action) => {
-      const pr = prs.find((p) => p.id === id);
-      if (!pr) return;
-      if (action === "approve" && !canApprovePR) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุมัติ PR", "warning");
-        return;
-      }
-      if (action === "reject" && !canRejectPR) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธ PR", "warning");
-        return;
-      }
-      if (action === "reject") {
-        setSelectedPrForReject(pr);
-        setPrRejectReason("");
-        setIsPrRejectModalOpen(true);
-        return;
-      }
-      let newStatus = pr.status;
-      const isCMApprove = pr.status === "Pending CM" && (userRoles.includes("CM") || userRoles.includes("PM") || userRoles.includes("Administrator"));
-      const isPMApprove = pr.status === "Pending PM" && (userRoles.includes("PM") || userRoles.includes("Administrator"));
-      const isGMApprove = pr.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator"));
-      const isMDApprove = pr.status === "Pending MD" && (userRoles.includes("MD") || userRoles.includes("Administrator"));
-
-      const isContractPR = ["จ้างเหมา > DL"].includes(pr.purchaseType || "");
-      if (isCMApprove) newStatus = "Pending PM";
-      else if (isPMApprove) {
-        newStatus = isContractPR ? "Pending MD" : "Approved";
-      }
-      else if (isGMApprove) newStatus = "Pending MD";
-      else if (isMDApprove) newStatus = "Approved";
-
-      if (newStatus !== pr.status) {
-        setPrApproveFlightFromStatus((s) => ({ ...s, [id]: pr.status }));
-        const emailField = isCMApprove ? "cmApproverEmail" : isPMApprove ? "pmApproverEmail" : null;
-        const approverEmail = userData?.email || user?.email || "";
-        const approverSig = userData?.signatureDataUrl || userData?.signatureUrl;
-        const stampField = isCMApprove ? "Signature2" : isPMApprove ? "Signature3" : null;
-
-        let updatedPdfUrl: string | undefined;
-        let newPdfPath: string | undefined;
-
-        try {
-          const safePRNo = (pr.prNo || pr.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
-          const safeProjId = pr.projectId || "unknown";
-          const project = projects.find((p: any) => p.id === pr.projectId) || null;
-
-          // สร้าง PR data อัปเดตพร้อม email ผู้ approve ปัจจุบัน
-          // (ถ้า PM approve จะมี cmApproverEmail จาก Firestore อยู่แล้ว + เพิ่ม pmApproverEmail)
-          const updatedPrData = {
-            ...pr,
-            ...(emailField && approverEmail ? { [emailField]: approverEmail } : {}),
-          };
-
-          // Regenerate PDF จาก template ใหม่ทั้งหมด (เพื่อให้ prcm/prpm ติดถูกต้องแน่นอน)
-          let bytes = await generatePRPdfBytes(updatedPrData, {
-            projectName: project?.name || "",
-            budgetDesc: "",
-          });
-
-          // Stamp ลายเซ็นผู้ approve บน PDF ที่ regenerate แล้ว
-          if (stampField && approverSig) {
-            try {
-              bytes = await stampSignatureToField(bytes, approverSig, stampField as "Signature2" | "Signature3");
-            } catch (sigErr) {
-              console.warn(`[PR Approve] Stamp ${stampField} failed:`, sigErr);
-            }
+        // Stamp ลายเซ็นผู้ approve บน PDF ที่ regenerate แล้ว
+        if (stampField && approverSig) {
+          try {
+            bytes = await stampSignatureToField(bytes, approverSig, stampField as "Signature2" | "Signature3");
+          } catch (sigErr) {
+            console.warn(`[PR Approve] Stamp ${stampField} failed:`, sigErr);
           }
-
-          newPdfPath = `generated/prs/${safeProjId}/${safePRNo}.pdf`;
-          await deleteGeneratedPdf(newPdfPath);
-          updatedPdfUrl = await uploadGeneratedPdf(bytes, newPdfPath);
-        } catch (e) {
-          console.warn("[PR Approve] Regenerate PDF failed:", e);
         }
 
-        const ok = await updateData("prs", id, {
+        newPdfPath = `generated/prs/${safeProjId}/${safePRNo}.pdf`;
+        await deleteGeneratedPdf(newPdfPath);
+        updatedPdfUrl = await uploadGeneratedPdf(bytes, newPdfPath);
+      } catch (e) {
+        console.warn("[PR Approve] Regenerate PDF failed:", e);
+      }
+
+      const ok = await updateData("prs", id, {
+        status: newStatus,
+        rejectReason: "",
+        ...(emailField && approverEmail ? { [emailField]: approverEmail } : {}),
+        ...(updatedPdfUrl ? { pdfUrl: updatedPdfUrl, pdfPath: newPdfPath } : {}),
+        ...(updatedPdfUrl ? { pdfUpdatedAt: new Date().toISOString() } : {}),
+      });
+
+      if (!ok) {
+        setPrApproveFlightFromStatus((s) => {
+          const n = { ...s };
+          delete n[id];
+          return n;
+        });
+      } else if (viewingPR && viewingPR.id === id) {
+        setViewingPR((prev) => ({
+          ...prev,
           status: newStatus,
           rejectReason: "",
           ...(emailField && approverEmail ? { [emailField]: approverEmail } : {}),
           ...(updatedPdfUrl ? { pdfUrl: updatedPdfUrl, pdfPath: newPdfPath } : {}),
           ...(updatedPdfUrl ? { pdfUpdatedAt: new Date().toISOString() } : {}),
-        });
-
-        if (!ok) {
-          setPrApproveFlightFromStatus((s) => {
-            const n = { ...s };
-            delete n[id];
-            return n;
-          });
-        } else if (viewingPR && viewingPR.id === id) {
-          setViewingPR((prev) => ({
-            ...prev,
-            status: newStatus,
-            rejectReason: "",
-            ...(emailField && approverEmail ? { [emailField]: approverEmail } : {}),
-            ...(updatedPdfUrl ? { pdfUrl: updatedPdfUrl, pdfPath: newPdfPath } : {}),
-            ...(updatedPdfUrl ? { pdfUpdatedAt: new Date().toISOString() } : {}),
-          }));
-        }
+        }));
       }
-    };
+    }
+  };
 
-    const groupPrsByPurchaseType = (list) =>
-      list.reduce((groups, pr) => {
-        const type = pr.purchaseType || "Uncategorized";
-        if (!groups[type]) groups[type] = [];
-        groups[type].push(pr);
-        return groups;
-      }, {});
+  const groupPrsByPurchaseType = (list) =>
+    list.reduce((groups, pr) => {
+      const type = pr.purchaseType || "Uncategorized";
+      if (!groups[type]) groups[type] = [];
+      groups[type].push(pr);
+      return groups;
+    }, {});
 
-    const getPrBudgetItemName = useCallback((pr) => {
-      const headerBudgetItem = pr?.budgetId
-        ? budgets.find((b: any) => b.id === pr.budgetId && b.projectId === pr.projectId)
-        : pr?.costCode
-          ? budgets.find((b: any) => b.code === pr.costCode && b.projectId === pr.projectId)
-          : null;
+  const getPrBudgetItemName = useCallback((pr) => {
+    const headerBudgetItem = pr?.budgetId
+      ? budgets.find((b: any) => b.id === pr.budgetId && b.projectId === pr.projectId)
+      : pr?.costCode
+        ? budgets.find((b: any) => b.code === pr.costCode && b.projectId === pr.projectId)
+        : null;
 
-      if (!headerBudgetItem) return "";
+    if (!headerBudgetItem) return "";
 
-      const mainDesc = headerBudgetItem.description || "";
-      const subItemId = pr?.selectedSubItemId || pr?.subItemId
-        || (pr?.items?.[0]?.subItemId) || (pr?.items?.[0]?.budgetSubItemId);
+    const mainDesc = headerBudgetItem.description || "";
+    const subItemId = pr?.selectedSubItemId || pr?.subItemId
+      || (pr?.items?.[0]?.subItemId) || (pr?.items?.[0]?.budgetSubItemId);
 
-      let subDesc = "";
-      if (subItemId && headerBudgetItem?.subItems?.length > 0) {
-        const sub = headerBudgetItem.subItems.find((s: any) => s.id === subItemId);
-        subDesc = sub?.description || "";
+    let subDesc = "";
+    if (subItemId && headerBudgetItem?.subItems?.length > 0) {
+      const sub = headerBudgetItem.subItems.find((s: any) => s.id === subItemId);
+      subDesc = sub?.description || "";
+    }
+
+    return mainDesc && subDesc ? `${mainDesc} + ${subDesc}` : (mainDesc || subDesc || "");
+  }, [budgets]);
+
+  const getPrSortValue = useCallback((pr, key) => {
+    switch (key) {
+      case "prNo": return String(pr.prNo || pr.id || "");
+      case "date": return String(pr.requestDate || "");
+      case "costCode": return String(pr.costCode || "");
+      case "description": {
+        const budgetName = getPrBudgetItemName(pr);
+        const itemDescs = pr.items?.map((it) => it.description).filter(Boolean).join(", ") || "";
+        return String(budgetName || itemDescs || "");
       }
+      case "type": return String(pr.purchaseType || "");
+      case "requestor": return String(pr.requestor || "");
+      case "items": return Number(pr.items?.length || 0);
+      case "amount": return Number(pr.totalAmount || pr.amount || 0);
+      case "status": return String(pr.status || "");
+      case "refDoc": return String(getRefDocInfo(pr)?.docNo || "");
+      default: return "";
+    }
+  }, [getPrBudgetItemName]);
 
-      return mainDesc && subDesc ? `${mainDesc} + ${subDesc}` : (mainDesc || subDesc || "");
-    }, [budgets]);
+  const requestPrSort = useCallback((key) => {
+    setPrSortConfig((prev) => ({
+      key,
+      direction: prev.key === key && prev.direction === "asc" ? "desc" : "asc",
+    }));
+  }, []);
 
-    const getPrSortValue = useCallback((pr, key) => {
-      switch (key) {
-        case "prNo": return String(pr.prNo || pr.id || "");
-        case "date": return String(pr.requestDate || "");
-        case "costCode": return String(pr.costCode || "");
-        case "description": {
-          const budgetName = getPrBudgetItemName(pr);
-          const itemDescs = pr.items?.map((it) => it.description).filter(Boolean).join(", ") || "";
-          return String(budgetName || itemDescs || "");
-        }
-        case "type": return String(pr.purchaseType || "");
-        case "requestor": return String(pr.requestor || "");
-        case "items": return Number(pr.items?.length || 0);
-        case "amount": return Number(pr.totalAmount || pr.amount || 0);
-        case "status": return String(pr.status || "");
-        case "refDoc": return String(getRefDocInfo(pr)?.docNo || "");
-        default: return "";
+  const getPrSortIndicator = useCallback((key) => {
+    if (prSortConfig.key !== key) return "↕";
+    return prSortConfig.direction === "asc" ? "▲" : "▼";
+  }, [prSortConfig]);
+
+  const sortPrList = useCallback((list) => {
+    if (!prSortConfig.key) return list;
+    const { key, direction } = prSortConfig;
+    const sorted = [...list].sort((a, b) => {
+      const av = getPrSortValue(a, key);
+      const bv = getPrSortValue(b, key);
+      if (typeof av === "number" || typeof bv === "number") {
+        const na = Number(av) || 0;
+        const nb = Number(bv) || 0;
+        return direction === "asc" ? na - nb : nb - na;
       }
-    }, [getPrBudgetItemName]);
+      return direction === "asc"
+        ? String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: "base" })
+        : String(bv).localeCompare(String(av), undefined, { numeric: true, sensitivity: "base" });
+    });
+    return sorted;
+  }, [prSortConfig, getPrSortValue]);
 
-    const requestPrSort = useCallback((key) => {
-      setPrSortConfig((prev) => ({
-        key,
-        direction: prev.key === key && prev.direction === "asc" ? "desc" : "asc",
-      }));
-    }, []);
+  const isPrMatchSearch = useCallback((pr) => {
+    const q = (prTableSearchText || "").trim().toLowerCase();
+    if (!q) return true;
+    const budgetName = getPrBudgetItemName(pr);
+    const itemDescs = pr.items?.map((it) => it.description).filter(Boolean).join(", ") || "";
+    const refDoc = getRefDocInfo(pr);
+    const blob = [
+      pr.prNo,
+      pr.requestDate,
+      pr.costCode,
+      budgetName,
+      itemDescs,
+      pr.purchaseType,
+      getPurchaseTypeDisplayLabel(pr.purchaseType),
+      pr.requestor,
+      pr.items?.length,
+      pr.totalAmount || pr.amount,
+      pr.status,
+      refDoc?.docNo,
+    ].filter(Boolean).join(" ").toLowerCase();
+    return blob.includes(q);
+  }, [prTableSearchText, getPrBudgetItemName]);
 
-    const getPrSortIndicator = useCallback((key) => {
-      if (prSortConfig.key !== key) return "↕";
-      return prSortConfig.direction === "asc" ? "▲" : "▼";
-    }, [prSortConfig]);
-
-    const sortPrList = useCallback((list) => {
-      if (!prSortConfig.key) return list;
-      const { key, direction } = prSortConfig;
-      const sorted = [...list].sort((a, b) => {
-        const av = getPrSortValue(a, key);
-        const bv = getPrSortValue(b, key);
-        if (typeof av === "number" || typeof bv === "number") {
-          const na = Number(av) || 0;
-          const nb = Number(bv) || 0;
-          return direction === "asc" ? na - nb : nb - na;
-        }
-        return direction === "asc"
-          ? String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: "base" })
-          : String(bv).localeCompare(String(av), undefined, { numeric: true, sensitivity: "base" });
-      });
-      return sorted;
-    }, [prSortConfig, getPrSortValue]);
-
-    const isPrMatchSearch = useCallback((pr) => {
-      const q = (prTableSearchText || "").trim().toLowerCase();
-      if (!q) return true;
-      const budgetName = getPrBudgetItemName(pr);
-      const itemDescs = pr.items?.map((it) => it.description).filter(Boolean).join(", ") || "";
-      const refDoc = getRefDocInfo(pr);
-      const blob = [
-        pr.prNo,
-        pr.requestDate,
-        pr.costCode,
-        budgetName,
-        itemDescs,
-        pr.purchaseType,
-        getPurchaseTypeDisplayLabel(pr.purchaseType),
-        pr.requestor,
-        pr.items?.length,
-        pr.totalAmount || pr.amount,
-        pr.status,
-        refDoc?.docNo,
-      ].filter(Boolean).join(" ").toLowerCase();
-      return blob.includes(q);
-    }, [prTableSearchText, getPrBudgetItemName]);
-
-    /** ตารางบนสุด: รายการรอ Action (รอ Approve หรือ รอแก้ไข หรือ รอปิด) */
-    const pendingActionStatuses = ["Pending CM", "Pending PM", "Pending GM", "Pending MD", "Edit Budget", "Rejected", "Pending Close"];
-    const groupedPrEntriesPending = useMemo(() => {
-      let list = prs.filter(
-        (pr) =>
-          pr.projectId === selectedProjectId &&
-          pendingActionStatuses.includes(pr.status)
-      );
-      // Filter by allowed PR Types (if configured)
-      if (allowedPRTypes && allowedPRTypes.length > 0) {
-        list = list.filter((pr) => allowedPRTypes.includes(pr.purchaseType));
-      }
-      const filtered = list.filter(isPrMatchSearch);
-      const sorted = sortPrList(filtered);
-      return Object.entries(groupPrsByPurchaseType(sorted));
-    }, [prs, selectedProjectId, isPrMatchSearch, sortPrList, allowedPRTypes]);
-
-    /** ตารางกลาง: ทุกสถานะยกเว้น Closed PR, Closed PR Auto, PO Issued และรอ Action */
-    const groupedPrEntriesMain = useMemo(() => {
-      let list = prs.filter(
-        (pr) =>
-          pr.projectId === selectedProjectId &&
-          pr.status !== "Closed PR" &&
-          pr.status !== "Closed PR Auto" &&
-          pr.status !== "PO Issued" &&
-          !pendingActionStatuses.includes(pr.status)
-      );
-      // Filter by allowed PR Types (if configured)
-      if (allowedPRTypes && allowedPRTypes.length > 0) {
-        list = list.filter((pr) => allowedPRTypes.includes(pr.purchaseType));
-      }
-      const filtered = list.filter(isPrMatchSearch);
-      const sorted = sortPrList(filtered);
-      return Object.entries(groupPrsByPurchaseType(sorted));
-    }, [prs, selectedProjectId, isPrMatchSearch, sortPrList, allowedPRTypes]);
-
-    const showPendingActionTable = groupedPrEntriesPending.length > 0 && groupedPrEntriesPending.some(([, prs]) => prs.length > 0);
-
-    /** ตารางล่าง C: เฉพาะ PO Issued — รวมทุกประเภท เรียงตามเลข PR */
-    const flatPoIssuedPrs = useMemo(() => {
-      let list = prs.filter(
-        (pr) => pr.projectId === selectedProjectId && pr.status === "PO Issued"
-      );
-      // Filter by allowed PR Types (if configured)
-      if (allowedPRTypes && allowedPRTypes.length > 0) {
-        list = list.filter((pr) => allowedPRTypes.includes(pr.purchaseType));
-      }
-      const filtered = list.filter(isPrMatchSearch);
-      if (!prSortConfig.key) {
-        return [...filtered].sort((a, b) =>
-          String(a.prNo || a.id || "").localeCompare(String(b.prNo || b.id || ""), undefined, { numeric: true, sensitivity: "base" })
-        );
-      }
-      return sortPrList(filtered);
-    }, [prs, selectedProjectId, isPrMatchSearch, sortPrList, prSortConfig.key, allowedPRTypes]);
-
-    const showPoIssuedPrTable = flatPoIssuedPrs.length > 0;
-
-    const renderPrHeaderCells = () => (
-      <>
-        {isColumnVisible("pr", "prNo") && <ResizableTh tableId="pr" colKey="prNo" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.prNo} onClick={() => requestPrSort("prNo")}>PR No. <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("prNo")}</span></ResizableTh>}
-        {isColumnVisible("pr", "date") && <ResizableTh tableId="pr" colKey="date" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.date} onClick={() => requestPrSort("date")}>Date <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("date")}</span></ResizableTh>}
-        {isColumnVisible("pr", "costCode") && <ResizableTh tableId="pr" colKey="costCode" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.costCode} onClick={() => requestPrSort("costCode")}>Cost Code <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("costCode")}</span></ResizableTh>}
-        {isColumnVisible("pr", "description") && <ResizableTh tableId="pr" colKey="description" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.description} onClick={() => requestPrSort("description")}>Description <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("description")}</span></ResizableTh>}
-        {isColumnVisible("pr", "type") && <ResizableTh tableId="pr" colKey="type" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.type} onClick={() => requestPrSort("type")}>Type <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("type")}</span></ResizableTh>}
-        {isColumnVisible("pr", "requestor") && <ResizableTh tableId="pr" colKey="requestor" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.requestor} onClick={() => requestPrSort("requestor")}>Requestor <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("requestor")}</span></ResizableTh>}
-        {isColumnVisible("pr", "items") && <ResizableTh tableId="pr" colKey="items" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.items} onClick={() => requestPrSort("items")}>Items <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("items")}</span></ResizableTh>}
-        {isColumnVisible("pr", "amount") && <ResizableTh tableId="pr" colKey="amount" className="py-0.5 px-2 text-right cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.amount} onClick={() => requestPrSort("amount")}>Amount <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("amount")}</span></ResizableTh>}
-        {isColumnVisible("pr", "status") && <ResizableTh tableId="pr" colKey="status" className="py-0.5 px-2 text-center cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.status} onClick={() => requestPrSort("status")}>Status <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("status")}</span></ResizableTh>}
-        {isColumnVisible("pr", "refDoc") && <ResizableTh tableId="pr" colKey="refDoc" className="py-0.5 px-2 text-center cursor-pointer select-none" isAdmin={userRole==="Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.refDoc} onClick={() => requestPrSort("refDoc")}>Ref Doc <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("refDoc")}</span></ResizableTh>}
-        {isColumnVisible("pr", "actions") && <th className="py-0.5 px-2 text-right" style={{ width: prTableLayout.scaled.actions }}>Actions</th>}
-      </>
+  /** ตารางบนสุด: รายการรอ Action (รอ Approve หรือ รอแก้ไข หรือ รอปิด) */
+  const pendingActionStatuses = ["Pending CM", "Pending PM", "Pending GM", "Pending MD", "Edit Budget", "Rejected", "Pending Close"];
+  const groupedPrEntriesPending = useMemo(() => {
+    let list = prs.filter(
+      (pr) =>
+        pr.projectId === selectedProjectId &&
+        pendingActionStatuses.includes(pr.status)
     );
+    // Filter by allowed PR Types (if configured)
+    if (allowedPRTypes && allowedPRTypes.length > 0) {
+      list = list.filter((pr) => allowedPRTypes.includes(pr.purchaseType));
+    }
+    const filtered = list.filter(isPrMatchSearch);
+    const sorted = sortPrList(filtered);
+    return Object.entries(groupPrsByPurchaseType(sorted));
+  }, [prs, selectedProjectId, isPrMatchSearch, sortPrList, allowedPRTypes]);
 
-    const dataRowClassForVariant = (variant) =>
-      variant === "poIssued"
-        ? "hover:bg-teal-50/60 border-b cursor-pointer transition-colors odd:bg-white even:bg-teal-50/25"
-        : "hover:bg-blue-50 border-b cursor-pointer transition-colors odd:bg-white even:bg-slate-50";
+  /** ตารางกลาง: ทุกสถานะยกเว้น Closed PR, Closed PR Auto, PO Issued และรอ Action */
+  const groupedPrEntriesMain = useMemo(() => {
+    let list = prs.filter(
+      (pr) =>
+        pr.projectId === selectedProjectId &&
+        pr.status !== "Closed PR" &&
+        pr.status !== "Closed PR Auto" &&
+        pr.status !== "PO Issued" &&
+        !pendingActionStatuses.includes(pr.status)
+    );
+    // Filter by allowed PR Types (if configured)
+    if (allowedPRTypes && allowedPRTypes.length > 0) {
+      list = list.filter((pr) => allowedPRTypes.includes(pr.purchaseType));
+    }
+    const filtered = list.filter(isPrMatchSearch);
+    const sorted = sortPrList(filtered);
+    return Object.entries(groupPrsByPurchaseType(sorted));
+  }, [prs, selectedProjectId, isPrMatchSearch, sortPrList, allowedPRTypes]);
 
-    const renderPrDataRows = (groupPrs, variant) => {
-      const dataRowClass = dataRowClassForVariant(variant);
-      return groupPrs.map((pr) => (
-        <React.Fragment key={pr.id}>
-          <tr className={dataRowClass} onClick={() => setViewingPR(pr)}>
-            {isColumnVisible("pr", "prNo") && <td className="py-0.5 px-2 font-medium" title={pr.prNo}><span className="cell-text">{pr.prNo}</span></td>}
-            {isColumnVisible("pr", "date") && <td className="py-0.5 px-2" title={pr.requestDate}><span className="cell-text">{pr.requestDate}</span></td>}
-            {isColumnVisible("pr", "costCode") && <td className="py-0.5 px-2">
-              <span className="bg-gray-100 px-1.5 py-0 rounded text-xs border border-gray-200 cell-text" title={pr.costCode}>
-                {pr.costCode}
-              </span>
-            </td>}
-            {isColumnVisible("pr", "description") && <td
-              className="py-0.5 px-2 text-xs text-slate-500"
-              title={(() => {
-                const budgetItemName = getPrBudgetItemName(pr);
-                const itemDescs = pr.items && pr.items.length > 0
+  const showPendingActionTable = groupedPrEntriesPending.length > 0 && groupedPrEntriesPending.some(([, prs]) => prs.length > 0);
+
+  /** ตารางล่าง C: เฉพาะ PO Issued — รวมทุกประเภท เรียงตามเลข PR */
+  const flatPoIssuedPrs = useMemo(() => {
+    let list = prs.filter(
+      (pr) => pr.projectId === selectedProjectId && pr.status === "PO Issued"
+    );
+    // Filter by allowed PR Types (if configured)
+    if (allowedPRTypes && allowedPRTypes.length > 0) {
+      list = list.filter((pr) => allowedPRTypes.includes(pr.purchaseType));
+    }
+    const filtered = list.filter(isPrMatchSearch);
+    if (!prSortConfig.key) {
+      return [...filtered].sort((a, b) =>
+        String(a.prNo || a.id || "").localeCompare(String(b.prNo || b.id || ""), undefined, { numeric: true, sensitivity: "base" })
+      );
+    }
+    return sortPrList(filtered);
+  }, [prs, selectedProjectId, isPrMatchSearch, sortPrList, prSortConfig.key, allowedPRTypes]);
+
+  const showPoIssuedPrTable = flatPoIssuedPrs.length > 0;
+
+  const renderPrHeaderCells = () => (
+    <>
+      {isColumnVisible("pr", "prNo") && <ResizableTh tableId="pr" colKey="prNo" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.prNo} onClick={() => requestPrSort("prNo")}>PR No. <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("prNo")}</span></ResizableTh>}
+      {isColumnVisible("pr", "date") && <ResizableTh tableId="pr" colKey="date" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.date} onClick={() => requestPrSort("date")}>Date <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("date")}</span></ResizableTh>}
+      {isColumnVisible("pr", "costCode") && <ResizableTh tableId="pr" colKey="costCode" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.costCode} onClick={() => requestPrSort("costCode")}>Cost Code <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("costCode")}</span></ResizableTh>}
+      {isColumnVisible("pr", "description") && <ResizableTh tableId="pr" colKey="description" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.description} onClick={() => requestPrSort("description")}>Description <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("description")}</span></ResizableTh>}
+      {isColumnVisible("pr", "type") && <ResizableTh tableId="pr" colKey="type" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.type} onClick={() => requestPrSort("type")}>Type <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("type")}</span></ResizableTh>}
+      {isColumnVisible("pr", "requestor") && <ResizableTh tableId="pr" colKey="requestor" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.requestor} onClick={() => requestPrSort("requestor")}>Requestor <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("requestor")}</span></ResizableTh>}
+      {isColumnVisible("pr", "items") && <ResizableTh tableId="pr" colKey="items" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.items} onClick={() => requestPrSort("items")}>Items <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("items")}</span></ResizableTh>}
+      {isColumnVisible("pr", "amount") && <ResizableTh tableId="pr" colKey="amount" className="py-0.5 px-2 text-right cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.amount} onClick={() => requestPrSort("amount")}>Amount <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("amount")}</span></ResizableTh>}
+      {isColumnVisible("pr", "status") && <ResizableTh tableId="pr" colKey="status" className="py-0.5 px-2 text-center cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.status} onClick={() => requestPrSort("status")}>Status <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("status")}</span></ResizableTh>}
+      {isColumnVisible("pr", "refDoc") && <ResizableTh tableId="pr" colKey="refDoc" className="py-0.5 px-2 text-center cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.refDoc} onClick={() => requestPrSort("refDoc")}>Ref Doc <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("refDoc")}</span></ResizableTh>}
+      {isColumnVisible("pr", "actions") && <th className="py-0.5 px-2 text-right" style={{ width: prTableLayout.scaled.actions }}>Actions</th>}
+    </>
+  );
+
+  const dataRowClassForVariant = (variant) =>
+    variant === "poIssued"
+      ? "hover:bg-teal-50/60 border-b cursor-pointer transition-colors odd:bg-white even:bg-teal-50/25"
+      : "hover:bg-blue-50 border-b cursor-pointer transition-colors odd:bg-white even:bg-slate-50";
+
+  const renderPrDataRows = (groupPrs, variant) => {
+    const dataRowClass = dataRowClassForVariant(variant);
+    return groupPrs.map((pr) => (
+      <React.Fragment key={pr.id}>
+        <tr className={dataRowClass} onClick={() => setViewingPR(pr)}>
+          {isColumnVisible("pr", "prNo") && <td className="py-0.5 px-2 font-medium" title={pr.prNo}><span className="cell-text">{pr.prNo}</span></td>}
+          {isColumnVisible("pr", "date") && <td className="py-0.5 px-2" title={pr.requestDate}><span className="cell-text">{pr.requestDate}</span></td>}
+          {isColumnVisible("pr", "costCode") && <td className="py-0.5 px-2">
+            <span className="bg-gray-100 px-1.5 py-0 rounded text-xs border border-gray-200 cell-text" title={pr.costCode}>
+              {pr.costCode}
+            </span>
+          </td>}
+          {isColumnVisible("pr", "description") && <td
+            className="py-0.5 px-2 text-xs text-slate-500"
+            title={(() => {
+              const budgetItemName = getPrBudgetItemName(pr);
+              const itemDescs = pr.items && pr.items.length > 0
+                ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
+                : "-";
+              const displayText = budgetItemName || itemDescs;
+              return pr.rejectReason ? `${displayText} | ปฏิเสธ: ${pr.rejectReason}` : displayText;
+            })()}
+          >
+            <div className="leading-tight">
+              <span className="cell-text font-semibold text-slate-700">
+                {getPrBudgetItemName(pr) || (pr.items && pr.items.length > 0
                   ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
-                  : "-";
-                const displayText = budgetItemName || itemDescs;
-                return pr.rejectReason ? `${displayText} | ปฏิเสธ: ${pr.rejectReason}` : displayText;
-              })()}
-            >
-              <div className="leading-tight">
-                <span className="cell-text font-semibold text-slate-700">
-                  {getPrBudgetItemName(pr) || (pr.items && pr.items.length > 0
-                    ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
-                    : "-")}
-                </span>
-                {pr.items && pr.items.length > 0 && (
-                  <div className="cell-text text-[10px] text-slate-400 mt-0.5">
-                    {pr.items.map((it) => it.description).filter(Boolean).join(", ")}
-                  </div>
-                )}
-              </div>
-            </td>}
-            {isColumnVisible("pr", "type") && <td className="py-0.5 px-2" title={pr.purchaseType}><span className="cell-text">{getPurchaseTypeDisplayLabel(pr.purchaseType)}</span></td>}
-            {isColumnVisible("pr", "requestor") && <td className="py-0.5 px-2" title={pr.requestor}><span className="cell-text">{pr.requestor}</span></td>}
-            {isColumnVisible("pr", "items") && <td className="py-0.5 px-2">
-              <span className="font-bold text-slate-700">
-                {pr.items?.length || 0} รายการ
+                  : "-")}
               </span>
-            </td>}
-            {isColumnVisible("pr", "amount") && <td className="py-0.5 px-2 text-right font-semibold">
-              {formatCurrency(pr.totalAmount || pr.amount)}
-            </td>}
-            {isColumnVisible("pr", "status") && <td className="py-0.5 px-2 text-center">
-              <Badge status={pr.status} />
-            </td>}
-            {isColumnVisible("pr", "refDoc") && <td className="py-0.5 px-2 text-center">
-              {(() => {
-                const { docNo, pdfUrl, docType } = getRefDocInfo(pr);
-                return pdfUrl ? (
-                  <button
-                    className="text-blue-600 hover:text-blue-800 hover:underline text-xs font-medium transition-colors"
-                    onClick={(e) => handleRefDocClick(pdfUrl, docNo, e)}
-                    title={`เปิด ${docType} - ${docNo}`}
-                  >
-                    {docNo}
-                  </button>
-                ) : (
-                  <span className="text-gray-400 text-xs">
-                    {docNo}
-                  </span>
-                );
-              })()}
-            </td>}
-            {isColumnVisible("pr", "actions") && <td
-              className="py-0.5 px-2 text-right flex justify-end gap-1"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {canApprovePR && (userRoles.includes("CM") || userRoles.includes("PM") || userRoles.includes("Administrator")) && pr.status === "Pending CM" && !isPrApproveInFlight(pr) && (
-                <>
-                  <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>CM Approve</Button>
-                  {canRejectPR && <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>}
-                </>
+              {pr.items && pr.items.length > 0 && (
+                <div className="cell-text text-[10px] text-slate-400 mt-0.5">
+                  {pr.items.map((it) => it.description).filter(Boolean).join(", ")}
+                </div>
               )}
-              {canApprovePR && (userRoles.includes("PM") || userRoles.includes("Administrator")) && pr.status === "Pending PM" && !isPrApproveInFlight(pr) && (
-                <>
-                  <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>PM Approve</Button>
-                  {canRejectPR && <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>}
-                </>
-              )}
-              {canApprovePR && (userRoles.includes("GM") || userRoles.includes("Administrator")) && pr.status === "Pending GM" && !isPrApproveInFlight(pr) && (
-                <>
-                  <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>GM Approve</Button>
-                  {canRejectPR && <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>}
-                </>
-              )}
-              {canApprovePR && (userRoles.includes("MD") || userRoles.includes("Administrator")) && pr.status === "Pending MD" && !isPrApproveInFlight(pr) && (
-                <>
-                  <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>MD Approve</Button>
-                  {canRejectPR && <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>}
-                </>
-              )}
-              {canEditBudgetPR && (userRoles.includes("Procurement") || userRoles.includes("PCM") || userRoles.includes("Administrator")) && pr.status === "Approved" && (
+            </div>
+          </td>}
+          {isColumnVisible("pr", "type") && <td className="py-0.5 px-2" title={pr.purchaseType}><span className="cell-text">{getPurchaseTypeDisplayLabel(pr.purchaseType)}</span></td>}
+          {isColumnVisible("pr", "requestor") && <td className="py-0.5 px-2" title={pr.requestor}><span className="cell-text">{pr.requestor}</span></td>}
+          {isColumnVisible("pr", "items") && <td className="py-0.5 px-2">
+            <span className="font-bold text-slate-700">
+              {pr.items?.length || 0} รายการ
+            </span>
+          </td>}
+          {isColumnVisible("pr", "amount") && <td className="py-0.5 px-2 text-right font-semibold">
+            {formatCurrency(pr.totalAmount || pr.amount)}
+          </td>}
+          {isColumnVisible("pr", "status") && <td className="py-0.5 px-2 text-center">
+            <Badge status={pr.status} />
+          </td>}
+          {isColumnVisible("pr", "refDoc") && <td className="py-0.5 px-2 text-center">
+            {(() => {
+              const { docNo, pdfUrl, docType } = getRefDocInfo(pr);
+              return pdfUrl ? (
                 <button
-                  className="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition-colors whitespace-nowrap"
-                  title="ส่งคืนให้แก้ไข Budget"
-                  onClick={() => {
-                    setSelectedPrForEditBudget(pr);
-                    setEditBudgetReason("");
-                    setIsEditBudgetModalOpen(true);
-                  }}
+                  className="text-blue-600 hover:text-blue-800 hover:underline text-xs font-medium transition-colors"
+                  onClick={(e) => handleRefDocClick(pdfUrl, docNo, e)}
+                  title={`เปิด ${docType} - ${docNo}`}
                 >
-                  Edit Budget
+                  {docNo}
                 </button>
-              )}
-              {canUseFunction("pr", "edit") && (pr.status === "Rejected" || pr.status === "Edit Budget") && (
-                <button
-                  className="text-blue-500 hover:bg-blue-50 p-1 rounded-full transition-colors"
-                  title="แก้ไข PR"
-                  onClick={() => handleEditClick(pr)}
-                >
-                  <Edit size={13} />
-                </button>
-              )}
-              {canUseFunction("pr", "delete") && (
-                <button
-                  className="text-red-500 hover:bg-red-50 p-1 rounded-full transition-colors"
-                  onClick={() => {
-                    openConfirm(
-                      "ยืนยันการลบ",
-                      "คุณต้องการลบรายการ PR นี้ใช่หรือไม่?",
-                      async () => {
-                        if (pr.pdfUrl) {
-                          const safePRNo = (pr.prNo || pr.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
-                          const safeProjId = pr.projectId || "unknown";
-                          await deleteGeneratedPdf(`generated/prs/${safeProjId}/${safePRNo}.pdf`);
-                        }
-                        await deleteData("prs", pr.id);
-                      },
-                      "danger"
-                    );
-                  }}
-                >
-                  <Trash2 size={13} />
-                </button>
-              )}
-              {/* ยืนยัน Close PR — เฉพาะสถานะ Pending Close */}
-              {canUseFunction("pr", "closePR") && pr.status === "Pending Close" && (
-                <Button
-                  variant="success"
-                  className="px-2 py-0.5 text-[10px] whitespace-nowrap"
-                  onClick={() => {
-                    openConfirm(
-                      "ยืนยันการปิด PR",
-                      `คุณต้องการปิด PR ${pr.prNo} ใช่หรือไม่?`,
-                      async () => {
-                        await updateData("prs", pr.id, { status: "Closed PR" });
-                      },
-                      "success"
-                    );
-                  }}
-                >
-                  ยืนยัน Close
-                </Button>
-              )}
-            </td>}
-          </tr>
-        </React.Fragment>
-      ));
-    };
-
-    const renderPrGroupedTableBody = (entries) => {
-      const groupRowClass = "bg-slate-100 border-b border-slate-200";
-      return entries.map(([type, groupPrs]) => (
-        <React.Fragment key={`main-${type}`}>
-          <tr className={groupRowClass}>
-            <td colSpan={["prNo","date","costCode","description","type","requestor","items","amount","status","actions"].filter(k => isColumnVisible("pr", k)).length} className="py-1 px-2 font-bold text-slate-700">
-              {type} ({groupPrs.length})
-            </td>
-          </tr>
-          {renderPrDataRows(groupPrs, "main")}
-        </React.Fragment>
-      ));
-    };
-
-    const groupedBudgets = useMemo(() => {
-      const groups = {};
-      const ALLOWED_CATS = ["001", "002", "003", "004", "005", "006", "007", "008", "009"];
-      availableBudgets.forEach((b) => {
-        // แสดง budget ที่มี sub-item ที่อนุมัติแล้ว หรือไม่มี sub-item เลย (main budget item)
-        const hasSubItems = b.subItems && b.subItems.length > 0;
-        const hasApprovedSubs = hasSubItems && b.subItems.some(s => s.status === "Approved");
-        // อนุญาตให้เลือกได้ถ้า: มี sub-item ที่ approved หรือไม่มี sub-item เลย
-        if (hasSubItems && !hasApprovedSubs) return;
-        const cat = b.code.substring(0, 3);
-        if (!ALLOWED_CATS.includes(cat)) return;
-        if (!groups[cat]) groups[cat] = [];
-        groups[cat].push(b);
-      });
-      return groups;
-    }, [availableBudgets]);
-
-    // ฟิลเตอร์ Cost Code / รายการ ใน Modal เลือกรายการงบประมาณ (content)
-    const groupedBudgetsFiltered = useMemo(() => {
-      const q = (budgetSearchText || "").trim().toLowerCase();
-      if (!q) return groupedBudgets;
-      const out = {};
-      Object.keys(groupedBudgets).forEach((cat) => {
-        const filtered = groupedBudgets[cat].filter((b) => {
-          const subDesc = (b.subItems || []).map((s) => s.description || "").join(" ");
-          const haystack = [b.code, b.description || "", subDesc].join(" ").toLowerCase();
-          return haystack.includes(q);
-        });
-        if (filtered.length > 0) out[cat] = filtered;
-      });
-      return out;
-    }, [groupedBudgets, budgetSearchText]);
-
-    // ประเภทการขอซื้อสำหรับ PR จ้าง/เหมา
-    const CONTRACT_PURCHASE_TYPES = ["จ้างเหมา > DL", "ค่าแรง > DC"];
-
-    // งบประมาณสำหรับ Contract PR (หมวด 004 และ 006 เท่านั้น)
-    const groupedBudgetsContract = useMemo(() => {
-      const groups = {};
-      const CONTRACT_CATS = ["004", "006"];
-      availableBudgets.forEach((b) => {
-        // แสดง budget ที่มี sub-item ที่อนุมัติแล้ว หรือไม่มี sub-item เลย (main budget item)
-        const hasSubItems = b.subItems && b.subItems.length > 0;
-        const hasApprovedSubs = hasSubItems && b.subItems.some(s => s.status === "Approved");
-        // อนุญาตให้เลือกได้ถ้า: มี sub-item ที่ approved หรือไม่มี sub-item เลย
-        if (hasSubItems && !hasApprovedSubs) return;
-        const cat = b.code.substring(0, 3);
-        if (!CONTRACT_CATS.includes(cat)) return;
-        if (!groups[cat]) groups[cat] = [];
-        groups[cat].push(b);
-      });
-      return groups;
-    }, [availableBudgets]);
-
-    const groupedBudgetsContractFiltered = useMemo(() => {
-      const q = (contractBudgetSearchText || "").trim().toLowerCase();
-      if (!q) return groupedBudgetsContract;
-      const out = {};
-      Object.keys(groupedBudgetsContract).forEach((cat) => {
-        const filtered = groupedBudgetsContract[cat].filter((b) => {
-          const subDesc = (b.subItems || []).map((s) => s.description || "").join(" ");
-          const haystack = [b.code, b.description || "", subDesc].join(" ").toLowerCase();
-          return haystack.includes(q);
-        });
-        if (filtered.length > 0) out[cat] = filtered;
-      });
-      return out;
-    }, [groupedBudgetsContract, contractBudgetSearchText]);
-
-    return (
-      <div className="space-y-4">
-
-        {/* ── Progress Modal: กำลังบันทึก PR ── */}
-        {savePrProgress.show && createPortal(
-          <div style={{ position: "fixed", inset: 0, zIndex: 999999, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)" }}>
-            <div className="bg-white rounded-2xl shadow-2xl px-8 py-7 w-80 flex flex-col items-center gap-4">
-              <div className="relative w-16 h-16 flex items-center justify-center">
-                <svg className="absolute inset-0 w-16 h-16 -rotate-90" viewBox="0 0 64 64">
-                  <circle cx="32" cy="32" r="28" fill="none" stroke="#e2e8f0" strokeWidth="6" />
-                  <circle
-                    cx="32" cy="32" r="28" fill="none"
-                    stroke={savePrProgress.pct < 100 ? "#dc2626" : "#16a34a"}
-                    strokeWidth="6" strokeLinecap="round"
-                    strokeDasharray={`${2 * Math.PI * 28}`}
-                    strokeDashoffset={`${2 * Math.PI * 28 * (1 - savePrProgress.pct / 100)}`}
-                    style={{ transition: "stroke-dashoffset 0.4s ease, stroke 0.3s" }}
-                  />
-                </svg>
-                <span className={`text-base font-bold ${savePrProgress.pct < 100 ? "text-red-600" : "text-green-600"}`}>
-                  {savePrProgress.pct}%
+              ) : (
+                <span className="text-gray-400 text-xs">
+                  {docNo}
                 </span>
-              </div>
-              <p className="text-sm font-semibold text-slate-700 text-center">{savePrProgress.step}</p>
-              <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-                <div
-                  className={`h-2 rounded-full transition-all duration-500 ${savePrProgress.pct < 100 ? "bg-red-500" : "bg-green-500"}`}
-                  style={{ width: `${savePrProgress.pct}%` }}
-                />
-              </div>
-              <p className="text-[11px] text-slate-400">กรุณารอสักครู่...</p>
-            </div>
-          </div>,
-          document.body
-        )}
-
-        {/* ── Page Header ── */}
-        <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white/40 p-2 rounded-2xl border border-slate-100/50 shadow-sm">
-          <div className="flex items-center gap-2">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-rose-100 to-pink-100 flex items-center justify-center shadow-sm">
-              <FileText size={19} className="text-rose-600" />
-            </div>
-            <div>
-              <h2 className="text-lg font-bold text-rose-800 leading-none">C. Purchase Request (PR)</h2>
-              <p className="text-[10px] text-rose-400 mt-1">จัดการใบขอซื้อและสถานะการอนุมัติ</p>
-            </div>
-            <div className="ml-2">
-              <ColumnVisibilityToggle tableId="pr" />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <div className="relative">
-              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="ค้นหา PR ได้ทุกคอลัมน์ (PR, Cost Code, Requestor...)"
-                value={prTableSearchText}
-                onChange={(e) => setPrTableSearchText(e.target.value)}
-                className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-300 w-72"
-              />
-            </div>
-            {canUseFunction("pr", "create") && (
-              <Button
-                className="bg-rose-500 hover:bg-rose-600 text-white shadow-md shadow-rose-100 border-none rounded-xl px-4 py-2 text-sm font-bold flex items-center gap-2 transition-all active:scale-95"
+              );
+            })()}
+          </td>}
+          {isColumnVisible("pr", "actions") && <td
+            className="py-0.5 px-2 text-right flex justify-end gap-1"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {canApprovePR && (userRoles.includes("CM") || userRoles.includes("PM") || userRoles.includes("Administrator")) && pr.status === "Pending CM" && !isPrApproveInFlight(pr) && (
+              <>
+                <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>CM Approve</Button>
+                {canRejectPR && <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>}
+              </>
+            )}
+            {canApprovePR && (userRoles.includes("PM") || userRoles.includes("Administrator")) && pr.status === "Pending PM" && !isPrApproveInFlight(pr) && (
+              <>
+                <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>PM Approve</Button>
+                {canRejectPR && <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>}
+              </>
+            )}
+            {canApprovePR && (userRoles.includes("GM") || userRoles.includes("Administrator")) && pr.status === "Pending GM" && !isPrApproveInFlight(pr) && (
+              <>
+                <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>GM Approve</Button>
+                {canRejectPR && <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>}
+              </>
+            )}
+            {canApprovePR && (userRoles.includes("MD") || userRoles.includes("Administrator")) && pr.status === "Pending MD" && !isPrApproveInFlight(pr) && (
+              <>
+                <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>MD Approve</Button>
+                {canRejectPR && <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>}
+              </>
+            )}
+            {canEditBudgetPR && (userRoles.includes("Procurement") || userRoles.includes("PCM") || userRoles.includes("Administrator")) && pr.status === "Approved" && (
+              <button
+                className="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition-colors whitespace-nowrap"
+                title="ส่งคืนให้แก้ไข Budget"
                 onClick={() => {
-                  setIsModalOpen(true);
-                  setIsFullScreenModalOpen(true);
-                  setEditingPRId(null);
-                  setHeaderData({
-                    prNo: "",
-                    requestDate: new Date().toISOString().split("T")[0],
-                    requestor: userData ? `${userData.firstName || ""} ${userData.lastName || ""}`.trim() : "",
-                    requestorEmail: userData?.email || "",
-                    costCode: "",
-                    selectedBudgetId: "",
-                    selectedSubItemId: "",
-                    urgency: "Normal",
-                    purchaseType: "",
-                    deliveryLocation: "",
-                    attachment: null,
-                    attachmentUrl: "",
-                    attachmentName: "",
-                  });
-                  setLineItems([]);
+                  setSelectedPrForEditBudget(pr);
+                  setEditBudgetReason("");
+                  setIsEditBudgetModalOpen(true);
                 }}
               >
-                <Plus size={16} /> สร้าง PR ใหม่
+                Edit Budget
+              </button>
+            )}
+            {canUseFunction("pr", "edit") && (pr.status === "Rejected" || pr.status === "Edit Budget") && (
+              <button
+                className="text-blue-500 hover:bg-blue-50 p-1 rounded-full transition-colors"
+                title="แก้ไข PR"
+                onClick={() => handleEditClick(pr)}
+              >
+                <Edit size={13} />
+              </button>
+            )}
+            {canUseFunction("pr", "delete") && (
+              <button
+                className="text-red-500 hover:bg-red-50 p-1 rounded-full transition-colors"
+                onClick={() => {
+                  openConfirm(
+                    "ยืนยันการลบ",
+                    "คุณต้องการลบรายการ PR นี้ใช่หรือไม่?",
+                    async () => {
+                      if (pr.pdfUrl) {
+                        const safePRNo = (pr.prNo || pr.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
+                        const safeProjId = pr.projectId || "unknown";
+                        await deleteGeneratedPdf(`generated/prs/${safeProjId}/${safePRNo}.pdf`);
+                      }
+                      await deleteData("prs", pr.id);
+                    },
+                    "danger"
+                  );
+                }}
+              >
+                <Trash2 size={13} />
+              </button>
+            )}
+            {/* ยืนยัน Close PR — เฉพาะสถานะ Pending Close */}
+            {canUseFunction("pr", "closePR") && pr.status === "Pending Close" && (
+              <Button
+                variant="success"
+                className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                onClick={() => {
+                  openConfirm(
+                    "ยืนยันการปิด PR",
+                    `คุณต้องการปิด PR ${pr.prNo} ใช่หรือไม่?`,
+                    async () => {
+                      await updateData("prs", pr.id, { status: "Closed PR" });
+                    },
+                    "success"
+                  );
+                }}
+              >
+                ยืนยัน Close
               </Button>
             )}
+          </td>}
+        </tr>
+      </React.Fragment>
+    ));
+  };
+
+  const renderPrGroupedTableBody = (entries) => {
+    const groupRowClass = "bg-slate-100 border-b border-slate-200";
+    return entries.map(([type, groupPrs]) => (
+      <React.Fragment key={`main-${type}`}>
+        <tr className={groupRowClass}>
+          <td colSpan={["prNo", "date", "costCode", "description", "type", "requestor", "items", "amount", "status", "actions"].filter(k => isColumnVisible("pr", k)).length} className="py-1 px-2 font-bold text-slate-700">
+            {type} ({groupPrs.length})
+          </td>
+        </tr>
+        {renderPrDataRows(groupPrs, "main")}
+      </React.Fragment>
+    ));
+  };
+
+  const groupedBudgets = useMemo(() => {
+    const groups = {};
+    const ALLOWED_CATS = ["001", "002", "003", "004", "005", "006", "007", "008", "009"];
+    availableBudgets.forEach((b) => {
+      // แสดง budget ที่มี sub-item ที่อนุมัติแล้ว หรือไม่มี sub-item เลย (main budget item)
+      const hasSubItems = b.subItems && b.subItems.length > 0;
+      const hasApprovedSubs = hasSubItems && b.subItems.some(s => s.status === "Approved");
+      // อนุญาตให้เลือกได้ถ้า: มี sub-item ที่ approved หรือไม่มี sub-item เลย
+      if (hasSubItems && !hasApprovedSubs) return;
+      const cat = b.code.substring(0, 3);
+      if (!ALLOWED_CATS.includes(cat)) return;
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(b);
+    });
+    return groups;
+  }, [availableBudgets]);
+
+  // ฟิลเตอร์ Cost Code / รายการ ใน Modal เลือกรายการงบประมาณ (content)
+  const groupedBudgetsFiltered = useMemo(() => {
+    const q = (budgetSearchText || "").trim().toLowerCase();
+    if (!q) return groupedBudgets;
+    const out = {};
+    Object.keys(groupedBudgets).forEach((cat) => {
+      const filtered = groupedBudgets[cat].filter((b) => {
+        const subDesc = (b.subItems || []).map((s) => s.description || "").join(" ");
+        const haystack = [b.code, b.description || "", subDesc].join(" ").toLowerCase();
+        return haystack.includes(q);
+      });
+      if (filtered.length > 0) out[cat] = filtered;
+    });
+    return out;
+  }, [groupedBudgets, budgetSearchText]);
+
+  // ประเภทการขอซื้อสำหรับ PR จ้าง/เหมา
+  const CONTRACT_PURCHASE_TYPES = ["จ้างเหมา > DL", "ค่าแรง > DC"];
+
+  // งบประมาณสำหรับ Contract PR (หมวด 004 และ 006 เท่านั้น)
+  const groupedBudgetsContract = useMemo(() => {
+    const groups = {};
+    const CONTRACT_CATS = ["004", "006"];
+    availableBudgets.forEach((b) => {
+      // แสดง budget ที่มี sub-item ที่อนุมัติแล้ว หรือไม่มี sub-item เลย (main budget item)
+      const hasSubItems = b.subItems && b.subItems.length > 0;
+      const hasApprovedSubs = hasSubItems && b.subItems.some(s => s.status === "Approved");
+      // อนุญาตให้เลือกได้ถ้า: มี sub-item ที่ approved หรือไม่มี sub-item เลย
+      if (hasSubItems && !hasApprovedSubs) return;
+      const cat = b.code.substring(0, 3);
+      if (!CONTRACT_CATS.includes(cat)) return;
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(b);
+    });
+    return groups;
+  }, [availableBudgets]);
+
+  const groupedBudgetsContractFiltered = useMemo(() => {
+    const q = (contractBudgetSearchText || "").trim().toLowerCase();
+    if (!q) return groupedBudgetsContract;
+    const out = {};
+    Object.keys(groupedBudgetsContract).forEach((cat) => {
+      const filtered = groupedBudgetsContract[cat].filter((b) => {
+        const subDesc = (b.subItems || []).map((s) => s.description || "").join(" ");
+        const haystack = [b.code, b.description || "", subDesc].join(" ").toLowerCase();
+        return haystack.includes(q);
+      });
+      if (filtered.length > 0) out[cat] = filtered;
+    });
+    return out;
+  }, [groupedBudgetsContract, contractBudgetSearchText]);
+
+  return (
+    <div className="space-y-4">
+
+      {/* ── Progress Modal: กำลังบันทึก PR ── */}
+      {savePrProgress.show && createPortal(
+        <div style={{ position: "fixed", inset: 0, zIndex: 999999, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)" }}>
+          <div className="bg-white rounded-2xl shadow-2xl px-8 py-7 w-80 flex flex-col items-center gap-4">
+            <div className="relative w-16 h-16 flex items-center justify-center">
+              <svg className="absolute inset-0 w-16 h-16 -rotate-90" viewBox="0 0 64 64">
+                <circle cx="32" cy="32" r="28" fill="none" stroke="#e2e8f0" strokeWidth="6" />
+                <circle
+                  cx="32" cy="32" r="28" fill="none"
+                  stroke={savePrProgress.pct < 100 ? "#dc2626" : "#16a34a"}
+                  strokeWidth="6" strokeLinecap="round"
+                  strokeDasharray={`${2 * Math.PI * 28}`}
+                  strokeDashoffset={`${2 * Math.PI * 28 * (1 - savePrProgress.pct / 100)}`}
+                  style={{ transition: "stroke-dashoffset 0.4s ease, stroke 0.3s" }}
+                />
+              </svg>
+              <span className={`text-base font-bold ${savePrProgress.pct < 100 ? "text-red-600" : "text-green-600"}`}>
+                {savePrProgress.pct}%
+              </span>
+            </div>
+            <p className="text-sm font-semibold text-slate-700 text-center">{savePrProgress.step}</p>
+            <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+              <div
+                className={`h-2 rounded-full transition-all duration-500 ${savePrProgress.pct < 100 ? "bg-red-500" : "bg-green-500"}`}
+                style={{ width: `${savePrProgress.pct}%` }}
+              />
+            </div>
+            <p className="text-[11px] text-slate-400">กรุณารอสักครู่...</p>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ── Page Header ── */}
+      <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white/40 p-2 rounded-2xl border border-slate-100/50 shadow-sm">
+        <div className="flex items-center gap-2">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-rose-100 to-pink-100 flex items-center justify-center shadow-sm">
+            <FileText size={19} className="text-rose-600" />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-rose-800 leading-none">ระบบ PR</h2>
+            <p className="text-[10px] text-rose-400 mt-1">จัดการใบขอซื้อและสถานะการอนุมัติ</p>
+          </div>
+          <div className="ml-2">
+            <ColumnVisibilityToggle tableId="pr" />
           </div>
         </div>
-        {/* ── ตารางบนสุด: รายการรอ Action (รอ Approve หรือ รอแก้ไข) ── */}
-        {showPendingActionTable && (
-          <Card className="overflow-hidden w-full min-w-0 border-t-4 border-t-rose-500">
-            <div className="px-3 py-2 bg-rose-50 border-b border-rose-200 flex items-center gap-2">
-              <AlertCircle size={15} className="text-rose-700" />
-              <h3 className="text-xs font-bold text-rose-900 uppercase tracking-wide">
-                PR — รอดำเนินการ (รอ Approve / รอแก้ไข)
-              </h3>
-            </div>
-            <div ref={prTableRef} className="w-full min-w-0">
-              <table className="w-full text-left text-xs text-slate-600 table-fixed">
-                <thead className="bg-rose-100/60 text-slate-900 uppercase font-semibold">
-                  <tr>
-                    {renderPrHeaderCells()}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {renderPrGroupedTableBody(groupedPrEntriesPending)}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        )}
 
-        {/* ── ตารางกลาง: รายการปกติ (ไม่รอ Action) ── */}
-        <Card className="overflow-hidden w-full min-w-0">
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="ค้นหา PR ได้ทุกคอลัมน์ (PR, Cost Code, Requestor...)"
+              value={prTableSearchText}
+              onChange={(e) => setPrTableSearchText(e.target.value)}
+              className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-300 w-72"
+            />
+          </div>
+          {canUseFunction("pr", "create") && (
+            <Button
+              className="bg-rose-500 hover:bg-rose-600 text-white shadow-md shadow-rose-100 border-none rounded-xl px-4 py-2 text-sm font-bold flex items-center gap-2 transition-all active:scale-95"
+              onClick={() => {
+                setIsModalOpen(true);
+                setIsFullScreenModalOpen(true);
+                setEditingPRId(null);
+                setHeaderData({
+                  prNo: "",
+                  requestDate: new Date().toISOString().split("T")[0],
+                  requestor: userData ? `${userData.firstName || ""} ${userData.lastName || ""}`.trim() : "",
+                  requestorEmail: userData?.email || "",
+                  costCode: "",
+                  selectedBudgetId: "",
+                  selectedSubItemId: "",
+                  urgency: "Normal",
+                  purchaseType: "",
+                  deliveryLocation: "",
+                  attachment: null,
+                  attachmentUrl: "",
+                  attachmentName: "",
+                });
+                setLineItems([]);
+              }}
+            >
+              <Plus size={16} /> สร้าง PR ใหม่
+            </Button>
+          )}
+        </div>
+      </div>
+      {/* ── ตารางบนสุด: รายการรอ Action (รอ Approve หรือ รอแก้ไข) ── */}
+      {showPendingActionTable && (
+        <Card className="overflow-hidden w-full min-w-0 border-t-4 border-t-rose-500">
+          <div className="px-3 py-2 bg-rose-50 border-b border-rose-200 flex items-center gap-2">
+            <AlertCircle size={15} className="text-rose-700" />
+            <h3 className="text-xs font-bold text-rose-900 uppercase tracking-wide">
+              PR — รอดำเนินการ (รอ Approve / รอแก้ไข)
+            </h3>
+          </div>
           <div ref={prTableRef} className="w-full min-w-0">
+            <table className="w-full text-left text-xs text-slate-600 table-fixed">
+              <thead className="bg-rose-100/60 text-slate-900 uppercase font-semibold">
+                <tr>
+                  {renderPrHeaderCells()}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {renderPrGroupedTableBody(groupedPrEntriesPending)}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      {/* ── ตารางกลาง: รายการปกติ (ไม่รอ Action) ── */}
+      <Card className="overflow-hidden w-full min-w-0">
+        <div ref={prTableRef} className="w-full min-w-0">
           <table className="w-full text-left text-xs text-slate-600 table-fixed">
             <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
               <tr>
@@ -1633,36 +1633,36 @@ const PRView = React.memo(() => {
               {renderPrGroupedTableBody(groupedPrEntriesMain)}
             </tbody>
           </table>
+        </div>
+      </Card>
+
+      {showPoIssuedPrTable && (
+        <Card className="overflow-hidden w-full min-w-0 border-t-4 border-t-teal-500">
+          <div className="px-3 py-2 bg-teal-50 border-b border-teal-200 flex items-center gap-2">
+            <ClipboardList size={15} className="text-teal-700" />
+            <h3 className="text-xs font-bold text-teal-900 uppercase tracking-wide">
+              PR — สถานะ PO Issued (เรียงตามเลข PR · ทุกประเภทรวมกัน)
+            </h3>
+          </div>
+          <div className="w-full min-w-0">
+            <table className="w-full text-left text-xs text-slate-600 table-fixed">
+              <thead className="bg-teal-100/60 text-slate-900 uppercase font-semibold">
+                <tr>
+                  {renderPrHeaderCells()}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {renderPrDataRows(flatPoIssuedPrs, "poIssued")}
+              </tbody>
+            </table>
           </div>
         </Card>
+      )}
 
-        {showPoIssuedPrTable && (
-          <Card className="overflow-hidden w-full min-w-0 border-t-4 border-t-teal-500">
-            <div className="px-3 py-2 bg-teal-50 border-b border-teal-200 flex items-center gap-2">
-              <ClipboardList size={15} className="text-teal-700" />
-              <h3 className="text-xs font-bold text-teal-900 uppercase tracking-wide">
-                PR — สถานะ PO Issued (เรียงตามเลข PR · ทุกประเภทรวมกัน)
-              </h3>
-            </div>
-            <div className="w-full min-w-0">
-              <table className="w-full text-left text-xs text-slate-600 table-fixed">
-                <thead className="bg-teal-100/60 text-slate-900 uppercase font-semibold">
-                  <tr>
-                    {renderPrHeaderCells()}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {renderPrDataRows(flatPoIssuedPrs, "poIssued")}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        )}
-
-        {/* PR View Modal — ดูข้อมูล + Approve/Reject */}
-        {viewingPR && (() => {
-          const prLive = prs.find((p: any) => p.id === viewingPR.id) || viewingPR;
-          return (
+      {/* PR View Modal — ดูข้อมูล + Approve/Reject */}
+      {viewingPR && (() => {
+        const prLive = prs.find((p: any) => p.id === viewingPR.id) || viewingPR;
+        return (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10010] p-4">
             <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-[90vh] flex flex-col">
               {/* Header */}
@@ -1946,130 +1946,132 @@ const PRView = React.memo(() => {
               </div>
             </div>
           </div>
-        )})()}
+        )
+      })()}
 
-        {isPrRejectModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
-            <Card className="w-full max-w-md p-6">
-              <h3 className="text-lg font-bold mb-4 text-red-600">
-                ปฏิเสธ PR (Reject PR)
-              </h3>
-              <p className="text-sm text-slate-600 mb-3">
-                PR No.: <span className="font-semibold text-slate-800">{selectedPrForReject?.prNo}</span>
-              </p>
-              <InputGroup label="เหตุผลที่ปฏิเสธ (Reject Reason)">
-                <textarea
-                  className="w-full border rounded p-2 h-24"
-                  placeholder="กรุณาระบุเหตุผลที่ปฏิเสธ..."
-                  value={prRejectReason}
-                  onChange={(e) => setPrRejectReason(e.target.value)}
-                />
-              </InputGroup>
-              <div className="flex justify-end gap-2 mt-4">
-                <Button
-                  variant="secondary"
-                  onClick={() => setIsPrRejectModalOpen(false)}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  variant="danger"
-                  onClick={handleRejectPrConfirm}
-                  disabled={!prRejectReason.trim()}
-                >
-                  ยืนยันปฏิเสธ
-                </Button>
-              </div>
-            </Card>
-          </div>
-        )}
-        {/* Modal Edit Budget — กรอกเหตุผลให้แก้ไข */}
-        {isEditBudgetModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010]">
-            <div className="bg-white rounded-2xl shadow-2xl border border-red-200 p-6 w-full max-w-md mx-4">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center">
-                  <AlertCircle size={20} className="text-red-600" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-slate-800">ส่งคืนให้แก้ไข Budget</h3>
-                  <p className="text-xs text-slate-500 mt-0.5">PR: <span className="font-semibold text-slate-700">{selectedPrForEditBudget?.prNo}</span></p>
-                </div>
-              </div>
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 text-xs text-red-700">
-                PR จะถูกเปลี่ยนสถานะเป็น <span className="font-bold">Edit Budget</span> และผู้เปิด PR ต้องแก้ไขและส่งอนุมัติใหม่
-              </div>
-              <label className="block text-xs font-bold text-slate-600 mb-1.5">เหตุผลที่ต้องแก้ไข <span className="text-red-500">*</span></label>
+      {isPrRejectModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
+          <Card className="w-full max-w-md p-6">
+            <h3 className="text-lg font-bold mb-4 text-red-600">
+              ปฏิเสธ PR (Reject PR)
+            </h3>
+            <p className="text-sm text-slate-600 mb-3">
+              PR No.: <span className="font-semibold text-slate-800">{selectedPrForReject?.prNo}</span>
+            </p>
+            <InputGroup label="เหตุผลที่ปฏิเสธ (Reject Reason)">
               <textarea
-                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:ring-2 focus:ring-red-300 focus:border-red-400"
-                rows={4}
-                placeholder="ระบุเหตุผลที่ต้องการให้แก้ไข Budget..."
-                value={editBudgetReason}
-                onChange={(e) => setEditBudgetReason(e.target.value)}
-                autoFocus
+                className="w-full border rounded p-2 h-24"
+                placeholder="กรุณาระบุเหตุผลที่ปฏิเสธ..."
+                value={prRejectReason}
+                onChange={(e) => setPrRejectReason(e.target.value)}
               />
-              <div className="flex justify-end gap-2 mt-4">
-                <Button variant="secondary" onClick={() => { setIsEditBudgetModalOpen(false); setEditBudgetReason(""); setSelectedPrForEditBudget(null); }}>
-                  ยกเลิก
-                </Button>
+            </InputGroup>
+            <div className="flex justify-end gap-2 mt-4">
+              <Button
+                variant="secondary"
+                onClick={() => setIsPrRejectModalOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                onClick={handleRejectPrConfirm}
+                disabled={!prRejectReason.trim()}
+              >
+                ยืนยันปฏิเสธ
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+      {/* Modal Edit Budget — กรอกเหตุผลให้แก้ไข */}
+      {isEditBudgetModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010]">
+          <div className="bg-white rounded-2xl shadow-2xl border border-red-200 p-6 w-full max-w-md mx-4">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center">
+                <AlertCircle size={20} className="text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-800">ส่งคืนให้แก้ไข Budget</h3>
+                <p className="text-xs text-slate-500 mt-0.5">PR: <span className="font-semibold text-slate-700">{selectedPrForEditBudget?.prNo}</span></p>
+              </div>
+            </div>
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 text-xs text-red-700">
+              PR จะถูกเปลี่ยนสถานะเป็น <span className="font-bold">Edit Budget</span> และผู้เปิด PR ต้องแก้ไขและส่งอนุมัติใหม่
+            </div>
+            <label className="block text-xs font-bold text-slate-600 mb-1.5">เหตุผลที่ต้องแก้ไข <span className="text-red-500">*</span></label>
+            <textarea
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:ring-2 focus:ring-red-300 focus:border-red-400"
+              rows={4}
+              placeholder="ระบุเหตุผลที่ต้องการให้แก้ไข Budget..."
+              value={editBudgetReason}
+              onChange={(e) => setEditBudgetReason(e.target.value)}
+              autoFocus
+            />
+            <div className="flex justify-end gap-2 mt-4">
+              <Button variant="secondary" onClick={() => { setIsEditBudgetModalOpen(false); setEditBudgetReason(""); setSelectedPrForEditBudget(null); }}>
+                ยกเลิก
+              </Button>
+              <button
+                className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-semibold hover:bg-red-700 transition-all disabled:opacity-50"
+                disabled={!editBudgetReason.trim()}
+                onClick={handleEditBudgetConfirm}
+              >
+                ยืนยัน Edit Budget
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal สร้าง/แก้ไข PR — ทับ Header, เต็มความสูง, Footer เลื่อนตามเนื้อหา */}
+      {isModalOpen && (
+        <motion.div
+          className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[10010] p-4"
+          initial="hidden"
+          animate="visible"
+          variants={modalOverlayVariants}
+          transition={overlayTransition}
+        >
+          <motion.div
+            className="w-[90vw] max-w-[90vw] max-h-[92vh] flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+            initial="hidden"
+            animate="visible"
+            variants={modalContentVariants}
+            transition={modalTransition}
+          >
+            {/* Sticky Header - โทนอ่อนใช้งานภายในองค์กร */}
+            <div className="px-6 py-4 border-b border-slate-200 bg-slate-600 shrink-0">
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-slate-500 rounded-lg flex items-center justify-center">
+                    <ClipboardList size={22} className="text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-white tracking-wide">
+                      {editingPRId
+                        ? "แก้ไขใบขอซื้อ (Edit PR)"
+                        : "สร้างใบขอซื้อ (Create PR)"}
+                    </h3>
+                    <p className="text-slate-300 text-xs mt-0.5">กรอกข้อมูลให้ครบถ้วนเพื่อสร้างใบขอซื้อ</p>
+                  </div>
+                </div>
                 <button
-                  className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-semibold hover:bg-red-700 transition-all disabled:opacity-50"
-                  disabled={!editBudgetReason.trim()}
-                  onClick={handleEditBudgetConfirm}
+                  onClick={() => {
+                    setIsModalOpen(false);
+                    setIsFullScreenModalOpen(false);
+                  }}
+                  className="text-slate-300 hover:text-white hover:bg-slate-500 p-2 rounded-lg transition-all duration-200"
                 >
-                  ยืนยัน Edit Budget
+                  <XCircle size={22} />
                 </button>
               </div>
             </div>
-          </div>
-        )}
 
-        {/* Modal สร้าง/แก้ไข PR — ทับ Header, เต็มความสูง, Footer เลื่อนตามเนื้อหา */}
-        {isModalOpen && (
-          <motion.div
-            className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[10010] p-4"
-            initial="hidden"
-            animate="visible"
-            variants={modalOverlayVariants}
-            transition={overlayTransition}
-          >
-            <motion.div
-              className="w-[90vw] max-w-[90vw] max-h-[92vh] flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
-              initial="hidden"
-              animate="visible"
-              variants={modalContentVariants}
-              transition={modalTransition}
-            >
-              {/* Sticky Header - โทนอ่อนใช้งานภายในองค์กร */}
-              <div className="px-6 py-4 border-b border-slate-200 bg-slate-600 shrink-0">
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-slate-500 rounded-lg flex items-center justify-center">
-                      <ClipboardList size={22} className="text-white" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-bold text-white tracking-wide">
-                        {editingPRId
-                          ? "แก้ไขใบขอซื้อ (Edit PR)"
-                          : "สร้างใบขอซื้อ (Create PR)"}
-                      </h3>
-                      <p className="text-slate-300 text-xs mt-0.5">กรอกข้อมูลให้ครบถ้วนเพื่อสร้างใบขอซื้อ</p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => {
-                      setIsModalOpen(false);
-                      setIsFullScreenModalOpen(false);
-                    }}
-                    className="text-slate-300 hover:text-white hover:bg-slate-500 p-2 rounded-lg transition-all duration-200"
-                  >
-                    <XCircle size={22} />
-                  </button>
-                </div>
-              </div>
-
-              {/* Banner แสดงเหตุผล Edit Budget */}
-              {editingPRId && (() => { const pr = prs.find(p => p.id === editingPRId); return pr?.status === "Edit Budget" ? (
+            {/* Banner แสดงเหตุผล Edit Budget */}
+            {editingPRId && (() => {
+              const pr = prs.find(p => p.id === editingPRId); return pr?.status === "Edit Budget" ? (
                 <div className="px-6 py-3 bg-red-600 shrink-0 flex items-start gap-3">
                   <AlertCircle size={18} className="text-white mt-0.5 shrink-0" />
                   <div className="flex-1 min-w-0">
@@ -2085,725 +2087,726 @@ const PRView = React.memo(() => {
                     )}
                   </div>
                 </div>
-              ) : null; })()}
+              ) : null;
+            })()}
 
-              {/* Scrollable Content */}
-              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5 bg-slate-50/50">
-                {/* Header Fields - Section 1: ข้อมูลใบขอซื้อ */}
-                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                  <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 border-b border-slate-200">
-                    <div className="w-6 h-6 bg-slate-600 rounded-md flex items-center justify-center">
-                      <FileText size={13} className="text-white" />
-                    </div>
-                    <span className="text-xs font-bold text-slate-700 tracking-wide uppercase">ข้อมูลใบขอซื้อ</span>
+            {/* Scrollable Content */}
+            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5 bg-slate-50/50">
+              {/* Header Fields - Section 1: ข้อมูลใบขอซื้อ */}
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 border-b border-slate-200">
+                  <div className="w-6 h-6 bg-slate-600 rounded-md flex items-center justify-center">
+                    <FileText size={13} className="text-white" />
                   </div>
-                  <div className="p-5">
-                    <div className="grid grid-cols-6 gap-x-4 gap-y-4">
-                      {/* Row 1: PR No. / ประเภท / Sub-Code */}
+                  <span className="text-xs font-bold text-slate-700 tracking-wide uppercase">ข้อมูลใบขอซื้อ</span>
+                </div>
+                <div className="p-5">
+                  <div className="grid grid-cols-6 gap-x-4 gap-y-4">
+                    {/* Row 1: PR No. / ประเภท / Sub-Code */}
+                    <div className="col-span-2">
+                      <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
+                        <Hash size={11} className="text-slate-500" /> PR No.
+                      </label>
+                      <input
+                        type="text"
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-slate-50 text-slate-700 font-mono font-semibold"
+                        value={headerData.prNo}
+                        readOnly
+                        placeholder="(auto)"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
+                        <Tag size={11} className="text-slate-500" /> ประเภทการขอซื้อ
+                      </label>
+                      <select
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all cursor-pointer"
+                        value={headerData.purchaseType}
+                        onChange={(e) => {
+                          const newType = e.target.value;
+                          const codes = PURCHASE_TYPE_CODES[newType] || [];
+                          const isEquipment = newType === PURCHASE_TYPE_EQUIPMENT;
+                          const isRental = newType === PURCHASE_TYPE_RENTAL_LABEL;
+                          const autoCode = codes.length === 1 && !isRental ? codes[0] : "";
+                          const newSubCode = isEquipment || isRental ? "" : autoCode;
+                          const newPrNo = (isEquipment || isRental) ? generatePrNo("", newType) : (newSubCode ? generatePrNo(newSubCode, newType) : "");
+                          setHeaderData({
+                            ...headerData,
+                            purchaseType: newType,
+                            subCode: newSubCode,
+                            prNo: newPrNo,
+                          });
+                        }}
+                      >
+                        <option value="">-- เลือกประเภท --</option>
+                        {PURCHASE_TYPES.map((t) => (
+                          <option key={t} value={t}>
+                            {getPurchaseTypeDisplayLabel(t)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    {headerData.purchaseType && headerData.purchaseType !== PURCHASE_TYPE_EQUIPMENT && headerData.purchaseType !== PURCHASE_TYPE_RENTAL_LABEL && (PURCHASE_TYPE_CODES[headerData.purchaseType] || []).length > 1 && (
                       <div className="col-span-2">
                         <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
-                          <Hash size={11} className="text-slate-500" /> PR No.
-                        </label>
-                        <input
-                          type="text"
-                          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-slate-50 text-slate-700 font-mono font-semibold"
-                          value={headerData.prNo}
-                          readOnly
-                          placeholder="(auto)"
-                        />
-                      </div>
-                      <div className="col-span-2">
-                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
-                          <Tag size={11} className="text-slate-500" /> ประเภทการขอซื้อ
+                          <CircleDot size={11} className="text-slate-500" />
+                          Sub-Code
                         </label>
                         <select
                           className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all cursor-pointer"
-                          value={headerData.purchaseType}
+                          value={headerData.subCode}
                           onChange={(e) => {
-                            const newType = e.target.value;
-                            const codes = PURCHASE_TYPE_CODES[newType] || [];
-                            const isEquipment = newType === PURCHASE_TYPE_EQUIPMENT;
-                            const isRental = newType === PURCHASE_TYPE_RENTAL_LABEL;
-                            const autoCode = codes.length === 1 && !isRental ? codes[0] : "";
-                            const newSubCode = isEquipment || isRental ? "" : autoCode;
-                            const newPrNo = (isEquipment || isRental) ? generatePrNo("", newType) : (newSubCode ? generatePrNo(newSubCode, newType) : "");
+                            const newSubCode = e.target.value;
+                            const newPrNo = generatePrNo(newSubCode, headerData.purchaseType);
                             setHeaderData({
                               ...headerData,
-                              purchaseType: newType,
                               subCode: newSubCode,
                               prNo: newPrNo,
                             });
                           }}
                         >
-                          <option value="">-- เลือกประเภท --</option>
-                          {PURCHASE_TYPES.map((t) => (
-                            <option key={t} value={t}>
-                              {getPurchaseTypeDisplayLabel(t)}
+                          <option value="">-- เลือก --</option>
+                          {(PURCHASE_TYPE_CODES[headerData.purchaseType] || []).map((code) => (
+                            <option key={code} value={code}>
+                              {code}
                             </option>
                           ))}
                         </select>
                       </div>
-                      {headerData.purchaseType && headerData.purchaseType !== PURCHASE_TYPE_EQUIPMENT && headerData.purchaseType !== PURCHASE_TYPE_RENTAL_LABEL && (PURCHASE_TYPE_CODES[headerData.purchaseType] || []).length > 1 && (
-                        <div className="col-span-2">
-                          <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
-                            <CircleDot size={11} className="text-slate-500" />
-                            Sub-Code
-                          </label>
-                          <select
-                            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all cursor-pointer"
-                            value={headerData.subCode}
-                            onChange={(e) => {
-                              const newSubCode = e.target.value;
-                              const newPrNo = generatePrNo(newSubCode, headerData.purchaseType);
-                              setHeaderData({
-                                ...headerData,
-                                subCode: newSubCode,
-                                prNo: newPrNo,
-                              });
-                            }}
-                          >
-                            <option value="">-- เลือก --</option>
-                            {(PURCHASE_TYPE_CODES[headerData.purchaseType] || []).map((code) => (
-                              <option key={code} value={code}>
-                                {code}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      )}
-
-                      {/* Row 2: ผู้ขอซื้อ / อีเมล / สถานที่จัดส่ง */}
-                      <div className="col-span-2">
-                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
-                          <UserCircle size={11} className="text-slate-500" /> ผู้ขอซื้อ
-                        </label>
-                        <div className="relative">
-                          <input
-                            type="text"
-                            className="w-full border border-slate-200 rounded-lg px-3 py-2 pl-9 text-sm hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all"
-                            value={headerData.requestor}
-                            onChange={(e) =>
-                              setHeaderData({
-                                ...headerData,
-                                requestor: e.target.value,
-                              })
-                            }
-                          />
-                          <UserCircle className="absolute left-3 top-2.5 text-slate-400" size={14} />
-                        </div>
-                      </div>
-                      <div className="col-span-2">
-                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
-                          <AtSign size={11} className="text-slate-500" /> อีเมลผู้ขอซื้อ
-                        </label>
-                        <div className="relative">
-                          <input
-                            type="email"
-                            className="w-full border border-slate-200 rounded-lg px-3 py-2 pl-9 text-sm hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all"
-                            value={headerData.requestorEmail}
-                            onChange={(e) =>
-                              setHeaderData({
-                                ...headerData,
-                                requestorEmail: e.target.value,
-                              })
-                            }
-                            placeholder="example@cmg.co.th"
-                          />
-                          <Mail className="absolute left-3 top-2.5 text-slate-400" size={14} />
-                        </div>
-                      </div>
-                      <div className="col-span-2">
-                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
-                          <Building2 size={11} className="text-slate-500" /> สถานที่จัดส่ง
-                        </label>
-                        <div className="relative">
-                          <select
-                            className="w-full border border-slate-200 rounded-lg px-3 py-2 pl-9 text-sm bg-white hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all cursor-pointer"
-                            value={headerData.deliveryLocation}
-                            onChange={(e) =>
-                              setHeaderData({
-                                ...headerData,
-                                deliveryLocation: e.target.value,
-                              })
-                            }
-                          >
-                            <option value="">-- เลือกสถานที่ --</option>
-                            {DELIVERY_LOCATIONS.map((l) => (
-                              <option key={l} value={l}>
-                                {l}
-                              </option>
-                            ))}
-                          </select>
-                          <MapPinned className="absolute left-3 top-2.5 text-slate-400 pointer-events-none" size={14} />
-                        </div>
-                      </div>
-
-                      {/* Row 3: วันที่ขอซื้อ / ความเร่งด่วน / แนบไฟล์ */}
-                      <div className="col-span-2">
-                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
-                          <Calendar size={11} className="text-slate-500" /> วันที่ขอซื้อ
-                        </label>
-                        <div className="relative">
-                          <input
-                            type="date"
-                            className="w-full border border-slate-200 rounded-lg px-3 py-2 pl-9 text-sm hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all"
-                            value={headerData.requestDate}
-                            onChange={(e) =>
-                              setHeaderData({
-                                ...headerData,
-                                requestDate: e.target.value,
-                              })
-                            }
-                          />
-                          <Calendar className="absolute left-3 top-2.5 text-slate-400" size={14} />
-                        </div>
-                      </div>
-                      <div className="col-span-2 flex items-end pb-1">
-                        <div>
-                          <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-2 uppercase tracking-wider">
-                            <Zap size={11} className="text-slate-500" /> ความเร่งด่วน
-                          </label>
-                          <div className="flex gap-2">
-                            <label className={`flex items-center gap-2 cursor-pointer px-3 py-1.5 rounded-lg border transition-all duration-200 ${headerData.urgency === "Normal" ? "border-slate-400 bg-slate-100" : "border-slate-200 bg-white hover:border-slate-300"}`}>
-                              <input
-                                type="radio"
-                                name="urgency"
-                                value="Normal"
-                                checked={headerData.urgency === "Normal"}
-                                onChange={(e) =>
-                                  setHeaderData({
-                                    ...headerData,
-                                    urgency: e.target.value,
-                                  })
-                                }
-                                className="hidden"
-                              />
-                              <CircleDot size={13} className={headerData.urgency === "Normal" ? "text-slate-600" : "text-slate-400"} />
-                              <span className={`text-xs font-medium ${headerData.urgency === "Normal" ? "text-slate-700" : "text-slate-500"}`}>ปกติ</span>
-                            </label>
-                            <label className={`flex items-center gap-2 cursor-pointer px-3 py-1.5 rounded-lg border transition-all duration-200 ${headerData.urgency === "Urgent" ? "border-red-300 bg-red-50" : "border-slate-200 bg-white hover:border-slate-300"}`}>
-                              <input
-                                type="radio"
-                                name="urgency"
-                                value="Urgent"
-                                checked={headerData.urgency === "Urgent"}
-                                onChange={(e) =>
-                                  setHeaderData({
-                                    ...headerData,
-                                    urgency: e.target.value,
-                                  })
-                                }
-                                className="hidden"
-                              />
-                              <Flame size={13} className={headerData.urgency === "Urgent" ? "text-red-500" : "text-slate-400"} />
-                              <span className={`text-xs font-semibold ${headerData.urgency === "Urgent" ? "text-red-600" : "text-slate-500"}`}>ด่วน</span>
-                            </label>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="col-span-2">
-                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
-                          <Paperclip size={11} className="text-slate-500" /> แนบไฟล์
-                        </label>
-                        <div className="flex items-center gap-3 w-full border border-dashed border-slate-200 rounded-lg px-4 py-2 bg-slate-50 hover:border-slate-300 hover:bg-slate-100/50 transition-all duration-200 group cursor-pointer">
-                          <div className="w-8 h-8 bg-slate-200 group-hover:bg-slate-300 rounded-md flex items-center justify-center transition-colors">
-                            <Upload size={14} className="text-slate-500 group-hover:text-slate-600 transition-colors" />
-                          </div>
-                          <input
-                            type="file"
-                            className="hidden"
-                            id="pr-attachment"
-                            onChange={(e) =>
-                              setHeaderData({
-                                ...headerData,
-                                attachment: e.target.files?.[0] || null,
-                              })
-                            }
-                          />
-                          <label
-                            htmlFor="pr-attachment"
-                            className="flex-1 text-xs text-slate-600 cursor-pointer"
-                          >
-                            {headerData.attachment
-                              ? (headerData.attachment as File).name
-                              : headerData.attachmentUrl
-                                ? (headerData.attachmentName || "ไฟล์แนบ") + " (บันทึกแล้ว)"
-                                : "คลิกเพื่อเลือกไฟล์แนบ (PDF, Image, Excel ฯลฯ)"}
-                          </label>
-                          {headerData.attachmentUrl && !headerData.attachment && (
-                            <a href={headerData.attachmentUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-600 hover:underline ml-1" onClick={(e) => e.stopPropagation()}>เปิด</a>
-                          )}
-                        </div>
-                        {(() => {
-                          const selBudget = availableBudgets.find(b => b.id === headerData.selectedBudgetId);
-                          const selSubItem = selBudget?.subItems?.find((si: any) => si.id === headerData.selectedSubItemId);
-                          const budgetAtts: { url: string; name: string }[] = selBudget?.attachments || [];
-                          const subItemAtts: { url: string; name: string }[] = selSubItem?.attachments || [];
-                          const allAtts = [...budgetAtts, ...subItemAtts];
-                          if (allAtts.length === 0) return null;
-                          return (
-                            <div className="mt-2">
-                              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
-                                <Paperclip size={10} /> ไฟล์แนบจากงบประมาณที่เลือก
-                              </p>
-                              <div className="flex flex-col gap-1">
-                                {allAtts.map((att, idx) => (
-                                  <a
-                                    key={idx}
-                                    href={att.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="flex items-center gap-2 text-xs text-blue-600 hover:text-blue-800 hover:underline bg-blue-50 border border-blue-100 rounded px-3 py-1.5"
-                                  >
-                                    <Paperclip size={11} className="shrink-0 text-blue-400" />
-                                    <span className="truncate">{att.name || `ไฟล์แนบ ${idx + 1}`}</span>
-                                  </a>
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Header Fields - Section 2: เลือกรายการที่ Approve */}
-                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                  <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 border-b border-slate-200">
-                    <div className="w-6 h-6 bg-slate-600 rounded-md flex items-center justify-center">
-                      <Settings size={13} className="text-white" />
-                    </div>
-                    <span className="text-xs font-bold text-slate-700 tracking-wide uppercase">
-                      เลือกรายการที่ Approve
-                    </span>
-                  </div>
-                  <div className="p-5">
-                    <div className="grid grid-cols-6 gap-x-4 gap-y-4">
-                      <div className="col-span-3 md:col-span-2 lg:col-span-2">
-                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
-                          <DollarSign size={11} className="text-slate-500" /> Cost Code
-                        </label>
-                        <div className="relative">
-                          <input
-                            type="text"
-                            className="w-full border border-dashed border-slate-300 rounded-lg px-3 py-2 pr-9 text-sm bg-slate-50 cursor-pointer font-medium text-slate-700 hover:border-slate-400 transition-all duration-200"
-                            value={
-                              headerData.costCode ? (() => {
-                                return headerData.costCode;
-                              })() : ""
-                            }
-                            placeholder="คลิกเพื่อเลือก"
-                            readOnly
-                            onClick={() => {
-                              if (!editingPRId) {
-                                setBudgetSearchText("");
-                                setIsCostCodeModalOpen(true);
-                              }
-                            }}
-                            disabled={!!editingPRId}
-                          />
-                          <ListFilter className="absolute right-3 top-2.5 text-slate-500" size={14} />
-                        </div>
-                        {headerData.costCode && (
-                          <>
-                            <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mt-3 mb-1.5 uppercase tracking-wider">
-                              <ClipboardList size={11} className="text-slate-500" /> รายการ (Main Description)
-                            </label>
-                            <input
-                              type="text"
-                              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-slate-700 font-medium"
-                              readOnly
-                              disabled={!!editingPRId}
-                              value={
-                                headerData.costCode ? (() => {
-                                  const selectedBudget = headerData.selectedBudgetId
-                                    ? availableBudgets.find((b) => b.id === headerData.selectedBudgetId)
-                                    : availableBudgets.find((b) => b.code === headerData.costCode);
-                                  return selectedBudget?.description || "";
-                                })() : ""
-                              }
-                              placeholder="(เลือก Budget Approve แล้วจะแสดง)"
-                            />
-                          </>
-                        )}
-                        {headerData.costCode && (() => {
-                          const selectedBudget = headerData.selectedBudgetId
-                            ? availableBudgets.find((b) => b.id === headerData.selectedBudgetId)
-                            : availableBudgets.find((b) => b.code === headerData.costCode);
-                          if (!selectedBudget) return null;
-
-                          // คำนวณยอดคงเหลือ: ถ้ามี sub-items ให้ใช้ยอดคงเหลือของ sub-item ที่เลือก
-                          const hasSubItems = selectedBudget.subItems && selectedBudget.subItems.length > 0;
-                          let balance = selectedBudget.remainingBalance;
-                          let label = "คงเหลือ";
-
-                          // หา sub-item ที่ตรงกับ selectedSubItemId ก่อน ถ้าไม่มีให้หาจาก lineItems
-                          const resolvedSubId = headerData.selectedSubItemId ||
-                            (lineItems.length > 0 && lineItems[0].subItemId ? lineItems[0].subItemId : "");
-
-                          if (hasSubItems) {
-                            const sub = resolvedSubId
-                              ? selectedBudget.subItems.find(s => s.id === resolvedSubId)
-                              : selectedBudget.subItems.find(s => s.status === "Approved");
-                            if (sub) {
-                              const subUsed = prs
-                                .filter(p => p.projectId === selectedProjectId && p.costCode === selectedBudget.code && p.status !== 'Rejected' && p.id !== editingPRId)
-                                .reduce((sum, p) => {
-                                  const matchItems = (p.items || []).filter(i => {
-                                    // Only match items that have proper sub-item IDs to avoid counting legacy records incorrectly
-                                    if (sub.id && (i.subItemId === sub.id || i.budgetSubItemId === sub.id)) {
-                                      return true;
-                                    }
-                                    // For legacy records without subItemId, only match if this is the only sub-item with this exact description
-                                    // and the PR was created before sub-item system (no subItemId on any items)
-                                    if (!i.subItemId && !i.budgetSubItemId && i.description?.trim() === sub.description?.trim()) {
-                                      // Check if this PR has any items with subItemId - if yes, it's not a legacy PR
-                                      const hasAnySubItemId = (p.items || []).some(item => item.subItemId || item.budgetSubItemId);
-                                      return !hasAnySubItemId;
-                                    }
-                                    return false;
-                                  });
-                                  return sum + matchItems.reduce((s, i) => s + (i.quantity * i.price), 0);
-                                }, 0);
-                              const currentFormUsed = lineItems
-                                .filter(i => i.subItemId === sub.id || i.budgetSubItemId === sub.id)
-                                .reduce((s, i) => s + (i.quantity * i.price), 0);
-                              balance = sub.amount - subUsed - currentFormUsed;
-                              label = `คงเหลือ (${sub.description})`;
-                            }
-                          }
-
-                          return (
-                            <div className={`flex items-center gap-1 mt-1.5 px-2 py-0.5 rounded-lg w-fit ml-auto ${balance < 0 ? "bg-red-50" : "bg-slate-100"}`}>
-                              <Wallet size={10} className={balance < 0 ? "text-red-500" : "text-slate-500"} />
-                              <span className={`text-[10px] font-semibold ${balance < 0 ? "text-red-600" : "text-slate-600"}`}>
-                                {label}:{" "}
-                                {formatCurrency(balance)}
-                              </span>
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Line Items Entry */}
-                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                  <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 border-b border-slate-200">
-                    <div className="w-6 h-6 bg-slate-600 rounded-md flex items-center justify-center">
-                      <ShoppingCart size={13} className="text-white" />
-                    </div>
-                    <span className="text-xs font-bold text-slate-700 tracking-wide uppercase">
-                      {editingItemId ? "แก้ไขรายการสินค้า" : "เพิ่มรายการสินค้า"}
-                    </span>
-                    {editingItemId && (
-                      <span className="ml-2 px-2 py-0.5 bg-slate-200 text-slate-700 text-[10px] font-medium rounded">กำลังแก้ไข</span>
                     )}
-                  </div>
-                  <div className="p-5">
-                    <div className="grid grid-cols-12 gap-3 items-end">
-                      <div className="col-span-4">
-                        <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wider">
-                          <Package size={10} className="text-slate-500" /> รายละเอียดสินค้า
-                        </label>
+
+                    {/* Row 2: ผู้ขอซื้อ / อีเมล / สถานที่จัดส่ง */}
+                    <div className="col-span-2">
+                      <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
+                        <UserCircle size={11} className="text-slate-500" /> ผู้ขอซื้อ
+                      </label>
+                      <div className="relative">
                         <input
                           type="text"
-                          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all placeholder:text-slate-400"
-                          placeholder="ชื่อสินค้า/บริการ"
-                          value={newItem.description}
+                          className="w-full border border-slate-200 rounded-lg px-3 py-2 pl-9 text-sm hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all"
+                          value={headerData.requestor}
                           onChange={(e) =>
-                            setNewItem({ ...newItem, description: e.target.value })
-                          }
-                        />
-                      </div>
-                      <div className="col-span-1">
-                        <label className="text-[10px] font-bold text-slate-500 block mb-1 uppercase tracking-wider">หน่วย</label>
-                        <input
-                          type="text"
-                          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-center hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all"
-                          value={newItem.unit}
-                          onChange={(e) =>
-                            setNewItem({ ...newItem, unit: e.target.value })
-                          }
-                        />
-                      </div>
-                      <div className="col-span-1">
-                        <label className="text-[10px] font-bold text-slate-500 block mb-1 uppercase tracking-wider">จำนวน</label>
-                        <input
-                          type="number"
-                          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-center hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all"
-                          value={newItem.quantity}
-                          onChange={(e) =>
-                            setNewItem({
-                              ...newItem,
-                              quantity: Number(e.target.value),
+                            setHeaderData({
+                              ...headerData,
+                              requestor: e.target.value,
                             })
                           }
                         />
+                        <UserCircle className="absolute left-3 top-2.5 text-slate-400" size={14} />
                       </div>
-                      <div className="col-span-2">
-                        <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wider">
-                          <DollarSign size={10} className="text-slate-500" /> ราคา/หน่วย
-                        </label>
+                    </div>
+                    <div className="col-span-2">
+                      <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
+                        <AtSign size={11} className="text-slate-500" /> อีเมลผู้ขอซื้อ
+                      </label>
+                      <div className="relative">
                         <input
-                          type="number"
-                          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all"
-                          value={newItem.price}
+                          type="email"
+                          className="w-full border border-slate-200 rounded-lg px-3 py-2 pl-9 text-sm hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all"
+                          value={headerData.requestorEmail}
                           onChange={(e) =>
-                            setNewItem({
-                              ...newItem,
-                              price: Number(e.target.value),
+                            setHeaderData({
+                              ...headerData,
+                              requestorEmail: e.target.value,
                             })
                           }
+                          placeholder="example@cmg.co.th"
                         />
+                        <Mail className="absolute left-3 top-2.5 text-slate-400" size={14} />
                       </div>
-                      <div className="col-span-2">
-                        <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wider">
-                          <Calendar size={10} className="text-slate-500" /> วันที่ใช้
-                        </label>
+                    </div>
+                    <div className="col-span-2">
+                      <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
+                        <Building2 size={11} className="text-slate-500" /> สถานที่จัดส่ง
+                      </label>
+                      <div className="relative">
+                        <select
+                          className="w-full border border-slate-200 rounded-lg px-3 py-2 pl-9 text-sm bg-white hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all cursor-pointer"
+                          value={headerData.deliveryLocation}
+                          onChange={(e) =>
+                            setHeaderData({
+                              ...headerData,
+                              deliveryLocation: e.target.value,
+                            })
+                          }
+                        >
+                          <option value="">-- เลือกสถานที่ --</option>
+                          {DELIVERY_LOCATIONS.map((l) => (
+                            <option key={l} value={l}>
+                              {l}
+                            </option>
+                          ))}
+                        </select>
+                        <MapPinned className="absolute left-3 top-2.5 text-slate-400 pointer-events-none" size={14} />
+                      </div>
+                    </div>
+
+                    {/* Row 3: วันที่ขอซื้อ / ความเร่งด่วน / แนบไฟล์ */}
+                    <div className="col-span-2">
+                      <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
+                        <Calendar size={11} className="text-slate-500" /> วันที่ขอซื้อ
+                      </label>
+                      <div className="relative">
                         <input
                           type="date"
-                          className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all"
-                          value={newItem.requiredDate}
+                          className="w-full border border-slate-200 rounded-lg px-3 py-2 pl-9 text-sm hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all"
+                          value={headerData.requestDate}
                           onChange={(e) =>
-                            setNewItem({ ...newItem, requiredDate: e.target.value })
+                            setHeaderData({
+                              ...headerData,
+                              requestDate: e.target.value,
+                            })
                           }
                         />
-                      </div>
-                      <div className="col-span-2">
-                        <Button
-                          onClick={handleAddItem}
-                          variant={editingItemId ? "warning" : "primary"}
-                          className="w-full justify-center h-[38px] text-xs rounded-lg transition-all"
-                        >
-                          {editingItemId ? <Save size={14} /> : <Plus size={14} />}{" "}
-                          {editingItemId ? "บันทึก" : "เพิ่ม"}
-                        </Button>
+                        <Calendar className="absolute left-3 top-2.5 text-slate-400" size={14} />
                       </div>
                     </div>
-                  </div>
-                </div>
-
-                {/* Items Table */}
-                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden flex-1">
-                  <div className="flex items-center justify-between px-4 py-2.5 bg-slate-100 border-b border-slate-200">
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 bg-slate-600 rounded-md flex items-center justify-center">
-                        <FileSpreadsheet size={13} className="text-white" />
+                    <div className="col-span-2 flex items-end pb-1">
+                      <div>
+                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-2 uppercase tracking-wider">
+                          <Zap size={11} className="text-slate-500" /> ความเร่งด่วน
+                        </label>
+                        <div className="flex gap-2">
+                          <label className={`flex items-center gap-2 cursor-pointer px-3 py-1.5 rounded-lg border transition-all duration-200 ${headerData.urgency === "Normal" ? "border-slate-400 bg-slate-100" : "border-slate-200 bg-white hover:border-slate-300"}`}>
+                            <input
+                              type="radio"
+                              name="urgency"
+                              value="Normal"
+                              checked={headerData.urgency === "Normal"}
+                              onChange={(e) =>
+                                setHeaderData({
+                                  ...headerData,
+                                  urgency: e.target.value,
+                                })
+                              }
+                              className="hidden"
+                            />
+                            <CircleDot size={13} className={headerData.urgency === "Normal" ? "text-slate-600" : "text-slate-400"} />
+                            <span className={`text-xs font-medium ${headerData.urgency === "Normal" ? "text-slate-700" : "text-slate-500"}`}>ปกติ</span>
+                          </label>
+                          <label className={`flex items-center gap-2 cursor-pointer px-3 py-1.5 rounded-lg border transition-all duration-200 ${headerData.urgency === "Urgent" ? "border-red-300 bg-red-50" : "border-slate-200 bg-white hover:border-slate-300"}`}>
+                            <input
+                              type="radio"
+                              name="urgency"
+                              value="Urgent"
+                              checked={headerData.urgency === "Urgent"}
+                              onChange={(e) =>
+                                setHeaderData({
+                                  ...headerData,
+                                  urgency: e.target.value,
+                                })
+                              }
+                              className="hidden"
+                            />
+                            <Flame size={13} className={headerData.urgency === "Urgent" ? "text-red-500" : "text-slate-400"} />
+                            <span className={`text-xs font-semibold ${headerData.urgency === "Urgent" ? "text-red-600" : "text-slate-500"}`}>ด่วน</span>
+                          </label>
+                        </div>
                       </div>
-                      <span className="text-xs font-bold text-slate-700 tracking-wide uppercase">รายการสินค้า</span>
                     </div>
-                    {lineItems.length > 0 && (
-                      <span className="px-2.5 py-0.5 bg-slate-600 text-white text-[10px] font-medium rounded">{lineItems.length} รายการ</span>
-                    )}
-                  </div>
-                  <table className="w-full text-left text-xs text-slate-600">
-                    <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
-                      <tr>
-                        <th className="py-2.5 px-4 w-10 text-center">#</th>
-                        <th className="py-2.5 px-4">รายละเอียด</th>
-                        <th className="py-2.5 px-4 text-center">หน่วย</th>
-                        <th className="py-2.5 px-4 text-right">จำนวน</th>
-                        <th className="py-2.5 px-4 text-right">ราคา/หน่วย</th>
-                        <th className="py-2.5 px-4 text-right">รวม</th>
-                        <th className="py-2.5 px-4">วันที่ใช้</th>
-                        <th className="py-2.5 px-4 text-center">เครื่องมือ</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {lineItems.length === 0 && (
-                        <tr>
-                          <td colSpan="8" className="py-10 text-center">
-                            <div className="flex flex-col items-center gap-2 text-slate-300">
-                              <ShoppingCart size={32} />
-                              <span className="text-sm font-medium">ยังไม่มีรายการสินค้า</span>
-                              <span className="text-xs">เพิ่มรายการสินค้าด้านบน</span>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                      {lineItems.map((item, index) => (
-                        <tr
-                          key={item.id}
-                          className={`hover:bg-slate-50 transition-all duration-150 ${editingItemId === item.id ? "bg-slate-100 border-l-4 border-l-slate-400" : ""
-                            }`}
+                    <div className="col-span-2">
+                      <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
+                        <Paperclip size={11} className="text-slate-500" /> แนบไฟล์
+                      </label>
+                      <div className="flex items-center gap-3 w-full border border-dashed border-slate-200 rounded-lg px-4 py-2 bg-slate-50 hover:border-slate-300 hover:bg-slate-100/50 transition-all duration-200 group cursor-pointer">
+                        <div className="w-8 h-8 bg-slate-200 group-hover:bg-slate-300 rounded-md flex items-center justify-center transition-colors">
+                          <Upload size={14} className="text-slate-500 group-hover:text-slate-600 transition-colors" />
+                        </div>
+                        <input
+                          type="file"
+                          className="hidden"
+                          id="pr-attachment"
+                          onChange={(e) =>
+                            setHeaderData({
+                              ...headerData,
+                              attachment: e.target.files?.[0] || null,
+                            })
+                          }
+                        />
+                        <label
+                          htmlFor="pr-attachment"
+                          className="flex-1 text-xs text-slate-600 cursor-pointer"
                         >
-                          <td className="py-2.5 px-4 text-center">
-                            <span className="inline-flex items-center justify-center w-6 h-6 bg-slate-100 rounded-full text-[11px] font-bold text-slate-600">{index + 1}</span>
-                          </td>
-                          <td className="py-2.5 px-4 font-semibold text-slate-800">{item.description}</td>
-                          <td className="py-2.5 px-4 text-center">
-                            <span className="px-2 py-0.5 bg-slate-100 rounded-md text-[11px] font-medium">{item.unit}</span>
-                          </td>
-                          <td className="py-2.5 px-4 text-right font-medium">{item.quantity}</td>
-                          <td className="py-2.5 px-4 text-right text-slate-500">
-                            {formatCurrency(item.price)}
-                          </td>
-                          <td className="py-2.5 px-4 text-right font-bold text-slate-800">
-                            {formatCurrency(item.quantity * item.price)}
-                          </td>
-                          <td className="py-2.5 px-4">
-                            <span className="flex items-center gap-1 text-slate-500">
-                              <Calendar size={11} className="text-slate-400" />
-                              {item.requiredDate}
-                            </span>
-                          </td>
-                          <td className="py-2.5 px-4 text-center">
-                            <div className="flex justify-center gap-1">
-                              <button
-                                onClick={() => handleEditItem(item)}
-                                className="text-slate-600 hover:text-slate-800 p-1.5 hover:bg-slate-200 rounded transition-all"
-                                title="แก้ไข"
-                              >
-                                <Edit size={13} />
-                              </button>
-                              <button
-                                onClick={() => handleRemoveItem(item.id)}
-                                className="text-red-500 hover:text-red-600 p-1.5 hover:bg-red-50 rounded transition-all"
-                                title="ลบ"
-                              >
-                                <Trash2 size={13} />
-                              </button>
+                          {headerData.attachment
+                            ? (headerData.attachment as File).name
+                            : headerData.attachmentUrl
+                              ? (headerData.attachmentName || "ไฟล์แนบ") + " (บันทึกแล้ว)"
+                              : "คลิกเพื่อเลือกไฟล์แนบ (PDF, Image, Excel ฯลฯ)"}
+                        </label>
+                        {headerData.attachmentUrl && !headerData.attachment && (
+                          <a href={headerData.attachmentUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-600 hover:underline ml-1" onClick={(e) => e.stopPropagation()}>เปิด</a>
+                        )}
+                      </div>
+                      {(() => {
+                        const selBudget = availableBudgets.find(b => b.id === headerData.selectedBudgetId);
+                        const selSubItem = selBudget?.subItems?.find((si: any) => si.id === headerData.selectedSubItemId);
+                        const budgetAtts: { url: string; name: string }[] = selBudget?.attachments || [];
+                        const subItemAtts: { url: string; name: string }[] = selSubItem?.attachments || [];
+                        const allAtts = [...budgetAtts, ...subItemAtts];
+                        if (allAtts.length === 0) return null;
+                        return (
+                          <div className="mt-2">
+                            <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                              <Paperclip size={10} /> ไฟล์แนบจากงบประมาณที่เลือก
+                            </p>
+                            <div className="flex flex-col gap-1">
+                              {allAtts.map((att, idx) => (
+                                <a
+                                  key={idx}
+                                  href={att.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="flex items-center gap-2 text-xs text-blue-600 hover:text-blue-800 hover:underline bg-blue-50 border border-blue-100 rounded px-3 py-1.5"
+                                >
+                                  <Paperclip size={11} className="shrink-0 text-blue-400" />
+                                  <span className="truncate">{att.name || `ไฟล์แนบ ${idx + 1}`}</span>
+                                </a>
+                              ))}
                             </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    {lineItems.length > 0 && (
-                      <tfoot>
-                        <tr className="bg-slate-600">
-                          <td colSpan="5" className="py-3 px-4 text-right text-xs text-slate-200 font-medium">
-                            ยอดรวมทั้งสิ้น (Total Amount):
-                          </td>
-                          <td className="py-3 px-4 text-right">
-                            <span className="text-sm font-bold text-white tracking-wide">{formatCurrency(calculateTotal())}</span>
-                          </td>
-                          <td colSpan="2"></td>
-                        </tr>
-                      </tfoot>
-                    )}
-                  </table>
-                </div>
-                {/* Footer — เลื่อนตามเนื้อหา ไม่ freeze */}
-                <div className="mt-4 pb-6 flex justify-between items-center px-6 py-3.5 border border-slate-200 rounded-xl bg-slate-50">
-                  <div className="flex items-center gap-2 text-xs text-slate-500">
-                    <Info size={13} />
-                    <span>กรุณากรอกข้อมูลให้ครบถ้วนก่อนบันทึก</span>
-                  </div>
-                  <div className="flex gap-3">
-                    <Button
-                      variant="secondary"
-                      onClick={() => {
-                        setIsModalOpen(false);
-                        setIsFullScreenModalOpen(false);
-                      }}
-                      className="px-5 rounded-lg"
-                    >
-                      <XCircle size={15} /> ยกเลิก
-                    </Button>
-                    <Button
-                      onClick={handleSavePR}
-                      className="px-8 rounded-lg bg-slate-600 hover:bg-slate-700 text-white transition-all"
-                    >
-                      <Save size={16} /> บันทึก PR
-                    </Button>
+                          </div>
+                        );
+                      })()}
+                    </div>
                   </div>
                 </div>
               </div>
-            </motion.div>
-          </motion.div>
-        )}
 
-        {/* V.19: Cost Code Selection Modal */}
-        {isCostCodeModalOpen && (
+              {/* Header Fields - Section 2: เลือกรายการที่ Approve */}
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 border-b border-slate-200">
+                  <div className="w-6 h-6 bg-slate-600 rounded-md flex items-center justify-center">
+                    <Settings size={13} className="text-white" />
+                  </div>
+                  <span className="text-xs font-bold text-slate-700 tracking-wide uppercase">
+                    เลือกรายการที่ Approve
+                  </span>
+                </div>
+                <div className="p-5">
+                  <div className="grid grid-cols-6 gap-x-4 gap-y-4">
+                    <div className="col-span-3 md:col-span-2 lg:col-span-2">
+                      <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
+                        <DollarSign size={11} className="text-slate-500" /> Cost Code
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          className="w-full border border-dashed border-slate-300 rounded-lg px-3 py-2 pr-9 text-sm bg-slate-50 cursor-pointer font-medium text-slate-700 hover:border-slate-400 transition-all duration-200"
+                          value={
+                            headerData.costCode ? (() => {
+                              return headerData.costCode;
+                            })() : ""
+                          }
+                          placeholder="คลิกเพื่อเลือก"
+                          readOnly
+                          onClick={() => {
+                            if (!editingPRId) {
+                              setBudgetSearchText("");
+                              setIsCostCodeModalOpen(true);
+                            }
+                          }}
+                          disabled={!!editingPRId}
+                        />
+                        <ListFilter className="absolute right-3 top-2.5 text-slate-500" size={14} />
+                      </div>
+                      {headerData.costCode && (
+                        <>
+                          <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mt-3 mb-1.5 uppercase tracking-wider">
+                            <ClipboardList size={11} className="text-slate-500" /> รายการ (Main Description)
+                          </label>
+                          <input
+                            type="text"
+                            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white text-slate-700 font-medium"
+                            readOnly
+                            disabled={!!editingPRId}
+                            value={
+                              headerData.costCode ? (() => {
+                                const selectedBudget = headerData.selectedBudgetId
+                                  ? availableBudgets.find((b) => b.id === headerData.selectedBudgetId)
+                                  : availableBudgets.find((b) => b.code === headerData.costCode);
+                                return selectedBudget?.description || "";
+                              })() : ""
+                            }
+                            placeholder="(เลือก Budget Approve แล้วจะแสดง)"
+                          />
+                        </>
+                      )}
+                      {headerData.costCode && (() => {
+                        const selectedBudget = headerData.selectedBudgetId
+                          ? availableBudgets.find((b) => b.id === headerData.selectedBudgetId)
+                          : availableBudgets.find((b) => b.code === headerData.costCode);
+                        if (!selectedBudget) return null;
+
+                        // คำนวณยอดคงเหลือ: ถ้ามี sub-items ให้ใช้ยอดคงเหลือของ sub-item ที่เลือก
+                        const hasSubItems = selectedBudget.subItems && selectedBudget.subItems.length > 0;
+                        let balance = selectedBudget.remainingBalance;
+                        let label = "คงเหลือ";
+
+                        // หา sub-item ที่ตรงกับ selectedSubItemId ก่อน ถ้าไม่มีให้หาจาก lineItems
+                        const resolvedSubId = headerData.selectedSubItemId ||
+                          (lineItems.length > 0 && lineItems[0].subItemId ? lineItems[0].subItemId : "");
+
+                        if (hasSubItems) {
+                          const sub = resolvedSubId
+                            ? selectedBudget.subItems.find(s => s.id === resolvedSubId)
+                            : selectedBudget.subItems.find(s => s.status === "Approved");
+                          if (sub) {
+                            const subUsed = prs
+                              .filter(p => p.projectId === selectedProjectId && p.costCode === selectedBudget.code && p.status !== 'Rejected' && p.id !== editingPRId)
+                              .reduce((sum, p) => {
+                                const matchItems = (p.items || []).filter(i => {
+                                  // Only match items that have proper sub-item IDs to avoid counting legacy records incorrectly
+                                  if (sub.id && (i.subItemId === sub.id || i.budgetSubItemId === sub.id)) {
+                                    return true;
+                                  }
+                                  // For legacy records without subItemId, only match if this is the only sub-item with this exact description
+                                  // and the PR was created before sub-item system (no subItemId on any items)
+                                  if (!i.subItemId && !i.budgetSubItemId && i.description?.trim() === sub.description?.trim()) {
+                                    // Check if this PR has any items with subItemId - if yes, it's not a legacy PR
+                                    const hasAnySubItemId = (p.items || []).some(item => item.subItemId || item.budgetSubItemId);
+                                    return !hasAnySubItemId;
+                                  }
+                                  return false;
+                                });
+                                return sum + matchItems.reduce((s, i) => s + (i.quantity * i.price), 0);
+                              }, 0);
+                            const currentFormUsed = lineItems
+                              .filter(i => i.subItemId === sub.id || i.budgetSubItemId === sub.id)
+                              .reduce((s, i) => s + (i.quantity * i.price), 0);
+                            balance = sub.amount - subUsed - currentFormUsed;
+                            label = `คงเหลือ (${sub.description})`;
+                          }
+                        }
+
+                        return (
+                          <div className={`flex items-center gap-1 mt-1.5 px-2 py-0.5 rounded-lg w-fit ml-auto ${balance < 0 ? "bg-red-50" : "bg-slate-100"}`}>
+                            <Wallet size={10} className={balance < 0 ? "text-red-500" : "text-slate-500"} />
+                            <span className={`text-[10px] font-semibold ${balance < 0 ? "text-red-600" : "text-slate-600"}`}>
+                              {label}:{" "}
+                              {formatCurrency(balance)}
+                            </span>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Line Items Entry */}
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 border-b border-slate-200">
+                  <div className="w-6 h-6 bg-slate-600 rounded-md flex items-center justify-center">
+                    <ShoppingCart size={13} className="text-white" />
+                  </div>
+                  <span className="text-xs font-bold text-slate-700 tracking-wide uppercase">
+                    {editingItemId ? "แก้ไขรายการสินค้า" : "เพิ่มรายการสินค้า"}
+                  </span>
+                  {editingItemId && (
+                    <span className="ml-2 px-2 py-0.5 bg-slate-200 text-slate-700 text-[10px] font-medium rounded">กำลังแก้ไข</span>
+                  )}
+                </div>
+                <div className="p-5">
+                  <div className="grid grid-cols-12 gap-3 items-end">
+                    <div className="col-span-4">
+                      <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wider">
+                        <Package size={10} className="text-slate-500" /> รายละเอียดสินค้า
+                      </label>
+                      <input
+                        type="text"
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all placeholder:text-slate-400"
+                        placeholder="ชื่อสินค้า/บริการ"
+                        value={newItem.description}
+                        onChange={(e) =>
+                          setNewItem({ ...newItem, description: e.target.value })
+                        }
+                      />
+                    </div>
+                    <div className="col-span-1">
+                      <label className="text-[10px] font-bold text-slate-500 block mb-1 uppercase tracking-wider">หน่วย</label>
+                      <input
+                        type="text"
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-center hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all"
+                        value={newItem.unit}
+                        onChange={(e) =>
+                          setNewItem({ ...newItem, unit: e.target.value })
+                        }
+                      />
+                    </div>
+                    <div className="col-span-1">
+                      <label className="text-[10px] font-bold text-slate-500 block mb-1 uppercase tracking-wider">จำนวน</label>
+                      <input
+                        type="number"
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-center hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all"
+                        value={newItem.quantity}
+                        onChange={(e) =>
+                          setNewItem({
+                            ...newItem,
+                            quantity: Number(e.target.value),
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wider">
+                        <DollarSign size={10} className="text-slate-500" /> ราคา/หน่วย
+                      </label>
+                      <input
+                        type="number"
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all"
+                        value={newItem.price}
+                        onChange={(e) =>
+                          setNewItem({
+                            ...newItem,
+                            price: Number(e.target.value),
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wider">
+                        <Calendar size={10} className="text-slate-500" /> วันที่ใช้
+                      </label>
+                      <input
+                        type="date"
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all"
+                        value={newItem.requiredDate}
+                        onChange={(e) =>
+                          setNewItem({ ...newItem, requiredDate: e.target.value })
+                        }
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <Button
+                        onClick={handleAddItem}
+                        variant={editingItemId ? "warning" : "primary"}
+                        className="w-full justify-center h-[38px] text-xs rounded-lg transition-all"
+                      >
+                        {editingItemId ? <Save size={14} /> : <Plus size={14} />}{" "}
+                        {editingItemId ? "บันทึก" : "เพิ่ม"}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Items Table */}
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden flex-1">
+                <div className="flex items-center justify-between px-4 py-2.5 bg-slate-100 border-b border-slate-200">
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 bg-slate-600 rounded-md flex items-center justify-center">
+                      <FileSpreadsheet size={13} className="text-white" />
+                    </div>
+                    <span className="text-xs font-bold text-slate-700 tracking-wide uppercase">รายการสินค้า</span>
+                  </div>
+                  {lineItems.length > 0 && (
+                    <span className="px-2.5 py-0.5 bg-slate-600 text-white text-[10px] font-medium rounded">{lineItems.length} รายการ</span>
+                  )}
+                </div>
+                <table className="w-full text-left text-xs text-slate-600">
+                  <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
+                    <tr>
+                      <th className="py-2.5 px-4 w-10 text-center">#</th>
+                      <th className="py-2.5 px-4">รายละเอียด</th>
+                      <th className="py-2.5 px-4 text-center">หน่วย</th>
+                      <th className="py-2.5 px-4 text-right">จำนวน</th>
+                      <th className="py-2.5 px-4 text-right">ราคา/หน่วย</th>
+                      <th className="py-2.5 px-4 text-right">รวม</th>
+                      <th className="py-2.5 px-4">วันที่ใช้</th>
+                      <th className="py-2.5 px-4 text-center">เครื่องมือ</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {lineItems.length === 0 && (
+                      <tr>
+                        <td colSpan="8" className="py-10 text-center">
+                          <div className="flex flex-col items-center gap-2 text-slate-300">
+                            <ShoppingCart size={32} />
+                            <span className="text-sm font-medium">ยังไม่มีรายการสินค้า</span>
+                            <span className="text-xs">เพิ่มรายการสินค้าด้านบน</span>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    {lineItems.map((item, index) => (
+                      <tr
+                        key={item.id}
+                        className={`hover:bg-slate-50 transition-all duration-150 ${editingItemId === item.id ? "bg-slate-100 border-l-4 border-l-slate-400" : ""
+                          }`}
+                      >
+                        <td className="py-2.5 px-4 text-center">
+                          <span className="inline-flex items-center justify-center w-6 h-6 bg-slate-100 rounded-full text-[11px] font-bold text-slate-600">{index + 1}</span>
+                        </td>
+                        <td className="py-2.5 px-4 font-semibold text-slate-800">{item.description}</td>
+                        <td className="py-2.5 px-4 text-center">
+                          <span className="px-2 py-0.5 bg-slate-100 rounded-md text-[11px] font-medium">{item.unit}</span>
+                        </td>
+                        <td className="py-2.5 px-4 text-right font-medium">{item.quantity}</td>
+                        <td className="py-2.5 px-4 text-right text-slate-500">
+                          {formatCurrency(item.price)}
+                        </td>
+                        <td className="py-2.5 px-4 text-right font-bold text-slate-800">
+                          {formatCurrency(item.quantity * item.price)}
+                        </td>
+                        <td className="py-2.5 px-4">
+                          <span className="flex items-center gap-1 text-slate-500">
+                            <Calendar size={11} className="text-slate-400" />
+                            {item.requiredDate}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-4 text-center">
+                          <div className="flex justify-center gap-1">
+                            <button
+                              onClick={() => handleEditItem(item)}
+                              className="text-slate-600 hover:text-slate-800 p-1.5 hover:bg-slate-200 rounded transition-all"
+                              title="แก้ไข"
+                            >
+                              <Edit size={13} />
+                            </button>
+                            <button
+                              onClick={() => handleRemoveItem(item.id)}
+                              className="text-red-500 hover:text-red-600 p-1.5 hover:bg-red-50 rounded transition-all"
+                              title="ลบ"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  {lineItems.length > 0 && (
+                    <tfoot>
+                      <tr className="bg-slate-600">
+                        <td colSpan="5" className="py-3 px-4 text-right text-xs text-slate-200 font-medium">
+                          ยอดรวมทั้งสิ้น (Total Amount):
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <span className="text-sm font-bold text-white tracking-wide">{formatCurrency(calculateTotal())}</span>
+                        </td>
+                        <td colSpan="2"></td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+              {/* Footer — เลื่อนตามเนื้อหา ไม่ freeze */}
+              <div className="mt-4 pb-6 flex justify-between items-center px-6 py-3.5 border border-slate-200 rounded-xl bg-slate-50">
+                <div className="flex items-center gap-2 text-xs text-slate-500">
+                  <Info size={13} />
+                  <span>กรุณากรอกข้อมูลให้ครบถ้วนก่อนบันทึก</span>
+                </div>
+                <div className="flex gap-3">
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setIsModalOpen(false);
+                      setIsFullScreenModalOpen(false);
+                    }}
+                    className="px-5 rounded-lg"
+                  >
+                    <XCircle size={15} /> ยกเลิก
+                  </Button>
+                  <Button
+                    onClick={handleSavePR}
+                    className="px-8 rounded-lg bg-slate-600 hover:bg-slate-700 text-white transition-all"
+                  >
+                    <Save size={16} /> บันทึก PR
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+
+      {/* V.19: Cost Code Selection Modal */}
+      {isCostCodeModalOpen && (
+        <motion.div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010]"
+          initial="hidden"
+          animate="visible"
+          variants={modalOverlayVariants}
+          transition={overlayTransition}
+        >
           <motion.div
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010]"
+            className="w-full max-w-5xl p-6 max-h-[85vh] overflow-hidden flex flex-col rounded-xl border border-slate-200 bg-white shadow-2xl"
             initial="hidden"
             animate="visible"
-            variants={modalOverlayVariants}
-            transition={overlayTransition}
+            variants={modalContentVariants}
+            transition={modalTransition}
           >
-            <motion.div
-              className="w-full max-w-5xl p-6 max-h-[85vh] overflow-hidden flex flex-col rounded-xl border border-slate-200 bg-white shadow-2xl"
-              initial="hidden"
-              animate="visible"
-              variants={modalContentVariants}
-              transition={modalTransition}
-            >
-              <div className="flex justify-between items-center gap-3 mb-4 pb-2 border-b flex-wrap">
-                <h3 className="text-lg font-bold text-slate-800">
-                  เลือกรายการงบประมาณ (Approved Budgets)
-                </h3>
-                <input
-                  type="text"
-                  placeholder="ค้นหา Cost Code, รายการ..."
-                  value={budgetSearchText}
-                  onChange={(e) => setBudgetSearchText(e.target.value)}
-                  className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm w-56 focus:ring-2 focus:ring-blue-400/50 focus:border-blue-400"
-                />
-                <button
-                  onClick={() => setIsCostCodeModalOpen(false)}
-                  className="text-slate-400 hover:text-slate-600"
-                >
-                  <XCircle size={24} />
-                </button>
-              </div>
+            <div className="flex justify-between items-center gap-3 mb-4 pb-2 border-b flex-wrap">
+              <h3 className="text-lg font-bold text-slate-800">
+                เลือกรายการงบประมาณ (Approved Budgets)
+              </h3>
+              <input
+                type="text"
+                placeholder="ค้นหา Cost Code, รายการ..."
+                value={budgetSearchText}
+                onChange={(e) => setBudgetSearchText(e.target.value)}
+                className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm w-56 focus:ring-2 focus:ring-blue-400/50 focus:border-blue-400"
+              />
+              <button
+                onClick={() => setIsCostCodeModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <XCircle size={24} />
+              </button>
+            </div>
 
-              <div className="flex-1 overflow-y-auto pr-2">
-                {Object.keys(groupedBudgets).length === 0 ? (
-                  <div className="text-center py-8 text-slate-400">
-                    ไม่พบรายการงบประมาณที่อนุมัติแล้ว หรือ งบประมาณหมด
-                  </div>
-                ) : Object.keys(groupedBudgetsFiltered).length === 0 ? (
-                  <div className="text-center py-8 text-slate-500">
-                    ไม่พบรายการที่ตรงกับคำค้น
-                  </div>
-                ) : (
-                  Object.keys(groupedBudgetsFiltered)
-                    .sort()
-                    .map((cat, idx) => (
-                      <motion.div
-                        key={cat}
-                        className="mb-6"
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: idx * 0.04, duration: 0.24, ease: [0.25, 0.46, 0.45, 0.94] }}
-                      >
-                        <h4 className="text-xs font-bold text-white bg-slate-600 px-3 py-1 rounded-t-md sticky top-0 z-10 shadow-sm flex items-center justify-between">
-                          <span>
-                            หมวด {cat}: {COST_CATEGORIES[cat]}
-                          </span>
-                          <span className="bg-slate-500 text-xs px-2 py-0.5 rounded-full">
-                            {groupedBudgetsFiltered[cat].length} รายการ
-                          </span>
-                        </h4>
-                        <div className="border border-slate-200 border-t-0 rounded-b-md overflow-hidden">
-                          <table className="w-full text-left text-xs">
-                            <thead className="bg-slate-50 text-slate-600 font-semibold border-b">
-                              <tr>
-                                <th className="py-1.5 px-3">Cost Code</th>
-                                <th className="py-1.5 px-3">รายการ</th>
-                                <th className="py-1.5 px-3 text-right">Budget</th>
-                                <th className="py-1.5 px-3 text-right text-orange-600">
-                                  Used
-                                </th>
-                                <th className="py-1.5 px-3 text-right text-green-600">
-                                  Balance
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                              {groupedBudgetsFiltered[cat].map((b) => {
-                                // เฉพาะ sub-items ที่อนุมัติแล้วและยังมียอดคงเหลือ
-                                const approvedSubItems = (b.subItems || []).filter(sub => sub.status === "Approved");
-                                if (approvedSubItems.length === 0) return null;
+            <div className="flex-1 overflow-y-auto pr-2">
+              {Object.keys(groupedBudgets).length === 0 ? (
+                <div className="text-center py-8 text-slate-400">
+                  ไม่พบรายการงบประมาณที่อนุมัติแล้ว หรือ งบประมาณหมด
+                </div>
+              ) : Object.keys(groupedBudgetsFiltered).length === 0 ? (
+                <div className="text-center py-8 text-slate-500">
+                  ไม่พบรายการที่ตรงกับคำค้น
+                </div>
+              ) : (
+                Object.keys(groupedBudgetsFiltered)
+                  .sort()
+                  .map((cat, idx) => (
+                    <motion.div
+                      key={cat}
+                      className="mb-6"
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: idx * 0.04, duration: 0.24, ease: [0.25, 0.46, 0.45, 0.94] }}
+                    >
+                      <h4 className="text-xs font-bold text-white bg-slate-600 px-3 py-1 rounded-t-md sticky top-0 z-10 shadow-sm flex items-center justify-between">
+                        <span>
+                          หมวด {cat}: {COST_CATEGORIES[cat]}
+                        </span>
+                        <span className="bg-slate-500 text-xs px-2 py-0.5 rounded-full">
+                          {groupedBudgetsFiltered[cat].length} รายการ
+                        </span>
+                      </h4>
+                      <div className="border border-slate-200 border-t-0 rounded-b-md overflow-hidden">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-slate-50 text-slate-600 font-semibold border-b">
+                            <tr>
+                              <th className="py-1.5 px-3">Cost Code</th>
+                              <th className="py-1.5 px-3">รายการ</th>
+                              <th className="py-1.5 px-3 text-right">Budget</th>
+                              <th className="py-1.5 px-3 text-right text-orange-600">
+                                Used
+                              </th>
+                              <th className="py-1.5 px-3 text-right text-green-600">
+                                Balance
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {groupedBudgetsFiltered[cat].map((b) => {
+                              // เฉพาะ sub-items ที่อนุมัติแล้วและยังมียอดคงเหลือ
+                              const approvedSubItems = (b.subItems || []).filter(sub => sub.status === "Approved");
+                              if (approvedSubItems.length === 0) return null;
 
-                                // คำนวณ Balance ของ main budget = งบรวม - รวม sub-items ทั้งหมด (ตรงกับ BudgetView)
-                                const subItemsTotal = b.subItems ? b.subItems.reduce((sum, s) => sum + s.amount, 0) : 0;
-                                const mainBudgetBalance = b.budgetAmount - subItemsTotal;
-                                return (
+                              // คำนวณ Balance ของ main budget = งบรวม - รวม sub-items ทั้งหมด (ตรงกับ BudgetView)
+                              const subItemsTotal = b.subItems ? b.subItems.reduce((sum, s) => sum + s.amount, 0) : 0;
+                              const mainBudgetBalance = b.budgetAmount - subItemsTotal;
+                              return (
                                 <React.Fragment key={b.id}>
                                   {/* Main Budget — แสดงเป็น header แบบ non-selectable */}
                                   <tr className="bg-slate-200/60 border-b border-slate-300 select-none">
@@ -2878,41 +2881,41 @@ const PRView = React.memo(() => {
                                     );
                                   })}
                                 </React.Fragment>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      </motion.div>
-                    ))
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </motion.div>
+                  ))
+              )}
+            </div>
+            <div className="pt-4 mt-2 border-t flex justify-between items-center">
+              <span className="text-sm text-slate-500">
+                {selectedSubItemsForPR.length > 0
+                  ? <span className="text-blue-700 font-semibold">เลือกแล้ว: {selectedSubItemsForPR[0].description}</span>
+                  : <span className="text-slate-400">กรุณาเลือก 1 รายการ</span>}
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => setIsCostCodeModalOpen(false)}
+                >
+                  ยกเลิก
+                </Button>
+                {selectedSubItemsForPR.length > 0 && (
+                  <Button onClick={handleAddSelectedSubItems}>
+                    ยืนยันการเลือก
+                  </Button>
                 )}
               </div>
-              <div className="pt-4 mt-2 border-t flex justify-between items-center">
-                <span className="text-sm text-slate-500">
-                  {selectedSubItemsForPR.length > 0
-                    ? <span className="text-blue-700 font-semibold">เลือกแล้ว: {selectedSubItemsForPR[0].description}</span>
-                    : <span className="text-slate-400">กรุณาเลือก 1 รายการ</span>}
-                </span>
-                <div className="flex gap-2">
-                  <Button
-                    variant="secondary"
-                    onClick={() => setIsCostCodeModalOpen(false)}
-                  >
-                    ยกเลิก
-                  </Button>
-                  {selectedSubItemsForPR.length > 0 && (
-                    <Button onClick={handleAddSelectedSubItems}>
-                      ยืนยันการเลือก
-                    </Button>
-                  )}
-                </div>
-              </div>
-            </motion.div>
+            </div>
           </motion.div>
-        )}
+        </motion.div>
+      )}
 
-      </div>
-    );
+    </div>
+  );
 });
 
 

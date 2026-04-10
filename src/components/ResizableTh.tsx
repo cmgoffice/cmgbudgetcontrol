@@ -26,6 +26,9 @@ const ResizableTh = React.memo(({ tableId, colKey, isAdmin, onResize, currentWid
     const onMove = (ev: MouseEvent) => {
       const newW = Math.max(30, startW + ev.clientX - startX);
       if (thRef.current) thRef.current.style.width = `${newW}px`;
+
+      const colEl = document.getElementById(`col-${tableId}-${colKey}`);
+      if (colEl) colEl.style.width = `${newW}px`;
     };
     const onUp = (ev: MouseEvent) => {
       if (handleRef.current) handleRef.current.classList.remove("is-resizing");

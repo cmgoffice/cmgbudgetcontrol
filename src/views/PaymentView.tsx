@@ -5,7 +5,7 @@ import {
   Trash2, Edit, XCircle, Save, Upload,
   CreditCard, AlertTriangle, CheckCircle, RotateCcw,
   ThumbsUp, ThumbsDown, Zap, Clock, ShieldCheck,
-  ChevronLeft, ChevronRight, Paperclip,
+  ChevronLeft, ChevronRight, Paperclip, Send,
 } from "lucide-react";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
@@ -28,21 +28,22 @@ const BILLING_CYCLES = [
 
 // ─── Approval Flow Constants ──────────────────────────────────────────────────
 const STATUS_APPROVER_ROLES: Record<string, string[]> = {
-  "Pending CM":          ["CM", "Administrator"],
-  "Pending PM":          ["PM", "PCM", "Administrator"],
-  "Pending MD":          ["MD", "GM", "Administrator"],
+  "Pending CM": ["CM", "Administrator"],
+  "Pending PM": ["PM", "PCM", "Administrator"],
+  "Pending MD": ["MD", "GM", "Administrator"],
   "Pending Procurement": ["Procurement", "Administrator"],
 };
 
 const getFirstPendingStatus = (roles: string[]): string => {
   if (roles.some((r) => ["MD", "GM"].includes(r))) return "Pending Procurement";
-  if (roles.some((r) => ["PM", "PCM"].includes(r))) return "Pending MD";
+  if (roles.some((r) => ["PM", "PCM"].includes(r))) return "Pending Procurement";
   if (roles.includes("CM")) return "Pending PM";
   return "Pending CM";
 };
 
 const getNextStatus = (status: string): string => {
-  const chain = ["Pending CM", "Pending PM", "Pending MD", "Pending Procurement", "Active"];
+  if (status === "Pending MD") return "Pending Procurement";
+  const chain = ["Pending CM", "Pending PM", "Pending Procurement", "Active"];
   const idx = chain.indexOf(status);
   return idx >= 0 && idx < chain.length - 1 ? chain[idx + 1] : "Active";
 };
@@ -56,20 +57,20 @@ const isFlowActive = (status: string): boolean =>
   ["Pending CM", "Pending PM", "Pending MD", "Pending Procurement"].includes(status);
 
 const STATUS_BADGE_COLORS: Record<string, string> = {
-  "Draft":                  "bg-gray-100 text-gray-700 border border-gray-200",
-  "Pending CM":             "bg-yellow-100 text-yellow-800 border border-yellow-200",
-  "Pending PM":             "bg-amber-100 text-amber-800 border border-amber-200",
-  "Pending MD":             "bg-orange-100 text-orange-800 border border-orange-200",
-  "Pending Procurement":    "bg-blue-100 text-blue-800 border border-blue-200",
-  "Active":                 "bg-green-100 text-green-800 border border-green-200",
-  "In Process":             "bg-indigo-100 text-indigo-800 border border-indigo-300",
-  "งวดงาน Pending CM":     "bg-yellow-200 text-yellow-900 border border-yellow-400",
-  "งวดงาน Pending PM":     "bg-amber-200 text-amber-900 border border-amber-400",
-  "Wait Pay":               "bg-orange-200 text-orange-900 border border-orange-400",
-  "Hold":                   "bg-yellow-200 text-yellow-900 border border-yellow-400",
-  "Paid":                   "bg-emerald-100 text-emerald-800 border border-emerald-300",
-  "Revision Requested":     "bg-rose-100 text-rose-800 border border-rose-200",
-  "Rejected":               "bg-red-100 text-red-800 border border-red-300",
+  "Draft": "bg-gray-100 text-gray-700 border border-gray-200",
+  "Pending CM": "bg-yellow-100 text-yellow-800 border border-yellow-200",
+  "Pending PM": "bg-amber-100 text-amber-800 border border-amber-200",
+  "Pending MD": "bg-orange-100 text-orange-800 border border-orange-200",
+  "Pending Procurement": "bg-blue-100 text-blue-800 border border-blue-200",
+  "Active": "bg-green-100 text-green-800 border border-green-200",
+  "In Process": "bg-indigo-100 text-indigo-800 border border-indigo-300",
+  "งวดงาน Pending CM": "bg-yellow-200 text-yellow-900 border border-yellow-400",
+  "งวดงาน Pending PM": "bg-amber-200 text-amber-900 border border-amber-400",
+  "Wait Pay": "bg-orange-200 text-orange-900 border border-orange-400",
+  "Hold": "bg-yellow-200 text-yellow-900 border border-yellow-400",
+  "Paid": "bg-emerald-100 text-emerald-800 border border-emerald-300",
+  "Revision Requested": "bg-rose-100 text-rose-800 border border-rose-200",
+  "Rejected": "bg-red-100 text-red-800 border border-red-300",
 };
 
 const PERIOD_APPROVER_ROLES: Record<string, string[]> = {
@@ -115,6 +116,7 @@ const PaymentView = React.memo(() => {
   const [savingActiveQty, setSavingActiveQty] = useState(false);
   const [isQtyEditMode, setIsQtyEditMode] = useState(false);
   const [periodBillingCycle, setPeriodBillingCycle] = useState("");
+  const [manualPeriodNo, setManualPeriodNo] = useState("");
 
   // ─── Revision Request ─────────────────────────────────────────────────────
   const [revisionModalPayment, setRevisionModalPayment] = useState<any>(null);
@@ -125,6 +127,7 @@ const PaymentView = React.memo(() => {
   const [rejectReason, setRejectReason] = useState("");
   const [waitPayModalPayment, setWaitPayModalPayment] = useState<any>(null);
   const [paySlipFile, setPaySlipFile] = useState<File | null>(null);
+  const [payJobComplete, setPayJobComplete] = useState<boolean>(false);
   const [holdModalPayment, setHoldModalPayment] = useState<any>(null);
   const [holdReasonInput, setHoldReasonInput] = useState("");
   const [holdDecision, setHoldDecision] = useState<"backToEdit" | "keepHold">("keepHold");
@@ -140,7 +143,14 @@ const PaymentView = React.memo(() => {
   const isPaymentMainTableAdmin = myRoles.includes("Administrator");
 
   // ─── Contract Items Table — resizable columns (MasterAdmin, persisted globally) ──
-  const PAY_ITEMS_DEFAULT_WIDTHS = { item: 44, description: 220, unit: 64, qty: 88, price: 120, amount: 120, remark: 128, progress: 190 };
+  const PAY_ITEMS_DEFAULT_WIDTHS = {
+    item: 40, description: 160, unit: 56,
+    cQty: 40, cPrice: 48, cAmount: 64,
+    tQty: 40, tAmount: 64, tProgress: 40,
+    pSum: 40, pAmt: 64, pPrev: 40,
+    currQty: 40, currAmt: 64, currPct: 40,
+    remark: 120
+  };
   const payItemColWidths = useMemo(() => ({ ...PAY_ITEMS_DEFAULT_WIDTHS, ...(columnWidths?.payItems || {}) }), [columnWidths]);
   const isPayTableAdmin = myRoles.includes("Administrator");
   // helper: ถ้า function key ยังไม่ได้กำหนดค่าใน Firestore (empty []) → fallback ให้ใช้ role check เดิม
@@ -255,7 +265,7 @@ const PaymentView = React.memo(() => {
     if (!revisionModalPayment) return;
     if (!canRequestRevision) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ขอแก้ไข Payment", "warning");
     const p = revisionModalPayment;
-    const targetRole = p.status === "Active" ? "MD" : p.status.replace("Pending ", "");
+    const targetRole = p.status === "Active" ? "Procurement" : p.status.replace("Pending ", "");
     setActioning(true);
     try {
       await updateData("payments", p.id, {
@@ -371,6 +381,16 @@ const PaymentView = React.memo(() => {
       const totalAmt = updatedItems.reduce((s: number, it: any) => s + (Number(it.thisPeriodAmount) || 0), 0);
       const now = new Date().toISOString();
       const extraFields: Record<string, any> = { billingCycle: periodBillingCycle };
+
+      if (manualPeriodNo && manualPeriodNo !== String(p.periodNo)) {
+        extraFields.periodNo = String(manualPeriodNo);
+        let baseNo = p.paymentNo || "PAYMENT";
+        if (baseNo.match(/-\d{2,3}$/)) {
+          baseNo = baseNo.substring(0, baseNo.lastIndexOf("-"));
+        }
+        extraFields.paymentNo = `${baseNo}-${String(manualPeriodNo).padStart(3, '0')}`;
+      }
+
       if (finalize) {
         extraFields.status = "งวดงาน Pending CM";
         extraFields.periodPreparedBy = userData?.name || user?.email || "";
@@ -398,7 +418,7 @@ const PaymentView = React.memo(() => {
         if (!prev) return prev;
         return { ...prev, items: updatedItems, amount: totalAmt, ...extraFields };
       });
-    } catch (_) {}
+    } catch (_) { }
     finally { setSavingActiveQty(false); }
   };
 
@@ -444,7 +464,8 @@ const PaymentView = React.memo(() => {
         ? items.reduce((s: number, it: any) => s + (Number(it.prevAccumAmount) || 0) + (Number(it.thisPeriodAmount) || 0), 0)
         : Number(waitPayModalPayment.amount) || 0;
       const progressPct = contractTotal > 0 ? (accumTotal / contractTotal) * 100 : 0;
-      const nextStatus = progressPct >= 99.99 ? "Paid" : "In Process";
+      // ถ้าเลือก "จบงาน" → force Paid, มิฉะนั้นใช้ logic เดิม (>= 99.99% → Paid, อื่น → In Process)
+      const nextStatus = payJobComplete ? "Paid" : (progressPct >= 99.99 ? "Paid" : "In Process");
 
       const safeNo = (waitPayModalPayment.paymentNo || "payment").replace(/[^a-zA-Z0-9\-_]/g, "_");
       const path = `payments/${selectedProjectId}/pay-slip/${safeNo}_${Date.now()}`;
@@ -456,9 +477,10 @@ const PaymentView = React.memo(() => {
         paySlipUrl: slipUrl,
         paySlipName: slipName,
         holdReason: null,
+        ...(payJobComplete ? { jobCompleted: true } : {}),
       }, { skipLog: true });
 
-      // หาก Payment ครบ 100% สถานะจะเป็น "Paid" ให้เปลี่ยนสถานะ PO เป็น "Closed PO"
+      // หาก Payment เป็น "Paid" (ครบ 100% หรือเลือกจบงาน) ให้เปลี่ยนสถานะ PO เป็น "Closed PO"
       if (nextStatus === "Paid") {
         const selectedPrIds = waitPayModalPayment.selectedPrIds || [];
         for (const poId of selectedPrIds) {
@@ -472,10 +494,11 @@ const PaymentView = React.memo(() => {
         }
       }
 
-      await logAction("Pay Payment", `จ่าย Payment ${waitPayModalPayment.paymentNo} → ${nextStatus}`, selectedProjectId);
+      await logAction("Pay Payment", `จ่าย Payment ${waitPayModalPayment.paymentNo} → ${nextStatus}${payJobComplete ? " (จบงาน)" : ""}`, selectedProjectId);
       showAlert("สำเร็จ", `บันทึกการจ่ายเงินเรียบร้อย (${nextStatus})`, "success");
       setWaitPayModalPayment(null);
       setPaySlipFile(null);
+      setPayJobComplete(false);
       if (viewingPayment?.id === waitPayModalPayment.id) {
         setViewingPayment((prev: any) => prev ? ({
           ...prev,
@@ -485,6 +508,7 @@ const PaymentView = React.memo(() => {
           paySlipUrl: slipUrl,
           paySlipName: slipName,
           holdReason: null,
+          ...(payJobComplete ? { jobCompleted: true } : {}),
         }) : prev);
       }
     } catch (e) {
@@ -708,7 +732,7 @@ const PaymentView = React.memo(() => {
         rejectedAt: null,
       };
       await addData('payments', payload, null, { skipLog: true });
-      
+
       await updateData("pos", po.id, {
         statusNow: "PMT In Process"
       }, { skipLog: true });
@@ -748,7 +772,7 @@ const PaymentView = React.memo(() => {
             <CreditCard size={19} className="text-orange-600" />
           </div>
           <div>
-            <h2 className="text-lg font-bold text-orange-800 leading-none">B. Payment Subcontractor</h2>
+            <h2 className="text-lg font-bold text-orange-800 leading-none">Payment Subcontractor</h2>
             <p className="text-[10px] text-orange-400 mt-1">จัดการการเบิกจ่ายงานผู้รับเหมาช่วง</p>
           </div>
           <div className="ml-2">
@@ -854,7 +878,7 @@ const PaymentView = React.memo(() => {
                     <td className="py-1 px-2">
                       <div className="flex items-center gap-1.5">
                         <div className="h-1.5 rounded overflow-hidden border border-slate-200 flex bg-slate-100 flex-1 min-w-0">
-                          {[10,20,30,40,50,60,70,80,90,100].map((step) => (
+                          {[10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((step) => (
                             <div key={step} className="h-full flex-1 bg-slate-200" />
                           ))}
                         </div>
@@ -889,7 +913,7 @@ const PaymentView = React.memo(() => {
             {/* ── Empty state เมื่อไม่มีทั้ง Draft PO และ Payment docs ── */}
             {unlinkedSPDCPos.length === 0 && projectPayments.length === 0 ? (
               <tr>
-                <td colSpan={["paymentNo","type","contractor","billingCycle","totalAmount","accumAmount","periodAmount","progress","status","actions"].filter(k => isColumnVisible("payment", k)).length} className="py-10 text-center text-slate-400 text-sm">
+                <td colSpan={["paymentNo", "type", "contractor", "billingCycle", "totalAmount", "accumAmount", "periodAmount", "progress", "status", "actions"].filter(k => isColumnVisible("payment", k)).length} className="py-10 text-center text-slate-400 text-sm">
                   ยังไม่มีรายการ Payment — PO ประเภท SP/DC ที่ได้รับการอนุมัติจะแสดงที่นี่โดยอัตโนมัติ
                 </td>
               </tr>
@@ -901,11 +925,10 @@ const PaymentView = React.memo(() => {
                 return (
                   <tr
                     key={p.id}
-                    className={`cursor-pointer transition-colors border-b ${
-                      p.status === "Wait Pay"
+                    className={`cursor-pointer transition-colors border-b ${p.status === "Wait Pay"
                         ? "bg-orange-50 hover:bg-orange-100"
                         : "hover:bg-orange-50 odd:bg-white even:bg-slate-50"
-                    }`}
+                      }`}
                     onClick={() => setViewingPayment(p)}
                   >
                     {isColumnVisible("payment", "paymentNo") && (
@@ -1000,7 +1023,7 @@ const PaymentView = React.memo(() => {
                           )}
                           {/* ปุ่ม Submit Draft→Pending ถูกลบแล้ว — ใช้ PM Active จาก Draft row แทน */}
                           {/* Revision request pending — for current approver */}
-                          {p.revisionRequested && isPendingForMe(p.status === "Active" ? "Pending MD" : p.status, myRoles) && (
+                          {p.revisionRequested && isPendingForMe(p.status === "Active" ? "Pending Procurement" : p.status, myRoles) && (
                             <>
                               {canApproveRevision && <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleApproveRevision(p)}>
                                 Approve Rev
@@ -1069,7 +1092,17 @@ const PaymentView = React.memo(() => {
         const allPeriods = vp.periods || [];
         const isViewingOldPeriod = viewPeriodIdx >= 0 && viewPeriodIdx < allPeriods.length;
         const activePeriod = isViewingOldPeriod ? allPeriods[viewPeriodIdx] : null;
-        const displayPeriodNo = isViewingOldPeriod ? activePeriod.periodNo : (vp.periodNo || (allPeriods.length + 1));
+        const displayPeriodNo = isViewingOldPeriod ? activePeriod.periodNo : (isQtyEditMode ? manualPeriodNo : (vp.periodNo || (allPeriods.length + 1)));
+
+        let displayPaymentNo = isViewingOldPeriod ? activePeriod.paymentNo : vp.paymentNo;
+        if (isQtyEditMode && manualPeriodNo && manualPeriodNo !== String(vp.periodNo)) {
+          let baseNo = vp.paymentNo || "PAYMENT";
+          if (baseNo.match(/-\d{2,3}$/)) {
+            baseNo = baseNo.substring(0, baseNo.lastIndexOf("-"));
+          }
+          displayPaymentNo = `${baseNo}-${String(manualPeriodNo).padStart(3, '0')}`;
+        }
+
         const rawPaySlipUrl = isViewingOldPeriod ? activePeriod.paySlipUrl : vp.paySlipUrl;
         const displayPaySlipUrl = rawPaySlipUrl && typeof rawPaySlipUrl === "object" ? rawPaySlipUrl.url : rawPaySlipUrl;
         const rawPaySlipName = isViewingOldPeriod ? activePeriod.paySlipName : vp.paySlipName;
@@ -1115,7 +1148,7 @@ const PaymentView = React.memo(() => {
                       <RotateCcw size={9} /> ขอแก้ไข
                     </span>
                   )}
-                  <button onClick={() => { setViewingPayment(null); setViewPeriodIdx(-1); }} className="text-white/60 hover:text-white hover:bg-white/20 p-1.5 rounded-lg transition-all">
+                  <button onClick={() => { setViewingPayment(null); setViewPeriodIdx(-1); setIsQtyEditMode(false); }} className="text-white/60 hover:text-white hover:bg-white/20 p-1.5 rounded-lg transition-all">
                     <XCircle size={18} />
                   </button>
                 </div>
@@ -1150,7 +1183,7 @@ const PaymentView = React.memo(() => {
                     <div className="space-y-1.5">
                       <div className="flex">
                         <span className="w-56 text-slate-500 font-semibold shrink-0">เลขที่เบิกงวดงาน / PAYMENT NO. :</span>
-                        <span className="font-bold text-blue-800">{vp.paymentNo}</span>
+                        <span className="font-bold text-blue-800">{displayPaymentNo}</span>
                       </div>
                       <div className="flex">
                         <span className="w-56 text-slate-500 font-semibold shrink-0">Payment Type :</span>
@@ -1172,9 +1205,21 @@ const PaymentView = React.memo(() => {
                               <ChevronLeft size={14} />
                             </button>
                           )}
-                          <span className={`font-bold px-2 py-0.5 rounded border ${isViewingOldPeriod ? "text-slate-600 bg-slate-100 border-slate-300" : "text-orange-700 bg-orange-50 border-orange-200"}`}>
-                            {displayPeriodNo} / {displayPeriodNo}
-                          </span>
+                          {isQtyEditMode && !isViewingOldPeriod ? (
+                            <select
+                              value={manualPeriodNo}
+                              onChange={(e) => setManualPeriodNo(e.target.value)}
+                              className="border border-orange-400 bg-orange-50 text-orange-800 rounded px-2 py-0.5 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-orange-400"
+                            >
+                              {Array.from({ length: 20 }, (_, i) => i + 1).map((num) => (
+                                <option key={num} value={num}>{num}/{num}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span className={`font-bold px-2 py-0.5 rounded border ${isViewingOldPeriod ? "text-slate-600 bg-slate-100 border-slate-300" : "text-orange-700 bg-orange-50 border-orange-200"}`}>
+                              {displayPeriodNo} / {displayPeriodNo}
+                            </span>
+                          )}
                           {totalPeriodCount > 1 && (
                             <button
                               className="p-0.5 rounded hover:bg-slate-200 text-slate-500 hover:text-slate-700 disabled:opacity-30 disabled:cursor-not-allowed"
@@ -1199,9 +1244,8 @@ const PaymentView = React.memo(() => {
                           <select
                             value={periodBillingCycle}
                             onChange={(e) => setPeriodBillingCycle(e.target.value)}
-                            className={`border rounded px-2 py-0.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-orange-400 ${
-                              periodBillingCycle ? "border-orange-400 bg-orange-50 text-orange-800" : "border-red-400 bg-red-50 text-red-600"
-                            }`}
+                            className={`border rounded px-2 py-0.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-orange-400 ${periodBillingCycle ? "border-orange-400 bg-orange-50 text-orange-800" : "border-red-400 bg-red-50 text-red-600"
+                              }`}
                           >
                             <option value="">-- กรุณาเลือกรอบวางบิล --</option>
                             {BILLING_CYCLES.map((c) => (
@@ -1238,19 +1282,37 @@ const PaymentView = React.memo(() => {
                   {/* ── Items table — Payment Application style ── */}
                   <div className="border border-slate-300 rounded-lg overflow-hidden">
                     <div className="overflow-x-auto">
-                      <table className="w-full text-[11px] border-collapse min-w-[1100px]">
+                      <table className="w-full text-[11px] border-collapse min-w-max table-fixed">
+                        <colgroup>
+                          <col id="col-payItems-item" style={{ width: payItemColWidths.item }} />
+                          <col id="col-payItems-description" style={{ width: payItemColWidths.description }} />
+                          <col id="col-payItems-unit" style={{ width: payItemColWidths.unit }} />
+                          <col id="col-payItems-cQty" style={{ width: payItemColWidths.cQty }} />
+                          <col id="col-payItems-cPrice" style={{ width: payItemColWidths.cPrice }} />
+                          <col id="col-payItems-cAmount" style={{ width: payItemColWidths.cAmount }} />
+                          <col id="col-payItems-tQty" style={{ width: payItemColWidths.tQty }} />
+                          <col id="col-payItems-tAmount" style={{ width: payItemColWidths.tAmount }} />
+                          <col id="col-payItems-tProgress" style={{ width: payItemColWidths.tProgress }} />
+                          <col id="col-payItems-pSum" style={{ width: payItemColWidths.pSum }} />
+                          <col id="col-payItems-pAmt" style={{ width: payItemColWidths.pAmt }} />
+                          <col id="col-payItems-pPrev" style={{ width: payItemColWidths.pPrev }} />
+                          <col id="col-payItems-currQty" style={{ width: payItemColWidths.currQty }} />
+                          <col id="col-payItems-currAmt" style={{ width: payItemColWidths.currAmt }} />
+                          <col id="col-payItems-currPct" style={{ width: payItemColWidths.currPct }} />
+                          <col id="col-payItems-remark" style={{ width: payItemColWidths.remark }} />
+                        </colgroup>
                         <thead>
                           {/* Row 1: Group headers */}
                           <tr className="bg-slate-100 border-b-2 border-slate-300">
-                            <th rowSpan={2} className="border border-slate-300 px-2 py-2 text-center font-bold text-slate-700 w-10 bg-slate-100">
+                            <ResizableTh tableId="payItems" colKey="item" isAdmin={isPayTableAdmin} onResize={handlePayItemColResize} currentWidth={payItemColWidths.item} rowSpan={2} className="border border-slate-300 px-2 py-2 text-center font-bold text-slate-700 bg-slate-100">
                               ITEM<br /><span className="font-normal text-[9px] text-slate-500">ลำดับ</span>
-                            </th>
-                            <th rowSpan={2} className="border border-slate-300 px-2 py-2 text-left font-bold text-slate-700 min-w-[160px] bg-slate-100">
+                            </ResizableTh>
+                            <ResizableTh tableId="payItems" colKey="description" isAdmin={isPayTableAdmin} onResize={handlePayItemColResize} currentWidth={payItemColWidths.description} rowSpan={2} className="border border-slate-300 px-2 py-2 text-left font-bold text-slate-700 bg-slate-100">
                               DESCRIPTION<br /><span className="font-normal text-[9px] text-slate-500">รายละเอียด</span>
-                            </th>
-                            <th rowSpan={2} className="border border-slate-300 px-2 py-2 text-center font-bold text-slate-700 w-14 bg-slate-100">
+                            </ResizableTh>
+                            <ResizableTh tableId="payItems" colKey="unit" isAdmin={isPayTableAdmin} onResize={handlePayItemColResize} currentWidth={payItemColWidths.unit} rowSpan={2} className="border border-slate-300 px-2 py-2 text-center font-bold text-slate-700 bg-slate-100">
                               หน่วย<br /><span className="font-normal text-[9px] text-slate-500">Unit</span>
-                            </th>
+                            </ResizableTh>
                             <th colSpan={3} className="border border-slate-300 px-2 py-1.5 text-center font-bold text-purple-800 bg-purple-50">
                               ราคาตามสัญญา/ใบสั่งซื้อ<br /><span className="font-normal text-[9px]">CONTRACT / PO PRICE</span>
                             </th>
@@ -1263,28 +1325,28 @@ const PaymentView = React.memo(() => {
                             <th colSpan={3} className="border border-slate-300 px-2 py-1.5 text-center font-bold text-green-800 bg-green-50">
                               ผลงานงวดนี้<br /><span className="font-normal text-[9px]">THIS PERIOD</span>
                             </th>
-                            <th rowSpan={2} className="border border-slate-300 px-2 py-2 text-center font-bold text-slate-700 w-20 bg-slate-100">
+                            <ResizableTh tableId="payItems" colKey="remark" isAdmin={isPayTableAdmin} onResize={handlePayItemColResize} currentWidth={payItemColWidths.remark} rowSpan={2} className="border border-slate-300 px-2 py-2 text-center font-bold text-slate-700 bg-slate-100">
                               หมายเหตุ<br /><span className="font-normal text-[9px] text-slate-500">REMARK</span>
-                            </th>
+                            </ResizableTh>
                           </tr>
                           {/* Row 2: Sub-column headers */}
                           <tr className="bg-slate-50 border-b border-slate-300 text-[9px] font-bold text-slate-600">
                             {/* CONTRACT / PO PRICE */}
-                            <th className="border border-slate-300 px-1.5 py-1 text-center bg-purple-50/50 text-purple-700 w-16">ปริมาณ<br />QUANTITY</th>
-                            <th className="border border-slate-300 px-1.5 py-1 text-center bg-purple-50/50 text-purple-700 w-20">ราคา/หน่วย<br />PRICE</th>
-                            <th className="border border-slate-300 px-1.5 py-1 text-center bg-purple-50/50 text-purple-700 w-24">จำนวนเงิน<br />AMOUNT</th>
+                            <ResizableTh tableId="payItems" colKey="cQty" isAdmin={isPayTableAdmin} onResize={handlePayItemColResize} currentWidth={payItemColWidths.cQty} className="border border-slate-300 px-1.5 py-1 text-center bg-purple-50/50 text-purple-700">ปริมาณ<br />QUANTITY</ResizableTh>
+                            <ResizableTh tableId="payItems" colKey="cPrice" isAdmin={isPayTableAdmin} onResize={handlePayItemColResize} currentWidth={payItemColWidths.cPrice} className="border border-slate-300 px-1.5 py-1 text-center bg-purple-50/50 text-purple-700">ราคา/หน่วย<br />PRICE</ResizableTh>
+                            <ResizableTh tableId="payItems" colKey="cAmount" isAdmin={isPayTableAdmin} onResize={handlePayItemColResize} currentWidth={payItemColWidths.cAmount} className="border border-slate-300 px-1.5 py-1 text-center bg-purple-50/50 text-purple-700">จำนวนเงิน<br />AMOUNT</ResizableTh>
                             {/* TOTAL ACCUMULATED */}
-                            <th className="border border-slate-300 px-1.5 py-1 text-center bg-blue-50/50 text-blue-700 w-16">ปริมาณ<br />TOTAL QTY</th>
-                            <th className="border border-slate-300 px-1.5 py-1 text-center bg-blue-50/50 text-blue-700 w-24">จำนวนเงิน<br />AMOUNT</th>
-                            <th className="border border-slate-300 px-1.5 py-1 text-center bg-blue-50/50 text-blue-700 w-14">%<br />PROGRESS</th>
+                            <ResizableTh tableId="payItems" colKey="tQty" isAdmin={isPayTableAdmin} onResize={handlePayItemColResize} currentWidth={payItemColWidths.tQty} className="border border-slate-300 px-1.5 py-1 text-center bg-blue-50/50 text-blue-700">ปริมาณ<br />TOTAL QTY</ResizableTh>
+                            <ResizableTh tableId="payItems" colKey="tAmount" isAdmin={isPayTableAdmin} onResize={handlePayItemColResize} currentWidth={payItemColWidths.tAmount} className="border border-slate-300 px-1.5 py-1 text-center bg-blue-50/50 text-blue-700">จำนวนเงิน<br />AMOUNT</ResizableTh>
+                            <ResizableTh tableId="payItems" colKey="tProgress" isAdmin={isPayTableAdmin} onResize={handlePayItemColResize} currentWidth={payItemColWidths.tProgress} className="border border-slate-300 px-1.5 py-1 text-center bg-blue-50/50 text-blue-700">%<br />PROGRESS</ResizableTh>
                             {/* PREVIOUS ACCUMULATED */}
-                            <th className="border border-slate-300 px-1.5 py-1 text-center bg-amber-50/50 text-amber-700 w-16">ปริมาณ<br />PREV SUM</th>
-                            <th className="border border-slate-300 px-1.5 py-1 text-center bg-amber-50/50 text-amber-700 w-24">จำนวนเงิน<br />PREV AMT</th>
-                            <th className="border border-slate-300 px-1.5 py-1 text-center bg-amber-50/50 text-amber-700 w-14">%<br />PREV</th>
+                            <ResizableTh tableId="payItems" colKey="pSum" isAdmin={isPayTableAdmin} onResize={handlePayItemColResize} currentWidth={payItemColWidths.pSum} className="border border-slate-300 px-1.5 py-1 text-center bg-amber-50/50 text-amber-700">ปริมาณ<br />PREV SUM</ResizableTh>
+                            <ResizableTh tableId="payItems" colKey="pAmt" isAdmin={isPayTableAdmin} onResize={handlePayItemColResize} currentWidth={payItemColWidths.pAmt} className="border border-slate-300 px-1.5 py-1 text-center bg-amber-50/50 text-amber-700">จำนวนเงิน<br />PREV AMT</ResizableTh>
+                            <ResizableTh tableId="payItems" colKey="pPrev" isAdmin={isPayTableAdmin} onResize={handlePayItemColResize} currentWidth={payItemColWidths.pPrev} className="border border-slate-300 px-1.5 py-1 text-center bg-amber-50/50 text-amber-700">%<br />PREV</ResizableTh>
                             {/* THIS PERIOD */}
-                            <th className="border border-slate-300 px-1.5 py-1 text-center bg-green-50/50 text-green-700 w-16">ปริมาณ<br />QUANTITY</th>
-                            <th className="border border-slate-300 px-1.5 py-1 text-center bg-green-50/50 text-green-700 w-24">จำนวนเงิน<br />AMOUNT</th>
-                            <th className="border border-slate-300 px-1.5 py-1 text-center bg-green-50/50 text-green-700 w-14">%<br />CURR</th>
+                            <ResizableTh tableId="payItems" colKey="currQty" isAdmin={isPayTableAdmin} onResize={handlePayItemColResize} currentWidth={payItemColWidths.currQty} className="border border-slate-300 px-1.5 py-1 text-center bg-green-50/50 text-green-700">ปริมาณ<br />QUANTITY</ResizableTh>
+                            <ResizableTh tableId="payItems" colKey="currAmt" isAdmin={isPayTableAdmin} onResize={handlePayItemColResize} currentWidth={payItemColWidths.currAmt} className="border border-slate-300 px-1.5 py-1 text-center bg-green-50/50 text-green-700">จำนวนเงิน<br />AMOUNT</ResizableTh>
+                            <ResizableTh tableId="payItems" colKey="currPct" isAdmin={isPayTableAdmin} onResize={handlePayItemColResize} currentWidth={payItemColWidths.currPct} className="border border-slate-300 px-1.5 py-1 text-center bg-green-50/50 text-green-700">%<br />CURR</ResizableTh>
                           </tr>
                         </thead>
                         <tbody>
@@ -1314,7 +1376,11 @@ const PaymentView = React.memo(() => {
                               return (
                                 <tr key={i} className="border-b border-slate-200 hover:bg-slate-50/50">
                                   <td className="border border-slate-200 px-2 py-1.5 text-center text-slate-500 font-medium">{i + 1}</td>
-                                  <td className="border border-slate-200 px-2 py-1.5 text-slate-700 font-medium">{it.description || "-"}</td>
+                                  <td className="border border-slate-200 px-2 py-1.5 text-slate-700 font-medium overflow-hidden max-w-0">
+                                    <div className="line-clamp-2 break-words leading-tight" title={it.description || "-"}>
+                                      {it.description || "-"}
+                                    </div>
+                                  </td>
                                   <td className="border border-slate-200 px-2 py-1.5 text-center text-slate-500">{it.unit || "-"}</td>
                                   {/* CONTRACT */}
                                   <td className="border border-slate-200 px-2 py-1.5 text-right font-mono bg-purple-50/20">{cQty.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
@@ -1519,7 +1585,7 @@ const PaymentView = React.memo(() => {
                     </>
                   )}
                   {/* Revision pending — for current approver */}
-                  {vp.revisionRequested && isPendingForMe(vp.status === "Active" ? "Pending MD" : vp.status, myRoles) && (
+                  {vp.revisionRequested && isPendingForMe(vp.status === "Active" ? "Pending Procurement" : vp.status, myRoles) && (
                     <>
                       {canApproveRevision && <button
                         disabled={actioning}
@@ -1556,7 +1622,7 @@ const PaymentView = React.memo(() => {
                       </span>
                     ) : (
                       <button
-                        onClick={() => { setIsQtyEditMode(true); setPeriodBillingCycle(""); setActiveQtyEdits({}); }}
+                        onClick={() => { setIsQtyEditMode(true); setPeriodBillingCycle(""); setManualPeriodNo(vp.periodNo || "1"); setActiveQtyEdits({}); }}
                         className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-semibold flex items-center gap-2"
                       >
                         <Edit size={14} /> ใส่ปริมาณ
@@ -1745,6 +1811,46 @@ const PaymentView = React.memo(() => {
               Payment: <strong>{waitPayModalPayment.paymentNo}</strong><br />
               กรุณาแนบไฟล์ Payin หรือสลิปเพื่อยืนยันการชำระเงิน
             </p>
+
+            {/* ── ตัวเลือกสถานะงาน ── */}
+            <div className="border border-slate-200 rounded-xl p-3 bg-slate-50 space-y-2">
+              <p className="text-xs font-semibold text-slate-700 mb-1">สถานะงาน</p>
+              <label className={`flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer border transition-all text-xs font-medium ${
+                !payJobComplete
+                  ? "bg-blue-50 border-blue-400 text-blue-800"
+                  : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100"
+              }`}>
+                <input
+                  type="checkbox"
+                  checked={!payJobComplete}
+                  onChange={() => setPayJobComplete(false)}
+                  className="accent-blue-500 w-3.5 h-3.5"
+                />
+                ยังไม่จบงาน
+                <span className="ml-auto text-[10px] text-blue-500 font-normal">จ่ายตามปกติ (In Process)</span>
+              </label>
+              <label className={`flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer border transition-all text-xs font-medium ${
+                payJobComplete
+                  ? "bg-emerald-50 border-emerald-400 text-emerald-800"
+                  : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100"
+              }`}>
+                <input
+                  type="checkbox"
+                  checked={payJobComplete}
+                  onChange={() => setPayJobComplete(true)}
+                  className="accent-emerald-500 w-3.5 h-3.5"
+                />
+                จบงาน
+                <span className="ml-auto text-[10px] text-emerald-600 font-normal">สถานะจะเปลี่ยนเป็น Paid</span>
+              </label>
+              {payJobComplete && (
+                <p className="text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 flex items-start gap-1.5">
+                  <AlertTriangle size={11} className="mt-0.5 shrink-0" />
+                  เมื่อจบงาน รายการนี้จะเปลี่ยนเป็น <strong>Paid</strong> และไม่สามารถใส่ปริมาณเพิ่มได้อีก
+                </p>
+              )}
+            </div>
+
             <div className="space-y-1">
               <label className="text-xs font-semibold text-slate-700">Upload File Payin / สลิป</label>
               <input
@@ -1756,16 +1862,18 @@ const PaymentView = React.memo(() => {
               <p className="text-[11px] text-slate-400">{paySlipFile ? `ไฟล์ที่เลือก: ${paySlipFile.name}` : "ยังไม่ได้เลือกไฟล์"}</p>
             </div>
             <div className="flex justify-end gap-2">
-              <button onClick={() => { setWaitPayModalPayment(null); setPaySlipFile(null); }} className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm hover:bg-slate-50">
+              <button onClick={() => { setWaitPayModalPayment(null); setPaySlipFile(null); setPayJobComplete(false); }} className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm hover:bg-slate-50">
                 ยกเลิก
               </button>
               <button
                 disabled={actioning}
                 onClick={handlePayConfirm}
-                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+                className={`px-4 py-2 rounded-lg text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60 ${
+                  payJobComplete ? "bg-emerald-600 hover:bg-emerald-700" : "bg-blue-600 hover:bg-blue-700"
+                }`}
               >
                 {actioning ? <span className="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full" /> : <Upload size={13} />}
-                Pay
+                {payJobComplete ? "Pay & จบงาน" : "Pay"}
               </button>
             </div>
           </div>

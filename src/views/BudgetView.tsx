@@ -25,9 +25,9 @@ import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 
 const BudgetView = React.memo(() => {
   const { budgets, projects, prs, pos, invoices, receives, addData, updateData, deleteData,
-          showAlert, openConfirm, logAction, userRole, userRoles, userData, columnWidths, handleColumnResize,
-          visibleProjects, handlePRAction, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,
-          db, appId, canUseFunction, isColumnVisible } = useAppData();
+    showAlert, openConfirm, logAction, userRole, userRoles, userData, columnWidths, handleColumnResize,
+    visibleProjects, handlePRAction, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,
+    db, appId, canUseFunction, isColumnVisible } = useAppData();
   const canSubmitBudget = canUseFunction("budget", "submit");
   const canRequestBudgetRevision = canUseFunction("budget", "requestRevision");
   const canApproveBudget = canUseFunction("budget", "approve");
@@ -50,2386 +50,2384 @@ const BudgetView = React.memo(() => {
   const canAllowPoRevisionFromBudget = canUseFunction("po", "allowRevision");
   const canDenyPoRevisionFromBudget = canUseFunction("po", "denyRevision");
   const { selectedProjectId,
-          budgetCategory, setBudgetCategory,
-          expandedBudgetRows, setExpandedBudgetRows,
-          scrollToPendingAfterRender, setScrollToPendingAfterRender,
-          pendingSectionRef } = useUI();
-    const [isModalOpen, setIsModalOpen] = useState(false);
-    const [isRevisionModalOpen, setIsRevisionModalOpen] = useState(false);
-    const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
-    const [isSubItemModalOpen, setIsSubItemModalOpen] = useState(false);
-    const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-    const [importData, setImportData] = useState({});
-    const [importFile, setImportFile] = useState(null);
-    const [selectedImportCategories, setSelectedImportCategories] = useState(
-      []
-    );
-    const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
-    const [clearConfirmText, setClearConfirmText] = useState("");
-    const fileInputRef = useRef<HTMLInputElement>(null);
-    const attachmentInputRef = useRef<HTMLInputElement>(null);
-    const modalMainPendingFileRef = useRef<HTMLInputElement>(null);
-    const modalSubPendingFileRef = useRef<HTMLInputElement>(null);
-    const [attachmentTarget, setAttachmentTarget] = useState<{ budgetId: string; subItemId?: string | null } | null>(null);
-    const [attachmentUploadingKey, setAttachmentUploadingKey] = useState<string | null>(null);
-    /** ไฟล์ที่เลือกในโมดัล — จะอัปโหลดหลังสร้าง Budget ใหม่ (ยังไม่มี budgetId) */
-    const [pendingMainAttachments, setPendingMainAttachments] = useState<File[]>([]);
-    /** ไฟล์ที่เลือกในโมดัล — จะอัปโหลดหลังบันทึก Sub-Item ใหม่ */
-    const [pendingSubAttachments, setPendingSubAttachments] = useState<File[]>([]);
-    const [sortConfig, setSortConfig] = useState({
-      key: null,
-      direction: "ascending",
-    });
-    const [editingBudgetId, setEditingBudgetId] = useState(null);
-    const [selectedBudget, setSelectedBudget] = useState(null);
-    const [editingSubItem, setEditingSubItem] = useState(null);
-    const [revisionReason, setRevisionReason] = useState("");
-    const [rejectReason, setRejectReason] = useState("");
-    const [reasonModalOpen, setReasonModalOpen] = useState(false);
-    const [reasonModalType, setReasonModalType] = useState("revision"); // 'revision' | 'reject'
-    const [reasonModalValue, setReasonModalValue] = useState("");
-    const [reasonModalContext, setReasonModalContext] = useState({ budgetId: null, subItemId: null });
-    const [selectedBudgetIds, setSelectedBudgetIds] = useState([]); // สำหรับหน้า 001-009: เลือกรายการงบ
-    const [actionDropdownOpen, setActionDropdownOpen] = useState(false);
-    const [pendingSelectedBudgetIds, setPendingSelectedBudgetIds] = useState([]); // สำหรับ Pending Approval Tasks
-    const [pendingActionDropdownOpen, setPendingActionDropdownOpen] = useState(false);
-    const [formData, setFormData] = useState({
-      code: "",
-      description: "",
-      amount: 0,
-    });
-    const [subItemData, setSubItemData] = useState({
-      description: "",
-      quantity: 1,
-      unit: "งาน",
-      unitPrice: 0,
-      amount: 0,
-    });
-    // รายการหน่วยสำหรับ Sub-Item dropdown (เก็บใน localStorage เพื่อให้ persistent)
-    const [unitOptions, setUnitOptions] = useState<string[]>(() => {
-      try {
-        const saved = localStorage.getItem("subItemUnitOptions");
-        return saved ? JSON.parse(saved) : ["งาน", "ชิ้น", "ชุด", "เดือน", "วัน", "ครั้ง", "ตร.ม.", "ม.", "ก.ก.", "ลิตร", "Job"];
-      } catch { return ["งาน", "ชิ้น", "ชุด", "เดือน", "วัน", "ครั้ง", "ตร.ม.", "ม.", "ก.ก.", "ลิตร", "Job"]; }
-    });
-    const [unitInputText, setUnitInputText] = useState("");
-    const [unitDropdownOpen, setUnitDropdownOpen] = useState(false);
-    const [isRecalculating, setIsRecalculating] = useState(false);
-    const unitInputRef = useRef<HTMLInputElement>(null);
-    const budgetTableContainerRef = useRef<HTMLDivElement>(null);
-    const dashBudgetTableRef = useRef<HTMLDivElement>(null);
-    const dashSubitemTableRef = useRef<HTMLDivElement>(null);
-    const dashPrTableRef = useRef<HTMLDivElement>(null);
-    const dashPoTableRef = useRef<HTMLDivElement>(null);
+    budgetCategory, setBudgetCategory,
+    expandedBudgetRows, setExpandedBudgetRows,
+    scrollToPendingAfterRender, setScrollToPendingAfterRender,
+    pendingSectionRef } = useUI();
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isRevisionModalOpen, setIsRevisionModalOpen] = useState(false);
+  const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
+  const [isSubItemModalOpen, setIsSubItemModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importData, setImportData] = useState({});
+  const [importFile, setImportFile] = useState(null);
+  const [selectedImportCategories, setSelectedImportCategories] = useState(
+    []
+  );
+  const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
+  const [clearConfirmText, setClearConfirmText] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const modalMainPendingFileRef = useRef<HTMLInputElement>(null);
+  const modalSubPendingFileRef = useRef<HTMLInputElement>(null);
+  const [attachmentTarget, setAttachmentTarget] = useState<{ budgetId: string; subItemId?: string | null } | null>(null);
+  const [attachmentUploadingKey, setAttachmentUploadingKey] = useState<string | null>(null);
+  /** ไฟล์ที่เลือกในโมดัล — จะอัปโหลดหลังสร้าง Budget ใหม่ (ยังไม่มี budgetId) */
+  const [pendingMainAttachments, setPendingMainAttachments] = useState<File[]>([]);
+  /** ไฟล์ที่เลือกในโมดัล — จะอัปโหลดหลังบันทึก Sub-Item ใหม่ */
+  const [pendingSubAttachments, setPendingSubAttachments] = useState<File[]>([]);
+  const [sortConfig, setSortConfig] = useState({
+    key: null,
+    direction: "ascending",
+  });
+  const [editingBudgetId, setEditingBudgetId] = useState(null);
+  const [selectedBudget, setSelectedBudget] = useState(null);
+  const [editingSubItem, setEditingSubItem] = useState(null);
+  const [revisionReason, setRevisionReason] = useState("");
+  const [rejectReason, setRejectReason] = useState("");
+  const [reasonModalOpen, setReasonModalOpen] = useState(false);
+  const [reasonModalType, setReasonModalType] = useState("revision"); // 'revision' | 'reject'
+  const [reasonModalValue, setReasonModalValue] = useState("");
+  const [reasonModalContext, setReasonModalContext] = useState({ budgetId: null, subItemId: null });
+  const [selectedBudgetIds, setSelectedBudgetIds] = useState([]); // สำหรับหน้า 001-009: เลือกรายการงบ
+  const [actionDropdownOpen, setActionDropdownOpen] = useState(false);
+  const [pendingSelectedBudgetIds, setPendingSelectedBudgetIds] = useState([]); // สำหรับ Pending Approval Tasks
+  const [pendingActionDropdownOpen, setPendingActionDropdownOpen] = useState(false);
+  const [formData, setFormData] = useState({
+    code: "",
+    description: "",
+    amount: 0,
+  });
+  const [subItemData, setSubItemData] = useState({
+    description: "",
+    quantity: 1,
+    unit: "งาน",
+    unitPrice: 0,
+    amount: 0,
+  });
+  // รายการหน่วยสำหรับ Sub-Item dropdown (เก็บใน localStorage เพื่อให้ persistent)
+  const [unitOptions, setUnitOptions] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem("subItemUnitOptions");
+      return saved ? JSON.parse(saved) : ["งาน", "ชิ้น", "ชุด", "เดือน", "วัน", "ครั้ง", "ตร.ม.", "ม.", "ก.ก.", "ลิตร", "Job"];
+    } catch { return ["งาน", "ชิ้น", "ชุด", "เดือน", "วัน", "ครั้ง", "ตร.ม.", "ม.", "ก.ก.", "ลิตร", "Job"]; }
+  });
+  const [unitInputText, setUnitInputText] = useState("");
+  const [unitDropdownOpen, setUnitDropdownOpen] = useState(false);
+  const [isRecalculating, setIsRecalculating] = useState(false);
+  const unitInputRef = useRef<HTMLInputElement>(null);
+  const budgetTableContainerRef = useRef<HTMLDivElement>(null);
+  const dashBudgetTableRef = useRef<HTMLDivElement>(null);
+  const dashSubitemTableRef = useRef<HTMLDivElement>(null);
+  const dashPrTableRef = useRef<HTMLDivElement>(null);
+  const dashPoTableRef = useRef<HTMLDivElement>(null);
 
-    const budgetMainLayout = useProportionalTableLayout({
-      tableId: "budget",
-      defaultWeights: TABLE_LAYOUT_DEFAULTS.budget,
-      savedWidths: columnWidths.budget,
-      containerRef: budgetTableContainerRef,
-      enabled: budgetCategory !== "OVERVIEW",
-      driftKey: "description",
-      handleColumnResize,
-    });
+  const budgetMainLayout = useProportionalTableLayout({
+    tableId: "budget",
+    defaultWeights: TABLE_LAYOUT_DEFAULTS.budget,
+    savedWidths: columnWidths.budget,
+    containerRef: budgetTableContainerRef,
+    enabled: budgetCategory !== "OVERVIEW",
+    driftKey: "description",
+    handleColumnResize,
+  });
 
-    const dashBudgetLayout = useProportionalTableLayout({
-      tableId: "dash-budget",
-      defaultWeights: TABLE_LAYOUT_DEFAULTS["dash-budget"],
-      savedWidths: columnWidths["dash-budget"],
-      containerRef: dashBudgetTableRef,
-      enabled: budgetCategory === "OVERVIEW",
-      driftKey: "description",
-      handleColumnResize,
-    });
+  const dashBudgetLayout = useProportionalTableLayout({
+    tableId: "dash-budget",
+    defaultWeights: TABLE_LAYOUT_DEFAULTS["dash-budget"],
+    savedWidths: columnWidths["dash-budget"],
+    containerRef: dashBudgetTableRef,
+    enabled: budgetCategory === "OVERVIEW",
+    driftKey: "description",
+    handleColumnResize,
+  });
 
-    const dashSubitemLayout = useProportionalTableLayout({
-      tableId: "dash-subitem",
-      defaultWeights: TABLE_LAYOUT_DEFAULTS["dash-subitem"],
-      savedWidths: columnWidths["dash-subitem"],
-      containerRef: dashSubitemTableRef,
-      enabled: budgetCategory === "OVERVIEW",
-      driftKey: "description",
-      handleColumnResize,
-    });
+  const dashSubitemLayout = useProportionalTableLayout({
+    tableId: "dash-subitem",
+    defaultWeights: TABLE_LAYOUT_DEFAULTS["dash-subitem"],
+    savedWidths: columnWidths["dash-subitem"],
+    containerRef: dashSubitemTableRef,
+    enabled: budgetCategory === "OVERVIEW",
+    driftKey: "description",
+    handleColumnResize,
+  });
 
-    const dashPrLayout = useProportionalTableLayout({
-      tableId: "dash-pr",
-      defaultWeights: TABLE_LAYOUT_DEFAULTS["dash-pr"],
-      savedWidths: columnWidths["dash-pr"],
-      containerRef: dashPrTableRef,
-      enabled: budgetCategory === "OVERVIEW",
-      driftKey: "description",
-      handleColumnResize,
-    });
+  const dashPrLayout = useProportionalTableLayout({
+    tableId: "dash-pr",
+    defaultWeights: TABLE_LAYOUT_DEFAULTS["dash-pr"],
+    savedWidths: columnWidths["dash-pr"],
+    containerRef: dashPrTableRef,
+    enabled: budgetCategory === "OVERVIEW",
+    driftKey: "description",
+    handleColumnResize,
+  });
 
-    const dashPoLayout = useProportionalTableLayout({
-      tableId: "dash-po",
-      defaultWeights: TABLE_LAYOUT_DEFAULTS["dash-po"],
-      savedWidths: columnWidths["dash-po"],
-      containerRef: dashPoTableRef,
-      enabled: budgetCategory === "OVERVIEW",
-      driftKey: "costCode",
-      handleColumnResize,
-    });
+  const dashPoLayout = useProportionalTableLayout({
+    tableId: "dash-po",
+    defaultWeights: TABLE_LAYOUT_DEFAULTS["dash-po"],
+    savedWidths: columnWidths["dash-po"],
+    containerRef: dashPoTableRef,
+    enabled: budgetCategory === "OVERVIEW",
+    driftKey: "costCode",
+    handleColumnResize,
+  });
 
-    const onBudgetViewColumnResize = useMemo(
-      () =>
-        chainTableResizeHandlers(
-          budgetMainLayout.handleResize,
-          dashBudgetLayout.handleResize,
-          dashSubitemLayout.handleResize,
-          dashPrLayout.handleResize,
-          dashPoLayout.handleResize
-        ),
-      [
+  const onBudgetViewColumnResize = useMemo(
+    () =>
+      chainTableResizeHandlers(
         budgetMainLayout.handleResize,
         dashBudgetLayout.handleResize,
         dashSubitemLayout.handleResize,
         dashPrLayout.handleResize,
-        dashPoLayout.handleResize,
-      ]
+        dashPoLayout.handleResize
+      ),
+    [
+      budgetMainLayout.handleResize,
+      dashBudgetLayout.handleResize,
+      dashSubitemLayout.handleResize,
+      dashPrLayout.handleResize,
+      dashPoLayout.handleResize,
+    ]
+  );
+
+  const saveUnitOptions = (opts: string[]) => {
+    setUnitOptions(opts);
+    try { localStorage.setItem("subItemUnitOptions", JSON.stringify(opts)); } catch { }
+  };
+
+  // เมื่อกดกระดิ่งแล้วเลือกโปรเจกต์ — เลื่อนลงไปที่รายการรออนุมัติ
+  useEffect(() => {
+    if (budgetCategory === "OVERVIEW" && scrollToPendingAfterRender && pendingSectionRef?.current) {
+      pendingSectionRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+      setScrollToPendingAfterRender(false);
+    }
+  }, [budgetCategory, scrollToPendingAfterRender]);
+
+  const currentBudgets = budgets.filter(
+    (b) => b.projectId === selectedProjectId && b.category === budgetCategory
+  );
+
+  // V.20: Explicitly define pending lists with Admin Super-Powers
+  const pendingBudgetsForProject = useMemo(() => {
+    if (!selectedProjectId) return [];
+    // MD or Admin sees pending budgets
+    if (userRole !== "MD" && userRole !== "Administrator") return [];
+
+    return budgets.filter(
+      (b) =>
+        b.projectId === selectedProjectId &&
+        (b.status === "Wait MD Approve" || b.status === "Revision Pending")
     );
+  }, [budgets, selectedProjectId, userRole]);
 
-    const saveUnitOptions = (opts: string[]) => {
-      setUnitOptions(opts);
-      try { localStorage.setItem("subItemUnitOptions", JSON.stringify(opts)); } catch {}
-    };
+  const pendingPRsForProject = useMemo(() => {
+    if (!selectedProjectId) return [];
+    return prs.filter((pr) => {
+      if (pr.projectId !== selectedProjectId) return false;
+      if (pr.status === "Rejected" || pr.status === "Approved" || pr.status === "PO Issued") return false;
 
-    // เมื่อกดกระดิ่งแล้วเลือกโปรเจกต์ — เลื่อนลงไปที่รายการรออนุมัติ
-    useEffect(() => {
-      if (budgetCategory === "OVERVIEW" && scrollToPendingAfterRender && pendingSectionRef?.current) {
-        pendingSectionRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
-        setScrollToPendingAfterRender(false);
-      }
-    }, [budgetCategory, scrollToPendingAfterRender]);
+      if (userRoles.includes("Administrator")) return true;
+      if (userRoles.includes("CM") && pr.status === "Pending CM") return true;
+      if (userRoles.includes("PM") && pr.status === "Pending PM") return true;
+      if (userRoles.includes("GM") && pr.status === "Pending GM") return true;
+      if (userRoles.includes("MD") && pr.status === "Pending MD") return true;
+      // PCM เห็น PR ที่ขอ Active
+      if (userRoles.includes("PCM") && pr.status === PR_PENDING_ACTIVE) return true;
 
-    const currentBudgets = budgets.filter(
-      (b) => b.projectId === selectedProjectId && b.category === budgetCategory
-    );
-
-    // V.20: Explicitly define pending lists with Admin Super-Powers
-    const pendingBudgetsForProject = useMemo(() => {
-      if (!selectedProjectId) return [];
-      // MD or Admin sees pending budgets
-      if (userRole !== "MD" && userRole !== "Administrator") return [];
-
-      return budgets.filter(
-        (b) =>
-          b.projectId === selectedProjectId &&
-          (b.status === "Wait MD Approve" || b.status === "Revision Pending")
-      );
-    }, [budgets, selectedProjectId, userRole]);
-
-    const pendingPRsForProject = useMemo(() => {
-      if (!selectedProjectId) return [];
-      return prs.filter((pr) => {
-        if (pr.projectId !== selectedProjectId) return false;
-        if (pr.status === "Rejected" || pr.status === "Approved" || pr.status === "PO Issued") return false;
-
-        if (userRoles.includes("Administrator")) return true;
-        if (userRoles.includes("CM") && pr.status === "Pending CM") return true;
-        if (userRoles.includes("PM") && pr.status === "Pending PM") return true;
-        if (userRoles.includes("GM") && pr.status === "Pending GM") return true;
-        if (userRoles.includes("MD") && pr.status === "Pending MD") return true;
-        // PCM เห็น PR ที่ขอ Active
-        if (userRoles.includes("PCM") && pr.status === PR_PENDING_ACTIVE) return true;
-
-        return false;
-      });
-    }, [prs, selectedProjectId, userRoles]);
-
-    const pendingSubItemsForProject = useMemo(() => {
-      if (!selectedProjectId) return [];
-      if (userRole !== "MD" && userRole !== "Administrator") return [];
-      const pendingSubs = [];
-      budgets.forEach((b) => {
-        if (b.projectId === selectedProjectId && b.subItems?.length > 0) {
-          b.subItems.forEach((sub) => {
-            if (sub.status === "Wait MD Approve" || sub.status === "Revision Pending")
-              pendingSubs.push({ ...sub, budgetId: b.id, budgetCode: b.code });
-          });
-        }
-      });
-      return pendingSubs;
-    }, [budgets, selectedProjectId, userRole]);
-
-    const pendingPOsForProject = useMemo(() => pos.filter((po) => {
-      if (po.projectId !== selectedProjectId) return false;
-      if (userRoles.includes("Administrator") && (
-        po.status?.startsWith("Pending") ||
-        po.status === PO_REVISION_PENDING_PCM ||
-        po.status === PO_REVISION_PENDING_GM
-      )) return true;
-      if (userRoles.includes("PCM") && (po.status === "Pending PCM" || po.status === PO_REVISION_PENDING_PCM)) return true;
-      if (userRoles.includes("GM") && (po.status === "Pending GM" || po.status === PO_REVISION_PENDING_GM)) return true;
       return false;
-    }), [pos, selectedProjectId, userRoles]);
+    });
+  }, [prs, selectedProjectId, userRoles]);
 
-    const sortedBudgets = useMemo(() => {
-      let sortableItems = [...currentBudgets];
-      if (sortConfig.key !== null) {
-        sortableItems.sort((a, b) => {
-          if (a[sortConfig.key] < b[sortConfig.key]) {
-            return sortConfig.direction === "ascending" ? -1 : 1;
-          }
-          if (a[sortConfig.key] > b[sortConfig.key]) {
-            return sortConfig.direction === "ascending" ? 1 : -1;
-          }
-          return 0;
+  const pendingSubItemsForProject = useMemo(() => {
+    if (!selectedProjectId) return [];
+    if (userRole !== "MD" && userRole !== "Administrator") return [];
+    const pendingSubs = [];
+    budgets.forEach((b) => {
+      if (b.projectId === selectedProjectId && b.subItems?.length > 0) {
+        b.subItems.forEach((sub) => {
+          if (sub.status === "Wait MD Approve" || sub.status === "Revision Pending")
+            pendingSubs.push({ ...sub, budgetId: b.id, budgetCode: b.code });
         });
       }
-      return sortableItems;
-    }, [currentBudgets, sortConfig]);
+    });
+    return pendingSubs;
+  }, [budgets, selectedProjectId, userRole]);
 
-    const requestSort = (key) => {
-      let direction = "ascending";
-      if (sortConfig.key === key && sortConfig.direction === "ascending") {
-        direction = "descending";
-      }
-      setSortConfig({ key, direction });
-    };
+  const pendingPOsForProject = useMemo(() => pos.filter((po) => {
+    if (po.projectId !== selectedProjectId) return false;
+    if (userRoles.includes("Administrator") && (
+      po.status?.startsWith("Pending") ||
+      po.status === PO_REVISION_PENDING_PCM ||
+      po.status === PO_REVISION_PENDING_GM
+    )) return true;
+    if (userRoles.includes("PCM") && (po.status === "Pending PCM" || po.status === PO_REVISION_PENDING_PCM)) return true;
+    if (userRoles.includes("GM") && (po.status === "Pending GM" || po.status === PO_REVISION_PENDING_GM)) return true;
+    return false;
+  }), [pos, selectedProjectId, userRoles]);
 
-    const isAllowedAttachmentFile = (file: File) => {
-      const name = (file?.name || "").toLowerCase();
-      const ext = name.includes(".") ? name.split(".").pop() : "";
-      const okExt = new Set(["pdf", "xls", "xlsx", "doc", "docx", "jpg", "jpeg", "png"]);
-      if (ext && okExt.has(ext)) return true;
-      const t = file?.type || "";
-      if (t.startsWith("image/")) return true;
-      const okMime = new Set([
-        "application/pdf",
-        "application/msword",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "application/vnd.ms-excel",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      ]);
-      return okMime.has(t);
-    };
-
-    /** แนบไฟล์ที่ระดับ Budget หลัก (Firestore: budget.attachments) */
-    const appendMainBudgetAttachments = async (budgetId: string, files: File[]) => {
-      if (!selectedProjectId) throw new Error("กรุณาเลือกโครงการก่อนแนบไฟล์");
-      if (!files?.length) return;
-      const budget = budgets.find((b) => b.id === budgetId);
-      const existing = [...(budget?.attachments || [])];
-      const uploaded = [];
-      for (const f of files) {
-        const up = await uploadAttachment(f, {
-          type: "budget",
-          projectId: selectedProjectId,
-          docId: budgetId,
-          subPath: "mainItem",
-        });
-        uploaded.push({
-          ...up,
-          uploadedAt: new Date().toISOString(),
-          uploadedBy: userData?.email || userData?.displayName || userRole || "unknown",
-        });
-      }
-      await updateDoc(
-        doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
-        { attachments: [...existing, ...uploaded] }
-      );
-      await logAction?.(
-        "Update",
-        `[Budget Attachments] ${budgetId} | main | +${files.length} files`,
-        selectedProjectId
-      );
-    };
-
-    /**
-     * แนบไฟล์ที่ Sub-Item
-     * @param subItemsHint ถ้ามี (เช่น หลังเพิ่ง updateDoc) ใช้แทน state เพื่อกันช้าของ onSnapshot
-     */
-    const appendSubItemAttachments = async (
-      budgetId: string,
-      subItemId: string,
-      files: File[],
-      subItemsHint: any[] | null
-    ) => {
-      if (!selectedProjectId) throw new Error("กรุณาเลือกโครงการก่อนแนบไฟล์");
-      if (!files?.length) return;
-      const uploaded = [];
-      for (const f of files) {
-        const up = await uploadAttachment(f, {
-          type: "budget",
-          projectId: selectedProjectId,
-          docId: budgetId,
-          subPath: `subItem_${subItemId}`,
-        });
-        uploaded.push({
-          ...up,
-          uploadedAt: new Date().toISOString(),
-          uploadedBy: userData?.email || userData?.displayName || userRole || "unknown",
-        });
-      }
-      const budget = budgets.find((b) => b.id === budgetId);
-      const baseSubs = Array.isArray(subItemsHint)
-        ? [...subItemsHint]
-        : Array.isArray(budget?.subItems)
-          ? [...budget.subItems]
-          : [];
-      const nextSubs = baseSubs.map((s) =>
-        s.id !== subItemId
-          ? s
-          : { ...s, attachments: [...(s.attachments || []), ...uploaded] }
-      );
-      await updateDoc(
-        doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
-        { subItems: nextSubs }
-      );
-      await logAction?.(
-        "Update",
-        `[Budget Attachments] ${budgetId} / SubItem ${subItemId} | +${files.length} files`,
-        selectedProjectId
-      );
-    };
-
-    const closeBudgetModal = () => {
-      setIsModalOpen(false);
-      setPendingMainAttachments([]);
-    };
-
-    const closeSubItemModal = () => {
-      setIsSubItemModalOpen(false);
-      setPendingSubAttachments([]);
-    };
-
-    const onModalMainPendingFilesSelected = (e: any) => {
-      const files: File[] = Array.from(e?.target?.files || []);
-      if (e?.target) e.target.value = "";
-      if (!files.length) return;
-      const invalid = files.filter((f) => !isAllowedAttachmentFile(f));
-      if (invalid.length > 0) {
-        showAlert(
-          "ไฟล์ไม่รองรับ",
-          `รองรับเฉพาะ PDF/EXCEL/WORD/JPG/JPEG/PNG\nไฟล์ที่ไม่รองรับ: ${invalid.map((f) => f.name).join(", ")}`,
-          "warning"
-        );
-        return;
-      }
-      setPendingMainAttachments((prev) => [...prev, ...files]);
-    };
-
-    const onModalSubPendingFilesSelected = (e: any) => {
-      const files: File[] = Array.from(e?.target?.files || []);
-      if (e?.target) e.target.value = "";
-      if (!files.length) return;
-      const invalid = files.filter((f) => !isAllowedAttachmentFile(f));
-      if (invalid.length > 0) {
-        showAlert(
-          "ไฟล์ไม่รองรับ",
-          `รองรับเฉพาะ PDF/EXCEL/WORD/JPG/JPEG/PNG\nไฟล์ที่ไม่รองรับ: ${invalid.map((f) => f.name).join(", ")}`,
-          "warning"
-        );
-        return;
-      }
-      setPendingSubAttachments((prev) => [...prev, ...files]);
-    };
-
-    const openAttachmentPicker = (budgetId: string, subItemId?: string | null) => {
-      if (!selectedProjectId) {
-        showAlert("แจ้งเตือน", "กรุณาเลือกโครงการก่อนแนบไฟล์", "warning");
-        return;
-      }
-      setAttachmentTarget({ budgetId, subItemId: subItemId || null });
-      // ใช้ timeout เล็กน้อยให้ state set ก่อน (กันกรณี click รัว)
-      setTimeout(() => attachmentInputRef.current?.click(), 0);
-    };
-
-    const handleAttachmentFilesSelected = async (e: any) => {
-      const files: File[] = Array.from(e?.target?.files || []);
-      // reset เพื่อให้เลือกไฟล์เดิมซ้ำได้
-      if (e?.target) e.target.value = "";
-      if (!files.length) return;
-
-      const target = attachmentTarget;
-      if (!target?.budgetId) return;
-
-      const invalid = files.filter((f) => !isAllowedAttachmentFile(f));
-      if (invalid.length > 0) {
-        showAlert(
-          "ไฟล์ไม่รองรับ",
-          `รองรับเฉพาะ PDF/EXCEL/WORD/JPG/JPEG/PNG\nไฟล์ที่ไม่รองรับ: ${invalid.map((f) => f.name).join(", ")}`,
-          "warning"
-        );
-        return;
-      }
-
-      const key = `${target.budgetId}:${target.subItemId || "main"}`;
-      setAttachmentUploadingKey(key);
-      try {
-        const budget = budgets.find((b) => b.id === target.budgetId);
-        if (!budget) throw new Error("ไม่พบรายการ Budget");
-
-        if (!target.subItemId) {
-          await appendMainBudgetAttachments(target.budgetId, files);
-        } else {
-          await appendSubItemAttachments(target.budgetId, target.subItemId, files, null);
+  const sortedBudgets = useMemo(() => {
+    let sortableItems = [...currentBudgets];
+    if (sortConfig.key !== null) {
+      sortableItems.sort((a, b) => {
+        if (a[sortConfig.key] < b[sortConfig.key]) {
+          return sortConfig.direction === "ascending" ? -1 : 1;
         }
+        if (a[sortConfig.key] > b[sortConfig.key]) {
+          return sortConfig.direction === "ascending" ? 1 : -1;
+        }
+        return 0;
+      });
+    }
+    return sortableItems;
+  }, [currentBudgets, sortConfig]);
 
-        showAlert("อัปโหลดสำเร็จ", `แนบไฟล์เรียบร้อย (${files.length} ไฟล์)`, "success");
-      } catch (err: any) {
-        console.error("[Budget Attachments] upload error:", err);
-        showAlert("อัปโหลดไม่สำเร็จ", err?.message || "เกิดข้อผิดพลาด", "error");
-      } finally {
-        setAttachmentUploadingKey(null);
-        setAttachmentTarget(null);
+  const requestSort = (key) => {
+    let direction = "ascending";
+    if (sortConfig.key === key && sortConfig.direction === "ascending") {
+      direction = "descending";
+    }
+    setSortConfig({ key, direction });
+  };
+
+  const isAllowedAttachmentFile = (file: File) => {
+    const name = (file?.name || "").toLowerCase();
+    const ext = name.includes(".") ? name.split(".").pop() : "";
+    const okExt = new Set(["pdf", "xls", "xlsx", "doc", "docx", "jpg", "jpeg", "png"]);
+    if (ext && okExt.has(ext)) return true;
+    const t = file?.type || "";
+    if (t.startsWith("image/")) return true;
+    const okMime = new Set([
+      "application/pdf",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.ms-excel",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ]);
+    return okMime.has(t);
+  };
+
+  /** แนบไฟล์ที่ระดับ Budget หลัก (Firestore: budget.attachments) */
+  const appendMainBudgetAttachments = async (budgetId: string, files: File[]) => {
+    if (!selectedProjectId) throw new Error("กรุณาเลือกโครงการก่อนแนบไฟล์");
+    if (!files?.length) return;
+    const budget = budgets.find((b) => b.id === budgetId);
+    const existing = [...(budget?.attachments || [])];
+    const uploaded = [];
+    for (const f of files) {
+      const up = await uploadAttachment(f, {
+        type: "budget",
+        projectId: selectedProjectId,
+        docId: budgetId,
+        subPath: "mainItem",
+      });
+      uploaded.push({
+        ...up,
+        uploadedAt: new Date().toISOString(),
+        uploadedBy: userData?.email || userData?.displayName || userRole || "unknown",
+      });
+    }
+    await updateDoc(
+      doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
+      { attachments: [...existing, ...uploaded] }
+    );
+    await logAction?.(
+      "Update",
+      `[Budget Attachments] ${budgetId} | main | +${files.length} files`,
+      selectedProjectId
+    );
+  };
+
+  /**
+   * แนบไฟล์ที่ Sub-Item
+   * @param subItemsHint ถ้ามี (เช่น หลังเพิ่ง updateDoc) ใช้แทน state เพื่อกันช้าของ onSnapshot
+   */
+  const appendSubItemAttachments = async (
+    budgetId: string,
+    subItemId: string,
+    files: File[],
+    subItemsHint: any[] | null
+  ) => {
+    if (!selectedProjectId) throw new Error("กรุณาเลือกโครงการก่อนแนบไฟล์");
+    if (!files?.length) return;
+    const uploaded = [];
+    for (const f of files) {
+      const up = await uploadAttachment(f, {
+        type: "budget",
+        projectId: selectedProjectId,
+        docId: budgetId,
+        subPath: `subItem_${subItemId}`,
+      });
+      uploaded.push({
+        ...up,
+        uploadedAt: new Date().toISOString(),
+        uploadedBy: userData?.email || userData?.displayName || userRole || "unknown",
+      });
+    }
+    const budget = budgets.find((b) => b.id === budgetId);
+    const baseSubs = Array.isArray(subItemsHint)
+      ? [...subItemsHint]
+      : Array.isArray(budget?.subItems)
+        ? [...budget.subItems]
+        : [];
+    const nextSubs = baseSubs.map((s) =>
+      s.id !== subItemId
+        ? s
+        : { ...s, attachments: [...(s.attachments || []), ...uploaded] }
+    );
+    await updateDoc(
+      doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
+      { subItems: nextSubs }
+    );
+    await logAction?.(
+      "Update",
+      `[Budget Attachments] ${budgetId} / SubItem ${subItemId} | +${files.length} files`,
+      selectedProjectId
+    );
+  };
+
+  const closeBudgetModal = () => {
+    setIsModalOpen(false);
+    setPendingMainAttachments([]);
+  };
+
+  const closeSubItemModal = () => {
+    setIsSubItemModalOpen(false);
+    setPendingSubAttachments([]);
+  };
+
+  const onModalMainPendingFilesSelected = (e: any) => {
+    const files: File[] = Array.from(e?.target?.files || []);
+    if (e?.target) e.target.value = "";
+    if (!files.length) return;
+    const invalid = files.filter((f) => !isAllowedAttachmentFile(f));
+    if (invalid.length > 0) {
+      showAlert(
+        "ไฟล์ไม่รองรับ",
+        `รองรับเฉพาะ PDF/EXCEL/WORD/JPG/JPEG/PNG\nไฟล์ที่ไม่รองรับ: ${invalid.map((f) => f.name).join(", ")}`,
+        "warning"
+      );
+      return;
+    }
+    setPendingMainAttachments((prev) => [...prev, ...files]);
+  };
+
+  const onModalSubPendingFilesSelected = (e: any) => {
+    const files: File[] = Array.from(e?.target?.files || []);
+    if (e?.target) e.target.value = "";
+    if (!files.length) return;
+    const invalid = files.filter((f) => !isAllowedAttachmentFile(f));
+    if (invalid.length > 0) {
+      showAlert(
+        "ไฟล์ไม่รองรับ",
+        `รองรับเฉพาะ PDF/EXCEL/WORD/JPG/JPEG/PNG\nไฟล์ที่ไม่รองรับ: ${invalid.map((f) => f.name).join(", ")}`,
+        "warning"
+      );
+      return;
+    }
+    setPendingSubAttachments((prev) => [...prev, ...files]);
+  };
+
+  const openAttachmentPicker = (budgetId: string, subItemId?: string | null) => {
+    if (!selectedProjectId) {
+      showAlert("แจ้งเตือน", "กรุณาเลือกโครงการก่อนแนบไฟล์", "warning");
+      return;
+    }
+    setAttachmentTarget({ budgetId, subItemId: subItemId || null });
+    // ใช้ timeout เล็กน้อยให้ state set ก่อน (กันกรณี click รัว)
+    setTimeout(() => attachmentInputRef.current?.click(), 0);
+  };
+
+  const handleAttachmentFilesSelected = async (e: any) => {
+    const files: File[] = Array.from(e?.target?.files || []);
+    // reset เพื่อให้เลือกไฟล์เดิมซ้ำได้
+    if (e?.target) e.target.value = "";
+    if (!files.length) return;
+
+    const target = attachmentTarget;
+    if (!target?.budgetId) return;
+
+    const invalid = files.filter((f) => !isAllowedAttachmentFile(f));
+    if (invalid.length > 0) {
+      showAlert(
+        "ไฟล์ไม่รองรับ",
+        `รองรับเฉพาะ PDF/EXCEL/WORD/JPG/JPEG/PNG\nไฟล์ที่ไม่รองรับ: ${invalid.map((f) => f.name).join(", ")}`,
+        "warning"
+      );
+      return;
+    }
+
+    const key = `${target.budgetId}:${target.subItemId || "main"}`;
+    setAttachmentUploadingKey(key);
+    try {
+      const budget = budgets.find((b) => b.id === target.budgetId);
+      if (!budget) throw new Error("ไม่พบรายการ Budget");
+
+      if (!target.subItemId) {
+        await appendMainBudgetAttachments(target.budgetId, files);
+      } else {
+        await appendSubItemAttachments(target.budgetId, target.subItemId, files, null);
       }
+
+      showAlert("อัปโหลดสำเร็จ", `แนบไฟล์เรียบร้อย (${files.length} ไฟล์)`, "success");
+    } catch (err: any) {
+      console.error("[Budget Attachments] upload error:", err);
+      showAlert("อัปโหลดไม่สำเร็จ", err?.message || "เกิดข้อผิดพลาด", "error");
+    } finally {
+      setAttachmentUploadingKey(null);
+      setAttachmentTarget(null);
+    }
+  };
+
+  const handleDownloadTemplate = () => {
+    if (!selectedProjectId) {
+      showAlert("แจ้งเตือน", "กรุณาเลือกโครงการก่อนดาวน์โหลด Template", "warning");
+      return;
+    }
+    // ฟังก์ชัน escape ค่าสำหรับ CSV
+    const esc = (val: any) => {
+      const s = String(val ?? "");
+      return s.includes(",") || s.includes('"') || s.includes("\n")
+        ? `"${s.replace(/"/g, '""')}"`
+        : s;
     };
 
-    const handleDownloadTemplate = () => {
-      if (!selectedProjectId) {
-        showAlert("แจ้งเตือน", "กรุณาเลือกโครงการก่อนดาวน์โหลด Template", "warning");
-        return;
-      }
-      // ฟังก์ชัน escape ค่าสำหรับ CSV
-      const esc = (val: any) => {
-        const s = String(val ?? "");
-        return s.includes(",") || s.includes('"') || s.includes("\n")
-          ? `"${s.replace(/"/g, '""')}"`
-          : s;
-      };
+    // คอลัมน์: เพิ่ม MainBudget (งบประมาณหลักที่ตั้งไว้) ให้เห็นยอดรวมของ main item
+    const headers = "MainCostCode,MainDescription,MainBudget,MainStatus,SubDescription,Quantity,Unit,UnitPrice,SubStatus";
 
-      // คอลัมน์: เพิ่ม MainBudget (งบประมาณหลักที่ตั้งไว้) ให้เห็นยอดรวมของ main item
-      const headers = "MainCostCode,MainDescription,MainBudget,MainStatus,SubDescription,Quantity,Unit,UnitPrice,SubStatus";
+    const dataRows: string[] = [];
 
-      const dataRows: string[] = [];
+    if (currentBudgets.length > 0) {
+      currentBudgets.forEach((budget: any) => {
+        const mainCode = budget.code || "";
+        const mainDesc = budget.description || "";
+        const mainBudget = budget.amount ?? 0;
+        const mainStatus = budget.status || "Draft";
 
-      if (currentBudgets.length > 0) {
-        currentBudgets.forEach((budget: any) => {
-          const mainCode   = budget.code        || "";
-          const mainDesc   = budget.description  || "";
-          const mainBudget = budget.amount       ?? 0;
-          const mainStatus = budget.status       || "Draft";
-
-          if (budget.subItems && budget.subItems.length > 0) {
-            budget.subItems.forEach((sub: any) => {
-              dataRows.push([
-                mainCode, mainDesc, mainBudget, mainStatus,
-                sub.description || "",
-                sub.quantity  ?? 0,
-                sub.unit      || "",
-                sub.unitPrice ?? 0,
-                sub.status    || "Draft",
-              ].map(esc).join(","));
-            });
-          } else {
-            // งบหลักที่ยังไม่มี sub-items
+        if (budget.subItems && budget.subItems.length > 0) {
+          budget.subItems.forEach((sub: any) => {
             dataRows.push([
               mainCode, mainDesc, mainBudget, mainStatus,
-              "", "", "", "", "",
+              sub.description || "",
+              sub.quantity ?? 0,
+              sub.unit || "",
+              sub.unitPrice ?? 0,
+              sub.status || "Draft",
             ].map(esc).join(","));
+          });
+        } else {
+          // งบหลักที่ยังไม่มี sub-items
+          dataRows.push([
+            mainCode, mainDesc, mainBudget, mainStatus,
+            "", "", "", "", "",
+          ].map(esc).join(","));
+        }
+      });
+    } else {
+      // ไม่มีข้อมูล — ใส่แถวตัวอย่างเพื่อให้รู้รูปแบบ
+      dataRows.push([
+        "001001", "(ตัวอย่าง) ค่าจัดเตรียมพื้นที่", "200000", "Draft",
+        "ทำความสะอาดพื้นที่หน้างาน", "1", "งาน", "30000", "Draft",
+      ].map(esc).join(","));
+    }
+
+    const projectCode = projects.find((p) => p.id === selectedProjectId)?.jobNo
+      || projects.find((p) => p.id === selectedProjectId)?.name?.slice(0, 10)
+      || selectedProjectId.slice(0, 8);
+
+    const bom = "\uFEFF";
+    const content = bom + headers + "\n" + dataRows.join("\n");
+    const csvContent = "data:text/csv;charset=utf-8," + encodeURIComponent(content);
+    const link = document.createElement("a");
+    link.setAttribute("href", csvContent);
+    link.setAttribute("download", `budget_${budgetCategory}_${projectCode}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleFileUpload = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    setImportFile(file);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target.result;
+      const rows = text.split(/\r?\n/).slice(1);
+      const parsedData: any = {};
+      rows.forEach((row) => {
+        if (!row.trim()) return;
+
+        const cols: string[] = [];
+        let inQuotes = false;
+        let currentVal = "";
+        for (let i = 0; i < row.length; i++) {
+          const char = row[i];
+          if (char === '"') {
+            inQuotes = !inQuotes;
+          } else if (char === "," && !inQuotes) {
+            cols.push(currentVal);
+            currentVal = "";
+          } else {
+            currentVal += char;
           }
-        });
-      } else {
-        // ไม่มีข้อมูล — ใส่แถวตัวอย่างเพื่อให้รู้รูปแบบ
-        dataRows.push([
-          "001001","(ตัวอย่าง) ค่าจัดเตรียมพื้นที่","200000","Draft",
-          "ทำความสะอาดพื้นที่หน้างาน","1","งาน","30000","Draft",
-        ].map(esc).join(","));
-      }
+        }
+        cols.push(currentVal);
 
-      const projectCode = projects.find((p) => p.id === selectedProjectId)?.jobNo
-        || projects.find((p) => p.id === selectedProjectId)?.name?.slice(0, 10)
-        || selectedProjectId.slice(0, 8);
+        // รองรับ 3 รูปแบบ:
+        // 8-col (Export+Status): MainCostCode,MainDescription,MainStatus,SubDescription,Quantity,Unit,UnitPrice,SubStatus
+        // 6-col (Template ใหม่): MainCostCode,MainDescription,SubDescription,Quantity,Unit,UnitPrice
+        // 3-col (Legacy):        Cost Code,Description,Budget
+        // 9-col (Export+Status): MainCostCode,MainDescription,MainBudget,MainStatus,SubDescription,Quantity,Unit,UnitPrice,SubStatus
+        // 6-col (Template ใหม่): MainCostCode,MainDescription,SubDescription,Quantity,Unit,UnitPrice
+        const isExportFormat = cols.length >= 9;
+        if (isExportFormat || cols.length >= 6) {
+          // export format (9 col): cols[2]=MainBudget(ข้าม), cols[3]=MainStatus(ข้าม), cols[4..8]=Sub fields
+          // template  format (6 col): cols[2..5]=Sub fields
+          const cIdx = isExportFormat ? 4 : 2; // index เริ่มต้นของ SubDescription
+          const clean = (v: any) => (v || "").toString().trim().replace(/^"|"$/g, "").replace(/""/g, '"').trim();
+          const rawMainCode = clean(cols[0]);
+          const mainDescription = clean(cols[1]);
+          // cols[2] = MainBudget (export) — ไม่ใช้ตอน import (ระบบใช้ budget.amount จาก Firestore)
+          // cols[3] = MainStatus (export) — ไม่ใช้ตอน import
+          const subDescription = clean(cols[cIdx]);
+          let qtyStr = clean(cols[cIdx + 1]);
+          let unit = clean(cols[cIdx + 2]);
+          let unitPriceStr = clean(cols[cIdx + 3]);
+          // cols[cIdx+4] = SubStatus (export) — ไม่ใช้ตอน import
 
-      const bom = "\uFEFF";
-      const content = bom + headers + "\n" + dataRows.join("\n");
-      const csvContent = "data:text/csv;charset=utf-8," + encodeURIComponent(content);
-      const link = document.createElement("a");
-      link.setAttribute("href", csvContent);
-      link.setAttribute("download", `budget_${budgetCategory}_${projectCode}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    };
+          if (!rawMainCode) return;
 
-    const handleFileUpload = (event) => {
-      const file = event.target.files[0];
-      if (!file) return;
-      setImportFile(file);
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const text = e.target.result;
-        const rows = text.split(/\r?\n/).slice(1);
-        const parsedData: any = {};
-        rows.forEach((row) => {
-          if (!row.trim()) return;
+          // Normalize Main Cost Code (รองรับทั้ง 6 / 9 หลัก และกรณี Excel ตัด 0 นำหน้า)
+          const strippedMain = rawMainCode.replace(/^0+/, "") || "0";
+          const normalizedMainCode =
+            strippedMain.length <= 6
+              ? strippedMain.padStart(6, "0")
+              : strippedMain.padStart(9, "0");
 
-          const cols: string[] = [];
-          let inQuotes = false;
-          let currentVal = "";
-          for (let i = 0; i < row.length; i++) {
-            const char = row[i];
-            if (char === '"') {
-              inQuotes = !inQuotes;
-            } else if (char === "," && !inQuotes) {
-              cols.push(currentVal);
-              currentVal = "";
-            } else {
-              currentVal += char;
-            }
+          const category = normalizedMainCode.substring(0, 3);
+          const ALLOWED_PREFIXES = ["001", "002", "003", "004", "005", "006", "007", "008", "009"];
+          if (!ALLOWED_PREFIXES.includes(category)) return;
+
+          qtyStr = qtyStr.replace(/,/g, "");
+          unitPriceStr = unitPriceStr.replace(/,/g, "");
+
+          const quantity = qtyStr ? Number(qtyStr) || 0 : 0;
+          const unitPrice = unitPriceStr ? Number(unitPriceStr) || 0 : 0;
+          const amount = quantity * unitPrice;
+
+          if (!parsedData[category]) parsedData[category] = [];
+          parsedData[category].push({
+            mainCode: normalizedMainCode,
+            mainDescription,
+            subDescription,
+            quantity,
+            unit: unit || "งาน",
+            unitPrice,
+            amount,
+            isLegacy: false,
+          });
+        } else if (cols.length >= 3) {
+          // Template เก่า: Cost Code,Description,Budget — ยังรองรับอยู่เพื่อ backward compatibility
+          let costCode = cols[0].trim().replace(/^"|"$/g, "").replace(/""/g, '"').trim();
+          const description = cols[1].trim().replace(/^"|"$/g, "").replace(/""/g, '"').trim();
+          let amountStr = cols[2].trim().replace(/^"|"$/g, "").replace(/""/g, '"').trim();
+
+          amountStr = amountStr.replace(/,/g, "");
+          if (amountStr === "-" || amountStr === "") {
+            amountStr = "0";
           }
-          cols.push(currentVal);
 
-          // รองรับ 3 รูปแบบ:
-          // 8-col (Export+Status): MainCostCode,MainDescription,MainStatus,SubDescription,Quantity,Unit,UnitPrice,SubStatus
-          // 6-col (Template ใหม่): MainCostCode,MainDescription,SubDescription,Quantity,Unit,UnitPrice
-          // 3-col (Legacy):        Cost Code,Description,Budget
-          // 9-col (Export+Status): MainCostCode,MainDescription,MainBudget,MainStatus,SubDescription,Quantity,Unit,UnitPrice,SubStatus
-          // 6-col (Template ใหม่): MainCostCode,MainDescription,SubDescription,Quantity,Unit,UnitPrice
-          const isExportFormat = cols.length >= 9;
-          if (isExportFormat || cols.length >= 6) {
-            // export format (9 col): cols[2]=MainBudget(ข้าม), cols[3]=MainStatus(ข้าม), cols[4..8]=Sub fields
-            // template  format (6 col): cols[2..5]=Sub fields
-            const cIdx = isExportFormat ? 4 : 2; // index เริ่มต้นของ SubDescription
-            const clean = (v: any) => (v || "").toString().trim().replace(/^"|"$/g, "").replace(/""/g, '"').trim();
-            const rawMainCode     = clean(cols[0]);
-            const mainDescription = clean(cols[1]);
-            // cols[2] = MainBudget (export) — ไม่ใช้ตอน import (ระบบใช้ budget.amount จาก Firestore)
-            // cols[3] = MainStatus (export) — ไม่ใช้ตอน import
-            const subDescription  = clean(cols[cIdx]);
-            let qtyStr            = clean(cols[cIdx + 1]);
-            let unit              = clean(cols[cIdx + 2]);
-            let unitPriceStr      = clean(cols[cIdx + 3]);
-            // cols[cIdx+4] = SubStatus (export) — ไม่ใช้ตอน import
+          const amount = Number(amountStr) || 0;
 
-            if (!rawMainCode) return;
+          if (costCode.length >= 1) {
+            const strippedNum = costCode.replace(/^0+/, "") || "0";
+            const normalizedCode =
+              strippedNum.length <= 6
+                ? strippedNum.padStart(6, "0")
+                : strippedNum.padStart(9, "0");
 
-            // Normalize Main Cost Code (รองรับทั้ง 6 / 9 หลัก และกรณี Excel ตัด 0 นำหน้า)
-            const strippedMain = rawMainCode.replace(/^0+/, "") || "0";
-            const normalizedMainCode =
-              strippedMain.length <= 6
-                ? strippedMain.padStart(6, "0")
-                : strippedMain.padStart(9, "0");
-
-            const category = normalizedMainCode.substring(0, 3);
-            const ALLOWED_PREFIXES = ["001","002","003","004","005","006","007","008","009"];
+            const category = normalizedCode.substring(0, 3);
+            const ALLOWED_PREFIXES = ["001", "002", "003", "004", "005", "006", "007", "008", "009"];
             if (!ALLOWED_PREFIXES.includes(category)) return;
-
-            qtyStr = qtyStr.replace(/,/g, "");
-            unitPriceStr = unitPriceStr.replace(/,/g, "");
-
-            const quantity = qtyStr ? Number(qtyStr) || 0 : 0;
-            const unitPrice = unitPriceStr ? Number(unitPriceStr) || 0 : 0;
-            const amount = quantity * unitPrice;
 
             if (!parsedData[category]) parsedData[category] = [];
             parsedData[category].push({
-              mainCode: normalizedMainCode,
-              mainDescription,
-              subDescription,
-              quantity,
-              unit: unit || "งาน",
-              unitPrice,
+              mainCode: normalizedCode,
+              mainDescription: description,
+              subDescription: "",
+              quantity: 0,
+              unit: "",
+              unitPrice: 0,
               amount,
-              isLegacy: false,
+              isLegacy: true,
             });
-          } else if (cols.length >= 3) {
-            // Template เก่า: Cost Code,Description,Budget — ยังรองรับอยู่เพื่อ backward compatibility
-            let costCode = cols[0].trim().replace(/^"|"$/g, "").replace(/""/g, '"').trim();
-            const description = cols[1].trim().replace(/^"|"$/g, "").replace(/""/g, '"').trim();
-            let amountStr = cols[2].trim().replace(/^"|"$/g, "").replace(/""/g, '"').trim();
-
-            amountStr = amountStr.replace(/,/g, "");
-            if (amountStr === "-" || amountStr === "") {
-              amountStr = "0";
-            }
-
-            const amount = Number(amountStr) || 0;
-
-            if (costCode.length >= 1) {
-              const strippedNum = costCode.replace(/^0+/, "") || "0";
-              const normalizedCode =
-                strippedNum.length <= 6
-                  ? strippedNum.padStart(6, "0")
-                  : strippedNum.padStart(9, "0");
-
-              const category = normalizedCode.substring(0, 3);
-              const ALLOWED_PREFIXES = ["001","002","003","004","005","006","007","008","009"];
-              if (!ALLOWED_PREFIXES.includes(category)) return;
-
-              if (!parsedData[category]) parsedData[category] = [];
-              parsedData[category].push({
-                mainCode: normalizedCode,
-                mainDescription: description,
-                subDescription: "",
-                quantity: 0,
-                unit: "",
-                unitPrice: 0,
-                amount,
-                isLegacy: true,
-              });
-            }
           }
-        });
-        setImportData(parsedData);
-        setSelectedImportCategories(Object.keys(parsedData));
-        setIsImportModalOpen(true);
-      };
-      reader.readAsText(file);
+        }
+      });
+      setImportData(parsedData);
+      setSelectedImportCategories(Object.keys(parsedData));
+      setIsImportModalOpen(true);
     };
+    reader.readAsText(file);
+  };
 
-    const handleConfirmImport = async () => {
-      if (!selectedProjectId)
-        return showAlert("Error", "กรุณาเลือกโครงการก่อน Import", "error");
+  const handleConfirmImport = async () => {
+    if (!selectedProjectId)
+      return showAlert("Error", "กรุณาเลือกโครงการก่อน Import", "error");
 
-      const normalizeDesc = (s: string) => (s || "").trim().toLowerCase();
+    const normalizeDesc = (s: string) => (s || "").trim().toLowerCase();
 
-      // ---- Phase 1: สร้าง budgetMap ทั้งหมด + ตรวจ violation ทั้งหมดก่อน ----
-      // ไม่มีการ write Firestore ใด ๆ ในขั้นนี้
-      const allViolationMessages: string[] = [];   // บล็อก import ทั้งหมด (ยอดเกินงบหลัก)
-      const allSkipMessages:      string[] = [];   // ข้ามรายการนั้น แต่ยังทำรายการอื่นต่อ
-      const allBudgetMaps: Array<{ cat: string; isLegacy: boolean; budgetMap?: any; legacyRows?: any[] }> = [];
+    // ---- Phase 1: สร้าง budgetMap ทั้งหมด + ตรวจ violation ทั้งหมดก่อน ----
+    // ไม่มีการ write Firestore ใด ๆ ในขั้นนี้
+    const allViolationMessages: string[] = [];   // บล็อก import ทั้งหมด (ยอดเกินงบหลัก)
+    const allSkipMessages: string[] = [];   // ข้ามรายการนั้น แต่ยังทำรายการอื่นต่อ
+    const allBudgetMaps: Array<{ cat: string; isLegacy: boolean; budgetMap?: any; legacyRows?: any[] }> = [];
 
-      for (const cat of selectedImportCategories) {
-        const rows = importData[cat] || [];
-        if (rows.length === 0) continue;
+    for (const cat of selectedImportCategories) {
+      const rows = importData[cat] || [];
+      if (rows.length === 0) continue;
 
-        const isLegacyTemplate = rows.every((r: any) => r.isLegacy);
+      const isLegacyTemplate = rows.every((r: any) => r.isLegacy);
 
-        if (isLegacyTemplate) {
-          allBudgetMaps.push({ cat, isLegacy: true, legacyRows: rows });
-        } else {
-          // สร้าง budgetMap สำหรับ category นี้
-          const budgetMap: any = {};
-          rows.forEach((row: any) => {
-            const key = `${row.mainCode}||${(row.mainDescription || "").trim()}`;
-            if (!budgetMap[key]) {
-              budgetMap[key] = {
-                projectId: selectedProjectId,
-                category: cat,
-                code: row.mainCode,
-                description: row.mainDescription || "",
-                amount: 0,
-                status: "Draft",
-                subItems: [],
-              };
-            }
-            const hasSub = !!row.subDescription;
-            if (hasSub) {
-              const subAmount = Number(row.amount) || 0;
-              budgetMap[key].subItems.push({
-                id: crypto.randomUUID(),
-                description: row.subDescription,
-                quantity: row.quantity || 0,
-                unit: row.unit || "งาน",
-                unitPrice: row.unitPrice || 0,
-                amount: subAmount,
-                status: "Draft",
-                rejectReason: "",
-              });
-              budgetMap[key].amount += subAmount;
-            } else {
-              budgetMap[key].amount += Number(row.amount) || 0;
-            }
-          });
-
-          // ตรวจ violation + skip ทุก budget ใน map นี้
-          Object.values(budgetMap).forEach((budgetItem: any) => {
-            const existingBudget = budgets.find(
-              (b) =>
-                b.projectId === selectedProjectId &&
-                b.code === budgetItem.code &&
-                normalizeDesc(b.description) === normalizeDesc(budgetItem.description)
-            );
-
-            if (existingBudget) {
-              const existingSubs: any[] = existingBudget.subItems || [];
-
-              // 2. กรอง sub-items ที่ซ้ำกับที่มีอยู่แล้ว
-              const duplicateSubs: any[] = [];
-              const newSubs: any[]       = [];
-              budgetItem.subItems.forEach((s: any) => {
-                const isDupe = existingSubs.some(
-                  (e: any) => normalizeDesc(e.description) === normalizeDesc(s.description)
-                );
-                if (isDupe) duplicateSubs.push(s);
-                else newSubs.push(s);
-              });
-
-              if (duplicateSubs.length > 0) {
-                const dupeNames = duplicateSubs.map((s: any) => `"${s.description}"`).join(", ");
-                allSkipMessages.push(
-                  `⚠️ ${budgetItem.code} — ${budgetItem.description || ""} : ข้ามรายการซ้ำ ${duplicateSubs.length} รายการ (${dupeNames})`
-                );
-              }
-
-              // ใช้เฉพาะ sub-items ใหม่ที่ไม่ซ้ำ
-              budgetItem.subItems = newSubs;
-
-              // 3. ตรวจยอดเงิน — คำนวณจาก sub-items ที่จะ merge จริง
-              if (newSubs.length > 0) {
-                const existingTotal = existingSubs.reduce(
-                  (sum: number, s: any) => sum + Number(s.amount || 0), 0
-                );
-                const newTotal = newSubs.reduce(
-                  (sum: number, s: any) => sum + Number(s.amount || 0), 0
-                );
-                const combined = existingTotal + newTotal;
-                if (combined > Number(existingBudget.amount || 0)) {
-                  const overAmount = combined - Number(existingBudget.amount || 0);
-                  const subLines = newSubs
-                    .map(
-                      (s: any) =>
-                        `    • ${s.description || "-"} : ${Number(s.quantity || 0).toLocaleString("th-TH")} ${s.unit || ""} × ${formatCurrency(s.unitPrice)} = ${formatCurrency(s.amount)}`
-                    )
-                    .join("\n");
-                  allViolationMessages.push(
-                    `❌ ${budgetItem.code} — ${budgetItem.description || ""}\n` +
-                    `   งบหลัก: ${formatCurrency(existingBudget.amount || 0)}  |  ยอดรวมปัจจุบัน+ใหม่: ${formatCurrency(combined)}  (เกิน ${formatCurrency(overAmount)})\n` +
-                    `   รายการที่กำลัง Import:\n${subLines}`
-                  );
-                }
-              }
-            }
-          });
-
-          allBudgetMaps.push({ cat, isLegacy: false, budgetMap });
-        }
-      }
-
-      // ---- หากมี violation (ยอดเกิน) → ยกเลิกทั้งหมด ----
-      if (allViolationMessages.length > 0) {
-        showAlert(
-          "Import ไม่สำเร็จ — ยกเลิกทั้งหมด",
-          "ยอดรวม Sub-Items เกินงบหลักในรายการต่อไปนี้ กรุณาแก้ไขไฟล์แล้วลองใหม่:\n" +
-            allViolationMessages.join("\n\n"),
-          "error"
-        );
-        setIsImportModalOpen(false);
-        setImportData({});
-        setImportFile(null);
-        setSelectedImportCategories([]);
-        if (fileInputRef.current) fileInputRef.current.value = "";
-        return;
-      }
-
-      // ---- Phase 2: ไม่มี violation → อัปโหลดไฟล์แนบ แล้ว write Firestore ทั้งหมด ----
-      try {
-        if (importFile) {
-          await uploadAttachment(importFile, { type: "imports", subPath: "budget", projectId: selectedProjectId });
-          setImportFile(null);
-        }
-      } catch (e) {
-        showAlert("Error", "อัปโหลดไฟล์ไม่สำเร็จ: " + (e?.message || e), "error");
-        return;
-      }
-
-      let importCount = 0;
-      const batchPromises = [];
-
-      for (const entry of allBudgetMaps) {
-        if (entry.isLegacy) {
-          for (const row of (entry.legacyRows || [])) {
-            const budgetItem = {
+      if (isLegacyTemplate) {
+        allBudgetMaps.push({ cat, isLegacy: true, legacyRows: rows });
+      } else {
+        // สร้าง budgetMap สำหรับ category นี้
+        const budgetMap: any = {};
+        rows.forEach((row: any) => {
+          const key = `${row.mainCode}||${(row.mainDescription || "").trim()}`;
+          if (!budgetMap[key]) {
+            budgetMap[key] = {
               projectId: selectedProjectId,
-              category: entry.cat,
+              category: cat,
               code: row.mainCode,
-              description: row.mainDescription,
-              amount: row.amount,
+              description: row.mainDescription || "",
+              amount: 0,
               status: "Draft",
               subItems: [],
             };
-            const safeDesc = (budgetItem.description || "")
-              .replace(/\//g, "-").replace(/[.#$[\]]/g, "").trim();
-            const budgetDocId = `${budgetItem.projectId}-${budgetItem.code}-${safeDesc}`;
-            batchPromises.push(addData("budgets", budgetItem, budgetDocId));
-            importCount++;
           }
-        } else {
-          Object.values(entry.budgetMap || {}).forEach((budgetItem: any) => {
-            const safeDesc = (budgetItem.description || "")
-              .replace(/\//g, "-").replace(/[.#$[\]]/g, "").trim();
-            const budgetDocId = `${budgetItem.projectId}-${budgetItem.code}-${safeDesc}`;
-            const existingBudget = budgets.find(
-              (b) =>
-                b.projectId === selectedProjectId &&
-                b.code === budgetItem.code &&
-                normalizeDesc(b.description) === normalizeDesc(budgetItem.description)
-            );
-            if (existingBudget) {
-              const mergedSubItems = [...(existingBudget.subItems || []), ...budgetItem.subItems];
-              batchPromises.push(
-                updateData("budgets", existingBudget.id, { subItems: mergedSubItems })
-              );
-            } else {
-              batchPromises.push(addData("budgets", budgetItem, budgetDocId));
-            }
-            importCount++;
-          });
-        }
-      }
+          const hasSub = !!row.subDescription;
+          if (hasSub) {
+            const subAmount = Number(row.amount) || 0;
+            budgetMap[key].subItems.push({
+              id: crypto.randomUUID(),
+              description: row.subDescription,
+              quantity: row.quantity || 0,
+              unit: row.unit || "งาน",
+              unitPrice: row.unitPrice || 0,
+              amount: subAmount,
+              status: "Draft",
+              rejectReason: "",
+            });
+            budgetMap[key].amount += subAmount;
+          } else {
+            budgetMap[key].amount += Number(row.amount) || 0;
+          }
+        });
 
-      await Promise.all(batchPromises);
-      await logAction("Import", `Imported ${importCount} budget items`, selectedProjectId);
+        // ตรวจ violation + skip ทุก budget ใน map นี้
+        Object.values(budgetMap).forEach((budgetItem: any) => {
+          const existingBudget = budgets.find(
+            (b) =>
+              b.projectId === selectedProjectId &&
+              b.code === budgetItem.code &&
+              normalizeDesc(b.description) === normalizeDesc(budgetItem.description)
+          );
+
+          if (existingBudget) {
+            const existingSubs: any[] = existingBudget.subItems || [];
+
+            // 2. กรอง sub-items ที่ซ้ำกับที่มีอยู่แล้ว
+            const duplicateSubs: any[] = [];
+            const newSubs: any[] = [];
+            budgetItem.subItems.forEach((s: any) => {
+              const isDupe = existingSubs.some(
+                (e: any) => normalizeDesc(e.description) === normalizeDesc(s.description)
+              );
+              if (isDupe) duplicateSubs.push(s);
+              else newSubs.push(s);
+            });
+
+            if (duplicateSubs.length > 0) {
+              const dupeNames = duplicateSubs.map((s: any) => `"${s.description}"`).join(", ");
+              allSkipMessages.push(
+                `⚠️ ${budgetItem.code} — ${budgetItem.description || ""} : ข้ามรายการซ้ำ ${duplicateSubs.length} รายการ (${dupeNames})`
+              );
+            }
+
+            // ใช้เฉพาะ sub-items ใหม่ที่ไม่ซ้ำ
+            budgetItem.subItems = newSubs;
+
+            // 3. ตรวจยอดเงิน — คำนวณจาก sub-items ที่จะ merge จริง
+            if (newSubs.length > 0) {
+              const existingTotal = existingSubs.reduce(
+                (sum: number, s: any) => sum + Number(s.amount || 0), 0
+              );
+              const newTotal = newSubs.reduce(
+                (sum: number, s: any) => sum + Number(s.amount || 0), 0
+              );
+              const combined = existingTotal + newTotal;
+              if (combined > Number(existingBudget.amount || 0)) {
+                const overAmount = combined - Number(existingBudget.amount || 0);
+                const subLines = newSubs
+                  .map(
+                    (s: any) =>
+                      `    • ${s.description || "-"} : ${Number(s.quantity || 0).toLocaleString("th-TH")} ${s.unit || ""} × ${formatCurrency(s.unitPrice)} = ${formatCurrency(s.amount)}`
+                  )
+                  .join("\n");
+                allViolationMessages.push(
+                  `❌ ${budgetItem.code} — ${budgetItem.description || ""}\n` +
+                  `   งบหลัก: ${formatCurrency(existingBudget.amount || 0)}  |  ยอดรวมปัจจุบัน+ใหม่: ${formatCurrency(combined)}  (เกิน ${formatCurrency(overAmount)})\n` +
+                  `   รายการที่กำลัง Import:\n${subLines}`
+                );
+              }
+            }
+          }
+        });
+
+        allBudgetMaps.push({ cat, isLegacy: false, budgetMap });
+      }
+    }
+
+    // ---- หากมี violation (ยอดเกิน) → ยกเลิกทั้งหมด ----
+    if (allViolationMessages.length > 0) {
+      showAlert(
+        "Import ไม่สำเร็จ — ยกเลิกทั้งหมด",
+        "ยอดรวม Sub-Items เกินงบหลักในรายการต่อไปนี้ กรุณาแก้ไขไฟล์แล้วลองใหม่:\n" +
+        allViolationMessages.join("\n\n"),
+        "error"
+      );
       setIsImportModalOpen(false);
       setImportData({});
       setImportFile(null);
       setSelectedImportCategories([]);
       if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
 
-      const skipSummary = allSkipMessages.length > 0
-        ? `\n\nรายการที่ถูกข้าม (${allSkipMessages.length} กลุ่ม):\n${allSkipMessages.join("\n")}`
-        : "";
-      // เดิมจะแสดง Modal แจ้งผล Import ที่นี่ ตัดออกตามคำขอ
-    };
+    // ---- Phase 2: ไม่มี violation → อัปโหลดไฟล์แนบ แล้ว write Firestore ทั้งหมด ----
+    try {
+      if (importFile) {
+        await uploadAttachment(importFile, { type: "imports", subPath: "budget", projectId: selectedProjectId });
+        setImportFile(null);
+      }
+    } catch (e) {
+      showAlert("Error", "อัปโหลดไฟล์ไม่สำเร็จ: " + (e?.message || e), "error");
+      return;
+    }
 
-    const calculateTotalBudget = (item) => {
-      // Rule 1 & 3: Main Budget amount is fixed. 
-      // It is no longer overwritten by sum of sub-items.
-      return item.amount;
-    };
+    let importCount = 0;
+    const batchPromises = [];
 
-    const getBudgetStats = (budget) => {
-      const budgetCode = budget.code;
-      const budgetDocId = budget.id;
-      const hasSubItems = budget.subItems && budget.subItems.length > 0;
-      const budgetDesc = (budget.description || "").trim();
-      const hasDuplicateCostCode = budgets.some(
-        (b) => b.projectId === selectedProjectId && b.code === budgetCode && b.id !== budgetDocId
-      );
-
-      // Collect all sub-item IDs for this budget
-      const subItemIds = hasSubItems ? budget.subItems.map(sub => sub.id) : [];
-
-      const getItemAmount = (item) => {
-        const amount = Number(item?.amount);
-        if (Number.isFinite(amount)) return amount;
-        const qty = Number(item?.quantity || 0);
-        const price = Number(item?.price || 0);
-        return qty * price;
-      };
-
-      const itemBelongsToBudget = (item, parentDoc = null) => {
-        // For budgets with sub-items, only match items that reference specific sub-items
-        if (hasSubItems) {
-          if (item?.budgetId && item.budgetId === budgetDocId) return true;
-          // Check if item has budgetSubItemId that matches one of our sub-items
-          if (item.budgetSubItemId && subItemIds.includes(item.budgetSubItemId)) return true;
-          if (item.subItemId && subItemIds.includes(item.subItemId)) return true;
-          
-          // IMPORTANT: For PO items created from PR items, trace back to find the original sub-item ID
-          if (item.prId != null && item.prItemIndex != null) {
-            const pr = prs.find(p => p.id === item.prId);
-            const prItem = pr?.items?.[item.prItemIndex];
-            if (prItem) {
-              if (prItem.budgetId && prItem.budgetId === budgetDocId) return true;
-              if (prItem.budgetSubItemId && subItemIds.includes(prItem.budgetSubItemId)) return true;
-              if (prItem.subItemId && subItemIds.includes(prItem.subItemId)) return true;
-            }
+    for (const entry of allBudgetMaps) {
+      if (entry.isLegacy) {
+        for (const row of (entry.legacyRows || [])) {
+          const budgetItem = {
+            projectId: selectedProjectId,
+            category: entry.cat,
+            code: row.mainCode,
+            description: row.mainDescription,
+            amount: row.amount,
+            status: "Draft",
+            subItems: [],
+          };
+          const safeDesc = (budgetItem.description || "")
+            .replace(/\//g, "-").replace(/[.#$[\]]/g, "").trim();
+          const budgetDocId = `${budgetItem.projectId}-${budgetItem.code}-${safeDesc}`;
+          batchPromises.push(addData("budgets", budgetItem, budgetDocId));
+          importCount++;
+        }
+      } else {
+        Object.values(entry.budgetMap || {}).forEach((budgetItem: any) => {
+          const safeDesc = (budgetItem.description || "")
+            .replace(/\//g, "-").replace(/[.#$[\]]/g, "").trim();
+          const budgetDocId = `${budgetItem.projectId}-${budgetItem.code}-${safeDesc}`;
+          const existingBudget = budgets.find(
+            (b) =>
+              b.projectId === selectedProjectId &&
+              b.code === budgetItem.code &&
+              normalizeDesc(b.description) === normalizeDesc(budgetItem.description)
+          );
+          if (existingBudget) {
+            const mergedSubItems = [...(existingBudget.subItems || []), ...budgetItem.subItems];
+            batchPromises.push(
+              updateData("budgets", existingBudget.id, { subItems: mergedSubItems })
+            );
+          } else {
+            batchPromises.push(addData("budgets", budgetItem, budgetDocId));
           }
-
-          // Fallback for Dis PR allocations or legacy mixed items without direct sub-item fields
-          if (Array.isArray(item.disPrAllocations) && item.disPrAllocations.length > 0) {
-            return item.disPrAllocations.some((alloc) => {
-              const pr = prs.find((p) => p.id === alloc?.prId);
-              if (!pr) return false;
-              if (pr.budgetId && pr.budgetId === budgetDocId) return true;
-              if (!hasDuplicateCostCode && pr.costCode === budgetCode) return true;
-              if (Array.isArray(pr.items)) {
-                return pr.items.some((prItem) =>
-                  (prItem.budgetId && prItem.budgetId === budgetDocId) ||
-                  (prItem.budgetSubItemId && subItemIds.includes(prItem.budgetSubItemId)) ||
-                  (prItem.subItemId && subItemIds.includes(prItem.subItemId))
-                );
-              }
-              return false;
-            });
-          }
-          
-          // Don't count items that only match by costCode when budget has sub-items
-          return false;
-        }
-        
-        // For budgets without sub-items, use original logic
-        // Prefer direct budgetId match
-        if (item.budgetId) return item.budgetId === budgetDocId;
-        // Fallback for legacy: PR-level budgetId
-        if (parentDoc?.budgetId) return parentDoc.budgetId === budgetDocId;
-        // Fallback for Dis PR allocations
-        if (Array.isArray(item.disPrAllocations) && item.disPrAllocations.length > 0) {
-          if (item.disPrAllocations.some((alloc) => {
-            const pr = prs.find((p) => p.id === alloc?.prId);
-            return !!pr && (pr.budgetId === budgetDocId || (!hasDuplicateCostCode && pr.costCode === budgetCode));
-          })) {
-            return true;
-          }
-        }
-        // Fallback for legacy item cost code
-        if (!hasDuplicateCostCode && item.costCode) return item.costCode === budgetCode;
-        // Match by description for legacy items
-        const iDesc = (item.description || "").trim();
-        return iDesc === budgetDesc;
-      };
-
-      const relatedPRs = prs.filter((pr) => {
-        if (pr.projectId !== selectedProjectId) return false;
-        if (pr.status === "Rejected") return false;
-        
-        // For budgets with sub-items, only include PRs that have items belonging to this budget
-        if (hasSubItems) {
-          if (!pr.items || pr.items.length === 0) return false;
-          return pr.items.some(i => itemBelongsToBudget(i, pr));
-        }
-        
-        // For budgets without sub-items, use original logic
-        // Match by budgetId (direct link)
-        if (pr.budgetId === budgetDocId) return true;
-        // Match by item-level budgetId
-        if (pr.items?.some(i => i.budgetId === budgetDocId)) return true;
-        // Fallback: match by cost code (legacy data without budgetId)
-        if (!hasDuplicateCostCode && !pr.budgetId && pr.costCode === budgetCode) return true;
-        return false;
-      });
-
-      const relatedPOs = pos.filter((po) => {
-        if (po.projectId !== selectedProjectId) return false;
-        if (po.status === "Rejected") return false;
-        
-        // For budgets with sub-items, only include POs that have items belonging to this budget
-        if (hasSubItems) {
-          if (!po.items || po.items.length === 0) return false;
-          return po.items.some(i => itemBelongsToBudget(i));
-        }
-        
-        // For budgets without sub-items, use original logic
-        if (po.items?.some(i => i.budgetId === budgetDocId)) return true;
-        // Fallback: match by cost code
-        if (!hasDuplicateCostCode && po.items?.some(i => i.costCode === budgetCode)) return true;
-        return false;
-      });
-
-      const prTotal = relatedPRs.reduce((sum, pr) => {
-        // Use PR's totalAmount directly for consistency with PO calculation
-        const prAmount = Number(pr.totalAmount || 0);
-        return sum + prAmount;
-      }, 0);
-
-      const poTotal = relatedPOs.reduce((sum, po) => {
-        // Use PO's amount before VAT (subtotal - discount)
-        // Calculate from items that belong to this budget only
-        let subtotal = 0;
-        if (po.items && po.items.length > 0) {
-          subtotal = po.items.reduce((iSum, i) => {
-            // Only include items that belong to this specific budget/sub-item
-            if (!itemBelongsToBudget(i)) return iSum;
-            const itemAmount = getItemAmount(i);
-            return iSum + itemAmount;
-          }, 0);
-        }
-        // Apply discount proportionally based on item ratio
-        if (subtotal > 0) {
-          const poSubtotal = po.items.reduce((s, i) => s + getItemAmount(i), 0);
-          const itemRatio = poSubtotal > 0 ? subtotal / poSubtotal : 0;
-          const discount = Number(po.discount || 0);
-          const proportionalDiscount = discount * itemRatio;
-          const poAmount = Math.max(0, subtotal - proportionalDiscount);
-          return sum + poAmount;
-        }
-        return sum;
-      }, 0);
-
-      const relatedInvoices = invoices.filter((inv) =>
-        relatedPOs.some((po) => po.poNo === inv.poRef && po.status !== "Rejected")
-      );
-      const invoiceTotal = relatedInvoices.reduce(
-        (sum, inv) => sum + Number(inv.amount),
-        0
-      );
-      return { prTotal, poTotal, invoiceTotal, relatedPRs, relatedPOs };
-    };
-
-    const NOW_STATUS_COLOR_MAP = {
-      green: "bg-blue-50 text-blue-800 border-blue-200",
-      blue: "bg-sky-50 text-sky-800 border-sky-200",
-      orange: "bg-orange-50 text-orange-800 border-orange-200",
-      yellow: "bg-yellow-50 text-yellow-800 border-yellow-200",
-      red: "bg-rose-50 text-rose-800 border-rose-200",
-      indigo: "bg-indigo-50 text-indigo-800 border-indigo-200",
-      purple: "bg-violet-50 text-violet-800 border-violet-200",
-      emerald: "bg-fuchsia-50 text-fuchsia-800 border-fuchsia-200",
-      cyan: "bg-cyan-50 text-cyan-800 border-cyan-200",
-      slate: "bg-slate-50 text-slate-700 border-slate-200",
-    };
-
-    const NOW_STATUS_LABEL_COLOR_MAP = {
-      "Budget รอ MD อนุมัติ": "bg-violet-50 text-violet-800 border-violet-200",
-      "Budget อนุมัติ": "bg-sky-50 text-sky-800 border-sky-200",
-      "Budget Rejected": "bg-rose-50 text-rose-800 border-rose-200",
-      "PR Wait CM": "bg-cyan-50 text-cyan-800 border-cyan-200",
-      "PR Wait PM": "bg-blue-50 text-blue-800 border-blue-200",
-      "PR Approve": "bg-indigo-50 text-indigo-800 border-indigo-200",
-      "PO Wait PCM": "bg-amber-50 text-amber-800 border-amber-200",
-      "PO Wait GM": "bg-orange-50 text-orange-800 border-orange-200",
-      "PO Approve": "bg-fuchsia-50 text-fuchsia-800 border-fuchsia-200",
-      Receiving: "bg-teal-50 text-teal-800 border-teal-200",
-      Received: "bg-red-50 text-red-800 border-red-200",
-    };
-
-    const getNowStatus = (budget, stats, filterMode = "ALL", targetSubId = null) => {
-      const budgetCode = budget.code;
-      const budgetDocId = budget.id;
-      const hasSubItems = Array.isArray(budget.subItems) && budget.subItems.length > 0;
-
-      const getItemAmount = (item) => {
-        const amount = Number(item?.amount);
-        if (Number.isFinite(amount)) return amount;
-        return Number(item?.quantity || 0) * Number(item?.price || 0);
-      };
-
-      const resolveSubItemId = (item) => {
-        if (item?.budgetSubItemId) return item.budgetSubItemId;
-        if (item?.subItemId) return item.subItemId;
-        if (item?.prId != null && item?.prItemIndex != null) {
-          const pr = prs.find((p) => p.id === item.prId);
-          return pr?.items?.[item.prItemIndex]?.budgetSubItemId
-            || pr?.items?.[item.prItemIndex]?.subItemId
-            || pr?.subItemId
-            || null;
-        }
-        return null;
-      };
-
-      const matchesTargetSubByAllocations = (item, targetSub) => {
-        if (!targetSub || !Array.isArray(item?.disPrAllocations) || item.disPrAllocations.length === 0) return false;
-        return item.disPrAllocations.some((alloc) => {
-          const pr = prs.find((p) => p.id === alloc?.prId);
-          if (!pr) return false;
-
-          // Most precise: PR item linked via index from allocation
-          if (alloc?.prItemIndex != null && Array.isArray(pr.items)) {
-            const prItem = pr.items[alloc.prItemIndex];
-            if (!prItem) return false;
-            return prItem.budgetSubItemId === targetSub.id || prItem.subItemId === targetSub.id;
-          }
-
-          // Fallback: any PR item mapped to this sub
-          if (Array.isArray(pr.items) && pr.items.some((prItem) => prItem.budgetSubItemId === targetSub.id || prItem.subItemId === targetSub.id)) {
-            return true;
-          }
-
-          // Legacy fallback
-          return pr.subItemId === targetSub.id;
+          importCount++;
         });
-      };
+      }
+    }
 
-      const matchesFilter = (item, itemCostCode, parentDoc = null) => {
-        if (filterMode === "SUB_ITEM" && targetSubId) {
-          const targetSub = hasSubItems ? budget.subItems.find((s) => s.id === targetSubId) : null;
-          if (!targetSub) return false;
-          const matchedByAlloc = matchesTargetSubByAllocations(item, targetSub);
+    await Promise.all(batchPromises);
+    await logAction("Import", `Imported ${importCount} budget items`, selectedProjectId);
+    setIsImportModalOpen(false);
+    setImportData({});
+    setImportFile(null);
+    setSelectedImportCategories([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
 
-          if (item?.budgetId) {
-            if (item.budgetId !== budgetDocId && !matchedByAlloc) return false;
-          } else if (itemCostCode !== budgetCode && !matchedByAlloc) {
-            return false;
+    const skipSummary = allSkipMessages.length > 0
+      ? `\n\nรายการที่ถูกข้าม (${allSkipMessages.length} กลุ่ม):\n${allSkipMessages.join("\n")}`
+      : "";
+    // เดิมจะแสดง Modal แจ้งผล Import ที่นี่ ตัดออกตามคำขอ
+  };
+
+  const calculateTotalBudget = (item) => {
+    // Rule 1 & 3: Main Budget amount is fixed. 
+    // It is no longer overwritten by sum of sub-items.
+    return item.amount;
+  };
+
+  const getBudgetStats = (budget) => {
+    const budgetCode = budget.code;
+    const budgetDocId = budget.id;
+    const hasSubItems = budget.subItems && budget.subItems.length > 0;
+    const budgetDesc = (budget.description || "").trim();
+    const hasDuplicateCostCode = budgets.some(
+      (b) => b.projectId === selectedProjectId && b.code === budgetCode && b.id !== budgetDocId
+    );
+
+    // Collect all sub-item IDs for this budget
+    const subItemIds = hasSubItems ? budget.subItems.map(sub => sub.id) : [];
+
+    const getItemAmount = (item) => {
+      const amount = Number(item?.amount);
+      if (Number.isFinite(amount)) return amount;
+      const qty = Number(item?.quantity || 0);
+      const price = Number(item?.price || 0);
+      return qty * price;
+    };
+
+    const itemBelongsToBudget = (item, parentDoc = null) => {
+      // For budgets with sub-items, only match items that reference specific sub-items
+      if (hasSubItems) {
+        if (item?.budgetId && item.budgetId === budgetDocId) return true;
+        // Check if item has budgetSubItemId that matches one of our sub-items
+        if (item.budgetSubItemId && subItemIds.includes(item.budgetSubItemId)) return true;
+        if (item.subItemId && subItemIds.includes(item.subItemId)) return true;
+
+        // IMPORTANT: For PO items created from PR items, trace back to find the original sub-item ID
+        if (item.prId != null && item.prItemIndex != null) {
+          const pr = prs.find(p => p.id === item.prId);
+          const prItem = pr?.items?.[item.prItemIndex];
+          if (prItem) {
+            if (prItem.budgetId && prItem.budgetId === budgetDocId) return true;
+            if (prItem.budgetSubItemId && subItemIds.includes(prItem.budgetSubItemId)) return true;
+            if (prItem.subItemId && subItemIds.includes(prItem.subItemId)) return true;
           }
-
-          const iDesc = (item?.description || "").trim();
-          const effectiveSubItemId = resolveSubItemId(item);
-          if (effectiveSubItemId) return effectiveSubItemId === targetSub.id;
-          if (matchedByAlloc) return true;
-          const docSubId = parentDoc?.selectedSubItemId || parentDoc?.subItemId;
-          if (docSubId && docSubId === targetSub.id) return true;
-          const targetDesc = (targetSub.description || "").trim();
-          return iDesc === targetDesc;
         }
+
+        // Fallback for Dis PR allocations or legacy mixed items without direct sub-item fields
+        if (Array.isArray(item.disPrAllocations) && item.disPrAllocations.length > 0) {
+          return item.disPrAllocations.some((alloc) => {
+            const pr = prs.find((p) => p.id === alloc?.prId);
+            if (!pr) return false;
+            if (pr.budgetId && pr.budgetId === budgetDocId) return true;
+            if (!hasDuplicateCostCode && pr.costCode === budgetCode) return true;
+            if (Array.isArray(pr.items)) {
+              return pr.items.some((prItem) =>
+                (prItem.budgetId && prItem.budgetId === budgetDocId) ||
+                (prItem.budgetSubItemId && subItemIds.includes(prItem.budgetSubItemId)) ||
+                (prItem.subItemId && subItemIds.includes(prItem.subItemId))
+              );
+            }
+            return false;
+          });
+        }
+
+        // Don't count items that only match by costCode when budget has sub-items
+        return false;
+      }
+
+      // For budgets without sub-items, use original logic
+      // Prefer direct budgetId match
+      if (item.budgetId) return item.budgetId === budgetDocId;
+      // Fallback for legacy: PR-level budgetId
+      if (parentDoc?.budgetId) return parentDoc.budgetId === budgetDocId;
+      // Fallback for Dis PR allocations
+      if (Array.isArray(item.disPrAllocations) && item.disPrAllocations.length > 0) {
+        if (item.disPrAllocations.some((alloc) => {
+          const pr = prs.find((p) => p.id === alloc?.prId);
+          return !!pr && (pr.budgetId === budgetDocId || (!hasDuplicateCostCode && pr.costCode === budgetCode));
+        })) {
+          return true;
+        }
+      }
+      // Fallback for legacy item cost code
+      if (!hasDuplicateCostCode && item.costCode) return item.costCode === budgetCode;
+      // Match by description for legacy items
+      const iDesc = (item.description || "").trim();
+      return iDesc === budgetDesc;
+    };
+
+    const relatedPRs = prs.filter((pr) => {
+      if (pr.projectId !== selectedProjectId) return false;
+      if (pr.status === "Rejected") return false;
+
+      // For budgets with sub-items, only include PRs that have items belonging to this budget
+      if (hasSubItems) {
+        if (!pr.items || pr.items.length === 0) return false;
+        return pr.items.some(i => itemBelongsToBudget(i, pr));
+      }
+
+      // For budgets without sub-items, use original logic
+      // Match by budgetId (direct link)
+      if (pr.budgetId === budgetDocId) return true;
+      // Match by item-level budgetId
+      if (pr.items?.some(i => i.budgetId === budgetDocId)) return true;
+      // Fallback: match by cost code (legacy data without budgetId)
+      if (!hasDuplicateCostCode && !pr.budgetId && pr.costCode === budgetCode) return true;
+      return false;
+    });
+
+    const relatedPOs = pos.filter((po) => {
+      if (po.projectId !== selectedProjectId) return false;
+      if (po.status === "Rejected") return false;
+
+      // For budgets with sub-items, only include POs that have items belonging to this budget
+      if (hasSubItems) {
+        if (!po.items || po.items.length === 0) return false;
+        return po.items.some(i => itemBelongsToBudget(i));
+      }
+
+      // For budgets without sub-items, use original logic
+      if (po.items?.some(i => i.budgetId === budgetDocId)) return true;
+      // Fallback: match by cost code
+      if (!hasDuplicateCostCode && po.items?.some(i => i.costCode === budgetCode)) return true;
+      return false;
+    });
+
+    const prTotal = relatedPRs.reduce((sum, pr) => {
+      // Use PR's totalAmount directly for consistency with PO calculation
+      const prAmount = Number(pr.totalAmount || 0);
+      return sum + prAmount;
+    }, 0);
+
+    const poTotal = relatedPOs.reduce((sum, po) => {
+      // Use PO's amount before VAT (subtotal - discount)
+      // Calculate from items that belong to this budget only
+      let subtotal = 0;
+      if (po.items && po.items.length > 0) {
+        subtotal = po.items.reduce((iSum, i) => {
+          // Only include items that belong to this specific budget/sub-item
+          if (!itemBelongsToBudget(i)) return iSum;
+          const itemAmount = getItemAmount(i);
+          return iSum + itemAmount;
+        }, 0);
+      }
+      // Apply discount proportionally based on item ratio
+      if (subtotal > 0) {
+        const poSubtotal = po.items.reduce((s, i) => s + getItemAmount(i), 0);
+        const itemRatio = poSubtotal > 0 ? subtotal / poSubtotal : 0;
+        const discount = Number(po.discount || 0);
+        const proportionalDiscount = discount * itemRatio;
+        const poAmount = Math.max(0, subtotal - proportionalDiscount);
+        return sum + poAmount;
+      }
+      return sum;
+    }, 0);
+
+    const relatedInvoices = invoices.filter((inv) =>
+      relatedPOs.some((po) => po.poNo === inv.poRef && po.status !== "Rejected")
+    );
+    const invoiceTotal = relatedInvoices.reduce(
+      (sum, inv) => sum + Number(inv.amount),
+      0
+    );
+    return { prTotal, poTotal, invoiceTotal, relatedPRs, relatedPOs };
+  };
+
+  const NOW_STATUS_COLOR_MAP = {
+    green: "bg-blue-50 text-blue-800 border-blue-200",
+    blue: "bg-sky-50 text-sky-800 border-sky-200",
+    orange: "bg-orange-50 text-orange-800 border-orange-200",
+    yellow: "bg-yellow-50 text-yellow-800 border-yellow-200",
+    red: "bg-rose-50 text-rose-800 border-rose-200",
+    indigo: "bg-indigo-50 text-indigo-800 border-indigo-200",
+    purple: "bg-violet-50 text-violet-800 border-violet-200",
+    emerald: "bg-fuchsia-50 text-fuchsia-800 border-fuchsia-200",
+    cyan: "bg-cyan-50 text-cyan-800 border-cyan-200",
+    slate: "bg-slate-50 text-slate-700 border-slate-200",
+  };
+
+  const NOW_STATUS_LABEL_COLOR_MAP = {
+    "Budget รอ MD อนุมัติ": "bg-violet-50 text-violet-800 border-violet-200",
+    "Budget อนุมัติ": "bg-sky-50 text-sky-800 border-sky-200",
+    "Budget Rejected": "bg-rose-50 text-rose-800 border-rose-200",
+    "PR Wait CM": "bg-cyan-50 text-cyan-800 border-cyan-200",
+    "PR Wait PM": "bg-blue-50 text-blue-800 border-blue-200",
+    "PR Approve": "bg-indigo-50 text-indigo-800 border-indigo-200",
+    "PO Wait PCM": "bg-amber-50 text-amber-800 border-amber-200",
+    "PO Wait GM": "bg-orange-50 text-orange-800 border-orange-200",
+    "PO Approve": "bg-fuchsia-50 text-fuchsia-800 border-fuchsia-200",
+    Receiving: "bg-teal-50 text-teal-800 border-teal-200",
+    Received: "bg-red-50 text-red-800 border-red-200",
+  };
+
+  const getNowStatus = (budget, stats, filterMode = "ALL", targetSubId = null) => {
+    const budgetCode = budget.code;
+    const budgetDocId = budget.id;
+    const hasSubItems = Array.isArray(budget.subItems) && budget.subItems.length > 0;
+
+    const getItemAmount = (item) => {
+      const amount = Number(item?.amount);
+      if (Number.isFinite(amount)) return amount;
+      return Number(item?.quantity || 0) * Number(item?.price || 0);
+    };
+
+    const resolveSubItemId = (item) => {
+      if (item?.budgetSubItemId) return item.budgetSubItemId;
+      if (item?.subItemId) return item.subItemId;
+      if (item?.prId != null && item?.prItemIndex != null) {
+        const pr = prs.find((p) => p.id === item.prId);
+        return pr?.items?.[item.prItemIndex]?.budgetSubItemId
+          || pr?.items?.[item.prItemIndex]?.subItemId
+          || pr?.subItemId
+          || null;
+      }
+      return null;
+    };
+
+    const matchesTargetSubByAllocations = (item, targetSub) => {
+      if (!targetSub || !Array.isArray(item?.disPrAllocations) || item.disPrAllocations.length === 0) return false;
+      return item.disPrAllocations.some((alloc) => {
+        const pr = prs.find((p) => p.id === alloc?.prId);
+        if (!pr) return false;
+
+        // Most precise: PR item linked via index from allocation
+        if (alloc?.prItemIndex != null && Array.isArray(pr.items)) {
+          const prItem = pr.items[alloc.prItemIndex];
+          if (!prItem) return false;
+          return prItem.budgetSubItemId === targetSub.id || prItem.subItemId === targetSub.id;
+        }
+
+        // Fallback: any PR item mapped to this sub
+        if (Array.isArray(pr.items) && pr.items.some((prItem) => prItem.budgetSubItemId === targetSub.id || prItem.subItemId === targetSub.id)) {
+          return true;
+        }
+
+        // Legacy fallback
+        return pr.subItemId === targetSub.id;
+      });
+    };
+
+    const matchesFilter = (item, itemCostCode, parentDoc = null) => {
+      if (filterMode === "SUB_ITEM" && targetSubId) {
+        const targetSub = hasSubItems ? budget.subItems.find((s) => s.id === targetSubId) : null;
+        if (!targetSub) return false;
+        const matchedByAlloc = matchesTargetSubByAllocations(item, targetSub);
 
         if (item?.budgetId) {
-          if (item.budgetId !== budgetDocId) return false;
-        } else if (itemCostCode !== budgetCode) {
+          if (item.budgetId !== budgetDocId && !matchedByAlloc) return false;
+        } else if (itemCostCode !== budgetCode && !matchedByAlloc) {
           return false;
         }
 
         const iDesc = (item?.description || "").trim();
         const effectiveSubItemId = resolveSubItemId(item);
-
-        if (filterMode === "MAIN_ONLY" && hasSubItems) {
-          if (effectiveSubItemId) {
-            return !budget.subItems.some((sub) => sub.id === effectiveSubItemId);
-          }
-          return !budget.subItems.some((sub) => (sub.description || "").trim() === iDesc);
-        }
-
-        return true;
-      };
-
-      const getPendingRole = (docType, status) => {
-        if (docType === "PR") {
-          if (status === "Pending CM") return "CM";
-          if (status === "Pending PM") return "PM";
-          if (status === "Pending GM") return "GM";
-          if (status === "Pending MD") return "MD";
-        }
-        if (docType === "PO") {
-          if (status === "Pending PCM") return "PCM";
-          if (status === "Pending GM") return "GM";
-        }
-        return null;
-      };
-
-      const statusesToReturn = [];
-
-      // Budget stage
-      const targetSub = filterMode === "SUB_ITEM" && targetSubId
-        ? (budget.subItems || []).find((s) => s.id === targetSubId)
-        : null;
-      const budgetStage = targetSub?.status || budget.status || "Draft";
-      if (budgetStage === "Wait MD Approve") {
-        statusesToReturn.push({ label: "Budget รอ MD อนุมัติ", color: "purple", amount: null });
-      } else if (budgetStage === "Approved") {
-        statusesToReturn.push({ label: "Budget อนุมัติ", color: "green", amount: null });
-      } else if (budgetStage === "Rejected") {
-        statusesToReturn.push({ label: "Budget Rejected", color: "red", amount: null });
-      } else {
-        statusesToReturn.push({ label: `Budget ${budgetStage}`, color: "slate", amount: null });
+        if (effectiveSubItemId) return effectiveSubItemId === targetSub.id;
+        if (matchedByAlloc) return true;
+        const docSubId = parentDoc?.selectedSubItemId || parentDoc?.subItemId;
+        if (docSubId && docSubId === targetSub.id) return true;
+        const targetDesc = (targetSub.description || "").trim();
+        return iDesc === targetDesc;
       }
 
-      // PR stage
-      const prGroups = {};
-      let prOpenedAmount = 0;
-      (stats.relatedPRs || []).forEach((pr) => {
-        let amount = 0;
-        if (Array.isArray(pr.items) && pr.items.length > 0) {
-          amount = pr.items
-            .filter((i) => matchesFilter(i, i.costCode || pr.costCode, pr))
-            .reduce((sum, i) => sum + getItemAmount(i), 0);
-        } else if (filterMode !== "SUB_ITEM" && pr.costCode === budgetCode) {
-          amount = Number(pr.totalAmount || pr.amount || 0);
-        }
-        if (amount <= 0) return;
-        prOpenedAmount += amount;
-        const s = pr.status || "Draft";
-        prGroups[s] = (prGroups[s] || 0) + amount;
-      });
-
-      if (prOpenedAmount > 0) {
-        ["Pending CM", "Pending PM"].forEach((st) => {
-          if ((prGroups[st] || 0) > 0) {
-            const role = getPendingRole("PR", st);
-            statusesToReturn.push({ label: `PR Wait ${role}`, amount: prGroups[st], color: "cyan" });
-          }
-        });
-        const prApprovedAmount = (prGroups["Approved"] || 0) + (prGroups["PO Issued"] || 0) + (prGroups["Closed PR"] || 0) + (prGroups["Closed PR Auto"] || 0);
-        if (prApprovedAmount > 0) {
-          statusesToReturn.push({ label: "PR Approve", amount: prApprovedAmount, color: "green" });
-        }
+      if (item?.budgetId) {
+        if (item.budgetId !== budgetDocId) return false;
+      } else if (itemCostCode !== budgetCode) {
+        return false;
       }
 
-      // PO stage
-      const poGroups = {};
-      let poOpenedAmount = 0;
-      const matchedPoItemKeys = [];
-      (stats.relatedPOs || []).forEach((po) => {
-        let amount = 0;
-        (po.items || []).forEach((i, idx) => {
-          const itemCode = i.costCode || prs.find((p) => p.id === i.prId)?.costCode;
-          if (!matchesFilter(i, itemCode, po)) return;
-          amount += getItemAmount(i);
-          matchedPoItemKeys.push({ poId: po.id, idx, orderedQty: Number(i.quantity || 0) });
-        });
-        if (amount <= 0) return;
-        poOpenedAmount += amount;
-        const s = po.statusNow || po.status || "Pending PCM";
-        poGroups[s] = (poGroups[s] || 0) + amount;
-      });
+      const iDesc = (item?.description || "").trim();
+      const effectiveSubItemId = resolveSubItemId(item);
 
-      if (poOpenedAmount > 0) {
-        ["Pending PCM", "Pending GM"].forEach((st) => {
-          if ((poGroups[st] || 0) > 0) {
-            const role = getPendingRole("PO", st);
-            statusesToReturn.push({ label: `PO Wait ${role}`, amount: poGroups[st], color: "orange" });
-          }
-        });
-        const poApprovedAmount = (poGroups["Approved"] || 0) + (poGroups["Partial Receive"] || 0) + (poGroups["Received"] || 0);
-        if (poApprovedAmount > 0) {
-          statusesToReturn.push({ label: "PO Approve", amount: poApprovedAmount, color: "green" });
+      if (filterMode === "MAIN_ONLY" && hasSubItems) {
+        if (effectiveSubItemId) {
+          return !budget.subItems.some((sub) => sub.id === effectiveSubItemId);
         }
+        return !budget.subItems.some((sub) => (sub.description || "").trim() === iDesc);
       }
 
-      // Receive stage
-      if (matchedPoItemKeys.length > 0) {
-        let orderedQty = 0;
-        let receivedQty = 0;
-        const keySet = new Set(matchedPoItemKeys.map((k) => `${k.poId}:${k.idx}`));
-        matchedPoItemKeys.forEach((k) => { orderedQty += Number(k.orderedQty || 0); });
-
-        (receives || [])
-          .filter((r: any) => r.projectId === budget.projectId)
-          .forEach((r: any) => {
-            (r.items || []).forEach((ri: any) => {
-              const key = `${r.poId}:${ri.poItemIndex}`;
-              if (!keySet.has(key)) return;
-              receivedQty += Number(ri.receivedQty || 0);
-            });
-          });
-
-        const receivePercent = orderedQty > 0
-          ? Math.max(0, Math.min(100, Math.round((receivedQty / orderedQty) * 100)))
-          : 0;
-
-        if (receivePercent > 0 && receivePercent < 100) {
-          statusesToReturn.push({ label: "Receiving", color: "cyan", amount: null, receivePercent });
-        } else if (orderedQty > 0 && receivePercent >= 100) {
-          statusesToReturn.push({ label: "Received", color: "emerald", amount: null, receivePercent: 100 });
-        }
-      }
-
-      return statusesToReturn;
+      return true;
     };
 
-    const renderNowStatusBadges = (statuses = []) => {
-      if (!statuses.length) return <span className="text-[10px] text-slate-400">-</span>;
-      return (
-        <div className="flex flex-wrap items-center justify-center gap-0.5">
-          {statuses.map((s, idx) => {
-            const badgeClass = NOW_STATUS_LABEL_COLOR_MAP[s.label] || NOW_STATUS_COLOR_MAP[s.color] || NOW_STATUS_COLOR_MAP.slate;
-            if (typeof s.receivePercent === "number" && s.receivePercent > 0 && s.receivePercent < 100) {
-              return (
-                <span key={idx} className="flex flex-col items-center gap-0.5 min-w-[72px]">
-                  <span className={`text-[9px] px-1.5 py-0 rounded border ${badgeClass} whitespace-nowrap w-full text-center`}>
-                    <span className="font-semibold">{s.label}</span>
-                    <span className="ml-1 font-extrabold text-slate-900">{s.receivePercent}%</span>
-                  </span>
-                  <div className="w-full h-1 bg-cyan-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-cyan-500 rounded-full transition-all" style={{ width: `${s.receivePercent}%` }} />
-                  </div>
-                </span>
-              );
-            }
+    const getPendingRole = (docType, status) => {
+      if (docType === "PR") {
+        if (status === "Pending CM") return "CM";
+        if (status === "Pending PM") return "PM";
+        if (status === "Pending GM") return "GM";
+        if (status === "Pending MD") return "MD";
+      }
+      if (docType === "PO") {
+        if (status === "Pending PCM") return "PCM";
+        if (status === "Pending GM") return "GM";
+      }
+      return null;
+    };
+
+    const statusesToReturn = [];
+
+    // Budget stage
+    const targetSub = filterMode === "SUB_ITEM" && targetSubId
+      ? (budget.subItems || []).find((s) => s.id === targetSubId)
+      : null;
+    const budgetStage = targetSub?.status || budget.status || "Draft";
+    if (budgetStage === "Wait MD Approve") {
+      statusesToReturn.push({ label: "Budget รอ MD อนุมัติ", color: "purple", amount: null });
+    } else if (budgetStage === "Approved") {
+      statusesToReturn.push({ label: "Budget อนุมัติ", color: "green", amount: null });
+    } else if (budgetStage === "Rejected") {
+      statusesToReturn.push({ label: "Budget Rejected", color: "red", amount: null });
+    } else {
+      statusesToReturn.push({ label: `Budget ${budgetStage}`, color: "slate", amount: null });
+    }
+
+    // PR stage
+    const prGroups = {};
+    let prOpenedAmount = 0;
+    (stats.relatedPRs || []).forEach((pr) => {
+      let amount = 0;
+      if (Array.isArray(pr.items) && pr.items.length > 0) {
+        amount = pr.items
+          .filter((i) => matchesFilter(i, i.costCode || pr.costCode, pr))
+          .reduce((sum, i) => sum + getItemAmount(i), 0);
+      } else if (filterMode !== "SUB_ITEM" && pr.costCode === budgetCode) {
+        amount = Number(pr.totalAmount || pr.amount || 0);
+      }
+      if (amount <= 0) return;
+      prOpenedAmount += amount;
+      const s = pr.status || "Draft";
+      prGroups[s] = (prGroups[s] || 0) + amount;
+    });
+
+    if (prOpenedAmount > 0) {
+      ["Pending CM", "Pending PM"].forEach((st) => {
+        if ((prGroups[st] || 0) > 0) {
+          const role = getPendingRole("PR", st);
+          statusesToReturn.push({ label: `PR Wait ${role}`, amount: prGroups[st], color: "cyan" });
+        }
+      });
+      const prApprovedAmount = (prGroups["Approved"] || 0) + (prGroups["PO Issued"] || 0) + (prGroups["Closed PR"] || 0) + (prGroups["Closed PR Auto"] || 0);
+      if (prApprovedAmount > 0) {
+        statusesToReturn.push({ label: "PR Approve", amount: prApprovedAmount, color: "green" });
+      }
+    }
+
+    // PO stage
+    const poGroups = {};
+    let poOpenedAmount = 0;
+    const matchedPoItemKeys = [];
+    (stats.relatedPOs || []).forEach((po) => {
+      let amount = 0;
+      (po.items || []).forEach((i, idx) => {
+        const itemCode = i.costCode || prs.find((p) => p.id === i.prId)?.costCode;
+        if (!matchesFilter(i, itemCode, po)) return;
+        amount += getItemAmount(i);
+        matchedPoItemKeys.push({ poId: po.id, idx, orderedQty: Number(i.quantity || 0) });
+      });
+      if (amount <= 0) return;
+      poOpenedAmount += amount;
+      const s = po.statusNow || po.status || "Pending PCM";
+      poGroups[s] = (poGroups[s] || 0) + amount;
+    });
+
+    if (poOpenedAmount > 0) {
+      ["Pending PCM", "Pending GM"].forEach((st) => {
+        if ((poGroups[st] || 0) > 0) {
+          const role = getPendingRole("PO", st);
+          statusesToReturn.push({ label: `PO Wait ${role}`, amount: poGroups[st], color: "orange" });
+        }
+      });
+      const poApprovedAmount = (poGroups["Approved"] || 0) + (poGroups["Partial Receive"] || 0) + (poGroups["Received"] || 0);
+      if (poApprovedAmount > 0) {
+        statusesToReturn.push({ label: "PO Approve", amount: poApprovedAmount, color: "green" });
+      }
+    }
+
+    // Receive stage
+    if (matchedPoItemKeys.length > 0) {
+      let orderedQty = 0;
+      let receivedQty = 0;
+      const keySet = new Set(matchedPoItemKeys.map((k) => `${k.poId}:${k.idx}`));
+      matchedPoItemKeys.forEach((k) => { orderedQty += Number(k.orderedQty || 0); });
+
+      (receives || [])
+        .filter((r: any) => r.projectId === budget.projectId)
+        .forEach((r: any) => {
+          (r.items || []).forEach((ri: any) => {
+            const key = `${r.poId}:${ri.poItemIndex}`;
+            if (!keySet.has(key)) return;
+            receivedQty += Number(ri.receivedQty || 0);
+          });
+        });
+
+      const receivePercent = orderedQty > 0
+        ? Math.max(0, Math.min(100, Math.round((receivedQty / orderedQty) * 100)))
+        : 0;
+
+      if (receivePercent > 0 && receivePercent < 100) {
+        statusesToReturn.push({ label: "Receiving", color: "cyan", amount: null, receivePercent });
+      } else if (orderedQty > 0 && receivePercent >= 100) {
+        statusesToReturn.push({ label: "Received", color: "emerald", amount: null, receivePercent: 100 });
+      }
+    }
+
+    return statusesToReturn;
+  };
+
+  const renderNowStatusBadges = (statuses = []) => {
+    if (!statuses.length) return <span className="text-[10px] text-slate-400">-</span>;
+    return (
+      <div className="flex flex-wrap items-center justify-center gap-0.5">
+        {statuses.map((s, idx) => {
+          const badgeClass = NOW_STATUS_LABEL_COLOR_MAP[s.label] || NOW_STATUS_COLOR_MAP[s.color] || NOW_STATUS_COLOR_MAP.slate;
+          if (typeof s.receivePercent === "number" && s.receivePercent > 0 && s.receivePercent < 100) {
             return (
-              <span key={idx} className={`text-[9px] px-1.5 py-0 rounded border ${badgeClass} whitespace-nowrap`}>
-                <span className="font-semibold">{s.label}</span>
-                {s.amount != null && (
-                  <span className="ml-1 font-extrabold text-slate-900">{formatCurrency(s.amount)}</span>
-                )}
+              <span key={idx} className="flex flex-col items-center gap-0.5 min-w-[72px]">
+                <span className={`text-[9px] px-1.5 py-0 rounded border ${badgeClass} whitespace-nowrap w-full text-center`}>
+                  <span className="font-semibold">{s.label}</span>
+                  <span className="ml-1 font-extrabold text-slate-900">{s.receivePercent}%</span>
+                </span>
+                <div className="w-full h-1 bg-cyan-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-cyan-500 rounded-full transition-all" style={{ width: `${s.receivePercent}%` }} />
+                </div>
               </span>
             );
-          })}
-        </div>
-      );
-    };
-
-    const pickLatestNowStatus = (statuses = []) => {
-      if (!Array.isArray(statuses) || statuses.length === 0) return null;
-
-      const getRank = (label = "") => {
-        if (label === "Received") return 100;
-        if (label === "Receiving") return 90;
-        if (label === "PO Approve") return 80;
-        if (label === "PO Wait GM") return 70;
-        if (label === "PO Wait PCM") return 60;
-        if (label === "PR Approve") return 50;
-        if (label === "PR Wait PM") return 40;
-        if (label === "PR Wait CM") return 30;
-        if (label === "Budget อนุมัติ") return 20;
-        if (label === "Budget รอ MD อนุมัติ") return 10;
-        return 0;
-      };
-
-      return [...statuses].sort((a, b) => getRank(b.label) - getRank(a.label))[0] || null;
-    };
-
-    const getCategorySummary = () => {
-      return Object.entries(COST_CATEGORIES).map(([code, name]) => {
-        const catBudgets = budgets.filter(
-          (b) => b.projectId === selectedProjectId && b.category === code
-        );
-        // Overview summary ต้องมาจากผลรวม Main item ของแต่ละหน้า (001-009)
-        const mainRows = catBudgets.map((b) => {
-          const totalBudget = Number(calculateTotalBudget(b)) || 0;
-          const stats = getBudgetStats(b);
-          const hasSubItems = Array.isArray(b.subItems) && b.subItems.length > 0;
-          const sumSubItems = hasSubItems
-            ? b.subItems.reduce((sum, sub) => sum + (Number(sub.amount) || 0), 0)
-            : 0;
-          // ใช้สูตรเดียวกับหน้า category ของแถว Main
-          const balance = hasSubItems
-            ? totalBudget - sumSubItems
-            : totalBudget - (Number(stats.invoiceTotal) || 0);
-
-          return {
-            totalBudget,
-            prTotal: Number(stats.prTotal) || 0,
-            poTotal: Number(stats.poTotal) || 0,
-            invoiceTotal: Number(stats.invoiceTotal) || 0,
-            balance,
-          };
-        });
-
-        const totalBudget = mainRows.reduce((sum, r) => sum + r.totalBudget, 0);
-        const totalPR = mainRows.reduce((sum, r) => sum + r.prTotal, 0);
-        const totalPO = mainRows.reduce((sum, r) => sum + r.poTotal, 0);
-        const totalInvoice = mainRows.reduce((sum, r) => sum + r.invoiceTotal, 0);
-        let categoryStatus = "No Budget";
-        if (catBudgets.length > 0) {
-          const hasDraft = catBudgets.some((b) => b.status === "Draft");
-          const hasRevision = catBudgets.some(
-            (b) => b.status === "Revision Pending"
+          }
+          return (
+            <span key={idx} className={`text-[9px] px-1.5 py-0 rounded border ${badgeClass} whitespace-nowrap`}>
+              <span className="font-semibold">{s.label}</span>
+              {s.amount != null && (
+                <span className="ml-1 font-extrabold text-slate-900">{formatCurrency(s.amount)}</span>
+              )}
+            </span>
           );
-          const allApproved = catBudgets.every((b) => b.status === "Approved");
-          if (hasDraft) categoryStatus = "Budget - Draft";
-          else if (hasRevision) categoryStatus = "Budget - Revision Pending";
-          else if (allApproved) categoryStatus = "Budget - MD Approved";
-          else categoryStatus = "Budget - In Progress";
-        }
-        const catBalance = mainRows.reduce((sum, r) => sum + r.balance, 0);
+        })}
+      </div>
+    );
+  };
+
+  const pickLatestNowStatus = (statuses = []) => {
+    if (!Array.isArray(statuses) || statuses.length === 0) return null;
+
+    const getRank = (label = "") => {
+      if (label === "Received") return 100;
+      if (label === "Receiving") return 90;
+      if (label === "PO Approve") return 80;
+      if (label === "PO Wait GM") return 70;
+      if (label === "PO Wait PCM") return 60;
+      if (label === "PR Approve") return 50;
+      if (label === "PR Wait PM") return 40;
+      if (label === "PR Wait CM") return 30;
+      if (label === "Budget อนุมัติ") return 20;
+      if (label === "Budget รอ MD อนุมัติ") return 10;
+      return 0;
+    };
+
+    return [...statuses].sort((a, b) => getRank(b.label) - getRank(a.label))[0] || null;
+  };
+
+  const getCategorySummary = () => {
+    return Object.entries(COST_CATEGORIES).map(([code, name]) => {
+      const catBudgets = budgets.filter(
+        (b) => b.projectId === selectedProjectId && b.category === code
+      );
+      // Overview summary ต้องมาจากผลรวม Main item ของแต่ละหน้า (001-009)
+      const mainRows = catBudgets.map((b) => {
+        const totalBudget = Number(calculateTotalBudget(b)) || 0;
+        const stats = getBudgetStats(b);
+        const hasSubItems = Array.isArray(b.subItems) && b.subItems.length > 0;
+        const sumSubItems = hasSubItems
+          ? b.subItems.reduce((sum, sub) => sum + (Number(sub.amount) || 0), 0)
+          : 0;
+        // ใช้สูตรเดียวกับหน้า category ของแถว Main
+        const balance = hasSubItems
+          ? totalBudget - sumSubItems
+          : totalBudget - (Number(stats.invoiceTotal) || 0);
 
         return {
-          code,
-          name,
-          budget: totalBudget,
-          pr: totalPR,
-          po: totalPO,
-          invoice: totalInvoice,
-          balance: catBalance,
-          status: categoryStatus,
+          totalBudget,
+          prTotal: Number(stats.prTotal) || 0,
+          poTotal: Number(stats.poTotal) || 0,
+          invoiceTotal: Number(stats.invoiceTotal) || 0,
+          balance,
         };
       });
-    };
 
-    const categorySummary = useMemo(() => getCategorySummary(), [
-      budgets,
-      selectedProjectId,
-      prs,
-      pos,
-      invoices,
-      userRole,
-      userRoles,
-    ]);
-
-    const categorySummaryTotals = useMemo(() => ({
-      budget: categorySummary.reduce((sum, c) => sum + c.budget, 0),
-      invoice: categorySummary.reduce((sum, c) => sum + c.invoice, 0),
-      balance: categorySummary.reduce((sum, c) => sum + c.balance, 0),
-      pr: categorySummary.reduce((sum, c) => sum + c.pr, 0),
-      po: categorySummary.reduce((sum, c) => sum + c.po, 0),
-    }), [categorySummary]);
-
-    const handleSaveBudget = async (newStatus = null) => {
-      if (editingBudgetId && !canUseFunction("budget", "edit")) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์แก้ไขงบประมาณ", "warning");
-        return;
+      const totalBudget = mainRows.reduce((sum, r) => sum + r.totalBudget, 0);
+      const totalPR = mainRows.reduce((sum, r) => sum + r.prTotal, 0);
+      const totalPO = mainRows.reduce((sum, r) => sum + r.poTotal, 0);
+      const totalInvoice = mainRows.reduce((sum, r) => sum + r.invoiceTotal, 0);
+      let categoryStatus = "No Budget";
+      if (catBudgets.length > 0) {
+        const hasDraft = catBudgets.some((b) => b.status === "Draft");
+        const hasRevision = catBudgets.some(
+          (b) => b.status === "Revision Pending"
+        );
+        const allApproved = catBudgets.every((b) => b.status === "Approved");
+        if (hasDraft) categoryStatus = "Budget - Draft";
+        else if (hasRevision) categoryStatus = "Budget - Revision Pending";
+        else if (allApproved) categoryStatus = "Budget - MD Approved";
+        else categoryStatus = "Budget - In Progress";
       }
-      if (!editingBudgetId && !canUseFunction("budget", "add")) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ตั้งงบประมาณ", "warning");
-        return;
-      }
-      if (newStatus === "Wait MD Approve" && !canSubmitBudget) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
-        return;
-      }
-      let success = false;
-      try {
-        if (editingBudgetId) {
-          const updatePayload = {
-            description: formData.description,
-            amount: formData.amount,
-            code: `${budgetCategory}${formData.code}`,
-          };
-          if (newStatus) updatePayload.status = newStatus;
+      const catBalance = mainRows.reduce((sum, r) => sum + r.balance, 0);
 
-          await updateDoc(
-            doc(
-              db,
-              "artifacts",
-              appId,
-              "public",
-              "data",
-              "budgets",
-              editingBudgetId
-            ),
-            updatePayload
-          );
-          await logAction("Update", `[Budget] ${formData.code} - ${formData.description} | โครงการ: ${projects.find(p => p.id === selectedProjectId)?.name || selectedProjectId}${newStatus ? ` | Status: ${newStatus}` : ''}`, selectedProjectId);
-        } else {
-          const budgetData = {
-            ...formData,
-            projectId: selectedProjectId,
-            category: budgetCategory,
-            code: `${budgetCategory}${formData.code}`,
-            status: "Draft",
-            revisionReason: "",
-            subItems: [],
-          };
-          const budgetDocId = `${selectedProjectId}-${budgetData.code}-${budgetData.description}`;
-          await setDoc(
-            doc(db, "artifacts", appId, "public", "data", "budgets", budgetDocId),
-            budgetData
-          );
-          await logAction("Create", `[Budget] ${formData.code} - ${formData.description} | โครงการ: ${projects.find(p => p.id === selectedProjectId)?.name || selectedProjectId}`, selectedProjectId);
-          if (pendingMainAttachments.length > 0) {
-            try {
-              await appendMainBudgetAttachments(budgetDocId, pendingMainAttachments);
-            } catch (attErr) {
-              console.error("[Budget] post-create attachments:", attErr);
-              showAlert(
-                "บันทึกงบแล้ว แต่แนบไฟล์ไม่สำเร็จ",
-                attErr?.message || "เกิดข้อผิดพลาด",
-                "warning"
-              );
-            }
+      return {
+        code,
+        name,
+        budget: totalBudget,
+        pr: totalPR,
+        po: totalPO,
+        invoice: totalInvoice,
+        balance: catBalance,
+        status: categoryStatus,
+      };
+    });
+  };
+
+  const categorySummary = useMemo(() => getCategorySummary(), [
+    budgets,
+    selectedProjectId,
+    prs,
+    pos,
+    invoices,
+    userRole,
+    userRoles,
+  ]);
+
+  const categorySummaryTotals = useMemo(() => ({
+    budget: categorySummary.reduce((sum, c) => sum + c.budget, 0),
+    invoice: categorySummary.reduce((sum, c) => sum + c.invoice, 0),
+    balance: categorySummary.reduce((sum, c) => sum + c.balance, 0),
+    pr: categorySummary.reduce((sum, c) => sum + c.pr, 0),
+    po: categorySummary.reduce((sum, c) => sum + c.po, 0),
+  }), [categorySummary]);
+
+  const handleSaveBudget = async (newStatus = null) => {
+    if (editingBudgetId && !canUseFunction("budget", "edit")) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์แก้ไขงบประมาณ", "warning");
+      return;
+    }
+    if (!editingBudgetId && !canUseFunction("budget", "add")) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ตั้งงบประมาณ", "warning");
+      return;
+    }
+    if (newStatus === "Wait MD Approve" && !canSubmitBudget) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
+      return;
+    }
+    let success = false;
+    try {
+      if (editingBudgetId) {
+        const updatePayload = {
+          description: formData.description,
+          amount: formData.amount,
+          code: `${budgetCategory}${formData.code}`,
+        };
+        if (newStatus) updatePayload.status = newStatus;
+
+        await updateDoc(
+          doc(
+            db,
+            "artifacts",
+            appId,
+            "public",
+            "data",
+            "budgets",
+            editingBudgetId
+          ),
+          updatePayload
+        );
+        await logAction("Update", `[Budget] ${formData.code} - ${formData.description} | โครงการ: ${projects.find(p => p.id === selectedProjectId)?.name || selectedProjectId}${newStatus ? ` | Status: ${newStatus}` : ''}`, selectedProjectId);
+      } else {
+        const budgetData = {
+          ...formData,
+          projectId: selectedProjectId,
+          category: budgetCategory,
+          code: `${budgetCategory}${formData.code}`,
+          status: "Draft",
+          revisionReason: "",
+          subItems: [],
+        };
+        const budgetDocId = `${selectedProjectId}-${budgetData.code}-${budgetData.description}`;
+        await setDoc(
+          doc(db, "artifacts", appId, "public", "data", "budgets", budgetDocId),
+          budgetData
+        );
+        await logAction("Create", `[Budget] ${formData.code} - ${formData.description} | โครงการ: ${projects.find(p => p.id === selectedProjectId)?.name || selectedProjectId}`, selectedProjectId);
+        if (pendingMainAttachments.length > 0) {
+          try {
+            await appendMainBudgetAttachments(budgetDocId, pendingMainAttachments);
+          } catch (attErr) {
+            console.error("[Budget] post-create attachments:", attErr);
+            showAlert(
+              "บันทึกงบแล้ว แต่แนบไฟล์ไม่สำเร็จ",
+              attErr?.message || "เกิดข้อผิดพลาด",
+              "warning"
+            );
           }
         }
-        setPendingMainAttachments([]);
-        setIsModalOpen(false);
-        setEditingBudgetId(null);
-        setFormData({ code: "", description: "", amount: 0 });
-      } catch (e) {
-        showAlert("Error", e.message, "error");
       }
-    };
-
-    const handleDeleteBudget = async (id) => {
-      if (!canUseFunction("budget", "delete")) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ลบงบประมาณ", "warning");
-        return;
-      }
-      openConfirm(
-        "ยืนยันการลบ",
-        "คุณต้องการลบรายการงบประมาณนี้ใช่หรือไม่?",
-        async () => {
-          try {
-            const b = budgets.find((x) => x.id === id);
-            await deleteDoc(
-              doc(db, "artifacts", appId, "public", "data", "budgets", id)
-            );
-            const desc =
-              b?.description && String(b.description).length > 80
-                ? `${String(b.description).slice(0, 77)}…`
-                : b?.description || "";
-            await logAction(
-              "Delete",
-              b
-                ? `Deleted Budget ${b.code}${desc ? ` — ${desc}` : ""}`
-                : `Deleted Budget ID: ${id}`,
-              selectedProjectId
-            );
-          } catch (e) {
-            showAlert("Error", e.message, "error");
-          }
-        },
-        "danger"
-      );
-    };
-
-    const handleClearAllBudgets = () => {
-      if (!canClearAllBudgets) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ล้างงบทั้งหมวด", "warning");
-        return;
-      }
-      openConfirm(
-        "⚠️ ล้างข้อมูลทั้งหมด",
-        `คุณต้องการลบข้อมูลงบประมาณทั้งหมดในหน้านี้ (${currentBudgets.length} รายการ) ใช่หรือไม่?\nการดำเนินการนี้ไม่สามารถย้อนกลับได้`,
-        () => {
-          setClearConfirmText("");
-          setIsClearConfirmOpen(true);
-        },
-        "danger"
-      );
-    };
-
-    const handleConfirmClearAll = async () => {
-      if (clearConfirmText !== "Confirm") return;
-      try {
-        await Promise.all(
-          currentBudgets.map((b) =>
-            deleteDoc(doc(db, "artifacts", appId, "public", "data", "budgets", b.id))
-          )
-        );
-        await logAction("Delete", `Cleared all ${currentBudgets.length} budget items in category ${budgetCategory}`, selectedProjectId);
-        setIsClearConfirmOpen(false);
-        setClearConfirmText("");
-      } catch (e) {
-        showAlert("Error", e.message, "error");
-      }
-    };
-
-    const handleEditClick = (item) => {
-      const suffix = item.code.substring(3);
-      setFormData({
-        code: suffix,
-        description: item.description,
-        amount: item.amount,
-      });
       setPendingMainAttachments([]);
-      setEditingBudgetId(item.id);
-      setSelectedBudget(item);
-      setIsModalOpen(true);
-    };
+      setIsModalOpen(false);
+      setEditingBudgetId(null);
+      setFormData({ code: "", description: "", amount: 0 });
+    } catch (e) {
+      showAlert("Error", e.message, "error");
+    }
+  };
 
-    const handleApproveBudget = async (budgetId) => {
-      if (!canApproveBudget) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุมัติงบประมาณ", "warning");
-        return;
-      }
-      const b = budgets.find((x) => x.id === budgetId);
-      await updateDoc(
-        doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
-        { status: "Approved", revisionReason: "", rejectReason: "" }
-      );
-      const desc =
-        b?.description && String(b.description).length > 80
-          ? `${String(b.description).slice(0, 77)}…`
-          : b?.description || "";
-      await logAction(
-        "Approve",
-        b
-          ? `Approved Budget ${b.code}${desc ? ` — ${desc}` : ""}`
-          : `Approved Budget ID: ${budgetId}`,
-        selectedProjectId
-      );
-      // ไม่แสดง Modal แจ้งเตือนเมื่อ Approve สำเร็จ เพื่อลด pop-up ตามคำขอ
-    };
-
-    const handleSubmitBudget = async (id) => {
-      if (!canSubmitBudget) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
-        return;
-      }
-      openConfirm(
-        "ยืนยันการส่ง",
-        "คุณต้องการส่งขออนุมัติรายการนี้ใช่หรือไม่?",
-        async () => {
+  const handleDeleteBudget = async (id) => {
+    if (!canUseFunction("budget", "delete")) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ลบงบประมาณ", "warning");
+      return;
+    }
+    openConfirm(
+      "ยืนยันการลบ",
+      "คุณต้องการลบรายการงบประมาณนี้ใช่หรือไม่?",
+      async () => {
+        try {
           const b = budgets.find((x) => x.id === id);
-          await updateDoc(
-            doc(db, "artifacts", appId, "public", "data", "budgets", id),
-            { status: "Wait MD Approve" }
+          await deleteDoc(
+            doc(db, "artifacts", appId, "public", "data", "budgets", id)
           );
           const desc =
             b?.description && String(b.description).length > 80
               ? `${String(b.description).slice(0, 77)}…`
               : b?.description || "";
           await logAction(
-            "Submit Budget",
+            "Delete",
             b
-              ? `ส่ง Budget ${b.code}${desc ? ` — ${desc}` : ""} เพื่ออนุมัติ MD`
-              : `ส่ง Budget ID ${id} เพื่ออนุมัติ MD`,
+              ? `Deleted Budget ${b.code}${desc ? ` — ${desc}` : ""}`
+              : `Deleted Budget ID: ${id}`,
             selectedProjectId
           );
-          showAlert(
-            "ส่งคำขอสำเร็จ",
-            "ส่งรายการ Budget ให้ MD ตรวจสอบแล้ว",
-            "success"
-          );
+        } catch (e) {
+          showAlert("Error", e.message, "error");
         }
+      },
+      "danger"
+    );
+  };
+
+  const handleClearAllBudgets = () => {
+    if (!canClearAllBudgets) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ล้างงบทั้งหมวด", "warning");
+      return;
+    }
+    openConfirm(
+      "⚠️ ล้างข้อมูลทั้งหมด",
+      `คุณต้องการลบข้อมูลงบประมาณทั้งหมดในหน้านี้ (${currentBudgets.length} รายการ) ใช่หรือไม่?\nการดำเนินการนี้ไม่สามารถย้อนกลับได้`,
+      () => {
+        setClearConfirmText("");
+        setIsClearConfirmOpen(true);
+      },
+      "danger"
+    );
+  };
+
+  const handleConfirmClearAll = async () => {
+    if (clearConfirmText !== "Confirm") return;
+    try {
+      await Promise.all(
+        currentBudgets.map((b) =>
+          deleteDoc(doc(db, "artifacts", appId, "public", "data", "budgets", b.id))
+        )
       );
-    };
+      await logAction("Delete", `Cleared all ${currentBudgets.length} budget items in category ${budgetCategory}`, selectedProjectId);
+      setIsClearConfirmOpen(false);
+      setClearConfirmText("");
+    } catch (e) {
+      showAlert("Error", e.message, "error");
+    }
+  };
 
-    // ล้างการเลือกเมื่อเปลี่ยนหมวด
-    useEffect(() => {
-      setSelectedBudgetIds([]);
-      setActionDropdownOpen(false);
-    }, [budgetCategory]);
+  const handleEditClick = (item) => {
+    const suffix = item.code.substring(3);
+    setFormData({
+      code: suffix,
+      description: item.description,
+      amount: item.amount,
+    });
+    setPendingMainAttachments([]);
+    setEditingBudgetId(item.id);
+    setSelectedBudget(item);
+    setIsModalOpen(true);
+  };
 
-    const handleBulkSubmitBudgets = () => {
-      if (!canSubmitBudget) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
-        return;
-      }
-      setActionDropdownOpen(false);
-      if (selectedBudgetIds.length === 0) {
-        showAlert("กรุณาเลือกรายการ", "กรุณาเลือกรายการที่ต้องการส่งอนุมัติก่อน (ติ๊กถูกหน้าบรรทัด)", "warning");
-        return;
-      }
-      const toSubmit = selectedBudgetIds.filter((id) => {
+  const handleApproveBudget = async (budgetId) => {
+    if (!canApproveBudget) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุมัติงบประมาณ", "warning");
+      return;
+    }
+    const b = budgets.find((x) => x.id === budgetId);
+    await updateDoc(
+      doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
+      { status: "Approved", revisionReason: "", rejectReason: "" }
+    );
+    const desc =
+      b?.description && String(b.description).length > 80
+        ? `${String(b.description).slice(0, 77)}…`
+        : b?.description || "";
+    await logAction(
+      "Approve",
+      b
+        ? `Approved Budget ${b.code}${desc ? ` — ${desc}` : ""}`
+        : `Approved Budget ID: ${budgetId}`,
+      selectedProjectId
+    );
+    // ไม่แสดง Modal แจ้งเตือนเมื่อ Approve สำเร็จ เพื่อลด pop-up ตามคำขอ
+  };
+
+  const handleSubmitBudget = async (id) => {
+    if (!canSubmitBudget) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
+      return;
+    }
+    openConfirm(
+      "ยืนยันการส่ง",
+      "คุณต้องการส่งขออนุมัติรายการนี้ใช่หรือไม่?",
+      async () => {
         const b = budgets.find((x) => x.id === id);
-        return b && b.status === "Draft";
-      });
-      if (toSubmit.length === 0) {
-        showAlert("ไม่สามารถส่งได้", "ไม่มีรายการที่สถานะ Draft ในรายการที่เลือก (ส่งได้เฉพาะรายการแบบร่าง)", "warning");
-        return;
+        await updateDoc(
+          doc(db, "artifacts", appId, "public", "data", "budgets", id),
+          { status: "Wait MD Approve" }
+        );
+        const desc =
+          b?.description && String(b.description).length > 80
+            ? `${String(b.description).slice(0, 77)}…`
+            : b?.description || "";
+        await logAction(
+          "Submit Budget",
+          b
+            ? `ส่ง Budget ${b.code}${desc ? ` — ${desc}` : ""} เพื่ออนุมัติ MD`
+            : `ส่ง Budget ID ${id} เพื่ออนุมัติ MD`,
+          selectedProjectId
+        );
+        showAlert(
+          "ส่งคำขอสำเร็จ",
+          "ส่งรายการ Budget ให้ MD ตรวจสอบแล้ว",
+          "success"
+        );
       }
-          openConfirm(
-            "ยืนยันส่ง MD Approve",
-            `ส่งรายการที่เลือก ${toSubmit.length} รายการไปยัง MD อนุมัติใช่หรือไม่?`,
-            async () => {
-              try {
-                for (const id of toSubmit) {
-                  await updateDoc(
-                    doc(db, "artifacts", appId, "public", "data", "budgets", id),
-                    { status: "Wait MD Approve" }
-                  );
-                }
-                await logAction("Bulk", `Sent ${toSubmit.length} budgets to Wait MD Approve`, selectedProjectId);
-                setSelectedBudgetIds([]);
-                setActionDropdownOpen(false);
-              } catch (e) {
-                showAlert("เกิดข้อผิดพลาด", e?.message || "ไม่สามารถส่งได้", "error");
-              }
-            }
-          );
-    };
+    );
+  };
 
-    const handleBulkDeleteBudgets = () => {
-      if (!canUseFunction("budget", "delete")) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ลบงบประมาณ", "warning");
-        return;
-      }
-      setActionDropdownOpen(false);
-      if (selectedBudgetIds.length === 0) {
-        showAlert("กรุณาเลือกรายการ", "กรุณาเลือกรายการที่ต้องการลบก่อน (ติ๊กถูกหน้าบรรทัด)", "warning");
-        return;
-      }
-      const toDelete = selectedBudgetIds.filter((id) => {
-        const b = budgets.find((x) => x.id === id);
-        return b && (b.status === "Draft" || userRole === "MD" || userRole === "Administrator");
-      });
-      if (toDelete.length === 0) {
-        showAlert("ไม่สามารถลบได้", "ไม่มีรายการที่ลบได้ในรายการที่เลือก (เฉพาะ Draft หรือ MD/Admin ลบได้)", "warning");
-        return;
-      }
-      openConfirm(
-        "ยืนยันลบหลายรายการ",
-        `คุณต้องการลบรายการที่เลือก ${toDelete.length} รายการใช่หรือไม่? การดำเนินการนี้ไม่สามารถย้อนกลับได้`,
-        async () => {
-          try {
-            for (const id of toDelete) {
-              await deleteDoc(
-                doc(db, "artifacts", appId, "public", "data", "budgets", id)
-              );
-            }
-            await logAction("Bulk", `Deleted ${toDelete.length} budgets`, selectedProjectId);
-            setSelectedBudgetIds([]);
-            setActionDropdownOpen(false);
-            showAlert("สำเร็จ", `ลบ ${toDelete.length} รายการเรียบร้อย`, "success");
-          } catch (e) {
-            showAlert("เกิดข้อผิดพลาด", e?.message || "ไม่สามารถลบได้", "error");
+  // ล้างการเลือกเมื่อเปลี่ยนหมวด
+  useEffect(() => {
+    setSelectedBudgetIds([]);
+    setActionDropdownOpen(false);
+  }, [budgetCategory]);
+
+  const handleBulkSubmitBudgets = () => {
+    if (!canSubmitBudget) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
+      return;
+    }
+    setActionDropdownOpen(false);
+    if (selectedBudgetIds.length === 0) {
+      showAlert("กรุณาเลือกรายการ", "กรุณาเลือกรายการที่ต้องการส่งอนุมัติก่อน (ติ๊กถูกหน้าบรรทัด)", "warning");
+      return;
+    }
+    const toSubmit = selectedBudgetIds.filter((id) => {
+      const b = budgets.find((x) => x.id === id);
+      return b && b.status === "Draft";
+    });
+    if (toSubmit.length === 0) {
+      showAlert("ไม่สามารถส่งได้", "ไม่มีรายการที่สถานะ Draft ในรายการที่เลือก (ส่งได้เฉพาะรายการแบบร่าง)", "warning");
+      return;
+    }
+    openConfirm(
+      "ยืนยันส่ง MD Approve",
+      `ส่งรายการที่เลือก ${toSubmit.length} รายการไปยัง MD อนุมัติใช่หรือไม่?`,
+      async () => {
+        try {
+          for (const id of toSubmit) {
+            await updateDoc(
+              doc(db, "artifacts", appId, "public", "data", "budgets", id),
+              { status: "Wait MD Approve" }
+            );
           }
-        },
-        "danger"
-      );
-    };
-
-    const handleBulkApprovePendingBudgets = async () => {
-      if (!canApproveBudget) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุมัติงบประมาณ", "warning");
-        return;
-      }
-      setPendingActionDropdownOpen(false);
-      if (pendingSelectedBudgetIds.length === 0) {
-        showAlert("กรุณาเลือกรายการ", "กรุณาเลือกรายการงบที่ต้องการ Approve ก่อน (ติ๊กถูกหน้าบรรทัด)", "warning");
-        return;
-      }
-      const toApprove = pendingSelectedBudgetIds.filter((id) => {
-        const b = pendingBudgetsForProject.find((x) => x.id === id);
-        return !!b;
-      });
-      if (toApprove.length === 0) {
-        showAlert("ไม่พบรายการ", "ไม่มีรายการรออนุมัติที่ตรงกับการเลือก", "warning");
-        return;
-      }
-      try {
-        for (const id of toApprove) {
-          await updateDoc(
-            doc(db, "artifacts", appId, "public", "data", "budgets", id),
-            { status: "Approved", revisionReason: "", rejectReason: "" }
-          );
+          await logAction("Bulk", `Sent ${toSubmit.length} budgets to Wait MD Approve`, selectedProjectId);
+          setSelectedBudgetIds([]);
+          setActionDropdownOpen(false);
+        } catch (e) {
+          showAlert("เกิดข้อผิดพลาด", e?.message || "ไม่สามารถส่งได้", "error");
         }
-        await logAction("Bulk", `Approved ${toApprove.length} pending budgets from dashboard`, selectedProjectId);
-        setPendingSelectedBudgetIds([]);
-        setPendingActionDropdownOpen(false);
-        // ไม่แสดง Modal แจ้งเตือนเมื่อ Approve สำเร็จ เพื่อลด pop-up ตามคำขอ
-      } catch (e) {
-        showAlert("เกิดข้อผิดพลาด", e?.message || "ไม่สามารถ Approve ได้", "error");
       }
-    };
+    );
+  };
 
-    const handleBulkRejectPendingBudgets = () => {
-      if (!canRejectBudget) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธงบประมาณ", "warning");
-        return;
-      }
-      setPendingActionDropdownOpen(false);
-      if (pendingSelectedBudgetIds.length === 0) {
-        showAlert("กรุณาเลือกรายการ", "กรุณาเลือกรายการงบที่ต้องการ Reject ก่อน (ติ๊กถูกหน้าบรรทัด)", "warning");
-        return;
-      }
-      const toReject = pendingSelectedBudgetIds.filter((id) => {
-        const b = pendingBudgetsForProject.find((x) => x.id === id);
-        return !!b;
-      });
-      if (toReject.length === 0) {
-        showAlert("ไม่พบรายการ", "ไม่มีรายการรออนุมัติที่ตรงกับการเลือก", "warning");
-        return;
-      }
-      openConfirm(
-        "ยืนยัน Reject หลายรายการ",
-        `คุณต้องการ Reject Budget ที่เลือก ${toReject.length} รายการใช่หรือไม่?`,
-        async () => {
-          try {
-            for (const id of toReject) {
-              await updateDoc(
-                doc(db, "artifacts", appId, "public", "data", "budgets", id),
-                { status: "Rejected" }
-              );
-            }
-            await logAction("Bulk", `Rejected ${toReject.length} pending budgets from dashboard`, selectedProjectId);
-            setPendingSelectedBudgetIds([]);
-            setPendingActionDropdownOpen(false);
-            showAlert("สำเร็จ", `Reject งบประมาณ ${toReject.length} รายการเรียบร้อย`, "success");
-          } catch (e) {
-            showAlert("เกิดข้อผิดพลาด", e?.message || "ไม่สามารถ Reject ได้", "error");
+  const handleBulkDeleteBudgets = () => {
+    if (!canUseFunction("budget", "delete")) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ลบงบประมาณ", "warning");
+      return;
+    }
+    setActionDropdownOpen(false);
+    if (selectedBudgetIds.length === 0) {
+      showAlert("กรุณาเลือกรายการ", "กรุณาเลือกรายการที่ต้องการลบก่อน (ติ๊กถูกหน้าบรรทัด)", "warning");
+      return;
+    }
+    const toDelete = selectedBudgetIds.filter((id) => {
+      const b = budgets.find((x) => x.id === id);
+      return b && (b.status === "Draft" || userRole === "MD" || userRole === "Administrator");
+    });
+    if (toDelete.length === 0) {
+      showAlert("ไม่สามารถลบได้", "ไม่มีรายการที่ลบได้ในรายการที่เลือก (เฉพาะ Draft หรือ MD/Admin ลบได้)", "warning");
+      return;
+    }
+    openConfirm(
+      "ยืนยันลบหลายรายการ",
+      `คุณต้องการลบรายการที่เลือก ${toDelete.length} รายการใช่หรือไม่? การดำเนินการนี้ไม่สามารถย้อนกลับได้`,
+      async () => {
+        try {
+          for (const id of toDelete) {
+            await deleteDoc(
+              doc(db, "artifacts", appId, "public", "data", "budgets", id)
+            );
           }
-        },
-        "danger"
-      );
-    };
+          await logAction("Bulk", `Deleted ${toDelete.length} budgets`, selectedProjectId);
+          setSelectedBudgetIds([]);
+          setActionDropdownOpen(false);
+          showAlert("สำเร็จ", `ลบ ${toDelete.length} รายการเรียบร้อย`, "success");
+        } catch (e) {
+          showAlert("เกิดข้อผิดพลาด", e?.message || "ไม่สามารถลบได้", "error");
+        }
+      },
+      "danger"
+    );
+  };
 
-    const handleRequestRevision = async () => {
-      if (!canRequestBudgetRevision) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ขอแก้ไขงบประมาณ", "warning");
-        return;
+  const handleBulkApprovePendingBudgets = async () => {
+    if (!canApproveBudget) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุมัติงบประมาณ", "warning");
+      return;
+    }
+    setPendingActionDropdownOpen(false);
+    if (pendingSelectedBudgetIds.length === 0) {
+      showAlert("กรุณาเลือกรายการ", "กรุณาเลือกรายการงบที่ต้องการ Approve ก่อน (ติ๊กถูกหน้าบรรทัด)", "warning");
+      return;
+    }
+    const toApprove = pendingSelectedBudgetIds.filter((id) => {
+      const b = pendingBudgetsForProject.find((x) => x.id === id);
+      return !!b;
+    });
+    if (toApprove.length === 0) {
+      showAlert("ไม่พบรายการ", "ไม่มีรายการรออนุมัติที่ตรงกับการเลือก", "warning");
+      return;
+    }
+    try {
+      for (const id of toApprove) {
+        await updateDoc(
+          doc(db, "artifacts", appId, "public", "data", "budgets", id),
+          { status: "Approved", revisionReason: "", rejectReason: "" }
+        );
       }
-      if (!selectedBudget || !revisionReason) return;
-      await updateDoc(
-        doc(
-          db,
-          "artifacts",
-          appId,
-          "public",
-          "data",
-          "budgets",
-          selectedBudget.id
-        ),
-        { status: "Revision Pending", revisionReason: revisionReason }
-      );
-      await logAction(
-        "Request",
-        `Requested Revision for Budget: ${selectedBudget.code}`,
-        selectedProjectId
-      );
-      setIsRevisionModalOpen(false);
-      setRevisionReason("");
-      setSelectedBudget(null);
-    };
+      await logAction("Bulk", `Approved ${toApprove.length} pending budgets from dashboard`, selectedProjectId);
+      setPendingSelectedBudgetIds([]);
+      setPendingActionDropdownOpen(false);
+      // ไม่แสดง Modal แจ้งเตือนเมื่อ Approve สำเร็จ เพื่อลด pop-up ตามคำขอ
+    } catch (e) {
+      showAlert("เกิดข้อผิดพลาด", e?.message || "ไม่สามารถ Approve ได้", "error");
+    }
+  };
 
-    const handleAllowEdit = async (budgetId) => {
-      if (!canAllowEditBudget) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุญาตแก้ไขงบประมาณ", "warning");
-        return;
-      }
-      const b = budgets.find((x) => x.id === budgetId);
-      await updateDoc(
-        doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
-        { status: "Draft", revisionReason: "", rejectReason: "" }
-      );
-      const desc =
-        b?.description && String(b.description).length > 80
-          ? `${String(b.description).slice(0, 77)}…`
-          : b?.description || "";
-      await logAction(
-        "Approve",
-        b
-          ? `Allowed Edit for Budget ${b.code}${desc ? ` — ${desc}` : ""}`
-          : `Allowed Edit for Budget ID: ${budgetId}`,
-        selectedProjectId
-      );
-    };
+  const handleBulkRejectPendingBudgets = () => {
+    if (!canRejectBudget) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธงบประมาณ", "warning");
+      return;
+    }
+    setPendingActionDropdownOpen(false);
+    if (pendingSelectedBudgetIds.length === 0) {
+      showAlert("กรุณาเลือกรายการ", "กรุณาเลือกรายการงบที่ต้องการ Reject ก่อน (ติ๊กถูกหน้าบรรทัด)", "warning");
+      return;
+    }
+    const toReject = pendingSelectedBudgetIds.filter((id) => {
+      const b = pendingBudgetsForProject.find((x) => x.id === id);
+      return !!b;
+    });
+    if (toReject.length === 0) {
+      showAlert("ไม่พบรายการ", "ไม่มีรายการรออนุมัติที่ตรงกับการเลือก", "warning");
+      return;
+    }
+    openConfirm(
+      "ยืนยัน Reject หลายรายการ",
+      `คุณต้องการ Reject Budget ที่เลือก ${toReject.length} รายการใช่หรือไม่?`,
+      async () => {
+        try {
+          for (const id of toReject) {
+            await updateDoc(
+              doc(db, "artifacts", appId, "public", "data", "budgets", id),
+              { status: "Rejected" }
+            );
+          }
+          await logAction("Bulk", `Rejected ${toReject.length} pending budgets from dashboard`, selectedProjectId);
+          setPendingSelectedBudgetIds([]);
+          setPendingActionDropdownOpen(false);
+          showAlert("สำเร็จ", `Reject งบประมาณ ${toReject.length} รายการเรียบร้อย`, "success");
+        } catch (e) {
+          showAlert("เกิดข้อผิดพลาด", e?.message || "ไม่สามารถ Reject ได้", "error");
+        }
+      },
+      "danger"
+    );
+  };
 
-    const handleRejectRevision = async (budgetId) => {
-      if (!canRejectBudgetRevision) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธคำขอแก้ไขงบประมาณ", "warning");
-        return;
-      }
-      const b = budgets.find((x) => x.id === budgetId);
-      await updateDoc(
-        doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
-        { status: "Approved", revisionReason: "" }
-      );
-      const desc =
-        b?.description && String(b.description).length > 80
-          ? `${String(b.description).slice(0, 77)}…`
-          : b?.description || "";
-      await logAction(
-        "Reject Revision",
-        b
-          ? `Rejected revision request for Budget ${b.code}${desc ? ` — ${desc}` : ""} — สถานะกลับเป็น Approved`
-          : `Rejected revision request for Budget ID: ${budgetId} — สถานะกลับเป็น Approved`,
-        selectedProjectId
-      );
-    };
+  const handleRequestRevision = async () => {
+    if (!canRequestBudgetRevision) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ขอแก้ไขงบประมาณ", "warning");
+      return;
+    }
+    if (!selectedBudget || !revisionReason) return;
+    await updateDoc(
+      doc(
+        db,
+        "artifacts",
+        appId,
+        "public",
+        "data",
+        "budgets",
+        selectedBudget.id
+      ),
+      { status: "Revision Pending", revisionReason: revisionReason }
+    );
+    await logAction(
+      "Request",
+      `Requested Revision for Budget: ${selectedBudget.code}`,
+      selectedProjectId
+    );
+    setIsRevisionModalOpen(false);
+    setRevisionReason("");
+    setSelectedBudget(null);
+  };
 
-    const openRejectModal = (budget) => {
-      setSelectedBudget(budget);
-      setRejectReason("");
-      setIsRejectModalOpen(true);
-    };
+  const handleAllowEdit = async (budgetId) => {
+    if (!canAllowEditBudget) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุญาตแก้ไขงบประมาณ", "warning");
+      return;
+    }
+    const b = budgets.find((x) => x.id === budgetId);
+    await updateDoc(
+      doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
+      { status: "Draft", revisionReason: "", rejectReason: "" }
+    );
+    const desc =
+      b?.description && String(b.description).length > 80
+        ? `${String(b.description).slice(0, 77)}…`
+        : b?.description || "";
+    await logAction(
+      "Approve",
+      b
+        ? `Allowed Edit for Budget ${b.code}${desc ? ` — ${desc}` : ""}`
+        : `Allowed Edit for Budget ID: ${budgetId}`,
+      selectedProjectId
+    );
+  };
 
-    const handleRejectBudget = async () => {
-      if (!selectedBudget || !rejectReason) return;
-      if (!canRejectBudget) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธงบประมาณ", "warning");
-        return;
-      }
-      await updateDoc(
-        doc(db, "artifacts", appId, "public", "data", "budgets", selectedBudget.id),
-        { status: "Rejected", rejectReason: rejectReason }
-      );
-      await logAction("Reject", `Rejected Budget: ${selectedBudget.code} - ${rejectReason}`, selectedProjectId);
-      setIsRejectModalOpen(false);
-      setRejectReason("");
-      setSelectedBudget(null);
-      showAlert("ปฏิเสธแล้ว", "รายการ Budget ถูกปฏิเสธเรียบร้อย", "error");
-    };
+  const handleRejectRevision = async (budgetId) => {
+    if (!canRejectBudgetRevision) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธคำขอแก้ไขงบประมาณ", "warning");
+      return;
+    }
+    const b = budgets.find((x) => x.id === budgetId);
+    await updateDoc(
+      doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
+      { status: "Approved", revisionReason: "" }
+    );
+    const desc =
+      b?.description && String(b.description).length > 80
+        ? `${String(b.description).slice(0, 77)}…`
+        : b?.description || "";
+    await logAction(
+      "Reject Revision",
+      b
+        ? `Rejected revision request for Budget ${b.code}${desc ? ` — ${desc}` : ""} — สถานะกลับเป็น Approved`
+        : `Rejected revision request for Budget ID: ${budgetId} — สถานะกลับเป็น Approved`,
+      selectedProjectId
+    );
+  };
 
-    const subItemLogDescription = (budget, subItemId) => {
-      const sub = budget?.subItems?.find((s) => s.id === subItemId);
-      const raw = (sub?.description ?? "").trim() || "(no description)";
-      return raw.length > 120 ? `${raw.slice(0, 117)}…` : raw;
-    };
+  const openRejectModal = (budget) => {
+    setSelectedBudget(budget);
+    setRejectReason("");
+    setIsRejectModalOpen(true);
+  };
 
-    const handleApproveSubItem = async (budgetId, subItemId) => {
-      if (!canApproveSubItem) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุมัติรายการย่อย", "warning");
-        return;
-      }
-      const budget = budgets.find(b => b.id === budgetId);
-      if (!budget) return;
+  const handleRejectBudget = async () => {
+    if (!selectedBudget || !rejectReason) return;
+    if (!canRejectBudget) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธงบประมาณ", "warning");
+      return;
+    }
+    await updateDoc(
+      doc(db, "artifacts", appId, "public", "data", "budgets", selectedBudget.id),
+      { status: "Rejected", rejectReason: rejectReason }
+    );
+    await logAction("Reject", `Rejected Budget: ${selectedBudget.code} - ${rejectReason}`, selectedProjectId);
+    setIsRejectModalOpen(false);
+    setRejectReason("");
+    setSelectedBudget(null);
+    showAlert("ปฏิเสธแล้ว", "รายการ Budget ถูกปฏิเสธเรียบร้อย", "error");
+  };
 
-      const newSubItems = budget.subItems.map(sub =>
-        sub.id === subItemId ? { ...sub, status: "Approved", rejectReason: "" } : sub
-      );
+  const subItemLogDescription = (budget, subItemId) => {
+    const sub = budget?.subItems?.find((s) => s.id === subItemId);
+    const raw = (sub?.description ?? "").trim() || "(no description)";
+    return raw.length > 120 ? `${raw.slice(0, 117)}…` : raw;
+  };
 
-      await updateDoc(
-        doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
-        { subItems: newSubItems }
-      );
-      await logAction("Approve Sub-Item", `Approved Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code})`, budget.projectId || selectedProjectId);
-      // ไม่แสดง Modal แจ้งเตือนเมื่อ Approve รายการย่อยสำเร็จ เพื่อลด pop-up ตามคำขอ
-    };
+  const handleApproveSubItem = async (budgetId, subItemId) => {
+    if (!canApproveSubItem) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุมัติรายการย่อย", "warning");
+      return;
+    }
+    const budget = budgets.find(b => b.id === budgetId);
+    if (!budget) return;
 
-    const handleRequestRevisionSubItem = async (budgetId, subItemId, reason) => {
+    const newSubItems = budget.subItems.map(sub =>
+      sub.id === subItemId ? { ...sub, status: "Approved", rejectReason: "" } : sub
+    );
+
+    await updateDoc(
+      doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
+      { subItems: newSubItems }
+    );
+    await logAction("Approve Sub-Item", `Approved Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code})`, budget.projectId || selectedProjectId);
+    // ไม่แสดง Modal แจ้งเตือนเมื่อ Approve รายการย่อยสำเร็จ เพื่อลด pop-up ตามคำขอ
+  };
+
+  const handleRequestRevisionSubItem = async (budgetId, subItemId, reason) => {
+    if (!canRequestSubItemRevision) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ขอแก้ไขงบประมาณ", "warning");
+      return;
+    }
+    const budget = budgets.find(b => b.id === budgetId);
+    if (!budget) return;
+    const newSubItems = budget.subItems.map(sub =>
+      sub.id === subItemId ? { ...sub, status: "Revision Pending", revisionReason: reason } : sub
+    );
+    await updateDoc(
+      doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
+      { subItems: newSubItems }
+    );
+    await logAction("Request Revision Sub-Item", `Requested Revision for Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code})`, budget.projectId || selectedProjectId);
+    showAlert("ส่งคำขอแก้ไข", "ส่งเรื่องรอ MD อนุมัติการแก้ไขรายการย่อยแล้ว", "info");
+  };
+
+  const handleAllowEditSubItem = async (budgetId, subItemId) => {
+    if (!canAllowEditSubItem) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุญาตแก้ไขรายการย่อย", "warning");
+      return;
+    }
+    const budget = budgets.find(b => b.id === budgetId);
+    if (!budget) return;
+    const newSubItems = budget.subItems.map(sub =>
+      sub.id === subItemId ? { ...sub, status: "Draft", revisionReason: "", rejectReason: "" } : sub
+    );
+    await updateDoc(
+      doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
+      { subItems: newSubItems }
+    );
+    await logAction("Allow Edit Sub-Item", `Allowed Edit for Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code})`, budget.projectId || selectedProjectId);
+    showAlert("อนุญาตแล้ว", "ปลดล็อครายการย่อยให้แก้ไขได้ (สถานะ Draft)", "success");
+  };
+
+  const handleRejectRevisionSubItem = async (budgetId, subItemId) => {
+    if (!canRejectSubItemRevision) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธคำขอแก้ไขรายการย่อย", "warning");
+      return;
+    }
+    const budget = budgets.find(b => b.id === budgetId);
+    if (!budget) return;
+    const newSubItems = budget.subItems.map(sub =>
+      sub.id === subItemId ? { ...sub, status: "Approved", revisionReason: "" } : sub
+    );
+    await updateDoc(
+      doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
+      { subItems: newSubItems }
+    );
+    await logAction("Reject Revision Sub-Item", `Rejected revision for Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code}) — สถานะกลับเป็น Approved`, budget.projectId || selectedProjectId);
+    showAlert("ไม่อนุญาตแก้ไข", "สถานะรายการย่อยกลับเป็น Approved ตามเดิม", "info");
+  };
+
+  const handleRecalculateTotals = async () => {
+    if (!canRecalculateBudget) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์คำนวณยอดใหม่", "warning");
+      return;
+    }
+    if (!selectedProjectId) {
+      showAlert("แจ้งเตือน", "กรุณาเลือกโครงการก่อน", "warning");
+      return;
+    }
+
+    setIsRecalculating(true);
+    try {
+      // Force refresh data to get the latest calculations with the new logic
+      await updateData();
+      showAlert("สำเร็จ", "คำนวณยอด PO TOTAL ใหม่เรียบร้อยแล้ว", "success");
+      await logAction("Recalculate", `Recalculated PO totals for project`, selectedProjectId);
+    } catch (error) {
+      console.error("Error recalculating totals:", error);
+      showAlert("ข้อผิดพลาด", "ไม่สามารถคำนวณยอดใหม่ได้", "error");
+    } finally {
+      setIsRecalculating(false);
+    }
+  };
+
+  const openReasonModal = (type, budgetId, subItemId) => {
+    setReasonModalType(type);
+    setReasonModalContext({ budgetId, subItemId });
+    setReasonModalValue("");
+    setReasonModalOpen(true);
+  };
+
+  const handleReasonModalSubmit = () => {
+    const { budgetId, subItemId } = reasonModalContext;
+    if (!reasonModalValue.trim()) return;
+    if (reasonModalType === "revision") {
       if (!canRequestSubItemRevision) {
         showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ขอแก้ไขงบประมาณ", "warning");
         return;
       }
-      const budget = budgets.find(b => b.id === budgetId);
-      if (!budget) return;
-      const newSubItems = budget.subItems.map(sub =>
-        sub.id === subItemId ? { ...sub, status: "Revision Pending", revisionReason: reason } : sub
-      );
-      await updateDoc(
-        doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
-        { subItems: newSubItems }
-      );
-      await logAction("Request Revision Sub-Item", `Requested Revision for Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code})`, budget.projectId || selectedProjectId);
-      showAlert("ส่งคำขอแก้ไข", "ส่งเรื่องรอ MD อนุมัติการแก้ไขรายการย่อยแล้ว", "info");
-    };
+      handleRequestRevisionSubItem(budgetId, subItemId, reasonModalValue.trim());
+    } else {
+      handleRejectSubItem(budgetId, subItemId, reasonModalValue.trim());
+    }
+    setReasonModalOpen(false);
+    setReasonModalValue("");
+  };
 
-    const handleAllowEditSubItem = async (budgetId, subItemId) => {
-      if (!canAllowEditSubItem) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุญาตแก้ไขรายการย่อย", "warning");
-        return;
-      }
-      const budget = budgets.find(b => b.id === budgetId);
-      if (!budget) return;
-      const newSubItems = budget.subItems.map(sub =>
-        sub.id === subItemId ? { ...sub, status: "Draft", revisionReason: "", rejectReason: "" } : sub
-      );
-      await updateDoc(
-        doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
-        { subItems: newSubItems }
-      );
-      await logAction("Allow Edit Sub-Item", `Allowed Edit for Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code})`, budget.projectId || selectedProjectId);
-      showAlert("อนุญาตแล้ว", "ปลดล็อครายการย่อยให้แก้ไขได้ (สถานะ Draft)", "success");
-    };
+  const handleSubmitSubItem = async (budgetId, subItemId) => {
+    if (!canSubmitSubItem) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
+      return;
+    }
+    const budget = budgets.find(b => b.id === budgetId);
+    if (!budget) return;
+    if (budget.status !== "Approved") {
+      showAlert("ไม่สามารถส่งคำขออนุมัติได้", "Main item ยังไม่ได้รับการอนุมัติ กรุณาส่งขออนุมัติ Main item ก่อน", "warning");
+      return;
+    }
+    const newSubItems = budget.subItems.map(sub =>
+      sub.id === subItemId ? { ...sub, status: "Wait MD Approve", rejectReason: "" } : sub
+    );
+    await updateDoc(
+      doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
+      { subItems: newSubItems }
+    );
+    await logAction("Submit Sub-Item", `Submitted Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code}) for approval`, budget.projectId || selectedProjectId);
+  };
 
-    const handleRejectRevisionSubItem = async (budgetId, subItemId) => {
-      if (!canRejectSubItemRevision) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธคำขอแก้ไขรายการย่อย", "warning");
-        return;
-      }
-      const budget = budgets.find(b => b.id === budgetId);
-      if (!budget) return;
-      const newSubItems = budget.subItems.map(sub =>
-        sub.id === subItemId ? { ...sub, status: "Approved", revisionReason: "" } : sub
-      );
-      await updateDoc(
-        doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
-        { subItems: newSubItems }
-      );
-      await logAction("Reject Revision Sub-Item", `Rejected revision for Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code}) — สถานะกลับเป็น Approved`, budget.projectId || selectedProjectId);
-      showAlert("ไม่อนุญาตแก้ไข", "สถานะรายการย่อยกลับเป็น Approved ตามเดิม", "info");
-    };
+  const handleRejectSubItem = async (budgetId, subItemId, reason) => {
+    if (!canRejectSubItem) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธรายการย่อย", "warning");
+      return;
+    }
+    const budget = budgets.find(b => b.id === budgetId);
+    if (!budget) return;
 
-    const handleRecalculateTotals = async () => {
-      if (!canRecalculateBudget) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์คำนวณยอดใหม่", "warning");
-        return;
-      }
-      if (!selectedProjectId) {
-        showAlert("แจ้งเตือน", "กรุณาเลือกโครงการก่อน", "warning");
-        return;
-      }
-      
-      setIsRecalculating(true);
+    const newSubItems = budget.subItems.map(sub =>
+      sub.id === subItemId ? { ...sub, status: "Rejected", rejectReason: reason } : sub
+    );
+
+    await updateDoc(
+      doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
+      { subItems: newSubItems }
+    );
+    await logAction("Reject Sub-Item", `Rejected Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code})`, budget.projectId || selectedProjectId);
+    showAlert("ปฏิเสธแล้ว", "ปฏิเสธรายการย่อย (Sub-Item) เรียบร้อย", "error");
+  };
+
+  const toggleRow = (id) => {
+    setExpandedBudgetRows((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const openSubItemModal = (item) => {
+    if (!canAddSubItem) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์เพิ่มรายการย่อย", "warning");
+      return;
+    }
+    setSelectedBudget(item);
+    setEditingSubItem(null);
+    setPendingSubAttachments([]);
+    setSubItemData({ description: "", quantity: 1, unit: "งาน", unitPrice: 0, amount: 0 });
+    setUnitInputText("งาน");
+    setUnitDropdownOpen(false);
+    setIsSubItemModalOpen(true);
+  };
+
+  const openEditSubItemModal = (mainItem, subItem) => {
+    if (!canEditSubItem) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์แก้ไขรายการย่อย", "warning");
+      return;
+    }
+    setSelectedBudget(mainItem);
+    setPendingSubAttachments([]);
+    setEditingSubItem(subItem);
+    setSubItemData({
+      description: subItem.description,
+      quantity: subItem.quantity,
+      unit: subItem.unit || "งาน",
+      unitPrice: subItem.unitPrice || 0,
+      amount: subItem.amount,
+    });
+    setUnitInputText(subItem.unit || "งาน");
+    setUnitDropdownOpen(false);
+    setIsSubItemModalOpen(true);
+  };
+
+  const handleResubmitSubItemFromModal = async () => {
+    if (!canSubmitSubItem) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
+      return;
+    }
+    if (!selectedBudget || !editingSubItem) return;
+    if (selectedBudget.status !== "Approved") {
+      showAlert("ไม่สามารถส่งคำขออนุมัติได้", "Main item ยังไม่ได้รับการอนุมัติ กรุณาส่งขออนุมัติ Main item ก่อน", "warning");
+      return;
+    }
+    const amountToAdd = Number(subItemData.quantity) * Number(subItemData.unitPrice);
+    const updatedSub = {
+      ...editingSubItem,
+      description: subItemData.description,
+      quantity: Number(subItemData.quantity),
+      unit: subItemData.unit || "งาน",
+      unitPrice: Number(subItemData.unitPrice),
+      amount: amountToAdd,
+      status: "Wait MD Approve",
+      rejectReason: ""
+    };
+    const updatedSubItems = selectedBudget.subItems.map((sub) =>
+      sub.id === editingSubItem.id ? updatedSub : sub
+    );
+    await updateDoc(
+      doc(db, "artifacts", appId, "public", "data", "budgets", selectedBudget.id),
+      { subItems: updatedSubItems }
+    );
+    setPendingSubAttachments([]);
+    setIsSubItemModalOpen(false);
+    setEditingSubItem(null);
+    setExpandedBudgetRows((prev) => ({ ...prev, [selectedBudget.id]: true }));
+  };
+
+  const handleSaveSubItem = async () => {
+    if (!selectedBudget) return;
+    if (editingSubItem && !canEditSubItem) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์แก้ไขรายการย่อย", "warning");
+      return;
+    }
+    if (!editingSubItem && !canAddSubItem) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์เพิ่มรายการย่อย", "warning");
+      return;
+    }
+    if (!subItemData.description.trim()) return showAlert("ข้อมูลไม่ครบ", "กรุณากรอกชื่อรายการ", "warning");
+    const amountToAdd = Number(subItemData.quantity) * Number(subItemData.unitPrice);
+    const newSubItem = {
+      ...(editingSubItem || {}),
+      id: editingSubItem ? editingSubItem.id : crypto.randomUUID(),
+      description: subItemData.description,
+      quantity: Number(subItemData.quantity),
+      unit: subItemData.unit || "งาน",
+      unitPrice: Number(subItemData.unitPrice),
+      amount: amountToAdd,
+      status: editingSubItem?.status === "Rejected" ? "Rejected" : "Draft",
+      rejectReason: editingSubItem?.status === "Rejected" ? (editingSubItem.rejectReason || "") : ""
+    };
+    let updatedSubItems;
+    if (editingSubItem) {
+      updatedSubItems = selectedBudget.subItems.map((sub) =>
+        sub.id === editingSubItem.id ? newSubItem : sub
+      );
+    } else {
+      updatedSubItems = [...(selectedBudget.subItems || []), newSubItem];
+    }
+    const newTotal = updatedSubItems.reduce(
+      (sum, sub) => sum + sub.amount,
+      0
+    );
+
+    // Rule 3 Validation: Sub-items cannot exceed Main Budget's original amount
+    if (newTotal > selectedBudget.amount) {
+      return showAlert(
+        "ยอดเงินเกินกำหนด",
+        `ยอดรวมรายการย่อย (${formatCurrency(newTotal)}) ห้ามเกินงบประมาณหลักที่ตั้งไว้ (${formatCurrency(selectedBudget.amount)})`,
+        "error"
+      );
+    }
+
+    // Rule 4: Do NOT update main budget amount.
+    await updateDoc(
+      doc(
+        db,
+        "artifacts",
+        appId,
+        "public",
+        "data",
+        "budgets",
+        selectedBudget.id
+      ),
+      { subItems: updatedSubItems }
+    );
+    if (pendingSubAttachments.length > 0 && !editingSubItem) {
       try {
-        // Force refresh data to get the latest calculations with the new logic
-        await updateData();
-        showAlert("สำเร็จ", "คำนวณยอด PO TOTAL ใหม่เรียบร้อยแล้ว", "success");
-        await logAction("Recalculate", `Recalculated PO totals for project`, selectedProjectId);
-      } catch (error) {
-        console.error("Error recalculating totals:", error);
-        showAlert("ข้อผิดพลาด", "ไม่สามารถคำนวณยอดใหม่ได้", "error");
-      } finally {
-        setIsRecalculating(false);
-      }
-    };
-
-    const openReasonModal = (type, budgetId, subItemId) => {
-      setReasonModalType(type);
-      setReasonModalContext({ budgetId, subItemId });
-      setReasonModalValue("");
-      setReasonModalOpen(true);
-    };
-
-    const handleReasonModalSubmit = () => {
-      const { budgetId, subItemId } = reasonModalContext;
-      if (!reasonModalValue.trim()) return;
-      if (reasonModalType === "revision") {
-        if (!canRequestSubItemRevision) {
-          showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ขอแก้ไขงบประมาณ", "warning");
-          return;
-        }
-        handleRequestRevisionSubItem(budgetId, subItemId, reasonModalValue.trim());
-      } else {
-        handleRejectSubItem(budgetId, subItemId, reasonModalValue.trim());
-      }
-      setReasonModalOpen(false);
-      setReasonModalValue("");
-    };
-
-    const handleSubmitSubItem = async (budgetId, subItemId) => {
-      if (!canSubmitSubItem) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
-        return;
-      }
-      const budget = budgets.find(b => b.id === budgetId);
-      if (!budget) return;
-      if (budget.status !== "Approved") {
-        showAlert("ไม่สามารถส่งคำขออนุมัติได้", "Main item ยังไม่ได้รับการอนุมัติ กรุณาส่งขออนุมัติ Main item ก่อน", "warning");
-        return;
-      }
-      const newSubItems = budget.subItems.map(sub =>
-        sub.id === subItemId ? { ...sub, status: "Wait MD Approve", rejectReason: "" } : sub
-      );
-      await updateDoc(
-        doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
-        { subItems: newSubItems }
-      );
-      await logAction("Submit Sub-Item", `Submitted Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code}) for approval`, budget.projectId || selectedProjectId);
-    };
-
-    const handleRejectSubItem = async (budgetId, subItemId, reason) => {
-      if (!canRejectSubItem) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธรายการย่อย", "warning");
-        return;
-      }
-      const budget = budgets.find(b => b.id === budgetId);
-      if (!budget) return;
-
-      const newSubItems = budget.subItems.map(sub =>
-        sub.id === subItemId ? { ...sub, status: "Rejected", rejectReason: reason } : sub
-      );
-
-      await updateDoc(
-        doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
-        { subItems: newSubItems }
-      );
-      await logAction("Reject Sub-Item", `Rejected Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code})`, budget.projectId || selectedProjectId);
-      showAlert("ปฏิเสธแล้ว", "ปฏิเสธรายการย่อย (Sub-Item) เรียบร้อย", "error");
-    };
-
-    const toggleRow = (id) => {
-      setExpandedBudgetRows((prev) => ({ ...prev, [id]: !prev[id] }));
-    };
-
-    const openSubItemModal = (item) => {
-      if (!canAddSubItem) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์เพิ่มรายการย่อย", "warning");
-        return;
-      }
-      setSelectedBudget(item);
-      setEditingSubItem(null);
-      setPendingSubAttachments([]);
-      setSubItemData({ description: "", quantity: 1, unit: "งาน", unitPrice: 0, amount: 0 });
-      setUnitInputText("งาน");
-      setUnitDropdownOpen(false);
-      setIsSubItemModalOpen(true);
-    };
-
-    const openEditSubItemModal = (mainItem, subItem) => {
-      if (!canEditSubItem) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์แก้ไขรายการย่อย", "warning");
-        return;
-      }
-      setSelectedBudget(mainItem);
-      setPendingSubAttachments([]);
-      setEditingSubItem(subItem);
-      setSubItemData({
-        description: subItem.description,
-        quantity: subItem.quantity,
-        unit: subItem.unit || "งาน",
-        unitPrice: subItem.unitPrice || 0,
-        amount: subItem.amount,
-      });
-      setUnitInputText(subItem.unit || "งาน");
-      setUnitDropdownOpen(false);
-      setIsSubItemModalOpen(true);
-    };
-
-    const handleResubmitSubItemFromModal = async () => {
-      if (!canSubmitSubItem) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
-        return;
-      }
-      if (!selectedBudget || !editingSubItem) return;
-      if (selectedBudget.status !== "Approved") {
-        showAlert("ไม่สามารถส่งคำขออนุมัติได้", "Main item ยังไม่ได้รับการอนุมัติ กรุณาส่งขออนุมัติ Main item ก่อน", "warning");
-        return;
-      }
-      const amountToAdd = Number(subItemData.quantity) * Number(subItemData.unitPrice);
-      const updatedSub = {
-        ...editingSubItem,
-        description: subItemData.description,
-        quantity: Number(subItemData.quantity),
-        unit: subItemData.unit || "งาน",
-        unitPrice: Number(subItemData.unitPrice),
-        amount: amountToAdd,
-        status: "Wait MD Approve",
-        rejectReason: ""
-      };
-      const updatedSubItems = selectedBudget.subItems.map((sub) =>
-        sub.id === editingSubItem.id ? updatedSub : sub
-      );
-      await updateDoc(
-        doc(db, "artifacts", appId, "public", "data", "budgets", selectedBudget.id),
-        { subItems: updatedSubItems }
-      );
-      setPendingSubAttachments([]);
-      setIsSubItemModalOpen(false);
-      setEditingSubItem(null);
-      setExpandedBudgetRows((prev) => ({ ...prev, [selectedBudget.id]: true }));
-    };
-
-    const handleSaveSubItem = async () => {
-      if (!selectedBudget) return;
-      if (editingSubItem && !canEditSubItem) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์แก้ไขรายการย่อย", "warning");
-        return;
-      }
-      if (!editingSubItem && !canAddSubItem) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์เพิ่มรายการย่อย", "warning");
-        return;
-      }
-      if (!subItemData.description.trim()) return showAlert("ข้อมูลไม่ครบ", "กรุณากรอกชื่อรายการ", "warning");
-      const amountToAdd = Number(subItemData.quantity) * Number(subItemData.unitPrice);
-      const newSubItem = {
-        ...(editingSubItem || {}),
-        id: editingSubItem ? editingSubItem.id : crypto.randomUUID(),
-        description: subItemData.description,
-        quantity: Number(subItemData.quantity),
-        unit: subItemData.unit || "งาน",
-        unitPrice: Number(subItemData.unitPrice),
-        amount: amountToAdd,
-        status: editingSubItem?.status === "Rejected" ? "Rejected" : "Draft",
-        rejectReason: editingSubItem?.status === "Rejected" ? (editingSubItem.rejectReason || "") : ""
-      };
-      let updatedSubItems;
-      if (editingSubItem) {
-        updatedSubItems = selectedBudget.subItems.map((sub) =>
-          sub.id === editingSubItem.id ? newSubItem : sub
+        await appendSubItemAttachments(
+          selectedBudget.id,
+          newSubItem.id,
+          pendingSubAttachments,
+          updatedSubItems
         );
-      } else {
-        updatedSubItems = [...(selectedBudget.subItems || []), newSubItem];
-      }
-      const newTotal = updatedSubItems.reduce(
-        (sum, sub) => sum + sub.amount,
-        0
-      );
-
-      // Rule 3 Validation: Sub-items cannot exceed Main Budget's original amount
-      if (newTotal > selectedBudget.amount) {
-        return showAlert(
-          "ยอดเงินเกินกำหนด",
-          `ยอดรวมรายการย่อย (${formatCurrency(newTotal)}) ห้ามเกินงบประมาณหลักที่ตั้งไว้ (${formatCurrency(selectedBudget.amount)})`,
-          "error"
+      } catch (attErr) {
+        console.error("[Sub-Item] post-save attachments:", attErr);
+        showAlert(
+          "บันทึก Sub แล้ว แต่แนบไฟล์ไม่สำเร็จ",
+          attErr?.message || "เกิดข้อผิดพลาด",
+          "warning"
         );
       }
+    }
+    setPendingSubAttachments([]);
+    setIsSubItemModalOpen(false);
+    setExpandedBudgetRows((prev) => ({ ...prev, [selectedBudget.id]: true }));
+  };
 
-      // Rule 4: Do NOT update main budget amount.
-      await updateDoc(
-        doc(
-          db,
-          "artifacts",
-          appId,
-          "public",
-          "data",
-          "budgets",
-          selectedBudget.id
-        ),
-        { subItems: updatedSubItems }
-      );
-      if (pendingSubAttachments.length > 0 && !editingSubItem) {
-        try {
-          await appendSubItemAttachments(
-            selectedBudget.id,
-            newSubItem.id,
-            pendingSubAttachments,
-            updatedSubItems
-          );
-        } catch (attErr) {
-          console.error("[Sub-Item] post-save attachments:", attErr);
-          showAlert(
-            "บันทึก Sub แล้ว แต่แนบไฟล์ไม่สำเร็จ",
-            attErr?.message || "เกิดข้อผิดพลาด",
-            "warning"
-          );
-        }
-      }
-      setPendingSubAttachments([]);
-      setIsSubItemModalOpen(false);
-      setExpandedBudgetRows((prev) => ({ ...prev, [selectedBudget.id]: true }));
-    };
+  const handleDeleteSubItem = async (mainId, subId) => {
+    if (!canDeleteSubItem) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ลบรายการย่อย", "warning");
+      return;
+    }
+    openConfirm(
+      "ยืนยันการลบ",
+      "ต้องการลบรายการย่อยนี้หรือไม่?",
+      async () => {
+        const mainBudget = budgets.find((b) => b.id === mainId);
+        if (!mainBudget) return;
+        const updatedSubItems = mainBudget.subItems.filter(
+          (sub) => sub.id !== subId
+        );
+        await updateDoc(
+          doc(db, "artifacts", appId, "public", "data", "budgets", mainId),
+          { subItems: updatedSubItems }
+        );
+      },
+      "danger"
+    );
+  };
 
-    const handleDeleteSubItem = async (mainId, subId) => {
-      if (!canDeleteSubItem) {
-        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ลบรายการย่อย", "warning");
-        return;
-      }
-      openConfirm(
-        "ยืนยันการลบ",
-        "ต้องการลบรายการย่อยนี้หรือไม่?",
-        async () => {
-          const mainBudget = budgets.find((b) => b.id === mainId);
-          if (!mainBudget) return;
-          const updatedSubItems = mainBudget.subItems.filter(
-            (sub) => sub.id !== subId
-          );
-          await updateDoc(
-            doc(db, "artifacts", appId, "public", "data", "budgets", mainId),
-            { subItems: updatedSubItems }
-          );
-        },
-        "danger"
-      );
-    };
-
-    return (
-      <div className="space-y-4 w-full min-w-0">
-        {/* ── Page Header + Tabs ── */}
-        <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white/40 p-2 rounded-2xl border border-slate-100/50 shadow-sm">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 flex items-center justify-center shadow-sm">
-                <Briefcase size={19} className="text-blue-600" />
-              </div>
-              <div>
-                <h2 className="text-lg font-bold text-blue-800 leading-none">A. Budget (งบประมาณ)</h2>
-                <p className="text-[10px] text-blue-400 mt-1">วางแผนและควบคุมงบประมาณโครงการ</p>
-              </div>
+  return (
+    <div className="space-y-4 w-full min-w-0">
+      {/* ── Page Header + Tabs ── */}
+      <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white/40 p-2 rounded-2xl border border-slate-100/50 shadow-sm">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 flex items-center justify-center shadow-sm">
+              <Briefcase size={19} className="text-blue-600" />
             </div>
-
-            {/* ── Tabs ── */}
-            <div className="flex items-center gap-1 bg-blue-50/50 rounded-xl border border-blue-100/50 p-1 w-fit overflow-x-auto no-scrollbar">
-              <button
-                onClick={() => setBudgetCategory("OVERVIEW")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
-                  budgetCategory === "OVERVIEW"
-                    ? "bg-white text-blue-600 shadow-sm ring-1 ring-blue-200"
-                    : "text-blue-400 hover:text-blue-600 hover:bg-white/50"
-                }`}
-              >
-                <BarChart3 size={13} />
-                Overview
-              </button>
-              {Object.entries(COST_CATEGORIES).map(([key, label]) => (
-                <button
-                  key={key}
-                  onClick={() => setBudgetCategory(key)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
-                    budgetCategory === key
-                      ? "bg-white text-blue-600 shadow-sm ring-1 ring-blue-200"
-                      : "text-blue-400 hover:text-blue-600 hover:bg-white/50"
-                  }`}
-                >
-                  {key}
-                </button>
-              ))}
+            <div>
+              <h2 className="text-lg font-bold text-blue-800 leading-none">Budget (งบประมาณ)</h2>
+              <p className="text-[10px] text-blue-400 mt-1">วางแผนและควบคุมงบประมาณโครงการ</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <ColumnVisibilityToggle tableId="budget" />
+          {/* ── Tabs ── */}
+          <div className="flex items-center gap-1 bg-blue-50/50 rounded-xl border border-blue-100/50 p-1 w-fit overflow-x-auto no-scrollbar">
+            <button
+              onClick={() => setBudgetCategory("OVERVIEW")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${budgetCategory === "OVERVIEW"
+                  ? "bg-white text-blue-600 shadow-sm ring-1 ring-blue-200"
+                  : "text-blue-400 hover:text-blue-600 hover:bg-white/50"
+                }`}
+            >
+              <BarChart3 size={13} />
+              Overview
+            </button>
+            {Object.entries(COST_CATEGORIES).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setBudgetCategory(key)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${budgetCategory === key
+                    ? "bg-white text-blue-600 shadow-sm ring-1 ring-blue-200"
+                    : "text-blue-400 hover:text-blue-600 hover:bg-white/50"
+                  }`}
+              >
+                {key}
+              </button>
+            ))}
           </div>
         </div>
 
-        {budgetCategory === "OVERVIEW" ? (
-          <>
-            <Card className="overflow-hidden w-full min-w-0">
-              <div className="p-3 bg-slate-50 border-b">
-                <h3 className="font-bold text-sm text-slate-800">
-                  สรุปภาพรวมงบประมาณโครงการ (Project Budget Summary)
+        <div className="flex items-center gap-2">
+          <ColumnVisibilityToggle tableId="budget" />
+        </div>
+      </div>
+
+      {budgetCategory === "OVERVIEW" ? (
+        <>
+          <Card className="overflow-hidden w-full min-w-0">
+            <div className="p-3 bg-slate-50 border-b">
+              <h3 className="font-bold text-sm text-slate-800">
+                สรุปภาพรวมงบประมาณโครงการ (Project Budget Summary)
+              </h3>
+            </div>
+            <table className="w-full text-left text-sm text-slate-600 table-fixed">
+              <colgroup>
+                <col style={{ width: "7%" }} />
+                <col style={{ width: "28%" }} />
+                <col style={{ width: "14%" }} />
+                <col style={{ width: "13%" }} />
+                <col style={{ width: "14%" }} />
+                <col style={{ width: "12%" }} />
+                <col style={{ width: "12%" }} />
+              </colgroup>
+              <thead className="bg-slate-200 text-slate-900 uppercase font-bold border-b text-sm">
+                <tr>
+                  <th className="py-3 px-4 border-r">Code</th>
+                  <th className="py-3 px-4 border-r min-w-0">หมวดงาน</th>
+                  <th className="py-3 px-4 text-right bg-blue-100">
+                    Budget Total
+                  </th>
+                  <th className="py-3 px-4 text-right text-orange-700">
+                    Spent (Inv)
+                  </th>
+                  <th className="py-3 px-4 text-right border-r font-bold text-green-800">
+                    Balance
+                  </th>
+                  <th className="py-3 px-4 text-right text-slate-600">
+                    PR Total
+                  </th>
+                  <th className="py-3 px-4 text-right text-slate-600 border-r-0">
+                    PO Total
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {categorySummary.map((cat) => (
+                  <tr key={cat.code} className="hover:bg-slate-50">
+                    <td className="py-2 px-4 border-r font-bold text-center bg-slate-50">
+                      {cat.code}
+                    </td>
+                    <td className="py-2 px-4 border-r font-medium min-w-0 truncate" title={cat.name}>
+                      {cat.name}
+                    </td>
+                    <td className="py-2 px-4 text-right bg-blue-50/50 font-semibold text-slate-900">
+                      {formatCurrency(cat.budget)}
+                    </td>
+                    <td className="py-2 px-4 text-right text-orange-600">
+                      {formatCurrency(cat.invoice)}
+                    </td>
+                    <td
+                      className={`py-2 px-4 text-right border-r font-bold ${cat.balance < 0 ? "text-red-600" : "text-green-600"
+                        }`}
+                    >
+                      {formatCurrency(cat.balance)}
+                    </td>
+                    <td className="py-2 px-4 text-right text-slate-500">
+                      {formatCurrency(cat.pr)}
+                    </td>
+                    <td className="py-2 px-4 text-right text-slate-500 border-r-0">
+                      {formatCurrency(cat.po)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-slate-800 text-white font-bold">
+                <tr>
+                  <td colSpan="2" className="py-2 px-3 text-right">
+                    Grand Total
+                  </td>
+                  <td className="py-2 px-3 text-right">
+                    {formatCurrency(
+                      categorySummaryTotals.budget
+                    )}
+                  </td>
+                  <td className="py-2 px-3 text-right text-orange-300">
+                    {formatCurrency(
+                      categorySummaryTotals.invoice
+                    )}
+                  </td>
+                  <td className="py-2 px-3 text-right">
+                    {formatCurrency(
+                      categorySummaryTotals.balance
+                    )}
+                  </td>
+                  <td className="py-2 px-3 text-right text-slate-300">
+                    {formatCurrency(
+                      categorySummaryTotals.pr
+                    )}
+                  </td>
+                  <td className="py-2 px-3 text-right text-slate-300 border-r-0">
+                    {formatCurrency(
+                      categorySummaryTotals.po
+                    )}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </Card>
+
+          {/* ===== Approval Tasks Section (เลื่อนลงมาดูเมื่อกดกระดิ่ง) ===== */}
+          {(pendingBudgetsForProject.length > 0 || pendingPRsForProject.length > 0 || pendingPOsForProject.length > 0 || pendingSubItemsForProject.length > 0) && (
+            <div ref={pendingSectionRef} id="pending-approval-tasks" className="space-y-4 scroll-mt-4">
+              <div className="flex items-center gap-2 pt-2">
+                <Bell size={16} className="text-amber-500" />
+                <h3 className="text-sm font-bold text-slate-700">
+                  รายการรออนุมัติ (Pending Approval Tasks)
                 </h3>
+                <span className="bg-red-500 text-white text-[10px] font-bold rounded-full px-2 py-0.5 shadow-sm">
+                  {pendingBudgetsForProject.length + pendingSubItemsForProject.length + pendingPRsForProject.length + pendingPOsForProject.length} รายการ
+                </span>
               </div>
-              <table className="w-full text-left text-sm text-slate-600 table-fixed">
-                <colgroup>
-                  <col style={{ width: "7%" }} />
-                  <col style={{ width: "28%" }} />
-                  <col style={{ width: "14%" }} />
-                  <col style={{ width: "13%" }} />
-                  <col style={{ width: "14%" }} />
-                  <col style={{ width: "12%" }} />
-                  <col style={{ width: "12%" }} />
-                </colgroup>
-                <thead className="bg-slate-200 text-slate-900 uppercase font-bold border-b text-sm">
-                  <tr>
-                    <th className="py-3 px-4 border-r">Code</th>
-                    <th className="py-3 px-4 border-r min-w-0">หมวดงาน</th>
-                    <th className="py-3 px-4 text-right bg-blue-100">
-                      Budget Total
-                    </th>
-                    <th className="py-3 px-4 text-right text-orange-700">
-                      Spent (Inv)
-                    </th>
-                    <th className="py-3 px-4 text-right border-r font-bold text-green-800">
-                      Balance
-                    </th>
-                    <th className="py-3 px-4 text-right text-slate-600">
-                      PR Total
-                    </th>
-                    <th className="py-3 px-4 text-right text-slate-600 border-r-0">
-                      PO Total
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {categorySummary.map((cat) => (
-                    <tr key={cat.code} className="hover:bg-slate-50">
-                      <td className="py-2 px-4 border-r font-bold text-center bg-slate-50">
-                        {cat.code}
-                      </td>
-                      <td className="py-2 px-4 border-r font-medium min-w-0 truncate" title={cat.name}>
-                        {cat.name}
-                      </td>
-                      <td className="py-2 px-4 text-right bg-blue-50/50 font-semibold text-slate-900">
-                        {formatCurrency(cat.budget)}
-                      </td>
-                      <td className="py-2 px-4 text-right text-orange-600">
-                        {formatCurrency(cat.invoice)}
-                      </td>
-                      <td
-                        className={`py-2 px-4 text-right border-r font-bold ${cat.balance < 0 ? "text-red-600" : "text-green-600"
-                          }`}
-                      >
-                        {formatCurrency(cat.balance)}
-                      </td>
-                      <td className="py-2 px-4 text-right text-slate-500">
-                        {formatCurrency(cat.pr)}
-                      </td>
-                      <td className="py-2 px-4 text-right text-slate-500 border-r-0">
-                        {formatCurrency(cat.po)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot className="bg-slate-800 text-white font-bold">
-                  <tr>
-                    <td colSpan="2" className="py-2 px-3 text-right">
-                      Grand Total
-                    </td>
-                    <td className="py-2 px-3 text-right">
-                      {formatCurrency(
-                        categorySummaryTotals.budget
-                      )}
-                    </td>
-                    <td className="py-2 px-3 text-right text-orange-300">
-                      {formatCurrency(
-                        categorySummaryTotals.invoice
-                      )}
-                    </td>
-                    <td className="py-2 px-3 text-right">
-                      {formatCurrency(
-                        categorySummaryTotals.balance
-                      )}
-                    </td>
-                    <td className="py-2 px-3 text-right text-slate-300">
-                      {formatCurrency(
-                        categorySummaryTotals.pr
-                      )}
-                    </td>
-                    <td className="py-2 px-3 text-right text-slate-300 border-r-0">
-                      {formatCurrency(
-                        categorySummaryTotals.po
-                      )}
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
-            </Card>
 
-            {/* ===== Approval Tasks Section (เลื่อนลงมาดูเมื่อกดกระดิ่ง) ===== */}
-            {(pendingBudgetsForProject.length > 0 || pendingPRsForProject.length > 0 || pendingPOsForProject.length > 0 || pendingSubItemsForProject.length > 0) && (
-              <div ref={pendingSectionRef} id="pending-approval-tasks" className="space-y-4 scroll-mt-4">
-                <div className="flex items-center gap-2 pt-2">
-                  <Bell size={16} className="text-amber-500" />
-                  <h3 className="text-sm font-bold text-slate-700">
-                    รายการรออนุมัติ (Pending Approval Tasks)
-                  </h3>
-                  <span className="bg-red-500 text-white text-[10px] font-bold rounded-full px-2 py-0.5 shadow-sm">
-                    {pendingBudgetsForProject.length + pendingSubItemsForProject.length + pendingPRsForProject.length + pendingPOsForProject.length} รายการ
-                  </span>
-                </div>
-
-                {/* ----- Budget Approval Table (MD only) ----- */}
-                {pendingBudgetsForProject.length > 0 && (
-                  <Card className="overflow-hidden border-l-4 border-l-blue-500 w-full min-w-0">
-                    <div className="p-3 bg-blue-50 border-b flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <CheckCircle size={15} className="text-blue-600" />
-                        <h4 className="font-bold text-xs text-blue-800 uppercase tracking-wide">
-                          Project Budget — รออนุมัติ ({pendingBudgetsForProject.length} รายการ)
-                        </h4>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="relative">
-                          <button
-                            type="button"
-                            className="flex items-center gap-1 px-3 py-1.5 h-8 rounded-md font-medium text-[11px] shadow-sm bg-slate-700 text-white hover:bg-slate-800"
-                            onClick={() => setPendingActionDropdownOpen((v) => !v)}
-                          >
-                            Action
-                            <ChevronDown size={12} className={pendingActionDropdownOpen ? "rotate-180" : ""} />
-                          </button>
-                          {pendingActionDropdownOpen && (
-                            <div className="absolute right-0 top-full mt-1 z-20 py-1 bg-white border border-slate-200 rounded-lg shadow-lg min-w-[220px]">
-                              {canApproveBudget && (
-                                <button
-                                  type="button"
-                                  className="w-full text-left px-3 py-2 text-xs hover:bg-green-50 text-green-700 flex items-center gap-2"
-                                  onClick={handleBulkApprovePendingBudgets}
-                                >
-                                  Approve ({pendingSelectedBudgetIds.length} รายการ)
-                                </button>
-                              )}
-                              {canRejectBudget && (
-                                <button
-                                  type="button"
-                                  className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 text-red-700 flex items-center gap-2"
-                                  onClick={handleBulkRejectPendingBudgets}
-                                >
-                                  Reject ({pendingSelectedBudgetIds.length} รายการ)
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
+              {/* ----- Budget Approval Table (MD only) ----- */}
+              {pendingBudgetsForProject.length > 0 && (
+                <Card className="overflow-hidden border-l-4 border-l-blue-500 w-full min-w-0">
+                  <div className="p-3 bg-blue-50 border-b flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle size={15} className="text-blue-600" />
+                      <h4 className="font-bold text-xs text-blue-800 uppercase tracking-wide">
+                        Project Budget — รออนุมัติ ({pendingBudgetsForProject.length} รายการ)
+                      </h4>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="relative">
+                        <button
+                          type="button"
+                          className="flex items-center gap-1 px-3 py-1.5 h-8 rounded-md font-medium text-[11px] shadow-sm bg-slate-700 text-white hover:bg-slate-800"
+                          onClick={() => setPendingActionDropdownOpen((v) => !v)}
+                        >
+                          Action
+                          <ChevronDown size={12} className={pendingActionDropdownOpen ? "rotate-180" : ""} />
+                        </button>
+                        {pendingActionDropdownOpen && (
+                          <div className="absolute right-0 top-full mt-1 z-20 py-1 bg-white border border-slate-200 rounded-lg shadow-lg min-w-[220px]">
+                            {canApproveBudget && (
+                              <button
+                                type="button"
+                                className="w-full text-left px-3 py-2 text-xs hover:bg-green-50 text-green-700 flex items-center gap-2"
+                                onClick={handleBulkApprovePendingBudgets}
+                              >
+                                Approve ({pendingSelectedBudgetIds.length} รายการ)
+                              </button>
+                            )}
+                            {canRejectBudget && (
+                              <button
+                                type="button"
+                                className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 text-red-700 flex items-center gap-2"
+                                onClick={handleBulkRejectPendingBudgets}
+                              >
+                                Reject ({pendingSelectedBudgetIds.length} รายการ)
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
-                    <div ref={dashBudgetTableRef} className="w-full min-w-0">
+                  </div>
+                  <div ref={dashBudgetTableRef} className="w-full min-w-0">
                     <table className="w-full text-left text-xs text-slate-600 table-fixed">
                       <thead className="bg-slate-200 text-slate-800 uppercase font-bold border-b text-sm">
                         <tr>
@@ -2444,10 +2442,10 @@ const BudgetView = React.memo(() => {
                               }}
                             />
                           </th>
-                          <ResizableTh tableId="dash-budget" colKey="costCode" className="py-2.5 px-4" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashBudgetLayout.scaled.costCode}>Cost Code</ResizableTh>
-                          <ResizableTh tableId="dash-budget" colKey="description" className="py-2.5 px-4" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashBudgetLayout.scaled.description}>รายการ</ResizableTh>
-                          <ResizableTh tableId="dash-budget" colKey="amount" className="py-2.5 px-4 text-right" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashBudgetLayout.scaled.amount}>จำนวนเงิน</ResizableTh>
-                          <ResizableTh tableId="dash-budget" colKey="status" className="py-2.5 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashBudgetLayout.scaled.status}>สถานะ</ResizableTh>
+                          <ResizableTh tableId="dash-budget" colKey="costCode" className="py-2.5 px-4" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashBudgetLayout.scaled.costCode}>Cost Code</ResizableTh>
+                          <ResizableTh tableId="dash-budget" colKey="description" className="py-2.5 px-4" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashBudgetLayout.scaled.description}>รายการ</ResizableTh>
+                          <ResizableTh tableId="dash-budget" colKey="amount" className="py-2.5 px-4 text-right" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashBudgetLayout.scaled.amount}>จำนวนเงิน</ResizableTh>
+                          <ResizableTh tableId="dash-budget" colKey="status" className="py-2.5 px-4 text-center" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashBudgetLayout.scaled.status}>สถานะ</ResizableTh>
                           <th className="py-2.5 px-4 text-center" style={{ width: dashBudgetLayout.scaled.actions }}>Actions</th>
                         </tr>
                       </thead>
@@ -2529,27 +2527,27 @@ const BudgetView = React.memo(() => {
                         })}
                       </tbody>
                     </table>
-                    </div>
-                  </Card>
-                )}
+                  </div>
+                </Card>
+              )}
 
-                {/* ----- Sub-Item Approval Table (MD only) ----- */}
-                {pendingSubItemsForProject.length > 0 && (
-                  <Card className="overflow-hidden border-l-4 border-l-purple-500 w-full min-w-0">
-                    <div className="p-3 bg-purple-50 border-b flex items-center gap-2">
-                      <CheckCircle size={15} className="text-purple-600" />
-                      <h4 className="font-bold text-xs text-purple-800 uppercase tracking-wide">
-                        Project Budget (Sub-Items) — รออนุมัติ ({pendingSubItemsForProject.length} รายการ)
-                      </h4>
-                    </div>
-                    <div ref={dashSubitemTableRef} className="w-full min-w-0">
+              {/* ----- Sub-Item Approval Table (MD only) ----- */}
+              {pendingSubItemsForProject.length > 0 && (
+                <Card className="overflow-hidden border-l-4 border-l-purple-500 w-full min-w-0">
+                  <div className="p-3 bg-purple-50 border-b flex items-center gap-2">
+                    <CheckCircle size={15} className="text-purple-600" />
+                    <h4 className="font-bold text-xs text-purple-800 uppercase tracking-wide">
+                      Project Budget (Sub-Items) — รออนุมัติ ({pendingSubItemsForProject.length} รายการ)
+                    </h4>
+                  </div>
+                  <div ref={dashSubitemTableRef} className="w-full min-w-0">
                     <table className="w-full text-left text-xs text-slate-600 table-fixed">
                       <thead className="bg-slate-200 text-slate-800 uppercase font-bold border-b text-sm">
                         <tr>
-                          <ResizableTh tableId="dash-subitem" colKey="costCode" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashSubitemLayout.scaled.costCode}>Cost Code</ResizableTh>
-                          <ResizableTh tableId="dash-subitem" colKey="description" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashSubitemLayout.scaled.description}>รายการ</ResizableTh>
-                          <ResizableTh tableId="dash-subitem" colKey="amount" className="py-1.5 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashSubitemLayout.scaled.amount}>จำนวนเงินรวม</ResizableTh>
-                          <ResizableTh tableId="dash-subitem" colKey="status" className="py-1.5 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashSubitemLayout.scaled.status}>สถานะ</ResizableTh>
+                          <ResizableTh tableId="dash-subitem" colKey="costCode" className="py-1.5 px-3" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashSubitemLayout.scaled.costCode}>Cost Code</ResizableTh>
+                          <ResizableTh tableId="dash-subitem" colKey="description" className="py-1.5 px-3" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashSubitemLayout.scaled.description}>รายการ</ResizableTh>
+                          <ResizableTh tableId="dash-subitem" colKey="amount" className="py-1.5 px-3 text-right" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashSubitemLayout.scaled.amount}>จำนวนเงินรวม</ResizableTh>
+                          <ResizableTh tableId="dash-subitem" colKey="status" className="py-1.5 px-3 text-center" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashSubitemLayout.scaled.status}>สถานะ</ResizableTh>
                           <th className="py-1.5 px-3 text-center" style={{ width: dashSubitemLayout.scaled.actions }}>Actions</th>
                         </tr>
                       </thead>
@@ -2640,30 +2638,30 @@ const BudgetView = React.memo(() => {
                         })()}
                       </tbody>
                     </table>
-                    </div>
-                  </Card>
-                )}
+                  </div>
+                </Card>
+              )}
 
-                {/* ----- PR Approval Table (PM / GM / MD by role) ----- */}
-                {pendingPRsForProject.length > 0 && (
-                  <Card className="overflow-hidden border-l-4 border-l-green-500 w-full min-w-0">
-                    <div className="p-3 bg-green-50 border-b flex items-center gap-2">
-                      <FileText size={15} className="text-green-600" />
-                      <h4 className="font-bold text-xs text-green-800 uppercase tracking-wide">
-                        Purchase Request (PR) — รออนุมัติ ({pendingPRsForProject.length} รายการ)
-                      </h4>
-                    </div>
-                    <div ref={dashPrTableRef} className="w-full min-w-0">
+              {/* ----- PR Approval Table (PM / GM / MD by role) ----- */}
+              {pendingPRsForProject.length > 0 && (
+                <Card className="overflow-hidden border-l-4 border-l-green-500 w-full min-w-0">
+                  <div className="p-3 bg-green-50 border-b flex items-center gap-2">
+                    <FileText size={15} className="text-green-600" />
+                    <h4 className="font-bold text-xs text-green-800 uppercase tracking-wide">
+                      Purchase Request (PR) — รออนุมัติ ({pendingPRsForProject.length} รายการ)
+                    </h4>
+                  </div>
+                  <div ref={dashPrTableRef} className="w-full min-w-0">
                     <table className="w-full text-left text-xs text-slate-600 table-fixed">
                       <thead className="bg-slate-200 text-slate-800 uppercase font-bold border-b text-sm">
                         <tr>
-                          <ResizableTh tableId="dash-pr" colKey="prNo" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.prNo}>PR No.</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="date" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.date}>วันที่</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="costCode" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.costCode}>Cost Code</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="type" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.type}>ประเภท</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="requestor" className="py-0.5 px-2" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.requestor}>ผู้ขอซื้อ</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="amount" className="py-0.5 px-2 text-right" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.amount}>จำนวนเงิน</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="status" className="py-0.5 px-2 text-center" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.status}>สถานะ</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="prNo" className="py-0.5 px-2" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.prNo}>PR No.</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="date" className="py-0.5 px-2" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.date}>วันที่</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="costCode" className="py-0.5 px-2" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.costCode}>Cost Code</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="type" className="py-0.5 px-2" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.type}>ประเภท</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="requestor" className="py-0.5 px-2" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.requestor}>ผู้ขอซื้อ</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="amount" className="py-0.5 px-2 text-right" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.amount}>จำนวนเงิน</ResizableTh>
+                          <ResizableTh tableId="dash-pr" colKey="status" className="py-0.5 px-2 text-center" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.status}>สถานะ</ResizableTh>
                           <th className="py-0.5 px-2 text-center" style={{ width: dashPrLayout.scaled.actions }}>Actions</th>
                         </tr>
                       </thead>
@@ -2746,28 +2744,28 @@ const BudgetView = React.memo(() => {
                         })}
                       </tbody>
                     </table>
-                    </div>
-                  </Card>
-                )}
+                  </div>
+                </Card>
+              )}
 
-                {/* ----- PO Approval Table (PCM / GM by role) ----- */}
-                {pendingPOsForProject.length > 0 && (
-                  <Card className="overflow-hidden border-l-4 border-l-orange-500 w-full min-w-0">
-                    <div className="p-3 bg-orange-50 border-b flex items-center gap-2">
-                      <FileText size={15} className="text-orange-600" />
-                      <h4 className="font-bold text-xs text-orange-800 uppercase tracking-wide">
-                        Purchase Order (PO) — รออนุมัติ ({pendingPOsForProject.length} รายการ)
-                      </h4>
-                    </div>
-                    <div ref={dashPoTableRef} className="w-full min-w-0">
+              {/* ----- PO Approval Table (PCM / GM by role) ----- */}
+              {pendingPOsForProject.length > 0 && (
+                <Card className="overflow-hidden border-l-4 border-l-orange-500 w-full min-w-0">
+                  <div className="p-3 bg-orange-50 border-b flex items-center gap-2">
+                    <FileText size={15} className="text-orange-600" />
+                    <h4 className="font-bold text-xs text-orange-800 uppercase tracking-wide">
+                      Purchase Order (PO) — รออนุมัติ ({pendingPOsForProject.length} รายการ)
+                    </h4>
+                  </div>
+                  <div ref={dashPoTableRef} className="w-full min-w-0">
                     <table className="w-full text-left text-xs text-slate-600 table-fixed">
                       <thead className="bg-slate-200 text-slate-800 uppercase font-bold border-b text-sm">
                         <tr>
-                          <ResizableTh tableId="dash-po" colKey="poNo" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.poNo}>PO No.</ResizableTh>
-                          <ResizableTh tableId="dash-po" colKey="date" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.date}>วันที่</ResizableTh>
-                          <ResizableTh tableId="dash-po" colKey="costCode" className="py-1.5 px-3" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.costCode}>Cost Code</ResizableTh>
-                          <ResizableTh tableId="dash-po" colKey="amount" className="py-1.5 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.amount}>จำนวนเงิน</ResizableTh>
-                          <ResizableTh tableId="dash-po" colKey="status" className="py-1.5 px-3 text-center" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.status}>สถานะ</ResizableTh>
+                          <ResizableTh tableId="dash-po" colKey="poNo" className="py-1.5 px-3" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.poNo}>PO No.</ResizableTh>
+                          <ResizableTh tableId="dash-po" colKey="date" className="py-1.5 px-3" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.date}>วันที่</ResizableTh>
+                          <ResizableTh tableId="dash-po" colKey="costCode" className="py-1.5 px-3" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.costCode}>Cost Code</ResizableTh>
+                          <ResizableTh tableId="dash-po" colKey="amount" className="py-1.5 px-3 text-right" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.amount}>จำนวนเงิน</ResizableTh>
+                          <ResizableTh tableId="dash-po" colKey="status" className="py-1.5 px-3 text-center" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.status}>สถานะ</ResizableTh>
                           <th className="py-1.5 px-3 text-center" style={{ width: dashPoLayout.scaled.actions }}>Actions</th>
                         </tr>
                       </thead>
@@ -2858,72 +2856,72 @@ const BudgetView = React.memo(() => {
                         })}
                       </tbody>
                     </table>
-                    </div>
-                  </Card>
-                )}
-              </div>
-            )}
-          </>
-        ) : (
-          <>
-            <div className="flex justify-between items-center gap-2 mb-2 flex-wrap bg-white/40 p-2 rounded-2xl border border-slate-100/50 shadow-sm">
-              <div className="flex gap-2 items-center">
-                {budgetCategory !== "OVERVIEW" && (
-                  <div className="relative z-[10]">
-                    <button
-                      type="button"
-                      className="flex items-center gap-1 px-3 py-1.5 h-8 rounded-lg font-bold text-xs shadow-sm bg-slate-600 text-white hover:bg-slate-700 transition-all active:scale-95"
-                      onClick={() => setActionDropdownOpen((v) => !v)}
-                    >
-                      <Settings size={12} />
-                      Action
-                      <ChevronDown size={12} className={actionDropdownOpen ? "rotate-180" : ""} />
-                    </button>
-                      {actionDropdownOpen && (
-                      <div
-                        className="absolute left-0 top-full mt-1 z-[20] py-1 bg-white border border-slate-200 rounded-lg shadow-lg min-w-[220px]"
-                      >
-                              {canSubmitBudget && (
-                          <button
-                            type="button"
-                            className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 text-blue-700 flex items-center gap-2 font-medium"
-                            onClick={handleBulkSubmitBudgets}
-                          >
-                            <Send size={12} /> ส่งไปยัง MD Approve ({selectedBudgetIds.length} รายการ)
-                          </button>
-                        )}
-                        {canUseFunction("budget", "delete") && (
-                          <button
-                            type="button"
-                            className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 text-red-700 flex items-center gap-2 font-medium"
-                            onClick={handleBulkDeleteBudgets}
-                          >
-                            <Trash2 size={12} /> ลบทิ้ง ({selectedBudgetIds.length} รายการ)
-                          </button>
-                        )}
-                      </div>
-                    )}
                   </div>
-                )}
-                <div className="flex items-center gap-1">
-                  <Button
-                    variant="outline"
-                    onClick={handleDownloadTemplate}
-                    className="text-[10px] h-8 px-2 border-slate-200 text-slate-500"
-                    title="Download Template"
+                </Card>
+              )}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <div className="flex justify-between items-center gap-2 mb-2 flex-wrap bg-white/40 p-2 rounded-2xl border border-slate-100/50 shadow-sm">
+            <div className="flex gap-2 items-center">
+              {budgetCategory !== "OVERVIEW" && (
+                <div className="relative z-[10]">
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 px-3 py-1.5 h-8 rounded-lg font-bold text-xs shadow-sm bg-slate-600 text-white hover:bg-slate-700 transition-all active:scale-95"
+                    onClick={() => setActionDropdownOpen((v) => !v)}
                   >
-                    <Download size={12} />
-                  </Button>
-                  {canUseFunction("budget", "import") && (
-                    <label className="flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-100 hover:bg-emerald-100 cursor-pointer transition-colors" title="Import CSV">
-                      <FileSpreadsheet size={14} />
-                      <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
-                    </label>
+                    <Settings size={12} />
+                    Action
+                    <ChevronDown size={12} className={actionDropdownOpen ? "rotate-180" : ""} />
+                  </button>
+                  {actionDropdownOpen && (
+                    <div
+                      className="absolute left-0 top-full mt-1 z-[20] py-1 bg-white border border-slate-200 rounded-lg shadow-lg min-w-[220px]"
+                    >
+                      {canSubmitBudget && (
+                        <button
+                          type="button"
+                          className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 text-blue-700 flex items-center gap-2 font-medium"
+                          onClick={handleBulkSubmitBudgets}
+                        >
+                          <Send size={12} /> ส่งไปยัง MD Approve ({selectedBudgetIds.length} รายการ)
+                        </button>
+                      )}
+                      {canUseFunction("budget", "delete") && (
+                        <button
+                          type="button"
+                          className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 text-red-700 flex items-center gap-2 font-medium"
+                          onClick={handleBulkDeleteBudgets}
+                        >
+                          <Trash2 size={12} /> ลบทิ้ง ({selectedBudgetIds.length} รายการ)
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
+              )}
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  onClick={handleDownloadTemplate}
+                  className="text-[10px] h-8 px-2 border-slate-200 text-slate-500"
+                  title="Download Template"
+                >
+                  <Download size={12} />
+                </Button>
+                {canUseFunction("budget", "import") && (
+                  <label className="flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-100 hover:bg-emerald-100 cursor-pointer transition-colors" title="Import CSV">
+                    <FileSpreadsheet size={14} />
+                    <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
+                  </label>
+                )}
               </div>
+            </div>
 
-              <div className="flex gap-2 flex-wrap">
+            <div className="flex gap-2 flex-wrap">
               {canClearAllBudgets && (
                 <Button
                   variant="outline"
@@ -2934,7 +2932,7 @@ const BudgetView = React.memo(() => {
                   <Trash2 size={12} /> ล้างทั้งหมด
                 </Button>
               )}
-              
+
               {(userRole === "Administrator" || userRole === "MD") && canRecalculateBudget && (
                 <Button
                   variant="outline"
@@ -2950,7 +2948,7 @@ const BudgetView = React.memo(() => {
                   <span className="ml-1">Recalculate PO</span>
                 </Button>
               )}
-              
+
               {canUseFunction("budget", "add") && (
                 <Button
                   className="bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-100 border-none rounded-xl px-4 py-2 text-sm font-bold flex items-center gap-2 transition-all active:scale-95"
@@ -2965,10 +2963,10 @@ const BudgetView = React.memo(() => {
                   <Plus size={16} /> ตั้งงบประมาณ
                 </Button>
               )}
-              </div>
             </div>
-            <Card className="overflow-hidden w-full min-w-0">
-              <div ref={budgetTableContainerRef} className="w-full min-w-0">
+          </div>
+          <Card className="overflow-hidden w-full min-w-0">
+            <div ref={budgetTableContainerRef} className="w-full min-w-0">
               <table className="w-full text-left text-xs text-slate-600 table-fixed">
                 <thead className="bg-slate-200 text-slate-900 uppercase font-bold border-b text-sm">
                   <tr>
@@ -2990,30 +2988,30 @@ const BudgetView = React.memo(() => {
                       </th>
                     )}
                     {isColumnVisible("budget", "code") && (
-                    <th
-                      className="py-3 px-4 border-r cursor-pointer hover:bg-slate-300 transition-colors"
-                      style={{ width: budgetMainLayout.scaled.code }}
-                      onClick={() => requestSort("code")}
-                    >
-                      <div className="flex items-center justify-between">
-                        Cost Code
-                        {sortConfig.key === "code" &&
-                          (sortConfig.direction === "ascending" ? (
-                            <ChevronDown size={14} />
-                          ) : (
-                            <ChevronUp size={14} />
-                          ))}
-                      </div>
-                    </th>
+                      <th
+                        className="py-3 px-4 border-r cursor-pointer hover:bg-slate-300 transition-colors"
+                        style={{ width: budgetMainLayout.scaled.code }}
+                        onClick={() => requestSort("code")}
+                      >
+                        <div className="flex items-center justify-between">
+                          Cost Code
+                          {sortConfig.key === "code" &&
+                            (sortConfig.direction === "ascending" ? (
+                              <ChevronDown size={14} />
+                            ) : (
+                              <ChevronUp size={14} />
+                            ))}
+                        </div>
+                      </th>
                     )}
-                    {isColumnVisible("budget", "description") && <ResizableTh tableId="budget" colKey="description" className="py-3 px-4 border-r" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.description}>รายการ</ResizableTh>}
-                    {isColumnVisible("budget", "budget") && <ResizableTh tableId="budget" colKey="budget" className="py-3 px-4 text-right bg-blue-100" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.budget}>Budget</ResizableTh>}
-                    {isColumnVisible("budget", "status") && <ResizableTh tableId="budget" colKey="status" className="py-3 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.status}>สถานะ</ResizableTh>}
-                    {isColumnVisible("budget", "attachment") && <ResizableTh tableId="budget" colKey="attachment" className="py-3 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.attachment}>Attachment</ResizableTh>}
-                    {isColumnVisible("budget", "balance") && <ResizableTh tableId="budget" colKey="balance" className="py-3 px-4 text-right text-green-800 font-bold border-r" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.balance}>Balance</ResizableTh>}
-                    {isColumnVisible("budget", "prTotal") && <ResizableTh tableId="budget" colKey="prTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.prTotal}>PR Total</ResizableTh>}
-                    {isColumnVisible("budget", "poTotal") && <ResizableTh tableId="budget" colKey="poTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.poTotal}>PO Total</ResizableTh>}
-                    {isColumnVisible("budget", "nowStatus") && <ResizableTh tableId="budget" colKey="nowStatus" className="py-3 px-4 text-center" isAdmin={userRole==="Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.nowStatus}>Now Status</ResizableTh>}
+                    {isColumnVisible("budget", "description") && <ResizableTh tableId="budget" colKey="description" className="py-3 px-4 border-r" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.description}>รายการ</ResizableTh>}
+                    {isColumnVisible("budget", "budget") && <ResizableTh tableId="budget" colKey="budget" className="py-3 px-4 text-right bg-blue-100" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.budget}>Budget</ResizableTh>}
+                    {isColumnVisible("budget", "status") && <ResizableTh tableId="budget" colKey="status" className="py-3 px-4 text-center" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.status}>สถานะ</ResizableTh>}
+                    {isColumnVisible("budget", "attachment") && <ResizableTh tableId="budget" colKey="attachment" className="py-3 px-4 text-center" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.attachment}>Attachment</ResizableTh>}
+                    {isColumnVisible("budget", "balance") && <ResizableTh tableId="budget" colKey="balance" className="py-3 px-4 text-right text-green-800 font-bold border-r" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.balance}>Balance</ResizableTh>}
+                    {isColumnVisible("budget", "prTotal") && <ResizableTh tableId="budget" colKey="prTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.prTotal}>PR Total</ResizableTh>}
+                    {isColumnVisible("budget", "poTotal") && <ResizableTh tableId="budget" colKey="poTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.poTotal}>PO Total</ResizableTh>}
+                    {isColumnVisible("budget", "nowStatus") && <ResizableTh tableId="budget" colKey="nowStatus" className="py-3 px-4 text-center" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.nowStatus}>Now Status</ResizableTh>}
                     {isColumnVisible("budget", "actions") && <th className="py-3 px-4 text-right" style={{ width: budgetMainLayout.scaled.actions }}>Actions</th>}
                   </tr>
                 </thead>
@@ -3102,14 +3100,14 @@ const BudgetView = React.memo(() => {
                             </div>
                           </td>}
                           {isColumnVisible("budget", "budget") && (
-                          <td className="py-1 px-3 text-right bg-blue-50/50 font-semibold">
-                            {formatCurrency(totalBudget)}
-                          </td>
+                            <td className="py-1 px-3 text-right bg-blue-50/50 font-semibold">
+                              {formatCurrency(totalBudget)}
+                            </td>
                           )}
                           {isColumnVisible("budget", "status") && (
-                          <td className="py-1 px-3 text-center">
-                            <Badge status={b.status} />
-                          </td>
+                            <td className="py-1 px-3 text-center">
+                              <Badge status={b.status} />
+                            </td>
                           )}
                           {isColumnVisible("budget", "attachment") && <td className="py-1 px-3 border-r align-top" onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-start gap-2">
@@ -3154,29 +3152,29 @@ const BudgetView = React.memo(() => {
                             </div>
                           </td>}
                           {isColumnVisible("budget", "balance") && (
-                          <td
-                            className={`py-1 px-3 text-right border-r font-bold ${budgetBalance < 0
-                              ? "text-red-600"
-                              : "text-green-600"
-                              }`}
-                          >
-                            {formatCurrency(budgetBalance)}
-                          </td>
+                            <td
+                              className={`py-1 px-3 text-right border-r font-bold ${budgetBalance < 0
+                                ? "text-red-600"
+                                : "text-green-600"
+                                }`}
+                            >
+                              {formatCurrency(budgetBalance)}
+                            </td>
                           )}
                           {isColumnVisible("budget", "prTotal") && (
-                          <td className="py-1 px-3 text-right text-slate-400">
-                            {formatCurrency(stats.prTotal)}
-                          </td>
+                            <td className="py-1 px-3 text-right text-slate-400">
+                              {formatCurrency(stats.prTotal)}
+                            </td>
                           )}
                           {isColumnVisible("budget", "poTotal") && (
-                          <td className="py-1 px-3 text-right text-slate-400">
-                            {formatCurrency(stats.poTotal)}
-                          </td>
+                            <td className="py-1 px-3 text-right text-slate-400">
+                              {formatCurrency(stats.poTotal)}
+                            </td>
                           )}
                           {isColumnVisible("budget", "nowStatus") && (
-                          <td className="py-1 px-3 min-w-0 overflow-hidden">
-                            {/* ตาม requirement: Main row ไม่ต้องแสดง NOW STATUS */}
-                          </td>
+                            <td className="py-1 px-3 min-w-0 overflow-hidden">
+                              {/* ตาม requirement: Main row ไม่ต้องแสดง NOW STATUS */}
+                            </td>
                           )}
                           {isColumnVisible("budget", "actions") && <td className="py-1 px-3 text-right">
                             <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -3294,14 +3292,14 @@ const BudgetView = React.memo(() => {
                                   </div>
                                 </td>}
                                 {isColumnVisible("budget", "budget") && (
-                                <td className="py-0.5 px-3 text-right pr-4 font-medium border-b border-slate-100">
-                                  <span className="text-red-600">-{formatCurrency(sub.amount)}</span>
-                                </td>
+                                  <td className="py-0.5 px-3 text-right pr-4 font-medium border-b border-slate-100">
+                                    <span className="text-red-600">-{formatCurrency(sub.amount)}</span>
+                                  </td>
                                 )}
                                 {isColumnVisible("budget", "status") && (
-                                <td className="py-0.5 px-3 text-center border-b border-slate-100">
-                                  {sub.status ? <Badge status={sub.status} /> : <Badge status="Approved" />}
-                                </td>
+                                  <td className="py-0.5 px-3 text-center border-b border-slate-100">
+                                    {sub.status ? <Badge status={sub.status} /> : <Badge status="Approved" />}
+                                  </td>
                                 )}
                                 {isColumnVisible("budget", "attachment") && <td className="py-0.5 px-3 border-r border-b border-slate-100 align-top" onClick={(e) => e.stopPropagation()}>
                                   <div className="flex items-start gap-2">
@@ -3431,7 +3429,7 @@ const BudgetView = React.memo(() => {
                             ))}
                             {/* เว้นพื้นที่ว่างใต้รายการ Sub เมื่อกาง (แยกตารางย่อยจากตารางหลัก) */}
                             <tr className="bg-transparent" aria-hidden="true">
-                              <td colSpan={["checkbox","code","description","budget","status","attachment","balance","prTotal","poTotal","nowStatus","actions"].filter(k => k === "checkbox" ? (budgetCategory !== "OVERVIEW" && isColumnVisible("budget","checkbox")) : isColumnVisible("budget",k)).length || 1} className="py-4 border-0 bg-slate-100/50"></td>
+                              <td colSpan={["checkbox", "code", "description", "budget", "status", "attachment", "balance", "prTotal", "poTotal", "nowStatus", "actions"].filter(k => k === "checkbox" ? (budgetCategory !== "OVERVIEW" && isColumnVisible("budget", "checkbox")) : isColumnVisible("budget", k)).length || 1} className="py-4 border-0 bg-slate-100/50"></td>
                             </tr>
                           </>
                         }
@@ -3440,676 +3438,676 @@ const BudgetView = React.memo(() => {
                   })}
                 </tbody>
               </table>
-              </div>
-            </Card>
-          </>
-        )}
-        <input
-          ref={attachmentInputRef}
-          type="file"
-          multiple
-          accept=".pdf,.xls,.xlsx,.doc,.docx,.jpg,.jpeg,.png,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/jpeg,image/png"
-          className="hidden"
-          onChange={handleAttachmentFilesSelected}
-        />
-        {/* Modals - Same as previous version, condensed for brevity */}
-        {isImportModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
-            <Card className="w-full max-w-2xl p-6">
-              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                <FileSpreadsheet size={20} /> นำเข้าข้อมูลงบประมาณ
-              </h3>
-              <div className="min-h-[150px] max-h-80 overflow-y-auto border border-slate-200 rounded-lg p-2 bg-slate-50 mb-4">
-                {Object.keys(importData).length === 0 ? (
-                  <div className="flex items-center justify-center h-[130px] text-slate-400 text-sm">
-                    ไม่มีรายการให้เลือก
-                  </div>
-                ) : Object.keys(importData).map((cat) => (
-                  <label
-                    key={cat}
-                    className="flex items-center gap-3 p-3 hover:bg-white rounded cursor-pointer border-b border-slate-100 last:border-0"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedImportCategories.includes(cat)}
-                      onChange={(e) => {
-                        if (e.target.checked)
-                          setSelectedImportCategories([
-                            ...selectedImportCategories,
-                            cat,
-                          ]);
-                        else
-                          setSelectedImportCategories(
-                            selectedImportCategories.filter((c) => c !== cat)
-                          );
-                      }}
-                      className="w-4 h-4 rounded text-blue-600"
-                    />
-                    <div className="flex-1">
-                      <span className="font-bold text-slate-800">{cat}</span>{" "}
-                      <span className="text-xs text-slate-500">
-                        ({importData[cat].length} items)
-                      </span>
-                    </div>
-                  </label>
-                ))}
-              </div>
-              <div className="flex justify-end gap-2 mt-4">
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setIsImportModalOpen(false);
-                    setImportData({});
-                    setImportFile(null);
-                    setSelectedImportCategories([]);
-                    if (fileInputRef.current) fileInputRef.current.value = "";
-                  }}
+            </div>
+          </Card>
+        </>
+      )}
+      <input
+        ref={attachmentInputRef}
+        type="file"
+        multiple
+        accept=".pdf,.xls,.xlsx,.doc,.docx,.jpg,.jpeg,.png,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/jpeg,image/png"
+        className="hidden"
+        onChange={handleAttachmentFilesSelected}
+      />
+      {/* Modals - Same as previous version, condensed for brevity */}
+      {isImportModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
+          <Card className="w-full max-w-2xl p-6">
+            <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+              <FileSpreadsheet size={20} /> นำเข้าข้อมูลงบประมาณ
+            </h3>
+            <div className="min-h-[150px] max-h-80 overflow-y-auto border border-slate-200 rounded-lg p-2 bg-slate-50 mb-4">
+              {Object.keys(importData).length === 0 ? (
+                <div className="flex items-center justify-center h-[130px] text-slate-400 text-sm">
+                  ไม่มีรายการให้เลือก
+                </div>
+              ) : Object.keys(importData).map((cat) => (
+                <label
+                  key={cat}
+                  className="flex items-center gap-3 p-3 hover:bg-white rounded cursor-pointer border-b border-slate-100 last:border-0"
                 >
-                  ยกเลิก
-                </Button>
-                <Button
-                  onClick={handleConfirmImport}
-                  disabled={selectedImportCategories.length === 0}
-                >
-                  ยืนยันการนำเข้า
-                </Button>
-              </div>
-            </Card>
-          </div>
-        )}
-        {isClearConfirmOpen && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
-            <Card className="w-full max-w-sm p-6 border-red-200">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
-                  <Trash2 size={20} className="text-red-600" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-slate-800">ยืนยันการล้างข้อมูล</h3>
-                  <p className="text-xs text-slate-500">การดำเนินการนี้ไม่สามารถย้อนกลับได้</p>
-                </div>
-              </div>
-              <p className="text-sm text-slate-600 mb-4">
-                พิมพ์ <span className="font-bold text-red-600 bg-red-50 px-1 rounded">Confirm</span> เพื่อยืนยันการลบข้อมูลงบประมาณ <span className="font-bold">{currentBudgets.length} รายการ</span>
-              </p>
-              <input
-                type="text"
-                className="w-full border rounded-md p-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 mb-4"
-                placeholder='พิมพ์ "Confirm" เพื่อยืนยัน'
-                value={clearConfirmText}
-                onChange={(e) => setClearConfirmText(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") handleConfirmClearAll(); }}
-                autoFocus
-              />
-              <div className="flex justify-end gap-2">
-                <Button
-                  variant="secondary"
-                  onClick={() => { setIsClearConfirmOpen(false); setClearConfirmText(""); }}
-                >
-                  ยกเลิก
-                </Button>
-                <Button
-                  onClick={handleConfirmClearAll}
-                  disabled={clearConfirmText !== "Confirm"}
-                  className="bg-red-600 hover:bg-red-700 text-white disabled:opacity-40"
-                >
-                  <Trash2 size={14} /> ล้างข้อมูลทั้งหมด
-                </Button>
-              </div>
-            </Card>
-          </div>
-        )}
-        {isModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
-            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md mx-4">
-              {/* Header */}
-              <div className="px-6 py-4 bg-slate-700 rounded-t-2xl flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
-                    <Tag size={16} className="text-white" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-white">
-                      {editingBudgetId ? (budgets.find(b => b.id === editingBudgetId)?.status === "Rejected" ? "แก้ไขรายการ (ถูกปฏิเสธ)" : "แก้ไขรายการ Budget") : "เพิ่มรายการ Budget"}
-                    </h3>
-                    <p className="text-slate-300 text-xs mt-0.5">
-                      {COST_CATEGORIES[budgetCategory] || budgetCategory} ({budgetCategory})
-                    </p>
-                  </div>
-                </div>
-                <button type="button" onClick={closeBudgetModal} className="text-white/60 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-all">
-                  <XCircle size={18} />
-                </button>
-              </div>
-
-              {/* Reject banner */}
-              {editingBudgetId && budgets.find(b => b.id === editingBudgetId)?.status === "Rejected" && budgets.find(b => b.id === editingBudgetId)?.rejectReason && (
-                <div className="mx-6 mt-4 text-xs text-red-700 bg-red-50 px-3 py-2 rounded-lg border border-red-200 flex items-start gap-2">
-                  <AlertCircle size={13} className="text-red-500 mt-0.5 shrink-0" />
-                  <span><span className="font-semibold">เหตุผลปฏิเสธ:</span> {budgets.find(b => b.id === editingBudgetId)?.rejectReason}</span>
-                </div>
-              )}
-
-              {/* Form */}
-              <div className="px-6 py-5 space-y-4">
-                {/* Cost Code Preview */}
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-center">
-                  <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">Cost Code</p>
-                  <div className="text-2xl font-black text-slate-800 tracking-tight flex items-center justify-center gap-1">
-                    <span className="text-slate-400">{budgetCategory}</span>
-                    {formData.code ? (
-                      <span className="text-blue-600">{formData.code}</span>
-                    ) : (
-                      <span className="text-slate-300">____</span>
-                    )}
-                  </div>
-                </div>
-
-                {/* รหัสต่อท้าย */}
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">รหัสต่อท้าย <span className="text-red-500">*</span></label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <span className="text-slate-400 font-semibold">{budgetCategory}</span>
-                    </div>
-                    <input
-                      type="text"
-                      className="w-full border border-slate-200 rounded-lg pl-12 pr-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all font-semibold"
-                      placeholder="เช่น 001, 123"
-                      value={formData.code}
-                      onChange={(e) => setFormData({ ...formData, code: e.target.value })}
-                      autoFocus
-                    />
-                  </div>
-                </div>
-
-                {/* Description */}
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">รายละเอียด (Description) <span className="text-red-500">*</span></label>
                   <input
-                    type="text"
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all"
-                    placeholder="ระบุรายละเอียด..."
-                    value={formData.description}
-                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                    type="checkbox"
+                    checked={selectedImportCategories.includes(cat)}
+                    onChange={(e) => {
+                      if (e.target.checked)
+                        setSelectedImportCategories([
+                          ...selectedImportCategories,
+                          cat,
+                        ]);
+                      else
+                        setSelectedImportCategories(
+                          selectedImportCategories.filter((c) => c !== cat)
+                        );
+                    }}
+                    className="w-4 h-4 rounded text-blue-600"
                   />
+                  <div className="flex-1">
+                    <span className="font-bold text-slate-800">{cat}</span>{" "}
+                    <span className="text-xs text-slate-500">
+                      ({importData[cat].length} items)
+                    </span>
+                  </div>
+                </label>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setIsImportModalOpen(false);
+                  setImportData({});
+                  setImportFile(null);
+                  setSelectedImportCategories([]);
+                  if (fileInputRef.current) fileInputRef.current.value = "";
+                }}
+              >
+                ยกเลิก
+              </Button>
+              <Button
+                onClick={handleConfirmImport}
+                disabled={selectedImportCategories.length === 0}
+              >
+                ยืนยันการนำเข้า
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+      {isClearConfirmOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
+          <Card className="w-full max-w-sm p-6 border-red-200">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+                <Trash2 size={20} className="text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-800">ยืนยันการล้างข้อมูล</h3>
+                <p className="text-xs text-slate-500">การดำเนินการนี้ไม่สามารถย้อนกลับได้</p>
+              </div>
+            </div>
+            <p className="text-sm text-slate-600 mb-4">
+              พิมพ์ <span className="font-bold text-red-600 bg-red-50 px-1 rounded">Confirm</span> เพื่อยืนยันการลบข้อมูลงบประมาณ <span className="font-bold">{currentBudgets.length} รายการ</span>
+            </p>
+            <input
+              type="text"
+              className="w-full border rounded-md p-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 mb-4"
+              placeholder='พิมพ์ "Confirm" เพื่อยืนยัน'
+              value={clearConfirmText}
+              onChange={(e) => setClearConfirmText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleConfirmClearAll(); }}
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => { setIsClearConfirmOpen(false); setClearConfirmText(""); }}
+              >
+                ยกเลิก
+              </Button>
+              <Button
+                onClick={handleConfirmClearAll}
+                disabled={clearConfirmText !== "Confirm"}
+                className="bg-red-600 hover:bg-red-700 text-white disabled:opacity-40"
+              >
+                <Trash2 size={14} /> ล้างข้อมูลทั้งหมด
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md mx-4">
+            {/* Header */}
+            <div className="px-6 py-4 bg-slate-700 rounded-t-2xl flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
+                  <Tag size={16} className="text-white" />
                 </div>
-
-                {/* Amount */}
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">งบประมาณ (Amount) <span className="text-red-500">*</span></label>
-                  <div className="relative">
-                    <input
-                      type="number"
-                      min="0"
-                      step="any"
-                      className="w-full border border-slate-200 rounded-lg pl-3 pr-10 py-2 text-sm focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all"
-                      placeholder="0.00"
-                      value={formData.amount}
-                      onChange={(e) => setFormData({ ...formData, amount: Number(e.target.value) })}
-                    />
-                    <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                      <span className="text-slate-400 text-xs font-semibold">THB</span>
-                    </div>
-                  </div>
+                  <h3 className="text-sm font-bold text-white">
+                    {editingBudgetId ? (budgets.find(b => b.id === editingBudgetId)?.status === "Rejected" ? "แก้ไขรายการ (ถูกปฏิเสธ)" : "แก้ไขรายการ Budget") : "เพิ่มรายการ Budget"}
+                  </h3>
+                  <p className="text-slate-300 text-xs mt-0.5">
+                    {COST_CATEGORIES[budgetCategory] || budgetCategory} ({budgetCategory})
+                  </p>
                 </div>
+              </div>
+              <button type="button" onClick={closeBudgetModal} className="text-white/60 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-all">
+                <XCircle size={18} />
+              </button>
+            </div>
 
-                {/* แนบไฟล์ — แก้ไข: ดูไฟล์เดิม + อัปโหลดเพิ่ม | เพิ่มใหม่: เลือกไฟล์ค้าง แล้วอัปโหลดหลัง Save */}
-                <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/90 space-y-2">
-                  <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-                    <Paperclip size={12} className="text-slate-400" />
-                    แนบไฟล์ (PDF / Office / รูป)
-                  </div>
-                  {editingBudgetId ? (
-                    <>
-                      <div className="space-y-1 max-h-28 overflow-y-auto">
-                        {((budgets.find((b) => b.id === editingBudgetId)?.attachments) || []).length === 0 ? (
-                          <p className="text-xs text-slate-400">ยังไม่มีไฟล์แนบ</p>
-                        ) : (
-                          (budgets.find((b) => b.id === editingBudgetId)?.attachments || []).map((att, i) => (
-                            <a
-                              key={`${att.url || att.name || i}`}
-                              href={att.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="block text-xs text-blue-600 hover:underline truncate"
-                              title={att.name}
-                            >
-                              {att.name || "เปิดไฟล์"}
-                            </a>
-                          ))
-                        )}
-                      </div>
-                      {selectedProjectId ? (
-                        <button
-                          type="button"
-                          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                          disabled={attachmentUploadingKey === `${editingBudgetId}:main`}
-                          onClick={() => openAttachmentPicker(editingBudgetId, null)}
-                        >
-                          {attachmentUploadingKey === `${editingBudgetId}:main` ? (
-                            <RefreshCw size={14} className="animate-spin" />
-                          ) : (
-                            <Upload size={14} />
-                          )}
-                          แนบไฟล์เพิ่ม
-                        </button>
-                      ) : (
-                        <p className="text-[10px] text-amber-600">เลือกโครงการก่อนเพื่อแนบไฟล์</p>
-                      )}
-                    </>
+            {/* Reject banner */}
+            {editingBudgetId && budgets.find(b => b.id === editingBudgetId)?.status === "Rejected" && budgets.find(b => b.id === editingBudgetId)?.rejectReason && (
+              <div className="mx-6 mt-4 text-xs text-red-700 bg-red-50 px-3 py-2 rounded-lg border border-red-200 flex items-start gap-2">
+                <AlertCircle size={13} className="text-red-500 mt-0.5 shrink-0" />
+                <span><span className="font-semibold">เหตุผลปฏิเสธ:</span> {budgets.find(b => b.id === editingBudgetId)?.rejectReason}</span>
+              </div>
+            )}
+
+            {/* Form */}
+            <div className="px-6 py-5 space-y-4">
+              {/* Cost Code Preview */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-center">
+                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">Cost Code</p>
+                <div className="text-2xl font-black text-slate-800 tracking-tight flex items-center justify-center gap-1">
+                  <span className="text-slate-400">{budgetCategory}</span>
+                  {formData.code ? (
+                    <span className="text-blue-600">{formData.code}</span>
                   ) : (
-                    <>
-                      <input
-                        ref={modalMainPendingFileRef}
-                        type="file"
-                        multiple
-                        className="hidden"
-                        accept=".pdf,.xls,.xlsx,.doc,.docx,.jpg,.jpeg,.png,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/jpeg,image/png"
-                        onChange={onModalMainPendingFilesSelected}
-                      />
-                      <button
-                        type="button"
-                        className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                        onClick={() => modalMainPendingFileRef.current?.click()}
-                      >
-                        <Upload size={14} />
-                        เลือกไฟล์แนบ
-                      </button>
-                      {pendingMainAttachments.length > 0 && (
-                        <ul className="space-y-1 max-h-24 overflow-y-auto">
-                          {pendingMainAttachments.map((f, idx) => (
-                            <li key={`${f.name}-${idx}`} className="flex items-center justify-between gap-2 text-xs bg-white border border-slate-100 rounded-lg px-2 py-1">
-                              <span className="truncate min-w-0" title={f.name}>{f.name}</span>
-                              <button
-                                type="button"
-                                className="text-red-500 hover:text-red-700 shrink-0 p-0.5"
-                                onClick={() => setPendingMainAttachments((prev) => prev.filter((_, j) => j !== idx))}
-                                title="เอาออก"
-                              >
-                                <Trash2 size={12} />
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                      <p className="text-[10px] text-slate-500 leading-relaxed">
-                        หลังกด Save ระบบจะอัปโหลดและบันทึกเป็น Attachment ของรายการนี้
-                      </p>
-                    </>
+                    <span className="text-slate-300">____</span>
                   )}
                 </div>
               </div>
 
-              {/* Footer */}
-              <div className="px-6 py-4 bg-slate-50 rounded-b-2xl border-t border-slate-100 flex justify-end gap-2">
-                {editingBudgetId && budgets.find(b => b.id === editingBudgetId)?.status === "Rejected" ? (
+              {/* รหัสต่อท้าย */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">รหัสต่อท้าย <span className="text-red-500">*</span></label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <span className="text-slate-400 font-semibold">{budgetCategory}</span>
+                  </div>
+                  <input
+                    type="text"
+                    className="w-full border border-slate-200 rounded-lg pl-12 pr-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all font-semibold"
+                    placeholder="เช่น 001, 123"
+                    value={formData.code}
+                    onChange={(e) => setFormData({ ...formData, code: e.target.value })}
+                    autoFocus
+                  />
+                </div>
+              </div>
+
+              {/* Description */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">รายละเอียด (Description) <span className="text-red-500">*</span></label>
+                <input
+                  type="text"
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all"
+                  placeholder="ระบุรายละเอียด..."
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                />
+              </div>
+
+              {/* Amount */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">งบประมาณ (Amount) <span className="text-red-500">*</span></label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    className="w-full border border-slate-200 rounded-lg pl-3 pr-10 py-2 text-sm focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all"
+                    placeholder="0.00"
+                    value={formData.amount}
+                    onChange={(e) => setFormData({ ...formData, amount: Number(e.target.value) })}
+                  />
+                  <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                    <span className="text-slate-400 text-xs font-semibold">THB</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* แนบไฟล์ — แก้ไข: ดูไฟล์เดิม + อัปโหลดเพิ่ม | เพิ่มใหม่: เลือกไฟล์ค้าง แล้วอัปโหลดหลัง Save */}
+              <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/90 space-y-2">
+                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                  <Paperclip size={12} className="text-slate-400" />
+                  แนบไฟล์ (PDF / Office / รูป)
+                </div>
+                {editingBudgetId ? (
                   <>
-                    <Button variant="secondary" onClick={closeBudgetModal}>ยกเลิก (Cancel)</Button>
-                    <Button variant="warning" onClick={() => handleSaveBudget("Draft")}>บันทึก (Draft)</Button>
-                    {canSubmitBudget && (
-                      <Button variant="primary" onClick={() => handleSaveBudget("Wait MD Approve")}>ส่งขออนุมัติ (Resubmit)</Button>
+                    <div className="space-y-1 max-h-28 overflow-y-auto">
+                      {((budgets.find((b) => b.id === editingBudgetId)?.attachments) || []).length === 0 ? (
+                        <p className="text-xs text-slate-400">ยังไม่มีไฟล์แนบ</p>
+                      ) : (
+                        (budgets.find((b) => b.id === editingBudgetId)?.attachments || []).map((att, i) => (
+                          <a
+                            key={`${att.url || att.name || i}`}
+                            href={att.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block text-xs text-blue-600 hover:underline truncate"
+                            title={att.name}
+                          >
+                            {att.name || "เปิดไฟล์"}
+                          </a>
+                        ))
+                      )}
+                    </div>
+                    {selectedProjectId ? (
+                      <button
+                        type="button"
+                        className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                        disabled={attachmentUploadingKey === `${editingBudgetId}:main`}
+                        onClick={() => openAttachmentPicker(editingBudgetId, null)}
+                      >
+                        {attachmentUploadingKey === `${editingBudgetId}:main` ? (
+                          <RefreshCw size={14} className="animate-spin" />
+                        ) : (
+                          <Upload size={14} />
+                        )}
+                        แนบไฟล์เพิ่ม
+                      </button>
+                    ) : (
+                      <p className="text-[10px] text-amber-600">เลือกโครงการก่อนเพื่อแนบไฟล์</p>
                     )}
                   </>
                 ) : (
                   <>
-                    <Button variant="secondary" onClick={closeBudgetModal}>Cancel</Button>
-                    <Button onClick={() => handleSaveBudget()}>Save</Button>
+                    <input
+                      ref={modalMainPendingFileRef}
+                      type="file"
+                      multiple
+                      className="hidden"
+                      accept=".pdf,.xls,.xlsx,.doc,.docx,.jpg,.jpeg,.png,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/jpeg,image/png"
+                      onChange={onModalMainPendingFilesSelected}
+                    />
+                    <button
+                      type="button"
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                      onClick={() => modalMainPendingFileRef.current?.click()}
+                    >
+                      <Upload size={14} />
+                      เลือกไฟล์แนบ
+                    </button>
+                    {pendingMainAttachments.length > 0 && (
+                      <ul className="space-y-1 max-h-24 overflow-y-auto">
+                        {pendingMainAttachments.map((f, idx) => (
+                          <li key={`${f.name}-${idx}`} className="flex items-center justify-between gap-2 text-xs bg-white border border-slate-100 rounded-lg px-2 py-1">
+                            <span className="truncate min-w-0" title={f.name}>{f.name}</span>
+                            <button
+                              type="button"
+                              className="text-red-500 hover:text-red-700 shrink-0 p-0.5"
+                              onClick={() => setPendingMainAttachments((prev) => prev.filter((_, j) => j !== idx))}
+                              title="เอาออก"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <p className="text-[10px] text-slate-500 leading-relaxed">
+                      หลังกด Save ระบบจะอัปโหลดและบันทึกเป็น Attachment ของรายการนี้
+                    </p>
                   </>
                 )}
               </div>
             </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-slate-50 rounded-b-2xl border-t border-slate-100 flex justify-end gap-2">
+              {editingBudgetId && budgets.find(b => b.id === editingBudgetId)?.status === "Rejected" ? (
+                <>
+                  <Button variant="secondary" onClick={closeBudgetModal}>ยกเลิก (Cancel)</Button>
+                  <Button variant="warning" onClick={() => handleSaveBudget("Draft")}>บันทึก (Draft)</Button>
+                  {canSubmitBudget && (
+                    <Button variant="primary" onClick={() => handleSaveBudget("Wait MD Approve")}>ส่งขออนุมัติ (Resubmit)</Button>
+                  )}
+                </>
+              ) : (
+                <>
+                  <Button variant="secondary" onClick={closeBudgetModal}>Cancel</Button>
+                  <Button onClick={() => handleSaveBudget()}>Save</Button>
+                </>
+              )}
+            </div>
           </div>
-        )}
-        {isSubItemModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200" onClick={() => setUnitDropdownOpen(false)}>
-            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md mx-4" onClick={(e) => e.stopPropagation()}>
-              {/* Header */}
-              <div className="px-6 py-4 bg-slate-700 rounded-t-2xl flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
-                    <Tag size={16} className="text-white" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-white">
-                      {editingSubItem ? (editingSubItem.status === "Rejected" ? "แก้ไขรายการ (ถูกปฏิเสธ)" : "แก้ไข Sub-Item") : "เพิ่ม Sub-Item"}
-                    </h3>
-                    {selectedBudget && <p className="text-slate-300 text-xs mt-0.5">{selectedBudget.code} — {selectedBudget.description}</p>}
-                  </div>
+        </div>
+      )}
+      {isSubItemModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200" onClick={() => setUnitDropdownOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md mx-4" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div className="px-6 py-4 bg-slate-700 rounded-t-2xl flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
+                  <Tag size={16} className="text-white" />
                 </div>
-                <button type="button" onClick={closeSubItemModal} className="text-white/60 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-all">
-                  <XCircle size={18} />
-                </button>
+                <div>
+                  <h3 className="text-sm font-bold text-white">
+                    {editingSubItem ? (editingSubItem.status === "Rejected" ? "แก้ไขรายการ (ถูกปฏิเสธ)" : "แก้ไข Sub-Item") : "เพิ่ม Sub-Item"}
+                  </h3>
+                  {selectedBudget && <p className="text-slate-300 text-xs mt-0.5">{selectedBudget.code} — {selectedBudget.description}</p>}
+                </div>
+              </div>
+              <button type="button" onClick={closeSubItemModal} className="text-white/60 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-all">
+                <XCircle size={18} />
+              </button>
+            </div>
+
+            {/* Reject banner */}
+            {editingSubItem?.status === "Rejected" && editingSubItem?.rejectReason && (
+              <div className="mx-6 mt-4 text-xs text-red-700 bg-red-50 px-3 py-2 rounded-lg border border-red-200 flex items-start gap-2">
+                <AlertCircle size={13} className="text-red-500 mt-0.5 shrink-0" />
+                <span><span className="font-semibold">เหตุผลปฏิเสธ:</span> {editingSubItem.rejectReason}</span>
+              </div>
+            )}
+
+            {/* Form */}
+            <div className="px-6 py-5 space-y-4">
+              {/* ชื่อรายการ */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">ชื่อรายการ <span className="text-red-500">*</span></label>
+                <input
+                  type="text"
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all"
+                  placeholder="ระบุชื่อรายการ..."
+                  value={subItemData.description}
+                  onChange={(e) => setSubItemData({ ...subItemData, description: e.target.value })}
+                  autoFocus
+                />
               </div>
 
-              {/* Reject banner */}
-              {editingSubItem?.status === "Rejected" && editingSubItem?.rejectReason && (
-                <div className="mx-6 mt-4 text-xs text-red-700 bg-red-50 px-3 py-2 rounded-lg border border-red-200 flex items-start gap-2">
-                  <AlertCircle size={13} className="text-red-500 mt-0.5 shrink-0" />
-                  <span><span className="font-semibold">เหตุผลปฏิเสธ:</span> {editingSubItem.rejectReason}</span>
-                </div>
-              )}
-
-              {/* Form */}
-              <div className="px-6 py-5 space-y-4">
-                {/* ชื่อรายการ */}
+              {/* จำนวน + หน่วย */}
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">ชื่อรายการ <span className="text-red-500">*</span></label>
-                  <input
-                    type="text"
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all"
-                    placeholder="ระบุชื่อรายการ..."
-                    value={subItemData.description}
-                    onChange={(e) => setSubItemData({ ...subItemData, description: e.target.value })}
-                    autoFocus
-                  />
-                </div>
-
-                {/* จำนวน + หน่วย */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">จำนวน</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="any"
-                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all"
-                      value={subItemData.quantity}
-                      onChange={(e) => setSubItemData({ ...subItemData, quantity: Number(e.target.value) })}
-                    />
-                  </div>
-
-                  {/* หน่วย — combobox */}
-                  <div className="relative">
-                    <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">หน่วย</label>
-                    <input
-                      ref={unitInputRef}
-                      type="text"
-                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all pr-8"
-                      placeholder="พิมพ์หรือเลือกหน่วย..."
-                      value={unitInputText}
-                      onChange={(e) => {
-                        setUnitInputText(e.target.value);
-                        setSubItemData({ ...subItemData, unit: e.target.value });
-                        setUnitDropdownOpen(true);
-                      }}
-                      onFocus={() => setUnitDropdownOpen(true)}
-                    />
-                    <ChevronDown size={13} className="absolute right-2.5 top-[2.1rem] text-slate-400 pointer-events-none" />
-                    {unitDropdownOpen && (
-                      <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-52 overflow-y-auto">
-                        {/* ตัวกรอง */}
-                        {unitOptions.filter(u => u.toLowerCase().includes(unitInputText.toLowerCase())).map(u => (
-                          <button
-                            key={u}
-                            type="button"
-                            className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center justify-between group"
-                            onMouseDown={(e) => { e.preventDefault(); setUnitInputText(u); setSubItemData({ ...subItemData, unit: u }); setUnitDropdownOpen(false); }}
-                          >
-                            <span>{u}</span>
-                            <button
-                              type="button"
-                              className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 text-xs px-1"
-                              title="ลบหน่วยนี้"
-                              onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); saveUnitOptions(unitOptions.filter(x => x !== u)); }}
-                            >
-                              <Trash2 size={11} />
-                            </button>
-                          </button>
-                        ))}
-                        {/* เพิ่มใหม่ */}
-                        {unitInputText.trim() && !unitOptions.some(u => u.toLowerCase() === unitInputText.trim().toLowerCase()) && (
-                          <button
-                            type="button"
-                            className="w-full text-left px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 flex items-center gap-1.5 border-t border-slate-100"
-                            onMouseDown={(e) => { e.preventDefault(); const newUnit = unitInputText.trim(); saveUnitOptions([...unitOptions, newUnit]); setSubItemData({ ...subItemData, unit: newUnit }); setUnitDropdownOpen(false); }}
-                          >
-                            <Plus size={12} /> เพิ่ม "{unitInputText.trim()}"
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* ราคา */}
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">ราคา / หน่วย</label>
+                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">จำนวน</label>
                   <input
                     type="number"
                     min="0"
                     step="any"
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all"
-                    placeholder="0.00"
-                    value={subItemData.unitPrice}
-                    onChange={(e) => setSubItemData({ ...subItemData, unitPrice: Number(e.target.value) })}
+                    value={subItemData.quantity}
+                    onChange={(e) => setSubItemData({ ...subItemData, quantity: Number(e.target.value) })}
                   />
                 </div>
 
-                {/* ยอดรวม (auto) */}
-                <div className="bg-slate-50 rounded-xl border border-slate-200 px-4 py-3 flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">ยอดรวม</span>
-                  <span className="text-base font-bold text-slate-800">{formatCurrency(Number(subItemData.quantity) * Number(subItemData.unitPrice))}</span>
-                </div>
-
-                {/* แนบไฟล์ Sub-Item */}
-                <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/90 space-y-2">
-                  <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-                    <Paperclip size={12} className="text-slate-400" />
-                    แนบไฟล์ (PDF / Office / รูป)
-                  </div>
-                  {editingSubItem ? (
-                    <>
-                      <div className="space-y-1 max-h-28 overflow-y-auto">
-                        {(() => {
-                          const liveSub = selectedBudget
-                            ? (budgets.find((b) => b.id === selectedBudget.id)?.subItems || []).find(
-                                (s) => s.id === editingSubItem.id
-                              )
-                            : null;
-                          const attList = liveSub?.attachments || editingSubItem.attachments || [];
-                          if (attList.length === 0) {
-                            return <p className="text-xs text-slate-400">ยังไม่มีไฟล์แนบ</p>;
-                          }
-                          return attList.map((att, i) => (
-                            <a
-                              key={`${att.url || att.name || i}`}
-                              href={att.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="block text-xs text-blue-600 hover:underline truncate"
-                              title={att.name}
-                            >
-                              {att.name || "เปิดไฟล์"}
-                            </a>
-                          ));
-                        })()}
-                      </div>
-                      {selectedBudget && selectedProjectId ? (
+                {/* หน่วย — combobox */}
+                <div className="relative">
+                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">หน่วย</label>
+                  <input
+                    ref={unitInputRef}
+                    type="text"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all pr-8"
+                    placeholder="พิมพ์หรือเลือกหน่วย..."
+                    value={unitInputText}
+                    onChange={(e) => {
+                      setUnitInputText(e.target.value);
+                      setSubItemData({ ...subItemData, unit: e.target.value });
+                      setUnitDropdownOpen(true);
+                    }}
+                    onFocus={() => setUnitDropdownOpen(true)}
+                  />
+                  <ChevronDown size={13} className="absolute right-2.5 top-[2.1rem] text-slate-400 pointer-events-none" />
+                  {unitDropdownOpen && (
+                    <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-52 overflow-y-auto">
+                      {/* ตัวกรอง */}
+                      {unitOptions.filter(u => u.toLowerCase().includes(unitInputText.toLowerCase())).map(u => (
+                        <button
+                          key={u}
+                          type="button"
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center justify-between group"
+                          onMouseDown={(e) => { e.preventDefault(); setUnitInputText(u); setSubItemData({ ...subItemData, unit: u }); setUnitDropdownOpen(false); }}
+                        >
+                          <span>{u}</span>
+                          <button
+                            type="button"
+                            className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 text-xs px-1"
+                            title="ลบหน่วยนี้"
+                            onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); saveUnitOptions(unitOptions.filter(x => x !== u)); }}
+                          >
+                            <Trash2 size={11} />
+                          </button>
+                        </button>
+                      ))}
+                      {/* เพิ่มใหม่ */}
+                      {unitInputText.trim() && !unitOptions.some(u => u.toLowerCase() === unitInputText.trim().toLowerCase()) && (
                         <button
                           type="button"
-                          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                          disabled={attachmentUploadingKey === `${selectedBudget.id}:${editingSubItem.id}`}
-                          onClick={() => openAttachmentPicker(selectedBudget.id, editingSubItem.id)}
+                          className="w-full text-left px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 flex items-center gap-1.5 border-t border-slate-100"
+                          onMouseDown={(e) => { e.preventDefault(); const newUnit = unitInputText.trim(); saveUnitOptions([...unitOptions, newUnit]); setSubItemData({ ...subItemData, unit: newUnit }); setUnitDropdownOpen(false); }}
                         >
-                          {attachmentUploadingKey === `${selectedBudget.id}:${editingSubItem.id}` ? (
-                            <RefreshCw size={14} className="animate-spin" />
-                          ) : (
-                            <Upload size={14} />
-                          )}
-                          แนบไฟล์เพิ่ม
+                          <Plus size={12} /> เพิ่ม "{unitInputText.trim()}"
                         </button>
-                      ) : (
-                        <p className="text-[10px] text-amber-600">เลือกโครงการก่อนเพื่อแนบไฟล์</p>
                       )}
-                    </>
-                  ) : (
-                    <>
-                      <input
-                        ref={modalSubPendingFileRef}
-                        type="file"
-                        multiple
-                        className="hidden"
-                        accept=".pdf,.xls,.xlsx,.doc,.docx,.jpg,.jpeg,.png,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/jpeg,image/png"
-                        onChange={onModalSubPendingFilesSelected}
-                      />
-                      <button
-                        type="button"
-                        className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                        onClick={() => modalSubPendingFileRef.current?.click()}
-                      >
-                        <Upload size={14} />
-                        เลือกไฟล์แนบ
-                      </button>
-                      {pendingSubAttachments.length > 0 && (
-                        <ul className="space-y-1 max-h-24 overflow-y-auto">
-                          {pendingSubAttachments.map((f, idx) => (
-                            <li key={`${f.name}-${idx}`} className="flex items-center justify-between gap-2 text-xs bg-white border border-slate-100 rounded-lg px-2 py-1">
-                              <span className="truncate min-w-0" title={f.name}>{f.name}</span>
-                              <button
-                                type="button"
-                                className="text-red-500 hover:text-red-700 shrink-0 p-0.5"
-                                onClick={() => setPendingSubAttachments((prev) => prev.filter((_, j) => j !== idx))}
-                                title="เอาออก"
-                              >
-                                <Trash2 size={12} />
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                      <p className="text-[10px] text-slate-500 leading-relaxed">
-                        หลังกดบันทึก ระบบจะสร้าง Sub-Item แล้วอัปโหลดแนบให้อัตโนมัติ
-                      </p>
-                    </>
+                    </div>
                   )}
                 </div>
               </div>
 
-              {/* Footer */}
-              <div className="px-6 pb-5 flex justify-end gap-2">
-                {editingSubItem?.status === "Rejected" ? (
+              {/* ราคา */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">ราคา / หน่วย</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 focus:border-slate-400 transition-all"
+                  placeholder="0.00"
+                  value={subItemData.unitPrice}
+                  onChange={(e) => setSubItemData({ ...subItemData, unitPrice: Number(e.target.value) })}
+                />
+              </div>
+
+              {/* ยอดรวม (auto) */}
+              <div className="bg-slate-50 rounded-xl border border-slate-200 px-4 py-3 flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">ยอดรวม</span>
+                <span className="text-base font-bold text-slate-800">{formatCurrency(Number(subItemData.quantity) * Number(subItemData.unitPrice))}</span>
+              </div>
+
+              {/* แนบไฟล์ Sub-Item */}
+              <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/90 space-y-2">
+                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                  <Paperclip size={12} className="text-slate-400" />
+                  แนบไฟล์ (PDF / Office / รูป)
+                </div>
+                {editingSubItem ? (
                   <>
-                    <Button variant="secondary" onClick={() => { setEditingSubItem(null); closeSubItemModal(); }}>ยกเลิก</Button>
-                    <Button variant="secondary" onClick={handleSaveSubItem}>บันทึก</Button>
-                    {canSubmitSubItem && (
-                      <Button onClick={handleResubmitSubItemFromModal}>ขออนุมัติ</Button>
+                    <div className="space-y-1 max-h-28 overflow-y-auto">
+                      {(() => {
+                        const liveSub = selectedBudget
+                          ? (budgets.find((b) => b.id === selectedBudget.id)?.subItems || []).find(
+                            (s) => s.id === editingSubItem.id
+                          )
+                          : null;
+                        const attList = liveSub?.attachments || editingSubItem.attachments || [];
+                        if (attList.length === 0) {
+                          return <p className="text-xs text-slate-400">ยังไม่มีไฟล์แนบ</p>;
+                        }
+                        return attList.map((att, i) => (
+                          <a
+                            key={`${att.url || att.name || i}`}
+                            href={att.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block text-xs text-blue-600 hover:underline truncate"
+                            title={att.name}
+                          >
+                            {att.name || "เปิดไฟล์"}
+                          </a>
+                        ));
+                      })()}
+                    </div>
+                    {selectedBudget && selectedProjectId ? (
+                      <button
+                        type="button"
+                        className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                        disabled={attachmentUploadingKey === `${selectedBudget.id}:${editingSubItem.id}`}
+                        onClick={() => openAttachmentPicker(selectedBudget.id, editingSubItem.id)}
+                      >
+                        {attachmentUploadingKey === `${selectedBudget.id}:${editingSubItem.id}` ? (
+                          <RefreshCw size={14} className="animate-spin" />
+                        ) : (
+                          <Upload size={14} />
+                        )}
+                        แนบไฟล์เพิ่ม
+                      </button>
+                    ) : (
+                      <p className="text-[10px] text-amber-600">เลือกโครงการก่อนเพื่อแนบไฟล์</p>
                     )}
                   </>
                 ) : (
                   <>
-                    <Button variant="secondary" onClick={closeSubItemModal}>ยกเลิก</Button>
-                    <Button onClick={handleSaveSubItem}><Save size={14} /> บันทึก</Button>
+                    <input
+                      ref={modalSubPendingFileRef}
+                      type="file"
+                      multiple
+                      className="hidden"
+                      accept=".pdf,.xls,.xlsx,.doc,.docx,.jpg,.jpeg,.png,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/jpeg,image/png"
+                      onChange={onModalSubPendingFilesSelected}
+                    />
+                    <button
+                      type="button"
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                      onClick={() => modalSubPendingFileRef.current?.click()}
+                    >
+                      <Upload size={14} />
+                      เลือกไฟล์แนบ
+                    </button>
+                    {pendingSubAttachments.length > 0 && (
+                      <ul className="space-y-1 max-h-24 overflow-y-auto">
+                        {pendingSubAttachments.map((f, idx) => (
+                          <li key={`${f.name}-${idx}`} className="flex items-center justify-between gap-2 text-xs bg-white border border-slate-100 rounded-lg px-2 py-1">
+                            <span className="truncate min-w-0" title={f.name}>{f.name}</span>
+                            <button
+                              type="button"
+                              className="text-red-500 hover:text-red-700 shrink-0 p-0.5"
+                              onClick={() => setPendingSubAttachments((prev) => prev.filter((_, j) => j !== idx))}
+                              title="เอาออก"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <p className="text-[10px] text-slate-500 leading-relaxed">
+                      หลังกดบันทึก ระบบจะสร้าง Sub-Item แล้วอัปโหลดแนบให้อัตโนมัติ
+                    </p>
                   </>
                 )}
               </div>
             </div>
+
+            {/* Footer */}
+            <div className="px-6 pb-5 flex justify-end gap-2">
+              {editingSubItem?.status === "Rejected" ? (
+                <>
+                  <Button variant="secondary" onClick={() => { setEditingSubItem(null); closeSubItemModal(); }}>ยกเลิก</Button>
+                  <Button variant="secondary" onClick={handleSaveSubItem}>บันทึก</Button>
+                  {canSubmitSubItem && (
+                    <Button onClick={handleResubmitSubItemFromModal}>ขออนุมัติ</Button>
+                  )}
+                </>
+              ) : (
+                <>
+                  <Button variant="secondary" onClick={closeSubItemModal}>ยกเลิก</Button>
+                  <Button onClick={handleSaveSubItem}><Save size={14} /> บันทึก</Button>
+                </>
+              )}
+            </div>
           </div>
-        )}
-        {isRevisionModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
-            <Card className="w-full max-w-md p-6">
-              <h3 className="text-lg font-bold mb-4 text-orange-600">
-                ขอแก้ไขงบประมาณ
-              </h3>
-              <InputGroup label="เหตุผล">
-                <textarea
-                  className="w-full border rounded p-2 h-24"
-                  value={revisionReason}
-                  onChange={(e) => setRevisionReason(e.target.value)}
-                />
-              </InputGroup>
-              <div className="flex justify-end gap-2 mt-4">
-                <Button
-                  variant="secondary"
-                  onClick={() => setIsRevisionModalOpen(false)}
-                >
-                  Cancel
-                </Button>
-                <Button variant="warning" onClick={handleRequestRevision}>
-                  Submit
-                </Button>
-              </div>
-            </Card>
-          </div>
-        )}
-        {isRejectModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
-            <Card className="w-full max-w-md p-6">
-              <h3 className="text-lg font-bold mb-4 text-red-600">
-                ปฏิเสธงบประมาณ (Reject Budget)
-              </h3>
-              <p className="text-sm text-slate-600 mb-3">
-                รายการ: <span className="font-semibold text-slate-800">{selectedBudget?.code} — {selectedBudget?.description}</span>
-              </p>
-              <InputGroup label="เหตุผลที่ปฏิเสธ (Reject Reason)">
-                <textarea
-                  className="w-full border rounded p-2 h-24"
-                  placeholder="กรุณาระบุเหตุผลที่ปฏิเสธ เช่น ตรงไหนเพราะอะไร..."
-                  value={rejectReason}
-                  onChange={(e) => setRejectReason(e.target.value)}
-                />
-              </InputGroup>
-              <div className="flex justify-end gap-2 mt-4">
-                <Button
-                  variant="secondary"
-                  onClick={() => setIsRejectModalOpen(false)}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  variant="danger"
-                  onClick={handleRejectBudget}
-                  disabled={!rejectReason.trim()}
-                >
-                  ยืนยันปฏิเสธ
-                </Button>
-              </div>
-            </Card>
-          </div>
-        )}
-        {/* Modal กรอกเหตุผล (แทน window.prompt) — ขอแก้ไข / ปฏิเสธ รายการย่อย */}
-        {reasonModalOpen && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200 p-4">
-            <Card className="w-full max-w-md p-6">
-              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                {reasonModalType === "revision" ? (
-                  <><RefreshCw size={20} className="text-orange-600" /> ระบุเหตุผลที่ขอแก้ไข (Revision Reason)</>
-                ) : (
-                  <><XCircle size={20} className="text-red-600" /> ระบุเหตุผลที่ไม่อนุมัติ (Reject Reason)</>
-                )}
-              </h3>
-              <InputGroup label={reasonModalType === "revision" ? "เหตุผลที่ขอแก้ไข" : "เหตุผลที่ปฏิเสธ"}>
-                <textarea
-                  className="w-full border border-slate-200 rounded-lg p-3 h-24 text-sm"
-                  placeholder={reasonModalType === "revision" ? "กรุณาระบุเหตุผลที่ต้องการแก้ไข..." : "กรุณาระบุเหตุผลที่ไม่อนุมัติ..."}
-                  value={reasonModalValue}
-                  onChange={(e) => setReasonModalValue(e.target.value)}
-                />
-              </InputGroup>
-              <div className="flex justify-end gap-2 mt-4">
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setReasonModalOpen(false);
-                    setReasonModalValue("");
-                  }}
-                >
-                  ยกเลิก
-                </Button>
-                <Button
-                  variant={reasonModalType === "revision" ? "warning" : "danger"}
-                  onClick={handleReasonModalSubmit}
-                  disabled={!reasonModalValue.trim()}
-                >
-                  {reasonModalType === "revision" ? "ส่งคำขอแก้ไข" : "ยืนยันปฏิเสธ"}
-                </Button>
-              </div>
-            </Card>
-          </div>
-        )}
-      </div>
-    );
+        </div>
+      )}
+      {isRevisionModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
+          <Card className="w-full max-w-md p-6">
+            <h3 className="text-lg font-bold mb-4 text-orange-600">
+              ขอแก้ไขงบประมาณ
+            </h3>
+            <InputGroup label="เหตุผล">
+              <textarea
+                className="w-full border rounded p-2 h-24"
+                value={revisionReason}
+                onChange={(e) => setRevisionReason(e.target.value)}
+              />
+            </InputGroup>
+            <div className="flex justify-end gap-2 mt-4">
+              <Button
+                variant="secondary"
+                onClick={() => setIsRevisionModalOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button variant="warning" onClick={handleRequestRevision}>
+                Submit
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+      {isRejectModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
+          <Card className="w-full max-w-md p-6">
+            <h3 className="text-lg font-bold mb-4 text-red-600">
+              ปฏิเสธงบประมาณ (Reject Budget)
+            </h3>
+            <p className="text-sm text-slate-600 mb-3">
+              รายการ: <span className="font-semibold text-slate-800">{selectedBudget?.code} — {selectedBudget?.description}</span>
+            </p>
+            <InputGroup label="เหตุผลที่ปฏิเสธ (Reject Reason)">
+              <textarea
+                className="w-full border rounded p-2 h-24"
+                placeholder="กรุณาระบุเหตุผลที่ปฏิเสธ เช่น ตรงไหนเพราะอะไร..."
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+              />
+            </InputGroup>
+            <div className="flex justify-end gap-2 mt-4">
+              <Button
+                variant="secondary"
+                onClick={() => setIsRejectModalOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                onClick={handleRejectBudget}
+                disabled={!rejectReason.trim()}
+              >
+                ยืนยันปฏิเสธ
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+      {/* Modal กรอกเหตุผล (แทน window.prompt) — ขอแก้ไข / ปฏิเสธ รายการย่อย */}
+      {reasonModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200 p-4">
+          <Card className="w-full max-w-md p-6">
+            <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+              {reasonModalType === "revision" ? (
+                <><RefreshCw size={20} className="text-orange-600" /> ระบุเหตุผลที่ขอแก้ไข (Revision Reason)</>
+              ) : (
+                <><XCircle size={20} className="text-red-600" /> ระบุเหตุผลที่ไม่อนุมัติ (Reject Reason)</>
+              )}
+            </h3>
+            <InputGroup label={reasonModalType === "revision" ? "เหตุผลที่ขอแก้ไข" : "เหตุผลที่ปฏิเสธ"}>
+              <textarea
+                className="w-full border border-slate-200 rounded-lg p-3 h-24 text-sm"
+                placeholder={reasonModalType === "revision" ? "กรุณาระบุเหตุผลที่ต้องการแก้ไข..." : "กรุณาระบุเหตุผลที่ไม่อนุมัติ..."}
+                value={reasonModalValue}
+                onChange={(e) => setReasonModalValue(e.target.value)}
+              />
+            </InputGroup>
+            <div className="flex justify-end gap-2 mt-4">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setReasonModalOpen(false);
+                  setReasonModalValue("");
+                }}
+              >
+                ยกเลิก
+              </Button>
+              <Button
+                variant={reasonModalType === "revision" ? "warning" : "danger"}
+                onClick={handleReasonModalSubmit}
+                disabled={!reasonModalValue.trim()}
+              >
+                {reasonModalType === "revision" ? "ส่งคำขอแก้ไข" : "ยืนยันปฏิเสธ"}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
 });
 
 

@@ -128,7 +128,7 @@ const AppShell = () => {
     }
     setSidebarCollapsed((c) => {
       const next = !c;
-      try { localStorage.setItem("cmgbudget_sidebarCollapsed", String(next)); } catch (_) {}
+      try { localStorage.setItem("cmgbudget_sidebarCollapsed", String(next)); } catch (_) { }
       return next;
     });
   };
@@ -199,7 +199,7 @@ const AppShell = () => {
 
   const sidebarDense = isCompactViewport;
   const shouldShowSidebar = !isFullScreenModalOpen;
-  const moduleMenus = ["budget","pr","po","payment-subcontract","invoice","receive"].includes(activeMenu);
+  const moduleMenus = ["budget", "pr", "po", "payment-subcontract", "invoice", "receive"].includes(activeMenu);
 
   return (
     <div className="app-shell-root relative flex overflow-hidden bg-slate-100 font-sans">
@@ -212,433 +212,430 @@ const AppShell = () => {
         />
       )}
       {shouldShowSidebar && (
-      <aside
-        className={`${
-          isCompactViewport
+        <aside
+          className={`${isCompactViewport
             ? `fixed inset-y-0 left-0 z-40 w-[17rem] max-w-[85vw] transform transition-transform duration-200 ease-out ${isSidebarOpenMobile ? "translate-x-0" : "-translate-x-full"}`
             : `${sidebarCollapsed ? "w-[4.5rem]" : "w-64"} relative z-20 transition-[width] duration-200 ease-out`
-        } bg-slate-900 text-white flex flex-col shadow-xl overflow-hidden`}
-      >
-        <div className={`border-b border-slate-800 bg-slate-950 shrink-0 ${sidebarCollapsed && !isCompactViewport ? "p-2" : isCompactViewport ? "p-3" : "p-4"}`}>
-          <div className={`rounded-xl bg-slate-800/80 border border-slate-700 ${sidebarCollapsed && !isCompactViewport ? "p-2" : isCompactViewport ? "p-2.5" : "p-3"}`}>
-            <div className={`flex items-center ${sidebarCollapsed && !isCompactViewport ? "justify-center" : "gap-3"}`}>
-              <ProfileAvatar
-                src={userData?.profilePhotoUrl || user?.photoURL}
-                className="w-11 h-11 rounded-full object-cover border-2 border-slate-600 shadow-md flex-shrink-0"
-                fallback={
-                  <div className="w-11 h-11 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-md flex-shrink-0">
-                    {userData?.firstName?.charAt(0) || user?.email?.charAt(0) || "?"}
-                  </div>
-                }
-              />
-              {(!sidebarCollapsed || isCompactViewport) && (
-                <div className="min-w-0 flex-1">
-                  <p className={`font-bold text-white truncate ${isCompactViewport ? "text-[13px]" : "text-sm"}`}>
-                    {userData?.firstName} {userData?.lastName}
-                  </p>
-                  <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wide flex flex-wrap gap-0.5">
-                    {userRoles.join(", ")}
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-        <nav className={`flex-1 overflow-y-auto custom-scrollbar ${isCompactViewport ? "p-2.5 space-y-1" : "p-2 space-y-0.5"}`}>
-          {canAccessModule("dashboard") && (
-            <SidebarItem
-              icon={<LayoutDashboard size={20} />}
-              label="ภาพรวม"
-              active={activeMenu === "dashboard"}
-              onClick={() => changeMenu("dashboard")}
-              collapsed={sidebarCollapsed}
-              dense={sidebarDense}
-            />
-          )}
-          {(!sidebarCollapsed || isCompactViewport) && (
-            <div className={`font-bold text-slate-500 uppercase tracking-wider ${isCompactViewport ? "pt-3 pb-1.5 px-3 text-[10px]" : "pt-4 pb-2 px-4 text-xs"}`}>
-              Modules
-            </div>
-          )}
-          {canAccessModule("projects") && (
-            <SidebarItem
-              icon={<Briefcase size={20} className="text-amber-300" />}
-              label="จัดการโครงการ"
-              active={activeMenu === "projects"}
-              onClick={() => changeMenu("projects")}
-              collapsed={sidebarCollapsed}
-              dense={sidebarDense}
-            />
-          )}
-          {(() => {
-            const proj = pendingByProject?.find((x: any) => x.projectId === selectedProjectId);
-            const projBadge = {
-              budget: (proj?.budgets || 0) + (proj?.subItems || 0),
-              pr: proj?.prs || 0,
-              po: proj?.pos || 0,
-              "payment-subcontract": proj?.payments || 0,
-            };
-            return (
-              <>
-                {canAccessModule("budget") && (
-                  <SidebarItem
-                    icon={<Wallet size={20} className="text-emerald-300" />}
-                    label="Project Budget"
-                    active={activeMenu === "budget"}
-                    onClick={() => changeMenu("budget")}
-                    collapsed={sidebarCollapsed}
-                    badge={projBadge.budget}
-                    dense={sidebarDense}
-                  />
-                )}
-                {(canAccessModule("pr") || canAccessModule("pr-table")) && (
-                  <SidebarItem
-                    icon={<FileText size={20} className="text-sky-300" />}
-                    label="Purchase Request (PR)"
-                    active={activeMenu === "pr"}
-                    onClick={() => changeMenu("pr")}
-                    collapsed={sidebarCollapsed}
-                    badge={projBadge.pr}
-                    dense={sidebarDense}
-                  />
-                )}
-                {(canAccessModule("po") || canAccessModule("po-table")) && (
-                  <SidebarItem
-                    icon={<ShoppingCart size={20} className="text-rose-300" />}
-                    label="Purchase Order (PO)"
-                    active={activeMenu === "po"}
-                    onClick={() => changeMenu("po")}
-                    collapsed={sidebarCollapsed}
-                    badge={projBadge.po}
-                    dense={sidebarDense}
-                  />
-                )}
-                {canAccessModule("payment-subcontract") && (
-                  <SidebarItem
-                    icon={<CreditCard size={20} className="text-orange-300" />}
-                    label="Payment Subcontract"
-                    active={activeMenu === "payment-subcontract"}
-                    onClick={() => changeMenu("payment-subcontract")}
-                    collapsed={sidebarCollapsed}
-                    badge={projBadge["payment-subcontract"]}
-                    dense={sidebarDense}
-                  />
-                )}
-              </>
-            );
-          })()}
-          {canAccessModule("receive") && (
-            <SidebarItem
-              icon={<FileInput size={20} />}
-              label="Receive"
-              active={activeMenu === "receive"}
-              onClick={() => changeMenu("receive")}
-              collapsed={sidebarCollapsed}
-              dense={sidebarDense}
-            />
-          )}
-          {canAccessModule("invoice") && (
-            <SidebarItem
-              icon={<FileText size={20} />}
-              label="Invoice"
-              active={activeMenu === "invoice"}
-              onClick={() => changeMenu("invoice")}
-              collapsed={sidebarCollapsed}
-              dense={sidebarDense}
-            />
-          )}
-
-          {(!sidebarCollapsed || isCompactViewport) && (
-            <div className={`font-bold text-slate-500 uppercase tracking-wider ${isCompactViewport ? "pt-3 pb-1.5 px-3 text-[10px]" : "pt-4 pb-2 px-4 text-xs"}`}>
-              Database
-            </div>
-          )}
-          {canAccessModule("vendor") && (
-            <SidebarItem
-              icon={<Building2 size={20} className="text-violet-300" />}
-              label="Vendor Management"
-              active={activeMenu === "vendor"}
-              onClick={() => changeMenu("vendor")}
-              collapsed={sidebarCollapsed}
-              dense={sidebarDense}
-            />
-          )}
-          {canAccessModule("material") && (
-            <SidebarItem
-              icon={<Package size={20} className="text-teal-300" />}
-              label="Material"
-              active={activeMenu === "material"}
-              onClick={() => changeMenu("material")}
-              collapsed={sidebarCollapsed}
-              dense={sidebarDense}
-            />
-          )}
-
-          {(!sidebarCollapsed || isCompactViewport) && (
-            <div className={`font-bold text-slate-500 uppercase tracking-wider ${isCompactViewport ? "pt-3 pb-1.5 px-3 text-[10px]" : "pt-4 pb-2 px-4 text-xs"}`}>
-              System
-            </div>
-          )}
-          {canAccessModule("profile") && (
-            <SidebarItem
-              icon={<User size={20} />}
-              label="ข้อมูลส่วนตัว (Profile)"
-              active={activeMenu === "profile"}
-              onClick={() => changeMenu("profile")}
-              collapsed={sidebarCollapsed}
-              dense={sidebarDense}
-            />
-          )}
-          {canAccessModule("admin") && (
-            <SidebarItem
-              icon={<Shield size={20} />}
-              label="ผู้ดูแลระบบ (Admin)"
-              active={activeMenu === "admin"}
-              onClick={() => changeMenu("admin")}
-              collapsed={sidebarCollapsed}
-              dense={sidebarDense}
-            />
-          )}
-        </nav>
-        <div className={`border-t border-slate-800 shrink-0 flex items-center justify-center gap-1 ${isCompactViewport ? "p-3" : sidebarCollapsed ? "py-2 px-1" : "p-4"}`}>
-          <button
-            type="button"
-            onClick={toggleSidebar}
-            className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-            title={isCompactViewport ? "ปิดแถบเมนู" : sidebarCollapsed ? "ขยายแถบเมนู" : "ย่อแถบเมนู"}
-          >
-            {isCompactViewport ? <ChevronLeft size={18} /> : sidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
-          </button>
-          {(!sidebarCollapsed || isCompactViewport) && (
-            <span className="text-[10px] text-slate-500 text-center flex-1">CMG Budget Control V.20</span>
-          )}
-        </div>
-      </aside>
-      )}
-
-      <main className="app-shell-main min-w-0 flex-1 overflow-y-auto bg-slate-50/50">
-        {!isFullScreenModalOpen && (
-        <header className="bg-white/80 backdrop-blur-md shadow-sm px-3 py-2 md:px-5 md:py-2.5 flex flex-wrap items-center gap-2 md:gap-3 sticky top-0 z-20 border-b border-slate-100">
-          {isCompactViewport && (
-            <button
-              type="button"
-              onClick={toggleSidebar}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors hover:bg-slate-100 lg:hidden"
-              title="เปิดเมนู"
-            >
-              <Menu size={16} />
-            </button>
-          )}
-          <h1 className="min-w-0 flex-1 text-[15px] font-bold text-slate-800 flex items-center gap-2 md:flex-none md:text-lg">
-            {activeMenu === "dashboard"
-              ? "Dashboard"
-              : activeMenu === "projects"
-                ? "จัดการโครงการ"
-                : activeMenu === "budget"
-                  ? "Project Budget"
-                  : activeMenu === "pr"
-                    ? "Purchase Request (PR)"
-                    : activeMenu === "po"
-                        ? "Purchase Order (PO)"
-                        : activeMenu === "vendor"
-                            ? "Vendor Management"
-                            : activeMenu === "material"
-                              ? "Material"
-                              : activeMenu === "invoice"
-                              ? "Invoice"
-                              : activeMenu === "receive"
-                              ? "Receive"
-                              : activeMenu === "profile"
-                                ? "User Profile"
-                                : activeMenu === "admin"
-                                  ? "Admin Dashboard"
-                                  : "Module View"}
-          </h1>
-          {!isCompactViewport && <div className="flex-1" />}
-
-          {/* Project Cards — อยู่ขวา ก่อนกระดิ่ง ขยายออกซ้ายเมื่อมีโครงการเพิ่ม */}
-          {moduleMenus && visibleProjects.length > 0 && (
-            <div className={`${isCompactViewport ? "order-3 flex w-full overflow-x-auto no-scrollbar pb-0.5" : "flex items-center gap-1.5 shrink-0"}`}>
-              <div className={`${isCompactViewport ? "flex min-w-max items-center gap-1.5" : "flex items-center gap-1.5 shrink-0"}`}>
-              {visibleProjects.map((p) => {
-                const projPending = pendingByProject?.find((x) => x.projectId === p.id);
-                const pendingTotal = projPending?.total || 0;
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => setSelectedProjectId(p.id)}
-                    title={p.name}
-                    className={`relative flex-shrink-0 rounded-lg font-extrabold transition-all text-center flex items-center justify-center break-all ${
-                      isCompactViewport ? "w-8 h-8 px-0.5 text-[9px]" : "w-9 h-9 px-0.5 text-[10px]"
-                    } ${
-                      selectedProjectId === p.id
-                        ? "bg-orange-500 text-white shadow-md scale-105"
-                        : "bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200"
-                    }`}
-                  >
-                    {(() => {
-                      if (!p.jobNo) return (p.name || "?").slice(0, 4);
-                      const segs = String(p.jobNo).trim().split("-");
-                      const last = segs.pop() || "";
-                      // 3-digit pure number (e.g. "072") → strip 1 leading zero → "72"
-                      const compact = /^0\d{2}$/.test(last) ? last.slice(1) : last;
-                      return "J" + compact;
-                    })()}
-                    {pendingTotal > 0 && (
-                      <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[8px] font-bold rounded-full min-w-[14px] h-3.5 flex items-center justify-center px-0.5 shadow animate-pulse">
-                        {pendingTotal > 99 ? "99+" : pendingTotal}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-              </div>
-            </div>
-          )}
-
-          <div className={`flex items-center gap-2 shrink-0 ${isCompactViewport ? "ml-auto" : "gap-2.5"}`}>
-            {/* Bell notification button */}
-            <div className="relative">
-              <button
-                onClick={() => setIsBellOpen(!isBellOpen)}
-                className={`relative text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors ${isCompactViewport ? "p-2" : "p-1.5"}`}
-                title="รายการรออนุมัติ"
-              >
-                <Bell size={18} />
-                {totalPendingCount > 0 && (
-                  <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-[9px] font-bold rounded-full min-w-[16px] h-4 flex items-center justify-center px-1 shadow-md animate-pulse">
-                    {totalPendingCount > 99 ? "99+" : totalPendingCount}
-                  </span>
-                )}
-              </button>
-              <AnimatePresence>
-              {isBellOpen && (
-                <motion.div
-                  className="absolute right-0 top-12 w-80 bg-white rounded-xl shadow-2xl border border-slate-200 z-50 overflow-hidden"
-                  initial={{ opacity: 0, y: -6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -6 }}
-                  transition={{ duration: 0.2, ease: [0.25, 0.46, 0.45, 0.94] }}
-                >
-                  <div className="p-3 bg-slate-900 text-white flex items-center justify-between">
-                    <span className="text-sm font-bold flex items-center gap-2">
-                      <Bell size={14} /> รายการรออนุมัติ
-                    </span>
-                    <span className="bg-red-500 text-[10px] font-bold rounded-full px-2 py-0.5">
-                      {totalPendingCount} รายการ
-                    </span>
-                  </div>
-                  {pendingByProject.length === 0 ? (
-                    <div className="p-6 text-center text-slate-400 text-sm">
-                      ไม่มีรายการรออนุมัติ
-                    </div>
-                  ) : (
-                    <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
-                      {pendingByProject.map((item) => (
-                        <button
-                          key={item.projectId}
-                          className="w-full text-left px-4 py-3 hover:bg-blue-50 transition-colors"
-                          onClick={() => {
-                            setSelectedProjectId(item.projectId);
-                            handleMenuChange("budget");
-                            setBudgetCategory("OVERVIEW");
-                            setScrollToPendingAfterRender(true);
-                            setIsBellOpen(false);
-                          }}
-                        >
-                          <div className="text-xs font-bold text-slate-800 truncate">
-                            {item.projectName}
-                          </div>
-                          <div className="flex gap-2 mt-1">
-                            {item.budgets > 0 && (
-                              <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">
-                                Budget: {item.budgets}
-                              </span>
-                            )}
-                            {item.prs > 0 && (
-                              <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
-                                PR: {item.prs}
-                              </span>
-                            )}
-                            {item.pos > 0 && (
-                              <span className="text-[10px] bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium">
-                                PO: {item.pos}
-                              </span>
-                            )}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </motion.div>
-              )}
-              </AnimatePresence>
-            </div>
-            <div className="relative shrink-0" ref={profileDropdownRef}>
-              <button
-                type="button"
-                onClick={() => setProfileDropdownOpen((o) => !o)}
-                className={`flex items-center rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200/80 transition-colors ${
-                  isCompactViewport ? "gap-1.5 px-2 py-1.5" : "gap-2 px-2.5 py-1"
-                }`}
-                title="โปรไฟล์"
-              >
+            } bg-slate-900 text-white flex flex-col shadow-xl overflow-hidden`}
+        >
+          <div className={`border-b border-slate-800 bg-slate-950 shrink-0 ${sidebarCollapsed && !isCompactViewport ? "p-2" : isCompactViewport ? "p-3" : "p-4"}`}>
+            <div className={`rounded-xl bg-slate-800/80 border border-slate-700 ${sidebarCollapsed && !isCompactViewport ? "p-2" : isCompactViewport ? "p-2.5" : "p-3"}`}>
+              <div className={`flex items-center ${sidebarCollapsed && !isCompactViewport ? "justify-center" : "gap-3"}`}>
                 <ProfileAvatar
                   src={userData?.profilePhotoUrl || user?.photoURL}
-                  className={`${isCompactViewport ? "w-8 h-8" : "w-7 h-7"} rounded-full object-cover border border-slate-300`}
+                  className="w-11 h-11 rounded-full object-cover border-2 border-slate-600 shadow-md flex-shrink-0"
                   fallback={
-                    <div className={`${isCompactViewport ? "w-8 h-8" : "w-7 h-7"} bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-xs shadow-md`}>
+                    <div className="w-11 h-11 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-md flex-shrink-0">
                       {userData?.firstName?.charAt(0) || user?.email?.charAt(0) || "?"}
                     </div>
                   }
                 />
-                <ChevronDown size={14} className="text-slate-500" />
-              </button>
-              <AnimatePresence>
-                {profileDropdownOpen && (
-                  <motion.div
-                    className="absolute right-0 top-full mt-2 w-52 bg-white rounded-xl shadow-xl border border-slate-200 py-1 z-50"
-                    initial={{ opacity: 0, y: -4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -4 }}
-                    transition={{ duration: 0.15 }}
-                  >
-                    <button
-                      type="button"
-                      className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50"
-                      onClick={() => {
-                        changeMenu("profile");
-                        setProfileDropdownOpen(false);
-                      }}
-                    >
-                      <User size={16} /> อัพเดทโปรไฟล์
-                    </button>
-                    <button
-                      type="button"
-                      className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50"
-                      onClick={() => {
-                        setProfileDropdownOpen(false);
-                        logout();
-                      }}
-                    >
-                      <LogOut size={16} /> ออกจากระบบ
-                    </button>
-                  </motion.div>
+                {(!sidebarCollapsed || isCompactViewport) && (
+                  <div className="min-w-0 flex-1">
+                    <p className={`font-bold text-white truncate ${isCompactViewport ? "text-[13px]" : "text-sm"}`}>
+                      {userData?.firstName} {userData?.lastName}
+                    </p>
+                    <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wide flex flex-wrap gap-0.5">
+                      {userRoles.join(", ")}
+                    </p>
+                  </div>
                 )}
-              </AnimatePresence>
+              </div>
             </div>
           </div>
-        </header>
+          <nav className={`flex-1 overflow-y-auto custom-scrollbar ${isCompactViewport ? "p-2.5 space-y-1" : "p-2 space-y-0.5"}`}>
+            {canAccessModule("dashboard") && (
+              <SidebarItem
+                icon={<LayoutDashboard size={20} />}
+                label="ภาพรวม"
+                active={activeMenu === "dashboard"}
+                onClick={() => changeMenu("dashboard")}
+                collapsed={sidebarCollapsed}
+                dense={sidebarDense}
+              />
+            )}
+            {(!sidebarCollapsed || isCompactViewport) && (
+              <div className={`font-bold text-slate-500 uppercase tracking-wider ${isCompactViewport ? "pt-3 pb-1.5 px-3 text-[10px]" : "pt-4 pb-2 px-4 text-xs"}`}>
+                Modules
+              </div>
+            )}
+            {canAccessModule("projects") && (
+              <SidebarItem
+                icon={<Briefcase size={20} className="text-amber-300" />}
+                label="จัดการโครงการ"
+                active={activeMenu === "projects"}
+                onClick={() => changeMenu("projects")}
+                collapsed={sidebarCollapsed}
+                dense={sidebarDense}
+              />
+            )}
+            {(() => {
+              const proj = pendingByProject?.find((x: any) => x.projectId === selectedProjectId);
+              const projBadge = {
+                budget: (proj?.budgets || 0) + (proj?.subItems || 0),
+                pr: proj?.prs || 0,
+                po: proj?.pos || 0,
+                "payment-subcontract": proj?.payments || 0,
+              };
+              return (
+                <>
+                  {canAccessModule("budget") && (
+                    <SidebarItem
+                      icon={<Wallet size={20} className="text-emerald-300" />}
+                      label="Project Budget"
+                      active={activeMenu === "budget"}
+                      onClick={() => changeMenu("budget")}
+                      collapsed={sidebarCollapsed}
+                      badge={projBadge.budget}
+                      dense={sidebarDense}
+                    />
+                  )}
+                  {(canAccessModule("pr") || canAccessModule("pr-table")) && (
+                    <SidebarItem
+                      icon={<FileText size={20} className="text-sky-300" />}
+                      label="Purchase Request (PR)"
+                      active={activeMenu === "pr"}
+                      onClick={() => changeMenu("pr")}
+                      collapsed={sidebarCollapsed}
+                      badge={projBadge.pr}
+                      dense={sidebarDense}
+                    />
+                  )}
+                  {(canAccessModule("po") || canAccessModule("po-table")) && (
+                    <SidebarItem
+                      icon={<ShoppingCart size={20} className="text-rose-300" />}
+                      label="Purchase Order (PO)"
+                      active={activeMenu === "po"}
+                      onClick={() => changeMenu("po")}
+                      collapsed={sidebarCollapsed}
+                      badge={projBadge.po}
+                      dense={sidebarDense}
+                    />
+                  )}
+                  {canAccessModule("payment-subcontract") && (
+                    <SidebarItem
+                      icon={<CreditCard size={20} className="text-orange-300" />}
+                      label="Payment Subcontract"
+                      active={activeMenu === "payment-subcontract"}
+                      onClick={() => changeMenu("payment-subcontract")}
+                      collapsed={sidebarCollapsed}
+                      badge={projBadge["payment-subcontract"]}
+                      dense={sidebarDense}
+                    />
+                  )}
+                </>
+              );
+            })()}
+            {canAccessModule("receive") && (
+              <SidebarItem
+                icon={<FileInput size={20} />}
+                label="Receive"
+                active={activeMenu === "receive"}
+                onClick={() => changeMenu("receive")}
+                collapsed={sidebarCollapsed}
+                dense={sidebarDense}
+              />
+            )}
+            {canAccessModule("invoice") && (
+              <SidebarItem
+                icon={<FileText size={20} />}
+                label="Invoice"
+                active={activeMenu === "invoice"}
+                onClick={() => changeMenu("invoice")}
+                collapsed={sidebarCollapsed}
+                dense={sidebarDense}
+              />
+            )}
+
+            {(!sidebarCollapsed || isCompactViewport) && (
+              <div className={`font-bold text-slate-500 uppercase tracking-wider ${isCompactViewport ? "pt-3 pb-1.5 px-3 text-[10px]" : "pt-4 pb-2 px-4 text-xs"}`}>
+                Database
+              </div>
+            )}
+            {canAccessModule("vendor") && (
+              <SidebarItem
+                icon={<Building2 size={20} className="text-violet-300" />}
+                label="Vendor Management"
+                active={activeMenu === "vendor"}
+                onClick={() => changeMenu("vendor")}
+                collapsed={sidebarCollapsed}
+                dense={sidebarDense}
+              />
+            )}
+            {canAccessModule("material") && (
+              <SidebarItem
+                icon={<Package size={20} className="text-teal-300" />}
+                label="Material"
+                active={activeMenu === "material"}
+                onClick={() => changeMenu("material")}
+                collapsed={sidebarCollapsed}
+                dense={sidebarDense}
+              />
+            )}
+
+            {(!sidebarCollapsed || isCompactViewport) && (
+              <div className={`font-bold text-slate-500 uppercase tracking-wider ${isCompactViewport ? "pt-3 pb-1.5 px-3 text-[10px]" : "pt-4 pb-2 px-4 text-xs"}`}>
+                System
+              </div>
+            )}
+            {canAccessModule("profile") && (
+              <SidebarItem
+                icon={<User size={20} />}
+                label="ข้อมูลส่วนตัว (Profile)"
+                active={activeMenu === "profile"}
+                onClick={() => changeMenu("profile")}
+                collapsed={sidebarCollapsed}
+                dense={sidebarDense}
+              />
+            )}
+            {canAccessModule("admin") && (
+              <SidebarItem
+                icon={<Shield size={20} />}
+                label="ผู้ดูแลระบบ (Admin)"
+                active={activeMenu === "admin"}
+                onClick={() => changeMenu("admin")}
+                collapsed={sidebarCollapsed}
+                dense={sidebarDense}
+              />
+            )}
+          </nav>
+          <div className={`border-t border-slate-800 shrink-0 flex items-center justify-center gap-1 ${isCompactViewport ? "p-3" : sidebarCollapsed ? "py-2 px-1" : "p-4"}`}>
+            <button
+              type="button"
+              onClick={toggleSidebar}
+              className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              title={isCompactViewport ? "ปิดแถบเมนู" : sidebarCollapsed ? "ขยายแถบเมนู" : "ย่อแถบเมนู"}
+            >
+              {isCompactViewport ? <ChevronLeft size={18} /> : sidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+            </button>
+            {(!sidebarCollapsed || isCompactViewport) && (
+              <span className="text-[10px] text-slate-500 text-center flex-1">CMG Budget Control V.20</span>
+            )}
+          </div>
+        </aside>
+      )}
+
+      <main className="app-shell-main min-w-0 flex-1 overflow-y-auto bg-slate-50/50">
+        {!isFullScreenModalOpen && (
+          <header className="bg-white/80 backdrop-blur-md shadow-sm px-3 py-2 md:px-5 md:py-2.5 flex flex-wrap items-center gap-2 md:gap-3 sticky top-0 z-20 border-b border-slate-100">
+            {isCompactViewport && (
+              <button
+                type="button"
+                onClick={toggleSidebar}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors hover:bg-slate-100 lg:hidden"
+                title="เปิดเมนู"
+              >
+                <Menu size={16} />
+              </button>
+            )}
+            <h1 className="min-w-0 flex-1 text-[15px] font-bold text-slate-800 flex items-center gap-2 md:flex-none md:text-lg">
+              {activeMenu === "dashboard"
+                ? "Dashboard"
+                : activeMenu === "projects"
+                  ? "จัดการโครงการ"
+                  : activeMenu === "budget"
+                    ? "Project Budget"
+                    : activeMenu === "pr"
+                      ? "Purchase Request (PR)"
+                      : activeMenu === "po"
+                        ? "Purchase Order (PO)"
+                        : activeMenu === "vendor"
+                          ? "Vendor Management"
+                          : activeMenu === "material"
+                            ? "Material"
+                            : activeMenu === "invoice"
+                              ? "Invoice"
+                              : activeMenu === "receive"
+                                ? "Receive"
+                                : activeMenu === "profile"
+                                  ? "User Profile"
+                                  : activeMenu === "admin"
+                                    ? "Admin Dashboard"
+                                  : activeMenu === "payment-subcontract"
+                                    ? "Payment Subcontractor"
+                                    : "Module View"}
+            </h1>
+            {!isCompactViewport && <div className="flex-1" />}
+
+            {/* Project Cards — อยู่ขวา ก่อนกระดิ่ง ขยายออกซ้ายเมื่อมีโครงการเพิ่ม */}
+            {moduleMenus && visibleProjects.length > 0 && (
+              <div className={`${isCompactViewport ? "order-3 flex w-full overflow-x-auto no-scrollbar pb-0.5" : "flex items-center gap-1.5 shrink-0"}`}>
+                <div className={`${isCompactViewport ? "flex min-w-max items-center gap-1.5" : "flex items-center gap-1.5 shrink-0"}`}>
+                  {visibleProjects.map((p) => {
+                    const projPending = pendingByProject?.find((x) => x.projectId === p.id);
+                    const pendingTotal = projPending?.total || 0;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => setSelectedProjectId(p.id)}
+                        title={p.name}
+                        className={`relative flex-shrink-0 rounded-lg font-extrabold transition-all text-center flex items-center justify-center break-all ${isCompactViewport ? "w-8 h-8 px-0.5 text-[9px]" : "w-9 h-9 px-0.5 text-[10px]"
+                          } ${selectedProjectId === p.id
+                            ? "bg-orange-500 text-white shadow-md scale-105"
+                            : "bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200"
+                          }`}
+                      >
+                        {(() => {
+                          if (!p.jobNo) return (p.name || "?").slice(0, 4);
+                          const segs = String(p.jobNo).trim().split("-");
+                          const last = segs.pop() || "";
+                          // 3-digit pure number (e.g. "072") → strip 1 leading zero → "72"
+                          const compact = /^0\d{2}$/.test(last) ? last.slice(1) : last;
+                          return "J" + compact;
+                        })()}
+                        {pendingTotal > 0 && (
+                          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[8px] font-bold rounded-full min-w-[14px] h-3.5 flex items-center justify-center px-0.5 shadow animate-pulse">
+                            {pendingTotal > 99 ? "99+" : pendingTotal}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className={`flex items-center gap-2 shrink-0 ${isCompactViewport ? "ml-auto" : "gap-2.5"}`}>
+              {/* Bell notification button */}
+              <div className="relative">
+                <button
+                  onClick={() => setIsBellOpen(!isBellOpen)}
+                  className={`relative text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors ${isCompactViewport ? "p-2" : "p-1.5"}`}
+                  title="รายการรออนุมัติ"
+                >
+                  <Bell size={18} />
+                  {totalPendingCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-[9px] font-bold rounded-full min-w-[16px] h-4 flex items-center justify-center px-1 shadow-md animate-pulse">
+                      {totalPendingCount > 99 ? "99+" : totalPendingCount}
+                    </span>
+                  )}
+                </button>
+                <AnimatePresence>
+                  {isBellOpen && (
+                    <motion.div
+                      className="absolute right-0 top-12 w-80 bg-white rounded-xl shadow-2xl border border-slate-200 z-50 overflow-hidden"
+                      initial={{ opacity: 0, y: -6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -6 }}
+                      transition={{ duration: 0.2, ease: [0.25, 0.46, 0.45, 0.94] }}
+                    >
+                      <div className="p-3 bg-slate-900 text-white flex items-center justify-between">
+                        <span className="text-sm font-bold flex items-center gap-2">
+                          <Bell size={14} /> รายการรออนุมัติ
+                        </span>
+                        <span className="bg-red-500 text-[10px] font-bold rounded-full px-2 py-0.5">
+                          {totalPendingCount} รายการ
+                        </span>
+                      </div>
+                      {pendingByProject.length === 0 ? (
+                        <div className="p-6 text-center text-slate-400 text-sm">
+                          ไม่มีรายการรออนุมัติ
+                        </div>
+                      ) : (
+                        <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
+                          {pendingByProject.map((item) => (
+                            <button
+                              key={item.projectId}
+                              className="w-full text-left px-4 py-3 hover:bg-blue-50 transition-colors"
+                              onClick={() => {
+                                setSelectedProjectId(item.projectId);
+                                handleMenuChange("budget");
+                                setBudgetCategory("OVERVIEW");
+                                setScrollToPendingAfterRender(true);
+                                setIsBellOpen(false);
+                              }}
+                            >
+                              <div className="text-xs font-bold text-slate-800 truncate">
+                                {item.projectName}
+                              </div>
+                              <div className="flex gap-2 mt-1">
+                                {item.budgets > 0 && (
+                                  <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">
+                                    Budget: {item.budgets}
+                                  </span>
+                                )}
+                                {item.prs > 0 && (
+                                  <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
+                                    PR: {item.prs}
+                                  </span>
+                                )}
+                                {item.pos > 0 && (
+                                  <span className="text-[10px] bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium">
+                                    PO: {item.pos}
+                                  </span>
+                                )}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+              <div className="relative shrink-0" ref={profileDropdownRef}>
+                <button
+                  type="button"
+                  onClick={() => setProfileDropdownOpen((o) => !o)}
+                  className={`flex items-center rounded-full border border-slate-200 bg-slate-100 hover:bg-slate-200/80 transition-colors ${isCompactViewport ? "gap-1.5 px-2 py-1.5" : "gap-2 px-2.5 py-1"
+                    }`}
+                  title="โปรไฟล์"
+                >
+                  <ProfileAvatar
+                    src={userData?.profilePhotoUrl || user?.photoURL}
+                    className={`${isCompactViewport ? "w-8 h-8" : "w-7 h-7"} rounded-full object-cover border border-slate-300`}
+                    fallback={
+                      <div className={`${isCompactViewport ? "w-8 h-8" : "w-7 h-7"} bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-xs shadow-md`}>
+                        {userData?.firstName?.charAt(0) || user?.email?.charAt(0) || "?"}
+                      </div>
+                    }
+                  />
+                  <ChevronDown size={14} className="text-slate-500" />
+                </button>
+                <AnimatePresence>
+                  {profileDropdownOpen && (
+                    <motion.div
+                      className="absolute right-0 top-full mt-2 w-52 bg-white rounded-xl shadow-xl border border-slate-200 py-1 z-50"
+                      initial={{ opacity: 0, y: -4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -4 }}
+                      transition={{ duration: 0.15 }}
+                    >
+                      <button
+                        type="button"
+                        className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50"
+                        onClick={() => {
+                          changeMenu("profile");
+                          setProfileDropdownOpen(false);
+                        }}
+                      >
+                        <User size={16} /> อัพเดทโปรไฟล์
+                      </button>
+                      <button
+                        type="button"
+                        className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50"
+                        onClick={() => {
+                          setProfileDropdownOpen(false);
+                          logout();
+                        }}
+                      >
+                        <LogOut size={16} /> ออกจากระบบ
+                      </button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            </div>
+          </header>
         )}
         <div
-          className={`app-shell-content ${
-            ["projects", "budget", "pr", "po", "payment-subcontract", "vendor", "material", "invoice", "receive", "admin"].includes(
-              activeMenu
-            )
-              ? "p-3 md:p-6 w-full max-w-none min-w-0"
-              : "p-3 md:p-8 max-w-[1600px] mx-auto"
-          }`}
+          className={`app-shell-content ${["projects", "budget", "pr", "po", "payment-subcontract", "vendor", "material", "invoice", "receive", "admin"].includes(
+            activeMenu
+          )
+            ? "p-3 md:p-6 w-full max-w-none min-w-0"
+            : "p-3 md:p-8 max-w-[1600px] mx-auto"
+            }`}
         >
           {!rolePermissionsReady ? (
             <div className="flex items-center justify-center h-64 text-slate-400 gap-3">
@@ -649,174 +646,168 @@ const AppShell = () => {
               <span className="text-sm">กำลังโหลด...</span>
             </div>
           ) : (
-          <motion.div
-            key={activeMenu}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.28, ease: [0.25, 0.46, 0.45, 0.94] }}
-          >
-            <div data-menu-page="dashboard" style={{ display: activeMenu === "dashboard" ? undefined : "none" }}>
-              {activeMenu === "dashboard" && <DashboardView />}
-            </div>
-            <div data-menu-page="projects" style={{ display: activeMenu === "projects" ? undefined : "none" }}>
-              {activeMenu === "projects" && <ProjectsView />}
-            </div>
-            <div data-menu-page="budget" style={{ display: activeMenu === "budget" ? undefined : "none" }}>
-              {activeMenu === "budget" && <BudgetView />}
-            </div>
-            <div data-menu-page="pr" style={{ display: activeMenu === "pr" ? undefined : "none" }}>
-              {activeMenu === "pr" && (
-              <>
-              <div className="flex items-center gap-1 mb-4 bg-white rounded-xl shadow-sm border border-slate-200 p-1 w-fit">
-                <button
-                  type="button"
-                  onClick={() => setPrTab("system")}
-                  className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
-                    prTab === "system"
-                      ? "bg-blue-600 text-white shadow"
-                      : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-                  }`}
-                >
-                  <span className="flex items-center gap-2"><FileText size={16} /> ระบบ PR</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPrTab("table")}
-                  className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
-                    prTab === "table"
-                      ? "bg-blue-600 text-white shadow"
-                      : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-                  }`}
-                >
-                  <span className="flex items-center gap-2"><FileSpreadsheet size={16} /> ตารางข้อมูล PR</span>
-                </button>
+            <motion.div
+              key={activeMenu}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.28, ease: [0.25, 0.46, 0.45, 0.94] }}
+            >
+              <div data-menu-page="dashboard" style={{ display: activeMenu === "dashboard" ? undefined : "none" }}>
+                {activeMenu === "dashboard" && <DashboardView />}
               </div>
-              {prTab === "system" && <PRView />}
-              {prTab === "table" && (
-                <PRPOTableView
-                  mode="pr"
-                  prs={prs}
-                  pos={pos}
-                  budgets={budgets}
-                  projects={projects}
-                  vendors={vendors}
-                  columnWidths={columnWidths}
-                  handleColumnResize={handleColumnResize}
-                  userRole={userRole}
-                  updateData={updateData}
-                  deleteData={deleteData}
-                  showAlert={showAlert}
-                  openConfirm={openConfirm}
-                  selectedProjectId={selectedProjectId}
-                />
-              )}
-              </>
-              )}
-            </div>
-            <div data-menu-page="po" style={{ display: activeMenu === "po" ? undefined : "none" }}>
-              {activeMenu === "po" && (
-              <>
-              <div className="flex items-center gap-1 mb-4 bg-white rounded-xl shadow-sm border border-slate-200 p-1 w-fit">
-                <button
-                  type="button"
-                  onClick={() => setPoTab("system")}
-                  className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
-                    poTab === "system"
-                      ? "bg-blue-600 text-white shadow"
-                      : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-                  }`}
-                >
-                  <span className="flex items-center gap-2"><ShoppingCart size={16} /> ระบบ PO</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPoTab("table")}
-                  className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
-                    poTab === "table"
-                      ? "bg-blue-600 text-white shadow"
-                      : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-                  }`}
-                >
-                  <span className="flex items-center gap-2"><FileSpreadsheet size={16} /> ตารางข้อมูล PO</span>
-                </button>
+              <div data-menu-page="projects" style={{ display: activeMenu === "projects" ? undefined : "none" }}>
+                {activeMenu === "projects" && <ProjectsView />}
               </div>
-              {poTab === "system" && <POView />}
-              {poTab === "table" && (
-                <PRPOTableView
-                  mode="po"
-                  prs={prs}
-                  pos={pos}
-                  budgets={budgets}
-                  projects={projects}
-                  vendors={vendors}
-                  columnWidths={columnWidths}
-                  handleColumnResize={handleColumnResize}
-                  userRole={userRole}
-                  updateData={updateData}
-                  deleteData={deleteData}
-                  showAlert={showAlert}
-                  openConfirm={openConfirm}
-                  selectedProjectId={selectedProjectId}
-                />
-              )}
-              </>
-              )}
-            </div>
-            <div data-menu-page="payment-subcontract" style={{ display: activeMenu === "payment-subcontract" ? undefined : "none" }}>
-              {activeMenu === "payment-subcontract" && (
-              <>
-              <div className="flex items-center gap-1 mb-4 bg-white rounded-xl shadow-sm border border-slate-200 p-1 w-fit">
-                <button
-                  type="button"
-                  onClick={() => setPaymentSubTab("system")}
-                  className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
-                    paymentSubTab === "system"
-                      ? "bg-orange-500 text-white shadow"
-                      : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-                  }`}
-                >
-                  <span className="flex items-center gap-2"><CreditCard size={16} /> ระบบ Payment Subcontract</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPaymentSubTab("table")}
-                  className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
-                    paymentSubTab === "table"
-                      ? "bg-orange-500 text-white shadow"
-                      : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-                  }`}
-                >
-                  <span className="flex items-center gap-2"><FileSpreadsheet size={16} /> ตารางข้อมูล Payment</span>
-                </button>
+              <div data-menu-page="budget" style={{ display: activeMenu === "budget" ? undefined : "none" }}>
+                {activeMenu === "budget" && <BudgetView />}
               </div>
-              {paymentSubTab === "system" && <PaymentView />}
-              {paymentSubTab === "table" && <PaymentTableView />}
-              </>
+              <div data-menu-page="pr" style={{ display: activeMenu === "pr" ? undefined : "none" }}>
+                {activeMenu === "pr" && (
+                  <>
+                    <div className="flex items-center gap-1 mb-4 bg-white rounded-xl shadow-sm border border-slate-200 p-1 w-fit">
+                      <button
+                        type="button"
+                        onClick={() => setPrTab("system")}
+                        className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${prTab === "system"
+                          ? "bg-blue-600 text-white shadow"
+                          : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                          }`}
+                      >
+                        <span className="flex items-center gap-2"><FileText size={16} /> ระบบ PR</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPrTab("table")}
+                        className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${prTab === "table"
+                          ? "bg-blue-600 text-white shadow"
+                          : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                          }`}
+                      >
+                        <span className="flex items-center gap-2"><FileSpreadsheet size={16} /> Log PR</span>
+                      </button>
+                    </div>
+                    {prTab === "system" && <PRView />}
+                    {prTab === "table" && (
+                      <PRPOTableView
+                        mode="pr"
+                        prs={prs}
+                        pos={pos}
+                        budgets={budgets}
+                        projects={projects}
+                        vendors={vendors}
+                        columnWidths={columnWidths}
+                        handleColumnResize={handleColumnResize}
+                        userRole={userRole}
+                        updateData={updateData}
+                        deleteData={deleteData}
+                        showAlert={showAlert}
+                        openConfirm={openConfirm}
+                        selectedProjectId={selectedProjectId}
+                      />
+                    )}
+                  </>
+                )}
+              </div>
+              <div data-menu-page="po" style={{ display: activeMenu === "po" ? undefined : "none" }}>
+                {activeMenu === "po" && (
+                  <>
+                    <div className="flex items-center gap-1 mb-4 bg-white rounded-xl shadow-sm border border-slate-200 p-1 w-fit">
+                      <button
+                        type="button"
+                        onClick={() => setPoTab("system")}
+                        className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${poTab === "system"
+                          ? "bg-blue-600 text-white shadow"
+                          : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                          }`}
+                      >
+                        <span className="flex items-center gap-2"><ShoppingCart size={16} /> ระบบ PO</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPoTab("table")}
+                        className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${poTab === "table"
+                          ? "bg-blue-600 text-white shadow"
+                          : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                          }`}
+                      >
+                        <span className="flex items-center gap-2"><FileSpreadsheet size={16} /> Log PO</span>
+                      </button>
+                    </div>
+                    {poTab === "system" && <POView />}
+                    {poTab === "table" && (
+                      <PRPOTableView
+                        mode="po"
+                        prs={prs}
+                        pos={pos}
+                        budgets={budgets}
+                        projects={projects}
+                        vendors={vendors}
+                        columnWidths={columnWidths}
+                        handleColumnResize={handleColumnResize}
+                        userRole={userRole}
+                        updateData={updateData}
+                        deleteData={deleteData}
+                        showAlert={showAlert}
+                        openConfirm={openConfirm}
+                        selectedProjectId={selectedProjectId}
+                      />
+                    )}
+                  </>
+                )}
+              </div>
+              <div data-menu-page="payment-subcontract" style={{ display: activeMenu === "payment-subcontract" ? undefined : "none" }}>
+                {activeMenu === "payment-subcontract" && (
+                  <>
+                    <div className="flex items-center gap-1 mb-4 bg-white rounded-xl shadow-sm border border-slate-200 p-1 w-fit">
+                      <button
+                        type="button"
+                        onClick={() => setPaymentSubTab("system")}
+                        className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${paymentSubTab === "system"
+                          ? "bg-orange-500 text-white shadow"
+                          : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                          }`}
+                      >
+                        <span className="flex items-center gap-2"><CreditCard size={16} />Payment Subcontractor</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPaymentSubTab("table")}
+                        className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${paymentSubTab === "table"
+                          ? "bg-orange-500 text-white shadow"
+                          : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                          }`}
+                      >
+                        <span className="flex items-center gap-2"><FileSpreadsheet size={16} />Log Payment</span>
+                      </button>
+                    </div>
+                    {paymentSubTab === "system" && <PaymentView />}
+                    {paymentSubTab === "table" && <PaymentTableView />}
+                  </>
+                )}
+              </div>
+              <div data-menu-page="vendor" style={{ display: activeMenu === "vendor" ? undefined : "none" }}>
+                {activeMenu === "vendor" && <VendorView />}
+              </div>
+              <div data-menu-page="material" style={{ display: activeMenu === "material" ? undefined : "none" }}>
+                {activeMenu === "material" && <MaterialView />}
+              </div>
+              <div data-menu-page="invoice" style={{ display: activeMenu === "invoice" ? undefined : "none" }}>
+                {activeMenu === "invoice" && <InvoiceView menuType="invoice" />}
+              </div>
+              <div data-menu-page="receive" style={{ display: activeMenu === "receive" ? undefined : "none" }}>
+                {activeMenu === "receive" && <ReceiveView />}
+              </div>
+              {activeMenu === "profile" && (
+                <div data-menu-page="profile">
+                  <UserProfile />
+                </div>
               )}
-            </div>
-            <div data-menu-page="vendor" style={{ display: activeMenu === "vendor" ? undefined : "none" }}>
-              {activeMenu === "vendor" && <VendorView />}
-            </div>
-            <div data-menu-page="material" style={{ display: activeMenu === "material" ? undefined : "none" }}>
-              {activeMenu === "material" && <MaterialView />}
-            </div>
-            <div data-menu-page="invoice" style={{ display: activeMenu === "invoice" ? undefined : "none" }}>
-              {activeMenu === "invoice" && <InvoiceView menuType="invoice" />}
-            </div>
-            <div data-menu-page="receive" style={{ display: activeMenu === "receive" ? undefined : "none" }}>
-              {activeMenu === "receive" && <ReceiveView />}
-            </div>
-            {activeMenu === "profile" && (
-              <div data-menu-page="profile">
-                <UserProfile />
-              </div>
-            )}
-            {activeMenu === "admin" && canAccessModule("admin") && (
-              <div data-menu-page="admin">
-                <AdminDashboard />
-              </div>
-            )}
-          </motion.div>
+              {activeMenu === "admin" && canAccessModule("admin") && (
+                <div data-menu-page="admin">
+                  <AdminDashboard />
+                </div>
+              )}
+            </motion.div>
           )}
         </div>
       </main>
@@ -887,11 +878,11 @@ const SidebarGroup = ({ icon, label, isActive, children, collapsed }) => {
                     {React.Children.map(children, (child) =>
                       React.isValidElement(child) && child.props?.onClick
                         ? React.cloneElement(child, {
-                            onClick: () => {
-                              child.props.onClick?.();
-                              setPopoverOpen(false);
-                            },
-                          })
+                          onClick: () => {
+                            child.props.onClick?.();
+                            setPopoverOpen(false);
+                          },
+                        })
                         : child
                     )}
                   </div>
@@ -1068,7 +1059,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   }, [deleteData, getRelatedInvoicesForPo, getRelatedReceivesForPo, logAction, showAlert, updateData]);
 
   const prPoTableWrapRef = React.useRef(null);
-  const resizeFn = handleColumnResize || ((_tid: string, _k: string, _w: number) => {});
+  const resizeFn = handleColumnResize || ((_tid: string, _k: string, _w: number) => { });
   const prTableLayout = useProportionalTableLayout({
     tableId: "pr-table",
     defaultWeights: TABLE_LAYOUT_DEFAULTS["pr-table"],
@@ -1160,12 +1151,12 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
     const itemPrIds = Array.isArray(po.items)
       ? po.items.flatMap((item: any) => {
-          const directPrId = item?.prId ? [item.prId] : [];
-          const disPrIds = Array.isArray(item?.disPrAllocations)
-            ? item.disPrAllocations.map((a: any) => a?.prId).filter(Boolean)
-            : [];
-          return [...directPrId, ...disPrIds];
-        })
+        const directPrId = item?.prId ? [item.prId] : [];
+        const disPrIds = Array.isArray(item?.disPrAllocations)
+          ? item.disPrAllocations.map((a: any) => a?.prId).filter(Boolean)
+          : [];
+        return [...directPrId, ...disPrIds];
+      })
       : [];
     const selectedPrIds = Array.isArray(po.selectedPrIds) ? po.selectedPrIds.filter(Boolean) : [];
     const prRefIds = po.prRefId ? [po.prRefId] : [];
@@ -1227,7 +1218,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
         const subject = encodeURIComponent(`PR ${pr.prNo || pr.id}`);
         const body = encodeURIComponent(`แนบลิงก์ไฟล์ PDF (ดาวน์โหลด):\n${url}\n\n*ไฟล์นี้ถูกสร้างจากแบบฟอร์ม PR ในระบบ`);
         window.open(`mailto:${encodeURIComponent(email)}?subject=${subject}&body=${body}`, "_blank");
-        try { await navigator.clipboard.writeText(url); } catch (_) {}
+        try { await navigator.clipboard.writeText(url); } catch (_) { }
         showAlert?.("เตรียมอีเมลแล้ว", "เปิดหน้าส่งเมลให้แล้ว และคัดลอกลิงก์ PDF เรียบร้อย", "success");
       } catch (e: any) {
         console.error("[Email PR] error:", e);
@@ -1255,7 +1246,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     const subject = encodeURIComponent(`PO ${po.poNo || po.id}`);
     const body = encodeURIComponent(`แนบลิงก์ไฟล์ PDF (ดาวน์โหลด):\n${po.pdfUrl}\n\n*ไฟล์นี้ถูกสร้างจากแบบฟอร์ม PO ในระบบ`);
     window.open(`mailto:${encodeURIComponent(email)}?subject=${subject}&body=${body}`, "_blank");
-    try { navigator.clipboard.writeText(po.pdfUrl); } catch (_) {}
+    try { navigator.clipboard.writeText(po.pdfUrl); } catch (_) { }
     setEmailModal(null); setEmailTo("");
     showAlert?.("เตรียมอีเมลแล้ว", "เปิดหน้าส่งเมลให้แล้ว และคัดลอกลิงก์ PDF เรียบร้อย", "success");
   };
@@ -1267,14 +1258,14 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     const lowerSearch = (searchTerm || "").toLowerCase();
     const poRefText = isPR
       ? pos
-          .filter((po: any) =>
-            (po.selectedPrIds || []).includes(r.id) ||
-            (po.items || []).some((it: any) => it.prId === r.id) ||
-            po.prRefId === r.id
-          )
-          .map((po: any) => po.poNo || po.id)
-          .filter(Boolean)
-          .join(", ")
+        .filter((po: any) =>
+          (po.selectedPrIds || []).includes(r.id) ||
+          (po.items || []).some((it: any) => it.prId === r.id) ||
+          po.prRefId === r.id
+        )
+        .map((po: any) => po.poNo || po.id)
+        .filter(Boolean)
+        .join(", ")
       : "";
     const poLinkedMeta = !isPR ? getPoLinkedPrMeta(r) : { prNos: [], costCodes: [] };
     const poProjectName = !isPR ? getProjectName(r.projectId) : "";
@@ -1286,20 +1277,20 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     const poAmountText = !isPR ? String(r.grandTotal ?? r.amount ?? 0) : "";
     const poSearchBlob = !isPR
       ? [
-          noField,
-          poProjectName,
-          poVendorName,
-          r.poType,
-          poLinkedMeta.prNos.join(", "),
-          poLinkedMeta.costCodes.join(", "),
-          poDateText,
-          poItemCountText,
-          poAmountText,
-          r.status,
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase()
+        noField,
+        poProjectName,
+        poVendorName,
+        r.poType,
+        poLinkedMeta.prNos.join(", "),
+        poLinkedMeta.costCodes.join(", "),
+        poDateText,
+        poItemCountText,
+        poAmountText,
+        r.status,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
       : "";
     const matchSearch =
       !lowerSearch ||
@@ -1326,7 +1317,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-lg font-bold text-slate-800">
-                {isPR ? "ตารางข้อมูล Purchase Request" : "ตารางข้อมูล Purchase Order"}
+                {isPR ? "Log PR" : "Log PO"}
               </h2>
               <ColumnVisibilityToggle tableId={tblId} />
             </div>
@@ -1376,20 +1367,20 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
             <thead>
               <tr className="bg-slate-800 text-white">
                 {isColumnVisible(tblId, "rowNum") && <th className="px-2 py-0.5 font-semibold" style={{ width: prPoScaled.rowNum }}>#</th>}
-                {isColumnVisible(tblId, "no") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="no" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.no}>{isPR ? "PR No." : "PO No."}</ResizableTh>}
-                {isColumnVisible(tblId, "project") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="project" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.project}>โครงการ</ResizableTh>}
-                {isPR && isColumnVisible("pr-table", "costCode") && <ResizableTh tableId="pr-table" colKey="costCode" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.costCode}>Cost Code</ResizableTh>}
-                {isPR && isColumnVisible("pr-table", "description") && <ResizableTh tableId="pr-table" colKey="description" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.description}>รายการงบ</ResizableTh>}
-                {!isPR && isColumnVisible("po-table", "costCode") && <ResizableTh tableId="po-table" colKey="costCode" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.costCode}>Cost Code</ResizableTh>}
-                {!isPR && isColumnVisible("po-table", "vendor") && <ResizableTh tableId="po-table" colKey="vendor" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.vendor}>Vendor</ResizableTh>}
-                {!isPR && isColumnVisible("po-table", "prRef") && <ResizableTh tableId="po-table" colKey="prRef" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.prRef}>Ref PR No.</ResizableTh>}
-                {isColumnVisible(tblId, "date") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="date" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.date}>วันที่</ResizableTh>}
-                {isPR && isColumnVisible("pr-table", "requestor") && <ResizableTh tableId="pr-table" colKey="requestor" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.requestor}>ผู้ขอ</ResizableTh>}
-                {isPR && isColumnVisible("pr-table", "type") && <ResizableTh tableId="pr-table" colKey="type" className="px-2 py-0.5 font-semibold" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.type}>ประเภท</ResizableTh>}
-                {isColumnVisible(tblId, "items") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="items" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.items}>จำนวนรายการ</ResizableTh>}
-                {isColumnVisible(tblId, "amount") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="amount" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.amount}>ยอดรวม</ResizableTh>}
-                {isColumnVisible(tblId, "status") && <ResizableTh tableId={isPR?"pr-table":"po-table"} colKey="status" className="px-2 py-0.5 font-semibold text-center" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.status}>สถานะ</ResizableTh>}
-                {isPR && isColumnVisible("pr-table", "poRef") && <ResizableTh tableId="pr-table" colKey="poRef" className="px-2 py-0.5 font-semibold text-center" isAdmin={userRole==="Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.poRef}>Ref PO</ResizableTh>}
+                {isColumnVisible(tblId, "no") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="no" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.no}>{isPR ? "PR No." : "PO No."}</ResizableTh>}
+                {isColumnVisible(tblId, "project") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="project" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.project}>โครงการ</ResizableTh>}
+                {isPR && isColumnVisible("pr-table", "costCode") && <ResizableTh tableId="pr-table" colKey="costCode" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.costCode}>Cost Code</ResizableTh>}
+                {isPR && isColumnVisible("pr-table", "description") && <ResizableTh tableId="pr-table" colKey="description" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.description}>รายการงบ</ResizableTh>}
+                {!isPR && isColumnVisible("po-table", "costCode") && <ResizableTh tableId="po-table" colKey="costCode" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.costCode}>Cost Code</ResizableTh>}
+                {!isPR && isColumnVisible("po-table", "vendor") && <ResizableTh tableId="po-table" colKey="vendor" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.vendor}>Vendor</ResizableTh>}
+                {!isPR && isColumnVisible("po-table", "prRef") && <ResizableTh tableId="po-table" colKey="prRef" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.prRef}>Ref PR No.</ResizableTh>}
+                {isColumnVisible(tblId, "date") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="date" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.date}>วันที่</ResizableTh>}
+                {isPR && isColumnVisible("pr-table", "requestor") && <ResizableTh tableId="pr-table" colKey="requestor" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.requestor}>ผู้ขอ</ResizableTh>}
+                {isPR && isColumnVisible("pr-table", "type") && <ResizableTh tableId="pr-table" colKey="type" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.type}>ประเภท</ResizableTh>}
+                {isColumnVisible(tblId, "items") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="items" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.items}>จำนวนรายการ</ResizableTh>}
+                {isColumnVisible(tblId, "amount") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="amount" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.amount}>ยอดรวม</ResizableTh>}
+                {isColumnVisible(tblId, "status") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="status" className="px-2 py-0.5 font-semibold text-center" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.status}>สถานะ</ResizableTh>}
+                {isPR && isColumnVisible("pr-table", "poRef") && <ResizableTh tableId="pr-table" colKey="poRef" className="px-2 py-0.5 font-semibold text-center" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.poRef}>Ref PO</ResizableTh>}
                 {isColumnVisible(tblId, "action") && <th className="px-2 py-0.5 font-semibold text-center" style={{ width: prPoScaled.action }}>Action</th>}
               </tr>
             </thead>
@@ -1419,34 +1410,34 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                   const poLinkedMeta = !isPR ? getPoLinkedPrMeta(r) : { prNos: [], costCodes: [] };
                   const poRefNos = isPR
                     ? pos
-                        .filter((po: any) =>
-                          (po.selectedPrIds || []).includes(r.id) ||
-                          (po.items || []).some((it: any) => it.prId === r.id) ||
-                          po.prRefId === r.id
-                        )
-                        .map((po: any) => po.poNo || po.id)
-                        .filter(Boolean)
-                        .join(", ")
+                      .filter((po: any) =>
+                        (po.selectedPrIds || []).includes(r.id) ||
+                        (po.items || []).some((it: any) => it.prId === r.id) ||
+                        po.prRefId === r.id
+                      )
+                      .map((po: any) => po.poNo || po.id)
+                      .filter(Boolean)
+                      .join(", ")
                     : "";
 
                   return (
                     <tr key={r.id} className={`hover:bg-blue-50/40 transition-colors cursor-pointer ${isEven ? "bg-white" : "bg-slate-50/40"}`} onClick={() => { if (!isPR && r.pdfUrl) setPdfPreviewUrl(r.pdfUrl); }}>
                       {isColumnVisible(tblId, "rowNum") && <td className="px-2 py-0.5 text-slate-400 font-mono">{idx + 1}</td>}
                       {isColumnVisible(tblId, "no") && (
-                      <td className="px-2 py-0.5 font-bold text-slate-800 whitespace-nowrap">
-                        <div className="flex items-center gap-1">
-                          <Hash size={10} className={isPR ? "text-slate-500" : "text-red-500"} />
-                          {noField || "-"}
-                          {!isPR && r.pdfUrl && (
-                            <span title="มี PDF — คลิกแถวเพื่อดู" className="ml-0.5 text-red-500"><FileText size={10} /></span>
-                          )}
-                        </div>
-                      </td>
+                        <td className="px-2 py-0.5 font-bold text-slate-800 whitespace-nowrap">
+                          <div className="flex items-center gap-1">
+                            <Hash size={10} className={isPR ? "text-slate-500" : "text-red-500"} />
+                            {noField || "-"}
+                            {!isPR && r.pdfUrl && (
+                              <span title="มี PDF — คลิกแถวเพื่อดู" className="ml-0.5 text-red-500"><FileText size={10} /></span>
+                            )}
+                          </div>
+                        </td>
                       )}
                       {isColumnVisible(tblId, "project") && (
-                      <td className="px-2 py-0.5 text-slate-600 max-w-[140px] truncate" title={getProjectName(r.projectId)}>
-                        {getProjectName(r.projectId)}
-                      </td>
+                        <td className="px-2 py-0.5 text-slate-600 max-w-[140px] truncate" title={getProjectName(r.projectId)}>
+                          {getProjectName(r.projectId)}
+                        </td>
                       )}
                       {isPR && isColumnVisible("pr-table", "costCode") && (
                         <td className="px-2 py-0.5 font-mono text-slate-700">{r.costCode || "-"}</td>
@@ -1490,13 +1481,13 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                         </td>
                       )}
                       {isColumnVisible(tblId, "date") && (
-                      <td className="px-2 py-0.5 text-slate-500 whitespace-nowrap">
-                        {dateField
-                          ? (dateField.includes("T")
+                        <td className="px-2 py-0.5 text-slate-500 whitespace-nowrap">
+                          {dateField
+                            ? (dateField.includes("T")
                               ? new Date(dateField).toLocaleDateString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric" })
                               : dateField)
-                          : "-"}
-                      </td>
+                            : "-"}
+                        </td>
                       )}
                       {isPR && isColumnVisible("pr-table", "requestor") && <td className="px-2 py-0.5 text-slate-600">{r.requestor || "-"}</td>}
                       {isPR && isColumnVisible("pr-table", "type") && (
@@ -1508,16 +1499,16 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                       )}
                       {isColumnVisible(tblId, "items") && <td className="px-2 py-0.5 text-right text-slate-600">{itemCount} รายการ</td>}
                       {isColumnVisible(tblId, "amount") && (
-                      <td className="px-2 py-0.5 text-right font-bold text-slate-800">
-                        ฿{Number(amount || 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
-                      </td>
+                        <td className="px-2 py-0.5 text-right font-bold text-slate-800">
+                          ฿{Number(amount || 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
+                        </td>
                       )}
                       {isColumnVisible(tblId, "status") && (
-                      <td className="px-2 py-0.5 text-center">
-                        <span className={`inline-flex items-center px-2 py-0 rounded-full border text-[10px] font-semibold whitespace-nowrap ${statusClass}`}>
-                          {r.status || "Draft"}
-                        </span>
-                      </td>
+                        <td className="px-2 py-0.5 text-center">
+                          <span className={`inline-flex items-center px-2 py-0 rounded-full border text-[10px] font-semibold whitespace-nowrap ${statusClass}`}>
+                            {r.status || "Draft"}
+                          </span>
+                        </td>
                       )}
                       {isPR && isColumnVisible("pr-table", "poRef") && (
                         <td className="px-2 py-0.5 text-slate-500 text-[11px] text-center">
@@ -1534,7 +1525,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                           {canUseFunction(tableModule, "download") && (
                             <button type="button" disabled={pdfLoadingId === r.id} className="p-1 rounded hover:bg-slate-200 text-slate-600 hover:text-slate-800 disabled:opacity-40" title="Download PDF" onClick={() => isPR ? handlePRDownloadPDF(r) : handlePODownloadPDF(r)}>
                               {pdfLoadingId === r.id ? (
-                                <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" strokeOpacity=".25"/><path d="M12 2a10 10 0 0 1 10 10" /></svg>
+                                <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" strokeOpacity=".25" /><path d="M12 2a10 10 0 0 1 10 10" /></svg>
                               ) : (
                                 <Download size={13} />
                               )}
@@ -2020,11 +2011,10 @@ const UserProfile = () => {
           </div>
         ) : (
           <div
-            className={`border-2 border-dashed rounded-xl p-6 text-center transition-colors ${
-              canUploadSignature
-                ? "border-slate-300 cursor-pointer hover:border-blue-400 hover:bg-blue-50/40"
-                : "border-slate-200 cursor-not-allowed bg-slate-50"
-            }`}
+            className={`border-2 border-dashed rounded-xl p-6 text-center transition-colors ${canUploadSignature
+              ? "border-slate-300 cursor-pointer hover:border-blue-400 hover:bg-blue-50/40"
+              : "border-slate-200 cursor-not-allowed bg-slate-50"
+              }`}
             onClick={() => canUploadSignature && signatureInputRef.current?.click()}
           >
             {uploadingSignature ? (
@@ -2311,7 +2301,7 @@ const AdminDashboard = () => {
         const timeout = setTimeout(() => reject(new Error("อัปโหลดใช้เวลานานเกินไป กรุณาลองใหม่ (ตรวจสอบ Storage Rules/อินเทอร์เน็ต)")), 90000);
         task.on(
           "state_changed",
-          () => {},
+          () => { },
           (err) => {
             clearTimeout(timeout);
             reject(err);
@@ -2518,104 +2508,104 @@ const AdminDashboard = () => {
 
       {activeTab === "users" && (
         <>
-        <Card className="overflow-hidden animate-in fade-in slide-in-from-bottom-2 w-full min-w-0">
-          <div ref={adminUsersTableRef} className="w-full min-w-0">
-          <table className="w-full text-left text-sm table-fixed">
-            <thead className="bg-slate-50 text-slate-700 font-semibold border-b">
-              <tr>
-                {isColumnVisible("users", "name") && <ResizableTh tableId="users" colKey="name" className="p-4" isAdmin={userRole==="Administrator"} onResize={adminUsersTableLayout.handleResize} currentWidth={adminUsersTableLayout.scaled.name}>Name</ResizableTh>}
-                {isColumnVisible("users", "role") && <ResizableTh tableId="users" colKey="role" className="p-4" isAdmin={userRole==="Administrator"} onResize={adminUsersTableLayout.handleResize} currentWidth={adminUsersTableLayout.scaled.role}>Role</ResizableTh>}
-                {isColumnVisible("users", "status") && <ResizableTh tableId="users" colKey="status" className="p-4" isAdmin={userRole==="Administrator"} onResize={adminUsersTableLayout.handleResize} currentWidth={adminUsersTableLayout.scaled.status}>Status</ResizableTh>}
-                {isColumnVisible("users", "projects") && <ResizableTh tableId="users" colKey="projects" className="p-4" isAdmin={userRole==="Administrator"} onResize={adminUsersTableLayout.handleResize} currentWidth={adminUsersTableLayout.scaled.projects}>Projects</ResizableTh>}
-                {isColumnVisible("users", "actions") && <th className="p-4 text-right" style={{ width: adminUsersTableLayout.scaled.actions }}>Actions</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {users.map((u) => (
-                <tr key={u.id} className="hover:bg-slate-50">
-                  {isColumnVisible("users", "name") && (
-                  <td className="p-4" title={`${u.firstName || ""} ${u.lastName || ""} | ${u.email || ""}`}>
-                    <div className="flex items-center gap-3">
-                      <ProfileAvatar
-                        src={u.profilePhotoUrl || u.photoURL}
-                        className="w-8 h-8 rounded-full object-cover border border-slate-200 flex-shrink-0"
-                        fallback={
-                          <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0">
-                            {u.firstName?.charAt(0) || u.email?.charAt(0) || "?"}
+          <Card className="overflow-hidden animate-in fade-in slide-in-from-bottom-2 w-full min-w-0">
+            <div ref={adminUsersTableRef} className="w-full min-w-0">
+              <table className="w-full text-left text-sm table-fixed">
+                <thead className="bg-slate-50 text-slate-700 font-semibold border-b">
+                  <tr>
+                    {isColumnVisible("users", "name") && <ResizableTh tableId="users" colKey="name" className="p-4" isAdmin={userRole === "Administrator"} onResize={adminUsersTableLayout.handleResize} currentWidth={adminUsersTableLayout.scaled.name}>Name</ResizableTh>}
+                    {isColumnVisible("users", "role") && <ResizableTh tableId="users" colKey="role" className="p-4" isAdmin={userRole === "Administrator"} onResize={adminUsersTableLayout.handleResize} currentWidth={adminUsersTableLayout.scaled.role}>Role</ResizableTh>}
+                    {isColumnVisible("users", "status") && <ResizableTh tableId="users" colKey="status" className="p-4" isAdmin={userRole === "Administrator"} onResize={adminUsersTableLayout.handleResize} currentWidth={adminUsersTableLayout.scaled.status}>Status</ResizableTh>}
+                    {isColumnVisible("users", "projects") && <ResizableTh tableId="users" colKey="projects" className="p-4" isAdmin={userRole === "Administrator"} onResize={adminUsersTableLayout.handleResize} currentWidth={adminUsersTableLayout.scaled.projects}>Projects</ResizableTh>}
+                    {isColumnVisible("users", "actions") && <th className="p-4 text-right" style={{ width: adminUsersTableLayout.scaled.actions }}>Actions</th>}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {users.map((u) => (
+                    <tr key={u.id} className="hover:bg-slate-50">
+                      {isColumnVisible("users", "name") && (
+                        <td className="p-4" title={`${u.firstName || ""} ${u.lastName || ""} | ${u.email || ""}`}>
+                          <div className="flex items-center gap-3">
+                            <ProfileAvatar
+                              src={u.profilePhotoUrl || u.photoURL}
+                              className="w-8 h-8 rounded-full object-cover border border-slate-200 flex-shrink-0"
+                              fallback={
+                                <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0">
+                                  {u.firstName?.charAt(0) || u.email?.charAt(0) || "?"}
+                                </div>
+                              }
+                            />
+                            <div>
+                              <div className="font-medium text-slate-900 cell-text">
+                                {u.firstName} {u.lastName}
+                              </div>
+                              <div className="text-xs text-slate-500 cell-text">{u.email}</div>
+                            </div>
                           </div>
-                        }
-                      />
-                      <div>
-                        <div className="font-medium text-slate-900 cell-text">
-                          {u.firstName} {u.lastName}
-                        </div>
-                        <div className="text-xs text-slate-500 cell-text">{u.email}</div>
-                      </div>
-                    </div>
-                  </td>
-                  )}
-                  {isColumnVisible("users", "role") && (
-                  <td className="p-4">
-                    <span className="bg-slate-100 px-2 py-1 rounded text-xs font-semibold cell-text" title={u.role}>
-                      {u.role}
-                    </span>
-                  </td>
-                  )}
-                  {isColumnVisible("users", "status") && (
-                  <td className="p-4">
-                    <Badge
-                      status={
-                        u.status === "Approved" ? "Approved User" : "Pending"
-                      }
-                    />
-                  </td>
-                  )}
-                  {isColumnVisible("users", "projects") && (
-                  <td className="p-4">
-                    <div className="flex -space-x-2 overflow-hidden">
-                      {(u.assignedProjectIds || []).length > 0 ? (
-                        <span className="text-xs bg-blue-50 text-blue-600 px-2 py-1 rounded-full border border-blue-100">
-                          {u.assignedProjectIds.length} Projects
-                        </span>
-                      ) : (
-                        <span className="text-xs text-slate-400">None</span>
+                        </td>
                       )}
-                    </div>
-                  </td>
-                  )}
-                  {isColumnVisible("users", "actions") && (
-                  <td className="p-4 text-right">
-                    <div className="flex justify-end gap-2 items-center">
-                      {u.status === "Pending" && (
-                        <Button
-                          variant="success"
-                          onClick={() => handleApprove(u.id, u.email)}
-                        >
-                          Approve
-                        </Button>
+                      {isColumnVisible("users", "role") && (
+                        <td className="p-4">
+                          <span className="bg-slate-100 px-2 py-1 rounded text-xs font-semibold cell-text" title={u.role}>
+                            {u.role}
+                          </span>
+                        </td>
                       )}
-                      <Button
-                        variant="outline"
-                        onClick={() => handleEditClick(u)}
-                      >
-                        <Settings size={14} /> Manage
-                      </Button>
-                      <button
-                        onClick={() => handleDeleteUser(u.id, u.email)}
-                        className="p-1.5 rounded text-red-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-                        title={`ลบผู้ใช้ ${u.email}`}
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                    </div>
-                  </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          </div>
-        </Card>
+                      {isColumnVisible("users", "status") && (
+                        <td className="p-4">
+                          <Badge
+                            status={
+                              u.status === "Approved" ? "Approved User" : "Pending"
+                            }
+                          />
+                        </td>
+                      )}
+                      {isColumnVisible("users", "projects") && (
+                        <td className="p-4">
+                          <div className="flex -space-x-2 overflow-hidden">
+                            {(u.assignedProjectIds || []).length > 0 ? (
+                              <span className="text-xs bg-blue-50 text-blue-600 px-2 py-1 rounded-full border border-blue-100">
+                                {u.assignedProjectIds.length} Projects
+                              </span>
+                            ) : (
+                              <span className="text-xs text-slate-400">None</span>
+                            )}
+                          </div>
+                        </td>
+                      )}
+                      {isColumnVisible("users", "actions") && (
+                        <td className="p-4 text-right">
+                          <div className="flex justify-end gap-2 items-center">
+                            {u.status === "Pending" && (
+                              <Button
+                                variant="success"
+                                onClick={() => handleApprove(u.id, u.email)}
+                              >
+                                Approve
+                              </Button>
+                            )}
+                            <Button
+                              variant="outline"
+                              onClick={() => handleEditClick(u)}
+                            >
+                              <Settings size={14} /> Manage
+                            </Button>
+                            <button
+                              onClick={() => handleDeleteUser(u.id, u.email)}
+                              className="p-1.5 rounded text-red-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                              title={`ลบผู้ใช้ ${u.email}`}
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
         </>
       )}
 
@@ -2779,9 +2769,8 @@ const AdminDashboard = () => {
                   return (
                     <tr key={role} className={`${rowBg} hover:bg-orange-50/30 transition-colors`}>
                       <td className={`p-3 sticky left-0 z-10 border-r border-slate-200 ${rowBg}`}>
-                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-bold ${
-                          isAdminRole ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-700"
-                        }`}>
+                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-bold ${isAdminRole ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-700"
+                          }`}>
                           {isAdminRole && <Shield size={10} />}
                           {role}
                         </span>
@@ -2826,13 +2815,12 @@ const AdminDashboard = () => {
                                     <button
                                       onClick={() => setOpenFuncDropdown(isDropdownOpen ? null : dropdownKey)}
                                       disabled={isAdminRole}
-                                      className={`px-2 py-0.5 rounded text-[10px] font-semibold border transition-colors ${
-                                        isAdminRole
-                                          ? "bg-blue-50 text-blue-400 border-blue-100 cursor-not-allowed"
-                                          : enabledFuncCount > 0
-                                            ? "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100"
-                                            : "bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100"
-                                      }`}
+                                      className={`px-2 py-0.5 rounded text-[10px] font-semibold border transition-colors ${isAdminRole
+                                        ? "bg-blue-50 text-blue-400 border-blue-100 cursor-not-allowed"
+                                        : enabledFuncCount > 0
+                                          ? "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100"
+                                          : "bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100"
+                                        }`}
                                     >
                                       {isAdminRole ? `${funcs.length}/${funcs.length}` : `${enabledFuncCount}/${funcs.length}`} ▾
                                     </button>
@@ -2873,11 +2861,10 @@ const AdminDashboard = () => {
                         <div className="relative inline-block" onClick={(e) => e.stopPropagation()}>
                           <button
                             onClick={() => setOpenPRTypeDropdown(openPRTypeDropdown === role ? null : role)}
-                            className={`px-2 py-0.5 rounded text-[10px] font-semibold border transition-colors ${
-                              (localPRTypePermissions[role] || []).length > 0
-                                ? "bg-purple-50 text-purple-600 border-purple-200 hover:bg-purple-100"
-                                : "bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100"
-                            }`}
+                            className={`px-2 py-0.5 rounded text-[10px] font-semibold border transition-colors ${(localPRTypePermissions[role] || []).length > 0
+                              ? "bg-purple-50 text-purple-600 border-purple-200 hover:bg-purple-100"
+                              : "bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100"
+                              }`}
                           >
                             {(localPRTypePermissions[role] || []).length}/{PURCHASE_TYPES.length} ▾
                           </button>
