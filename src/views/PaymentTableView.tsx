@@ -407,6 +407,29 @@ const PaymentTableView = React.memo(() => {
                     </div>
                   )}
 
+                  {/* paymentAttachments (Upload File) */}
+                  {Array.isArray(viewingPayment.paymentAttachments) && viewingPayment.paymentAttachments.length > 0 && (
+                    <div className="flex flex-col gap-1.5 bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 text-xs">
+                      <span className="font-semibold text-blue-700 flex items-center gap-1.5">
+                        <Paperclip size={12} /> ไฟล์แนบ ({viewingPayment.paymentAttachments.length})
+                      </span>
+                      {viewingPayment.paymentAttachments.map((att: any, idx: number) => (
+                        <div key={idx} className="flex items-center gap-2 ml-1">
+                          <Paperclip size={10} className="text-blue-400 shrink-0" />
+                          <a
+                            href={att.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-700 underline hover:text-blue-900 truncate max-w-[300px]"
+                          >
+                            {att.name || `ไฟล์แนบ ${idx + 1}`}
+                          </a>
+                          <span className="text-[10px] text-slate-400 shrink-0">โดย {att.uploadedBy || "-"}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {/* ── Items table — full Payment Application layout ── */}
                   <div className="border border-slate-300 rounded-lg overflow-hidden">
                     <div className="overflow-x-auto">

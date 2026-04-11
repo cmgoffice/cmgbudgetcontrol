@@ -12,7 +12,7 @@ import { useUI } from "../contexts/UIContext";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 import ResizableTh from "../components/ResizableTh";
 import { Card, Button, formatCurrency } from "../components/ui";
-import { uploadAttachment } from "../lib/uploadAttachment";
+import { uploadAttachment, deleteStorageFile } from "../lib/uploadAttachment";
 
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -135,6 +135,15 @@ const PaymentView = React.memo(() => {
   // ─── Period Navigation ─────────────────────────────────────────────────────
   const [viewPeriodIdx, setViewPeriodIdx] = useState(-1);
 
+  // ─── Period Attachment Upload ─────────────────────────────────────────────
+  const [periodAttachFile, setPeriodAttachFile] = useState<File | null>(null);
+  const [uploadingAttach, setUploadingAttach] = useState(false);
+  const periodAttachFileRef = React.useRef<HTMLInputElement>(null);
+
+  // ─── Period Reject Modal ──────────────────────────────────────────────────
+  const [periodRejectModal, setPeriodRejectModal] = useState<any>(null);
+  const [periodRejectReason, setPeriodRejectReason] = useState("");
+
 
 
   // ─── Main Payment Table — resizable columns (MasterAdmin, persisted globally) ──
@@ -180,7 +189,7 @@ const PaymentView = React.memo(() => {
     myRoles.some((r) => ["Procurement", "PCM"].includes(r))
     && canUseFunction?.("payment-subcontract", "hold") !== false
   );
-  const canStartNextPeriod = myRoles.includes("Administrator") || canUseFunction?.("payment-subcontract", "startNextPeriod") !== false;
+  const canStartNextPeriod = !myRoles.some(r => r === "Procurement") && (myRoles.includes("Administrator") || canUseFunction?.("payment-subcontract", "startNextPeriod") !== false);
   // ── aliases ที่ชัดเจนเพื่อส่งให้ ResizableTh (ใช้ handleColumnResize จาก AppDataContext)
   const handlePaymentMainColResize = handleColumnResize;
   const handlePayItemColResize = handleColumnResize;
@@ -192,7 +201,16 @@ const PaymentView = React.memo(() => {
   // ─── Delete ──────────────────────────────────────────────────────────────────
   const handleDelete = (p: any) => {
     if (!canDeletePayment) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ลบ Payment", "warning");
-    openConfirm("ยืนยันการลบ", `ต้องการลบ Payment ${p.paymentNo} ใช่หรือไม่?`, async () => {
+    openConfirm("ยืนยันการลบ", `ต้องการลบ Payment ${p.paymentNo} ใช่หรือไม่?\n(ไฟล์แนบที่อัปโหลดไว้จะถูกลบด้วย)`, async () => {
+      // ── ลบไฟล์ใน Firebase Storage ก่อนลบ Firestore doc ──
+      if (p.paySlipPath) {
+        try { const { deleteGeneratedPdf } = await import("../lib/pdfForms"); await deleteGeneratedPdf(p.paySlipPath); } catch (_) {}
+      } else if (p.paySlipUrl) {
+        await deleteStorageFile(p.paySlipUrl);
+      }
+      for (const att of (p.paymentAttachments || [])) {
+        if (att?.url) await deleteStorageFile(att.url);
+      }
       await deleteData("payments", p.id, { skipLog: true });
       await logAction("Delete Payment", `ลบ Payment ${p.paymentNo}`, selectedProjectId);
     }, "danger");
@@ -212,7 +230,6 @@ const PaymentView = React.memo(() => {
         revisionRequested: false,
       }, { skipLog: true });
       await logAction("Submit Payment", `ส่ง Payment ${p.paymentNo} เพื่ออนุมัติ → ${firstStatus}`, selectedProjectId);
-      showAlert("ส่งสำเร็จ", `Payment ถูกส่งเพื่ออนุมัติแล้ว (${firstStatus})`, "success");
       setViewingPayment(null);
     } catch (e) { showAlert("เกิดข้อผิดพลาด", String(e), "error"); }
     finally { setActioning(false); }
@@ -234,7 +251,6 @@ const PaymentView = React.memo(() => {
 
 
       await logAction("Approve Payment", `อนุมัติ Payment ${p.paymentNo} → ${label}`, selectedProjectId);
-      showAlert("อนุมัติสำเร็จ", `Payment ถูกเปลี่ยนสถานะเป็น ${label}`, "success");
       setViewingPayment(null);
     } catch (e) { showAlert("เกิดข้อผิดพลาด", String(e), "error"); }
     finally { setActioning(false); }
@@ -253,7 +269,6 @@ const PaymentView = React.memo(() => {
         revisionRequested: false,
       }, { skipLog: true });
       await logAction("Reject Payment", `ปฏิเสธ Payment ${rejectModalPayment.paymentNo}`, selectedProjectId);
-      showAlert("ปฏิเสธแล้ว", "Payment ถูกตีกลับ สามารถแก้ไขและส่งใหม่ได้", "warning");
       setRejectModalPayment(null);
       setRejectReason("");
       setViewingPayment(null);
@@ -277,7 +292,6 @@ const PaymentView = React.memo(() => {
         revisionFromStatus: p.status,
       }, { skipLog: true });
       await logAction("Request Revision", `ขอแก้ไข Payment ${p.paymentNo} → ${targetRole}`, selectedProjectId);
-      showAlert("ส่งขอแก้ไขแล้ว", `คำขอแก้ไขถูกส่งไปยัง ${targetRole}`, "success");
       setRevisionModalPayment(null);
       setRevisionNote("");
       setViewingPayment(null);
@@ -296,7 +310,6 @@ const PaymentView = React.memo(() => {
         revisionApprovedAt: new Date().toISOString(),
       }, { skipLog: true });
       await logAction("Approve Revision", `อนุมัติขอแก้ไข Payment ${p.paymentNo} → Draft`, selectedProjectId);
-      showAlert("อนุมัติแก้ไขแล้ว", "Payment กลับเป็น Draft สามารถแก้ไขได้แล้ว", "success");
       setViewingPayment(null);
     } catch (e) { showAlert("เกิดข้อผิดพลาด", String(e), "error"); }
     finally { setActioning(false); }
@@ -310,7 +323,6 @@ const PaymentView = React.memo(() => {
         revisionRequested: false,
       }, { skipLog: true });
       await logAction("Reject Revision", `ปฏิเสธขอแก้ไข Payment ${p.paymentNo}`, selectedProjectId);
-      showAlert("ปฏิเสธคำขอแก้ไข", "Payment ยังคงสถานะเดิม", "info");
       setViewingPayment(null);
     } catch (e) { showAlert("เกิดข้อผิดพลาด", String(e), "error"); }
     finally { setActioning(false); }
@@ -407,10 +419,6 @@ const PaymentView = React.memo(() => {
         `${finalize ? "บันทึกงวดงาน" : "Save Draft"} Payment ${p.paymentNo}`,
         selectedProjectId
       );
-      showAlert("บันทึกสำเร็จ",
-        finalize ? "บันทึกงวดงานแล้ว ส่งให้ CM ตรวจสอบ" : "Save Draft สำเร็จ",
-        "success"
-      );
       setActiveQtyEdits({});
       setPeriodBillingCycle("");
       setIsQtyEditMode(false);
@@ -420,6 +428,56 @@ const PaymentView = React.memo(() => {
       });
     } catch (_) { }
     finally { setSavingActiveQty(false); }
+  };
+
+  // ─── Period (งวดงาน) Reject → กลับไป Active ────────────────────────────────
+  const handlePeriodRejectConfirm = async () => {
+    if (!periodRejectModal) return;
+    if (!canApprovePeriod) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธงวดงาน", "warning");
+    setActioning(true);
+    try {
+      await updateData("payments", periodRejectModal.id, {
+        status: "Active",
+        periodRejectedBy: userData?.name || user?.email || "",
+        periodRejectedAt: new Date().toISOString(),
+        periodRejectReason: periodRejectReason.trim() || "-",
+        periodCheckedBy: null,
+        periodCheckedAt: null,
+        periodApprovedBy: null,
+        periodApprovedAt: null,
+      }, { skipLog: true });
+      await logAction("Reject งวดงาน", `Reject งวดงาน ${periodRejectModal.paymentNo} → Active`, selectedProjectId);
+      setPeriodRejectModal(null);
+      setPeriodRejectReason("");
+      setViewingPayment(null);
+    } catch (e) { showAlert("เกิดข้อผิดพลาด", String(e), "error"); }
+    finally { setActioning(false); }
+  };
+
+  // ─── Period Attachment Upload ─────────────────────────────────────────────
+  const handleUploadPeriodAttachment = async (p: any) => {
+    // _autoUploadFile มาจาก onChange trigger, periodAttachFile มาจาก manual (fallback)
+    const fileToUpload: File | null = p._autoUploadFile || periodAttachFile;
+    if (!fileToUpload) return;
+    // สร้าง payment object สะอาด (ไม่มี _autoUploadFile field)
+    const { _autoUploadFile, ...cleanP } = p;
+    setUploadingAttach(true);
+    try {
+      const { url, name } = await uploadAttachment(fileToUpload, {
+        type: "payments",
+        projectId: selectedProjectId || cleanP.projectId || "",
+        docId: cleanP.paymentNo || cleanP.id,
+      });
+      const prevAttachments = Array.isArray(cleanP.paymentAttachments) ? cleanP.paymentAttachments : [];
+      const newAttachment = { url, name, uploadedBy: userData?.name || user?.email || "", uploadedAt: new Date().toISOString() };
+      const updatedAttachments = [...prevAttachments, newAttachment];
+      await updateData("payments", cleanP.id, { paymentAttachments: updatedAttachments }, { skipLog: true });
+      await logAction("Upload Payment Attachment", `อัปโหลดไฟล์แนบ (${name}) ให้ Payment ${cleanP.paymentNo}`, selectedProjectId);
+      setPeriodAttachFile(null);
+      if (periodAttachFileRef.current) periodAttachFileRef.current.value = "";
+      setViewingPayment((prev: any) => prev ? { ...prev, paymentAttachments: updatedAttachments } : prev);
+    } catch (e) { showAlert("เกิดข้อผิดพลาด", String(e), "error"); }
+    finally { setUploadingAttach(false); }
   };
 
   // ─── Period (งวดงาน) Approve ─────────────────────────────────────────────────
@@ -440,10 +498,6 @@ const PaymentView = React.memo(() => {
 
 
       await logAction("Approve งวดงาน", `${isCheckStep ? "CM Check" : "PM Approve"} Payment ${p.paymentNo} → ${nextStatus}`, selectedProjectId);
-      showAlert("อนุมัติสำเร็จ",
-        isCheckStep ? "CM ตรวจสอบแล้ว ส่งให้ PM อนุมัติ" : "PM อนุมัติแล้ว สถานะเปลี่ยนเป็น Wait Pay",
-        "success"
-      );
       setViewingPayment(null);
     } catch (e) { showAlert("เกิดข้อผิดพลาด", String(e), "error"); }
     finally { setActioning(false); }
@@ -495,7 +549,6 @@ const PaymentView = React.memo(() => {
       }
 
       await logAction("Pay Payment", `จ่าย Payment ${waitPayModalPayment.paymentNo} → ${nextStatus}${payJobComplete ? " (จบงาน)" : ""}`, selectedProjectId);
-      showAlert("สำเร็จ", `บันทึกการจ่ายเงินเรียบร้อย (${nextStatus})`, "success");
       setWaitPayModalPayment(null);
       setPaySlipFile(null);
       setPayJobComplete(false);
@@ -539,7 +592,6 @@ const PaymentView = React.memo(() => {
         `Hold Payment ${holdModalPayment.paymentNo} (${holdDecision === "backToEdit" ? "ส่งกลับแก้ไข" : "คง Hold"})`,
         selectedProjectId
       );
-      showAlert("บันทึกสำเร็จ", holdDecision === "backToEdit" ? "ส่งกลับให้แก้ไขแล้ว" : "คงสถานะ Hold แล้ว", "success");
       setHoldModalPayment(null);
       setHoldReasonInput("");
       setHoldDecision("keepHold");
@@ -620,7 +672,6 @@ const PaymentView = React.memo(() => {
 
       await logAction("Start Next Period", `เริ่มงวดงาน ${nextPeriodNoInt} (${nextPaymentNo})`, selectedProjectId);
 
-      showAlert("สำเร็จ", `เปิดงวดถัดไป (${nextPaymentNo}) เป็น Active พร้อมให้กรอกแล้ว`, "success");
       setViewingPayment(null);
     } catch (e) {
       showAlert("เกิดข้อผิดพลาด", String(e), "error");
@@ -738,7 +789,7 @@ const PaymentView = React.memo(() => {
       }, { skipLog: true });
 
       await logAction('Activate Payment', `PM เปิด Active Payment จาก PO ${po.poNo} (${po.poType})`, selectedProjectId);
-      showAlert('สำเร็จ', `เปิด Payment จาก PO ${po.poNo} เป็น Active แล้ว — สามารถเริ่มใส่ปริมาณงวดได้`, 'success');
+
     } catch (e) {
       showAlert('เกิดข้อผิดพลาด', String(e), 'error');
     } finally {
@@ -1010,16 +1061,26 @@ const PaymentView = React.memo(() => {
                         onClick={(e) => e.stopPropagation()}
                       >
                         <div className="flex justify-end gap-1 flex-wrap">
-                          {/* Period flow approve */}
+                          {/* Period flow approve + reject */}
                           {canApprovePeriod && isPeriodFlow(p.status) && isPeriodPendingForMe(p.status, myRoles) && (
-                            <Button
-                              variant="success"
-                              size="sm"
-                              className="px-2 py-0.5 text-[10px] whitespace-nowrap"
-                              onClick={() => handlePeriodApprove(p)}
-                            >
-                              {p.status === "งวดงาน Pending CM" ? "CM Check" : "PM Approve"}
-                            </Button>
+                            <>
+                              <Button
+                                variant="success"
+                                size="sm"
+                                className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                                onClick={() => handlePeriodApprove(p)}
+                              >
+                                {p.status === "งวดงาน Pending CM" ? "CM Check" : "PM Approve"}
+                              </Button>
+                              <Button
+                                variant="danger"
+                                size="sm"
+                                className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                                onClick={() => { setPeriodRejectModal(p); setPeriodRejectReason(""); }}
+                              >
+                                Reject
+                              </Button>
+                            </>
                           )}
                           {/* ปุ่ม Submit Draft→Pending ถูกลบแล้ว — ใช้ PM Active จาก Draft row แทน */}
                           {/* Revision request pending — for current approver */}
@@ -1268,6 +1329,21 @@ const PaymentView = React.memo(() => {
                           </a>
                         </div>
                       )}
+                      {/* ── Payment Attachments (uploaded via Upload File button) ── */}
+                      {Array.isArray(vp.paymentAttachments) && vp.paymentAttachments.length > 0 && (
+                        <div className="flex flex-col gap-0.5">
+                          <span className="w-56 text-blue-700 font-semibold shrink-0 text-[11px]">ไฟล์แนบ PAYMENT ({vp.paymentAttachments.length}):</span>
+                          {vp.paymentAttachments.map((att: any, idx: number) => (
+                            <div key={idx} className="flex items-center gap-1 ml-1">
+                              <Paperclip size={10} className="text-blue-400 shrink-0" />
+                              <a href={att.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline text-[11px] truncate max-w-[220px]">
+                                {att.name || `ไฟล์แนบ ${idx + 1}`}
+                              </a>
+                              <span className="text-[9px] text-slate-400 shrink-0">โดย {att.uploadedBy || "-"}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       {displayPaySlipUrl && (
                         <div className="flex items-center">
                           <span className="w-56 text-emerald-600 font-semibold shrink-0">เอกสารการจ่ายเงิน (Pay / Slip) :</span>
@@ -1279,7 +1355,33 @@ const PaymentView = React.memo(() => {
                     </div>
                   </div>
 
-                  {/* ── Items table — Payment Application style ── */}
+                  {/* ── Upload File strip — แสดงเฉพาะเมื่ออยู่ใน mode ใส่ปริมาณ ── */}
+                  {isQtyEditMode && !isViewingOldPeriod && (
+                    <div className="flex items-center gap-3 border border-blue-200 rounded-lg px-4 py-2 bg-blue-50">
+                      <Paperclip size={13} className="text-blue-500 shrink-0" />
+                      <span className="text-[12px] text-blue-700 font-semibold whitespace-nowrap">อัปโหลดไฟล์แนบ :</span>
+                      {uploadingAttach ? (
+                        <span className="flex items-center gap-2 text-[11px] text-blue-600">
+                          <span className="animate-spin w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full" />
+                          กำลังอัปโหลด...
+                        </span>
+                      ) : (
+                        <input
+                          ref={periodAttachFileRef}
+                          type="file"
+                          className="text-[11px] text-slate-600 flex-1 min-w-0"
+                          accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0] || null;
+                            setPeriodAttachFile(file);
+                            if (file) handleUploadPeriodAttachment({ ...vp, _autoUploadFile: file });
+                          }}
+                        />
+                      )}
+                    </div>
+                  )}
+
+                  {/* ── Items table ── */}
                   <div className="border border-slate-300 rounded-lg overflow-hidden">
                     <div className="overflow-x-auto">
                       <table className="w-full text-[11px] border-collapse min-w-max table-fixed">
@@ -1603,16 +1705,26 @@ const PaymentView = React.memo(() => {
                       </button>}
                     </>
                   )}
-                  {/* งวดงาน Period Approve */}
+                  {/* งวดงาน Period Approve + Reject */}
                   {canApprovePeriod && isPeriodFlow(vp.status) && isPeriodPendingForMe(vp.status, myRoles) && (
-                    <button
-                      disabled={actioning}
-                      onClick={() => handlePeriodApprove(vp)}
-                      className="px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
-                    >
-                      <ThumbsUp size={14} />
-                      {vp.status === "งวดงาน Pending CM" ? "CHECK — ตรวจสอบ (CM)" : "APPROVE — อนุมัติ (PM)"}
-                    </button>
+                    <>
+                      <button
+                        disabled={actioning}
+                        onClick={() => handlePeriodApprove(vp)}
+                        className="px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+                      >
+                        <ThumbsUp size={14} />
+                        {vp.status === "งวดงาน Pending CM" ? "CHECK — ตรวจสอบ (CM)" : "APPROVE — อนุมัติ (PM)"}
+                      </button>
+                      <button
+                        disabled={actioning}
+                        onClick={() => { setPeriodRejectModal(vp); setPeriodRejectReason(""); }}
+                        className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+                      >
+                        <ThumbsDown size={14} />
+                        {vp.status === "งวดงาน Pending CM" ? "Reject (CM)" : "Reject (PM)"}
+                      </button>
+                    </>
                   )}
                   {/* Active: ใส่ปริมาณ / บันทึกงวดงาน + Save Draft */}
                   {vp.status === "Active" && !isQtyEditMode && !isViewingOldPeriod && (
@@ -1639,18 +1751,20 @@ const PaymentView = React.memo(() => {
                         <>
                           {canSubmitPeriod && (
                             <button
-                              disabled={savingActiveQty}
+                              disabled={savingActiveQty || uploadingAttach}
                               onClick={() => handleSaveActiveQty(vp, true)}
                               className="px-4 py-2 rounded-lg bg-green-700 hover:bg-green-800 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+                              title={uploadingAttach ? "กำลังอัปโหลดไฟล์แนบ กรุณารอ..." : undefined}
                             >
-                              {savingActiveQty ? <span className="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full" /> : <Save size={14} />}
-                              บันทึกงวดงาน
+                              {savingActiveQty ? <span className="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full" /> : uploadingAttach ? <span className="animate-spin w-3 h-3 border-2 border-blue-300 border-t-transparent rounded-full" /> : <Save size={14} />}
+                              {uploadingAttach ? "กำลังอัปโหลด..." : "บันทึกงวดงาน"}
                             </button>
                           )}
                           {canSavePeriodDraft && <button
-                            disabled={savingActiveQty}
+                            disabled={savingActiveQty || uploadingAttach}
                             onClick={() => handleSaveActiveQty(vp, false)}
                             className="px-4 py-2 rounded-lg border border-green-400 text-green-700 hover:bg-green-50 text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+                            title={uploadingAttach ? "กำลังอัปโหลดไฟล์แนบ กรุณารอ..." : undefined}
                           >
                             {savingActiveQty ? <span className="animate-spin w-3 h-3 border-2 border-green-500 border-t-transparent rounded-full" /> : <Save size={14} />}
                             Save Draft
@@ -1722,6 +1836,45 @@ const PaymentView = React.memo(() => {
           </div>
         );
       })(), document.body)}
+
+      {/* ─── Period Reject Modal ──────────────────────────────────────────────── */}
+      {periodRejectModal && createPortal((
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[10020] p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+            <h3 className="font-bold text-slate-800 flex items-center gap-2">
+              <ThumbsDown size={18} className="text-red-500" />
+              {periodRejectModal.status === "งวดงาน Pending CM" ? "Reject งวดงาน (CM)" : "Reject งวดงาน (PM)"}
+            </h3>
+            <p className="text-xs text-slate-500">
+              Payment: <strong>{periodRejectModal.paymentNo}</strong><br />
+              สถานะจะกลับเป็น <strong>Active</strong> — สามารถแก้ไขและส่งอนุมัติใหม่ได้
+            </p>
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-slate-700">เหตุผลที่ปฏิเสธ (ไม่บังคับ)</label>
+              <textarea
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-red-400"
+                rows={3}
+                placeholder="กรอกเหตุผล..."
+                value={periodRejectReason}
+                onChange={(e) => setPeriodRejectReason(e.target.value)}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setPeriodRejectModal(null)} className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm hover:bg-slate-50">
+                ยกเลิก
+              </button>
+              <button
+                disabled={actioning}
+                onClick={handlePeriodRejectConfirm}
+                className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+              >
+                {actioning ? <span className="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full" /> : <ThumbsDown size={13} />}
+                Reject
+              </button>
+            </div>
+          </div>
+        </div>
+      ), document.body)}
 
       {/* ─── Revision Request Modal ─────────────────────────────────────────────── */}
       {revisionModalPayment && createPortal((
