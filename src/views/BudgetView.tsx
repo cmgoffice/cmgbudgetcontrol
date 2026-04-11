@@ -24,7 +24,7 @@ import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 
 const BudgetView = React.memo(() => {
-  const { budgets, projects, prs, pos, invoices, receives, addData, updateData, deleteData,
+  const { budgets, projects, prs, pos, invoices, receives, payments = [], addData, updateData, deleteData,
     showAlert, openConfirm, logAction, userRole, userRoles, userData, columnWidths, handleColumnResize,
     visibleProjects, handlePRAction, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,
     db, appId, canUseFunction, isColumnVisible } = useAppData();
@@ -1066,6 +1066,7 @@ const BudgetView = React.memo(() => {
     "PO Approve": "bg-fuchsia-50 text-fuchsia-800 border-fuchsia-200",
     Receiving: "bg-teal-50 text-teal-800 border-teal-200",
     Received: "bg-red-50 text-red-800 border-red-200",
+    "SP Progress": "bg-blue-50 text-blue-800 border-blue-200",
   };
 
   const getNowStatus = (budget, stats, filterMode = "ALL", targetSubId = null) => {
@@ -1277,6 +1278,76 @@ const BudgetView = React.memo(() => {
       }
     }
 
+    // ── SP Payment Progress stage ──────────────────────────────────────────────
+    // สำหรับ PO ที่มี Payment ประเภท SP (ผู้รับเหมาย่อย) เท่านั้น
+    // แสดง % ความก้าวหน้าของงาน (Activity Bar) — ใช้เฉพาะงวดล่าสุดของแต่ละสัญญา
+    // เพราะ prevAccumAmount ใน items ของงวดใหม่สะสมยอดจากงวดก่อนหน้าแล้ว
+
+    // หากอยู่ใน SUB_ITEM mode ให้กรอง PO เฉพาะที่มี items ตรงกับ sub-item นั้น
+    // เพื่อป้องกัน sub-item ทุกตัวแสดง % เดียวกัน
+    const spRelevantPoIds: Set<string> = filterMode === "SUB_ITEM" && targetSubId
+      ? new Set(
+          (stats.relatedPOs || [])
+            .filter((po) =>
+              (po.items || []).some((item) => {
+                const itemCode = item.costCode || prs.find((p) => p.id === item.prId)?.costCode;
+                return matchesFilter(item, itemCode, po);
+              })
+            )
+            .map((po) => po.id)
+        )
+      : new Set((stats.relatedPOs || []).map((po) => po.id));
+
+    const spPayments = (payments || []).filter((pmt) => {
+      if (pmt.projectId !== budget.projectId) return false;
+      if (pmt.paymentType !== "SP") return false;
+      if (!Array.isArray(pmt.selectedPrIds) || pmt.selectedPrIds.length === 0) return false;
+      return pmt.selectedPrIds.some((id) => spRelevantPoIds.has(id));
+    });
+
+    if (spPayments.length > 0) {
+      // จัดกลุ่มตาม selectedPrIds (เรียงแล้ว) เพื่อหาแต่ละสัญญา
+      // แล้วเลือกเฉพาะงวดล่าสุด (periodNo สูงสุด) ของแต่ละสัญญา
+      const spGroupMap = new Map();
+      spPayments.forEach((pmt) => {
+        const key = (pmt.selectedPrIds || []).slice().sort().join(",");
+        const existing = spGroupMap.get(key);
+        if (!existing) {
+          spGroupMap.set(key, pmt);
+        } else {
+          const existingPeriod = parseInt(existing.periodNo) || 0;
+          const newPeriod = parseInt(pmt.periodNo) || 0;
+          if (newPeriod > existingPeriod) {
+            spGroupMap.set(key, pmt);
+          } else if (newPeriod === existingPeriod && (pmt.createdAt || "") > (existing.createdAt || "")) {
+            spGroupMap.set(key, pmt);
+          }
+        }
+      });
+
+      let totalContract = 0;
+      let totalAccum = 0;
+      spGroupMap.forEach((pmt) => {
+        (pmt.items || []).forEach((item) => {
+          const cAmt = (Number(item.contractQty) || 0) * (Number(item.contractPrice) || 0);
+          // prevAccumAmount สะสมยอดงวดก่อนหน้าทั้งหมดแล้ว + thisPeriodAmount งวดปัจจุบัน
+          const accumAmt = (Number(item.prevAccumAmount) || 0) + (Number(item.thisPeriodAmount) || 0);
+          totalContract += cAmt;
+          totalAccum += accumAmt;
+        });
+      });
+
+      const spProgressPct = totalContract > 0
+        ? Math.max(0, Math.min(100, Math.round((totalAccum / totalContract) * 100)))
+        : 0;
+      statusesToReturn.push({
+        label: "SP Progress",
+        color: "blue",
+        amount: null,
+        spPaymentProgress: spProgressPct,
+      });
+    }
+
     return statusesToReturn;
   };
 
@@ -1286,6 +1357,22 @@ const BudgetView = React.memo(() => {
       <div className="flex flex-wrap items-center justify-center gap-0.5">
         {statuses.map((s, idx) => {
           const badgeClass = NOW_STATUS_LABEL_COLOR_MAP[s.label] || NOW_STATUS_COLOR_MAP[s.color] || NOW_STATUS_COLOR_MAP.slate;
+          if (typeof s.spPaymentProgress === "number") {
+            const pct = s.spPaymentProgress;
+            const barColor = pct >= 100 ? "bg-emerald-500" : pct >= 50 ? "bg-blue-500" : "bg-blue-400";
+            const trackColor = pct >= 100 ? "bg-emerald-100" : "bg-blue-100";
+            return (
+              <span key={idx} className="flex flex-col items-center gap-0.5 min-w-[80px]">
+                <span className="text-[9px] px-1.5 py-0 rounded border bg-blue-50 text-blue-800 border-blue-200 whitespace-nowrap w-full text-center">
+                  <span className="font-semibold">SP Progress</span>
+                  <span className="ml-1 font-extrabold text-blue-900">{pct}%</span>
+                </span>
+                <div className={`w-full h-1.5 ${trackColor} rounded-full overflow-hidden`}>
+                  <div className={`h-full ${barColor} rounded-full transition-all`} style={{ width: `${pct}%` }} />
+                </div>
+              </span>
+            );
+          }
           if (typeof s.receivePercent === "number" && s.receivePercent > 0 && s.receivePercent < 100) {
             return (
               <span key={idx} className="flex flex-col items-center gap-0.5 min-w-[72px]">
@@ -1318,6 +1405,7 @@ const BudgetView = React.memo(() => {
     const getRank = (label = "") => {
       if (label === "Received") return 100;
       if (label === "Receiving") return 90;
+      if (label === "SP Progress") return 85;
       if (label === "PO Approve") return 80;
       if (label === "PO Wait GM") return 70;
       if (label === "PO Wait PCM") return 60;

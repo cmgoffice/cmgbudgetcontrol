@@ -70,6 +70,7 @@ const STATUS_BADGE_COLORS: Record<string, string> = {
   "Hold": "bg-yellow-200 text-yellow-900 border border-yellow-400",
   "Paid": "bg-emerald-100 text-emerald-800 border border-emerald-300",
   "Revision Requested": "bg-rose-100 text-rose-800 border border-rose-200",
+  "Reject": "bg-red-100 text-red-800 border border-red-300",
   "Rejected": "bg-red-100 text-red-800 border border-red-300",
 };
 
@@ -86,11 +87,14 @@ const isPeriodPendingForMe = (status: string, roles: string[]): boolean => {
   return !!approvers && roles.some((r) => approvers.includes(r));
 };
 
-const PaymentStatusBadge = ({ status }: { status: string }) => (
-  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_BADGE_COLORS[status] || "bg-slate-100 text-slate-700 border border-slate-200"}`}>
-    {status || "Draft"}
-  </span>
-);
+const PaymentStatusBadge = ({ status }: { status: string }) => {
+  const displayStatus = status === "Rejected" ? "Reject" : (status || "Draft");
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_BADGE_COLORS[displayStatus] || "bg-slate-100 text-slate-700 border border-slate-200"}`}>
+      {displayStatus}
+    </span>
+  );
+};
 
 
 
@@ -143,6 +147,17 @@ const PaymentView = React.memo(() => {
   // ─── Period Reject Modal ──────────────────────────────────────────────────
   const [periodRejectModal, setPeriodRejectModal] = useState<any>(null);
   const [periodRejectReason, setPeriodRejectReason] = useState("");
+
+  React.useEffect(() => {
+    if (!viewingPayment) return;
+    const paymentStatus = viewingPayment.status || "Draft";
+    if (["Reject", "Rejected"].includes(paymentStatus)) {
+      setIsQtyEditMode(true);
+      setPeriodBillingCycle(viewingPayment.billingCycle || "");
+      setManualPeriodNo(viewingPayment.periodNo || "1");
+      setActiveQtyEdits({});
+    }
+  }, [viewingPayment]);
 
 
 
@@ -262,7 +277,7 @@ const PaymentView = React.memo(() => {
     setActioning(true);
     try {
       await updateData("payments", rejectModalPayment.id, {
-        status: "Rejected",
+        status: "Reject",
         rejectReason: rejectReason.trim() || "-",
         rejectedBy: userData?.name || user?.email || "",
         rejectedAt: new Date().toISOString(),
@@ -430,23 +445,29 @@ const PaymentView = React.memo(() => {
     finally { setSavingActiveQty(false); }
   };
 
-  // ─── Period (งวดงาน) Reject → กลับไป Active ────────────────────────────────
+  // ─── Period (งวดงาน) Reject → กลับไป Reject ────────────────────────────────
   const handlePeriodRejectConfirm = async () => {
     if (!periodRejectModal) return;
     if (!canApprovePeriod) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธงวดงาน", "warning");
     setActioning(true);
     try {
+      const reason = periodRejectReason.trim() || "-";
+      const rejectedBy = userData?.name || user?.email || "";
+      const rejectedAt = new Date().toISOString();
       await updateData("payments", periodRejectModal.id, {
-        status: "Active",
-        periodRejectedBy: userData?.name || user?.email || "",
-        periodRejectedAt: new Date().toISOString(),
-        periodRejectReason: periodRejectReason.trim() || "-",
+        status: "Reject",
+        periodRejectedBy: rejectedBy,
+        periodRejectedAt: rejectedAt,
+        periodRejectReason: reason,
+        rejectReason: reason,
+        rejectedBy,
+        rejectedAt,
         periodCheckedBy: null,
         periodCheckedAt: null,
         periodApprovedBy: null,
         periodApprovedAt: null,
       }, { skipLog: true });
-      await logAction("Reject งวดงาน", `Reject งวดงาน ${periodRejectModal.paymentNo} → Active`, selectedProjectId);
+      await logAction("Reject งวดงาน", `Reject งวดงาน ${periodRejectModal.paymentNo} → Reject`, selectedProjectId);
       setPeriodRejectModal(null);
       setPeriodRejectReason("");
       setViewingPayment(null);
@@ -478,6 +499,21 @@ const PaymentView = React.memo(() => {
       setViewingPayment((prev: any) => prev ? { ...prev, paymentAttachments: updatedAttachments } : prev);
     } catch (e) { showAlert("เกิดข้อผิดพลาด", String(e), "error"); }
     finally { setUploadingAttach(false); }
+  };
+
+  const handleDeletePeriodAttachment = async (p: any, index: number) => {
+    const attachmentToDelete = p.paymentAttachments?.[index];
+    if (!attachmentToDelete) return;
+    try {
+      if (attachmentToDelete.url) await deleteStorageFile(attachmentToDelete.url);
+      const updatedAttachments = [...p.paymentAttachments];
+      updatedAttachments.splice(index, 1);
+      await updateData("payments", p.id, { paymentAttachments: updatedAttachments }, { skipLog: true });
+      await logAction("Delete Payment Attachment", `ลบไฟล์แนบ (${attachmentToDelete.name}) ของ Payment ${p.paymentNo}`, selectedProjectId);
+      setViewingPayment((prev: any) => prev ? { ...prev, paymentAttachments: updatedAttachments } : prev);
+    } catch (e: any) {
+      showAlert("เกิดข้อผิดพลาด", String(e), "error");
+    }
   };
 
   // ─── Period (งวดงาน) Approve ─────────────────────────────────────────────────
@@ -580,7 +616,7 @@ const PaymentView = React.memo(() => {
     }
     setActioning(true);
     try {
-      const nextStatus = holdDecision === "backToEdit" ? "Draft" : "Hold";
+      const nextStatus = holdDecision === "backToEdit" ? "Reject" : "Hold";
       await updateData("payments", holdModalPayment.id, {
         status: nextStatus,
         holdReason: holdReasonInput.trim(),
@@ -589,7 +625,7 @@ const PaymentView = React.memo(() => {
       }, { skipLog: true });
       await logAction(
         "Hold Payment",
-        `Hold Payment ${holdModalPayment.paymentNo} (${holdDecision === "backToEdit" ? "ส่งกลับแก้ไข" : "คง Hold"})`,
+        `Hold Payment ${holdModalPayment.paymentNo} (${holdDecision === "backToEdit" ? "Reject ส่งกลับแก้ไข" : "คง Hold"})`,
         selectedProjectId
       );
       setHoldModalPayment(null);
@@ -1047,7 +1083,7 @@ const PaymentView = React.memo(() => {
                           {p.revisionRequested && (
                             <span className="text-[9px] text-rose-600 font-semibold">ขอแก้ไข</span>
                           )}
-                          {p.status === "Rejected" && p.rejectReason && (
+                          {["Reject", "Rejected"].includes(p.status) && p.rejectReason && (
                             <span className="text-[9px] text-red-600 max-w-[100px] truncate" title={p.rejectReason}>
                               {p.rejectReason}
                             </span>
@@ -1334,12 +1370,21 @@ const PaymentView = React.memo(() => {
                         <div className="flex flex-col gap-0.5">
                           <span className="w-56 text-blue-700 font-semibold shrink-0 text-[11px]">ไฟล์แนบ PAYMENT ({vp.paymentAttachments.length}):</span>
                           {vp.paymentAttachments.map((att: any, idx: number) => (
-                            <div key={idx} className="flex items-center gap-1 ml-1">
+                            <div key={idx} className="flex items-center gap-1 ml-1 group">
                               <Paperclip size={10} className="text-blue-400 shrink-0" />
                               <a href={att.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline text-[11px] truncate max-w-[220px]">
                                 {att.name || `ไฟล์แนบ ${idx + 1}`}
                               </a>
                               <span className="text-[9px] text-slate-400 shrink-0">โดย {att.uploadedBy || "-"}</span>
+                              {isQtyEditMode && !isViewingOldPeriod && (
+                                <button
+                                  onClick={() => handleDeletePeriodAttachment(vp, idx)}
+                                  className="ml-2 p-0.5 rounded hover:bg-red-50 text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                                  title="ลบไฟล์แนบ"
+                                >
+                                  <Trash2 size={11} />
+                                </button>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -1460,7 +1505,7 @@ const PaymentView = React.memo(() => {
                             vpItems.map((it: any, i: number) => {
                               const key = `${it.prId}_${it.prItemIndex ?? i}`;
                               const edit = activeQtyEdits[key] || {};
-                              const canEditQty = vp.status === "Active" && isQtyEditMode && !isViewingOldPeriod;
+                              const canEditQty = ["Active", "Draft", "Reject", "Rejected"].includes(vp.status || "Draft") && isQtyEditMode && !isViewingOldPeriod;
                               const cQty = Number(it.contractQty) || 0;
                               const cPrice = Number(it.contractPrice) || 0;
                               const cAmount = cQty * cPrice;
@@ -1606,13 +1651,16 @@ const PaymentView = React.memo(() => {
                   )}
 
                   {/* ── Rejection banner ── */}
-                  {vp.status === "Rejected" && (
+                  {["Reject", "Rejected"].includes(vp.status) && (
                     <div className="bg-red-50 border border-red-300 rounded-lg px-4 py-3 text-xs text-red-800 flex items-start gap-2">
                       <ThumbsDown size={14} className="mt-0.5 shrink-0 text-red-600" />
                       <div className="space-y-0.5">
-                        <p className="font-bold text-red-700">Payment ถูกปฏิเสธ — กรุณาแก้ไขและส่งอนุมัติใหม่</p>
+                        <p className="font-bold text-red-700">สถานะ Reject — กรุณาแก้ไขรายการ ใส่ปริมาณ และส่งอนุมัติใหม่</p>
                         {vp.rejectReason && vp.rejectReason !== "-" && (
                           <p>เหตุผล: <span className="font-semibold">{vp.rejectReason}</span></p>
+                        )}
+                        {vp.holdReason && (
+                          <p>หมายเหตุจาก Hold: <span className="font-semibold">{vp.holdReason}</span></p>
                         )}
                         <p className="text-red-500">ปฏิเสธโดย: {vp.rejectedBy || "-"} เมื่อ {vp.rejectedAt ? new Date(vp.rejectedAt).toLocaleDateString("th-TH") : "-"}</p>
                       </div>
@@ -1727,21 +1775,21 @@ const PaymentView = React.memo(() => {
                     </>
                   )}
                   {/* Active: ใส่ปริมาณ / บันทึกงวดงาน + Save Draft */}
-                  {vp.status === "Active" && !isQtyEditMode && !isViewingOldPeriod && (
+                  {["Active", "Reject", "Rejected"].includes(vp.status) && !isQtyEditMode && !isViewingOldPeriod && (
                     allItemsComplete ? (
                       <span className="px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-700 text-xs font-semibold flex items-center gap-1.5">
                         <CheckCircle size={13} /> ผลงานครบ 100% ทุกรายการแล้ว
                       </span>
                     ) : (
                       <button
-                        onClick={() => { setIsQtyEditMode(true); setPeriodBillingCycle(""); setManualPeriodNo(vp.periodNo || "1"); setActiveQtyEdits({}); }}
+                        onClick={() => { setIsQtyEditMode(true); setPeriodBillingCycle(vp.billingCycle || ""); setManualPeriodNo(vp.periodNo || "1"); setActiveQtyEdits({}); }}
                         className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-semibold flex items-center gap-2"
                       >
                         <Edit size={14} /> ใส่ปริมาณ
                       </button>
                     )
                   )}
-                  {vp.status === "Active" && isQtyEditMode && !isViewingOldPeriod && (
+                  {["Active", "Draft", "Reject", "Rejected"].includes(vp.status || "Draft") && isQtyEditMode && !isViewingOldPeriod && (
                     <>
                       {hasOverCumulative ? (
                         <span className="px-3 py-2 rounded-lg bg-red-50 border border-red-300 text-red-600 text-xs font-semibold flex items-center gap-1.5">
@@ -1749,7 +1797,7 @@ const PaymentView = React.memo(() => {
                         </span>
                       ) : (
                         <>
-                          {canSubmitPeriod && (
+                          {["Active", "Reject", "Rejected"].includes(vp.status) && canSubmitPeriod && (
                             <button
                               disabled={savingActiveQty || uploadingAttach}
                               onClick={() => handleSaveActiveQty(vp, true)}
@@ -1767,7 +1815,7 @@ const PaymentView = React.memo(() => {
                             title={uploadingAttach ? "กำลังอัปโหลดไฟล์แนบ กรุณารอ..." : undefined}
                           >
                             {savingActiveQty ? <span className="animate-spin w-3 h-3 border-2 border-green-500 border-t-transparent rounded-full" /> : <Save size={14} />}
-                            Save Draft
+                            {["Active", "Reject", "Rejected"].includes(vp.status) ? "Save Draft" : "บันทึกอัปเดต"}
                           </button>}
                         </>
                       )}
@@ -1815,12 +1863,12 @@ const PaymentView = React.memo(() => {
                     </button>
                   )}
                   {/* Edit (Draft or Rejected) */}
-                  {["Draft", "Rejected"].includes(vp.status || "Draft") && !isViewingOldPeriod && canEditPayment && (
+                  {["Draft", "Reject", "Rejected"].includes(vp.status || "Draft") && !isQtyEditMode && !isViewingOldPeriod && canEditPayment && !["Reject", "Rejected"].includes(vp.status) && (
                     <button
-                      onClick={() => { setViewingPayment(null); openEdit(viewingPayment); }}
-                      className={`px-4 py-2 rounded-lg text-white text-sm font-medium flex items-center gap-2 ${vp.status === "Rejected" ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"}`}
+                      onClick={() => { setIsQtyEditMode(true); setPeriodBillingCycle(vp.billingCycle || ""); setManualPeriodNo(vp.periodNo || "1"); setActiveQtyEdits({}); }}
+                      className={`px-4 py-2 rounded-lg text-white text-sm font-medium flex items-center gap-2 ${["Reject", "Rejected"].includes(vp.status) ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"}`}
                     >
-                      <Edit size={14} /> แก้ไข{vp.status === "Rejected" ? " (ส่งใหม่)" : ""}
+                      <Edit size={14} /> แก้ไข{["Reject", "Rejected"].includes(vp.status) ? " (ส่งใหม่)" : ""}
                     </button>
                   )}
                 </div>
@@ -1847,7 +1895,7 @@ const PaymentView = React.memo(() => {
             </h3>
             <p className="text-xs text-slate-500">
               Payment: <strong>{periodRejectModal.paymentNo}</strong><br />
-              สถานะจะกลับเป็น <strong>Active</strong> — สามารถแก้ไขและส่งอนุมัติใหม่ได้
+              สถานะจะกลับเป็น <strong className="text-red-600">Reject</strong> — สามารถแก้ไขและส่งอนุมัติใหม่ได้
             </p>
             <div className="space-y-1">
               <label className="text-xs font-semibold text-slate-700">เหตุผลที่ปฏิเสธ (ไม่บังคับ)</label>
@@ -2042,7 +2090,7 @@ const PaymentView = React.memo(() => {
             </h3>
             <p className="text-xs text-slate-500">
               Payment: <strong>{holdModalPayment.paymentNo}</strong><br />
-              ระบุเหตุผล Hold และเลือกการดำเนินการ
+              ระบุเหตุผล Hold และเลือกการดำเนินการ หากส่งกลับแก้ไข ระบบจะเปลี่ยนเป็นสถานะ <strong className="text-red-600">Reject</strong>
             </p>
             <div className="space-y-1">
               <label className="text-xs font-semibold text-slate-700">เหตุผล Hold</label>
@@ -2072,7 +2120,7 @@ const PaymentView = React.memo(() => {
                   checked={holdDecision === "backToEdit"}
                   onChange={() => setHoldDecision("backToEdit")}
                 />
-                ส่งกลับไปแก้ไข (Draft)
+                ส่งกลับไปแก้ไขเป็นสถานะ Reject
               </label>
             </div>
             <div className="flex justify-end gap-2">

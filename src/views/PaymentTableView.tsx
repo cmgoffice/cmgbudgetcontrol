@@ -37,7 +37,7 @@ const PaymentTableView = React.memo(() => {
     setFilterProject(selectedProjectId || "all");
   }, [selectedProjectId]);
 
-  const allStatuses = ["Draft", "Pending", "Approved", "Rejected", "Paid"];
+  const allStatuses = ["Draft", "Pending", "Approved", "Reject", "Paid"];
 
   const filtered = useMemo(() => {
     const q = searchTerm.toLowerCase();
@@ -49,7 +49,8 @@ const PaymentTableView = React.memo(() => {
         (p.paymentType || "").toLowerCase().includes(q) ||
         (contractor?.name || "").toLowerCase().includes(q) ||
         (p.billingCycle || "").toLowerCase().includes(q);
-      const matchStatus = filterStatus === "all" || p.status === filterStatus;
+      const normalizedStatus = p.status === "Rejected" ? "Reject" : p.status;
+      const matchStatus = filterStatus === "all" || normalizedStatus === filterStatus;
       const matchType = filterType === "all" || p.paymentType === filterType;
       const matchProject = filterProject === "all" || p.projectId === filterProject;
       return matchSearch && matchStatus && matchType && matchProject;
@@ -60,6 +61,7 @@ const PaymentTableView = React.memo(() => {
     "Draft": "bg-slate-50 text-slate-500 border-slate-200",
     "Pending": "bg-amber-50 text-amber-700 border-amber-200",
     "Approved": "bg-emerald-50 text-emerald-700 border-emerald-200",
+    "Reject": "bg-red-50 text-red-700 border-red-200",
     "Rejected": "bg-red-50 text-red-700 border-red-200",
     "Paid": "bg-teal-50 text-teal-700 border-teal-200",
   };
@@ -171,7 +173,8 @@ const PaymentTableView = React.memo(() => {
               filtered.map((p: any) => {
                 const contractor = vendors?.find((v: any) => v.id === p.contractorId);
                 const project = projects.find((proj: any) => proj.id === p.projectId);
-                const statusCls = statusColors[p.status] || "bg-slate-50 text-slate-500 border-slate-200";
+                const displayStatus = p.status === "Rejected" ? "Reject" : (p.status || "Draft");
+                const statusCls = statusColors[displayStatus] || "bg-slate-50 text-slate-500 border-slate-200";
                 return (
                   <tr
                     key={p.id}
@@ -225,7 +228,7 @@ const PaymentTableView = React.memo(() => {
                     {isColumnVisible("payment-table", "status") && (
                       <td className="py-2 px-3 text-center">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-semibold ${statusCls}`}>
-                          {p.status || "Draft"}
+                          {displayStatus}
                         </span>
                       </td>
                     )}
@@ -305,7 +308,7 @@ const PaymentTableView = React.memo(() => {
                 <h3 className="text-sm font-bold text-white tracking-wide">แบบฟอร์มเบิกงวดงาน / PAYMENT APPLICATION</h3>
                 <div className="flex items-center gap-2">
                   <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-[11px] font-semibold ${statusColors[viewingPayment.status] || "bg-slate-100 text-slate-600 border-slate-200"}`}>
-                    {viewingPayment.status || "Draft"}
+                    {viewingPayment.status === "Rejected" ? "Reject" : (viewingPayment.status || "Draft")}
                   </span>
                   <button
                     onClick={() => setViewingPayment(null)}
