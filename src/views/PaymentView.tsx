@@ -115,6 +115,10 @@ const PaymentView = React.memo(() => {
   const [saving, setSaving] = useState(false);
   const [actioning, setActioning] = useState(false);
 
+  // ─── Activate PO Modal ────────────────────────────────────────────────────
+  const [activatingPO, setActivatingPO] = useState<any>(null);
+  const [activatingContractTitle, setActivatingContractTitle] = useState("");
+
   // ─── Active-state qty edit ────────────────────────────────────────────────
   const [activeQtyEdits, setActiveQtyEdits] = useState<Record<string, any>>({});
   const [savingActiveQty, setSavingActiveQty] = useState(false);
@@ -162,7 +166,7 @@ const PaymentView = React.memo(() => {
 
 
   // ─── Main Payment Table — resizable columns (MasterAdmin, persisted globally) ──
-  const PAYMENT_MAIN_DEFAULT_WIDTHS = { paymentNo: 160, type: 80, contractor: 220, billingCycle: 140, totalAmount: 140, accumAmount: 140, periodAmount: 140, progress: 128, status: 120, actions: 96 };
+  const PAYMENT_MAIN_DEFAULT_WIDTHS = { paymentNo: 160, type: 80, contractor: 200, contractTitle: 180, billingCycle: 140, totalAmount: 140, accumAmount: 140, periodAmount: 140, progress: 128, status: 120, actions: 96 };
   const paymentMainColWidths = useMemo(() => ({ ...PAYMENT_MAIN_DEFAULT_WIDTHS, ...(columnWidths?.paymentMain || {}) }), [columnWidths]);
   const isPaymentMainTableAdmin = myRoles.includes("Administrator");
 
@@ -771,7 +775,7 @@ const PaymentView = React.memo(() => {
     canUseFunction?.('payment-subcontract', 'activate') !== false;
 
   // ─── Activate: สร้าง Payment document จาก PO (PM กด) ─────────────────────
-  const handleActivatePayment = async (po: any) => {
+  const handleActivatePayment = async (po: any, contractTitleOverride?: string) => {
     if (!canActivatePayment) {
       showAlert('ไม่มีสิทธิ์', 'เฉพาะ PM หรือ Administrator เท่านั้นที่สามารถ Activate Payment ได้', 'warning');
       return;
@@ -799,7 +803,7 @@ const PaymentView = React.memo(() => {
         paymentNo: `${po.poNo || po.id}-001`,
         paymentType: po.poType,
         contractorId: po.vendorId || '',
-        contractTitle: po.contractTitle || po.poNo || '',
+        contractTitle: contractTitleOverride || po.contractTitle || po.poNo || '',
         periodNo: '1',
         openDate: new Date().toISOString().split('T')[0],
         billingCycle: '',
@@ -892,6 +896,11 @@ const PaymentView = React.memo(() => {
                   ผู้รับเหมา
                 </ResizableTh>
               )}
+              {isColumnVisible("payment", "contractTitle") && (
+                <ResizableTh tableId="paymentMain" colKey="contractTitle" isAdmin={isPaymentMainTableAdmin} onResize={handlePaymentMainColResize} currentWidth={paymentMainColWidths.contractTitle} className="py-2 px-3">
+                  ชื่อสัญญา
+                </ResizableTh>
+              )}
               {isColumnVisible("payment", "billingCycle") && (
                 <ResizableTh tableId="paymentMain" colKey="billingCycle" isAdmin={isPaymentMainTableAdmin} onResize={handlePaymentMainColResize} currentWidth={paymentMainColWidths.billingCycle} className="py-2 px-3">
                   รอบวางบิล
@@ -937,7 +946,7 @@ const PaymentView = React.memo(() => {
                 (s: number, it: any) => s + ((Number(it.quantity) || 0) * (Number(it.price) || Number(it.unitPrice) || 0)), 0
               );
               return (
-                <tr key={`po-draft-${po.id}`} className="bg-sky-50/60 border-b border-sky-100 hover:bg-sky-100/50 transition-colors">
+                <tr key={`po-draft-${po.id}`} className="bg-sky-50/60 border-b border-sky-100 hover:bg-sky-100/50 transition-colors cursor-pointer" onClick={() => { setActivatingPO(po); setActivatingContractTitle(po.contractTitle || ""); }}>
                   {isColumnVisible("payment", "paymentNo") && (
                     <td className="py-2 px-3 font-medium text-sky-700">{po.poNo}</td>
                   )}
@@ -948,6 +957,9 @@ const PaymentView = React.memo(() => {
                   )}
                   {isColumnVisible("payment", "contractor") && (
                     <td className="py-2 px-3 truncate text-slate-600">{vendor?.name || '-'}</td>
+                  )}
+                  {isColumnVisible("payment", "contractTitle") && (
+                    <td className="py-2 px-3 text-slate-400 italic text-xs">-</td>
                   )}
                   {isColumnVisible("payment", "billingCycle") && (
                     <td className="py-2 px-3 text-slate-400 italic text-xs">-</td>
@@ -987,7 +999,7 @@ const PaymentView = React.memo(() => {
                           size="sm"
                           className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                           disabled={actioning}
-                          onClick={() => handleActivatePayment(po)}
+                          onClick={(e) => { e.stopPropagation(); setActivatingPO(po); setActivatingContractTitle(po.contractTitle || ""); }}
                         >
                           Active
                         </Button>
@@ -1000,7 +1012,7 @@ const PaymentView = React.memo(() => {
             {/* ── Empty state เมื่อไม่มีทั้ง Draft PO และ Payment docs ── */}
             {unlinkedSPDCPos.length === 0 && projectPayments.length === 0 ? (
               <tr>
-                <td colSpan={["paymentNo", "type", "contractor", "billingCycle", "totalAmount", "accumAmount", "periodAmount", "progress", "status", "actions"].filter(k => isColumnVisible("payment", k)).length} className="py-10 text-center text-slate-400 text-sm">
+                <td colSpan={["paymentNo", "type", "contractor", "contractTitle", "billingCycle", "totalAmount", "accumAmount", "periodAmount", "progress", "status", "actions"].filter(k => isColumnVisible("payment", k)).length} className="py-10 text-center text-slate-400 text-sm">
                   ยังไม่มีรายการ Payment — PO ประเภท SP/DC ที่ได้รับการอนุมัติจะแสดงที่นี่โดยอัตโนมัติ
                 </td>
               </tr>
@@ -1032,6 +1044,9 @@ const PaymentView = React.memo(() => {
                     )}
                     {isColumnVisible("payment", "contractor") && (
                       <td className="py-2 px-3 truncate">{contractor?.name || "-"}</td>
+                    )}
+                    {isColumnVisible("payment", "contractTitle") && (
+                      <td className="py-2 px-3 truncate text-slate-600 text-xs">{p.contractTitle || "-"}</td>
                     )}
                     {isColumnVisible("payment", "billingCycle") && (
                       <td className="py-2 px-3 text-xs text-slate-500">{p.billingCycle || "-"}</td>
@@ -2139,6 +2154,121 @@ const PaymentView = React.memo(() => {
           </div>
         </div>
       ), document.body)}
+
+      {/* ─── Activate PO Modal (แบบฟอร์มเบิกงวดงาน) ─────────────────────────── */}
+      {activatingPO && createPortal((() => {
+        const po = activatingPO;
+        const vendor = vendors.find((v: any) => v.id === po.vendorId);
+        const project = (projects || []).find((p: any) => p.id === (po.projectId || selectedProjectId));
+        const contractTotal = (po.items || []).reduce(
+          (s: number, it: any) => s + ((Number(it.quantity) || 0) * (Number(it.price) || Number(it.unitPrice) || 0)), 0
+        );
+        const canActivate = activatingContractTitle.trim().length > 0;
+        return (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[10010] p-4">
+            <div className="bg-white shadow-2xl border border-slate-300 w-[80vw] max-w-[900px] max-h-[90vh] flex flex-col rounded-2xl overflow-hidden">
+              <div className="flex items-center justify-between px-6 py-3 bg-gradient-to-r from-blue-900 to-blue-700 shrink-0 rounded-t-2xl">
+                <h3 className="text-sm font-bold text-white tracking-wide">แบบฟอร์มเบิกงวดงาน / PAYMENT APPLICATION</h3>
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">Draft</span>
+                  <button onClick={() => { setActivatingPO(null); setActivatingContractTitle(""); }} className="text-white/60 hover:text-white hover:bg-white/20 p-1.5 rounded-lg transition-all">
+                    <XCircle size={18} />
+                  </button>
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto">
+                <div className="p-5 space-y-4">
+                  <div className="grid grid-cols-2 gap-x-8 gap-y-1.5 text-xs border border-slate-200 rounded-lg p-4 bg-slate-50/50">
+                    <div className="space-y-2">
+                      <div className="flex"><span className="w-52 text-slate-500 font-semibold shrink-0">ชื่อโครงการ / PROJECT NAME :</span><span className="font-bold text-slate-800">{project?.name || selectedProjectId || "-"}</span></div>
+                      <div className="flex"><span className="w-52 text-slate-500 font-semibold shrink-0">ผู้รับเหมาช่วง / SUBCONTRACTOR :</span><span className="font-bold text-slate-800">{vendor?.name || "-"}</span></div>
+                      <div className="flex"><span className="w-52 text-slate-500 font-semibold shrink-0">อ้างอิง PO / REF PO NO. :</span><span className="font-medium text-slate-700">{po.poNo || "-"}</span></div>
+                      <div className="flex items-center gap-2">
+                        <span className="w-52 text-red-600 font-semibold shrink-0 text-xs">ชื่อสัญญา / CONTRACT TITLE : <span className="text-red-500">*</span></span>
+                        <input
+                          type="text"
+                          value={activatingContractTitle}
+                          onChange={(e) => setActivatingContractTitle(e.target.value)}
+                          placeholder="กรอกชื่อสัญญา..."
+                          className={`flex-1 border rounded px-2 py-1 text-xs font-medium focus:outline-none focus:ring-2 ${activatingContractTitle.trim() ? "border-green-400 focus:ring-green-400 text-slate-800" : "border-red-400 focus:ring-red-400 bg-red-50 text-slate-600"}`}
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex"><span className="w-56 text-slate-500 font-semibold shrink-0">เลขที่เบิกงวดงาน / PAYMENT NO. :</span><span className="font-bold text-blue-800">{po.poNo || po.id}-001</span></div>
+                      <div className="flex"><span className="w-56 text-slate-500 font-semibold shrink-0">Payment Type :</span><span className="font-bold text-slate-800">{po.poType || "-"}</span></div>
+                      <div className="flex"><span className="w-56 text-slate-500 font-semibold shrink-0">งวดงาน / PERIOD NO. :</span><span className="font-bold px-2 py-0.5 rounded border text-orange-700 bg-orange-50 border-orange-200">1 / 1</span></div>
+                      <div className="flex"><span className="w-56 text-slate-500 font-semibold shrink-0">วันที่จัดทำเอกสาร / Date :</span><span className="font-medium text-slate-700">{new Date().toISOString().split("T")[0]}</span></div>
+                    </div>
+                  </div>
+                  <div className="border border-slate-300 rounded-lg overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[11px] border-collapse">
+                        <thead>
+                          <tr className="bg-slate-100 border-b-2 border-slate-300">
+                            <th className="border border-slate-300 px-2 py-2 text-center font-bold text-slate-700 w-10">ITEM</th>
+                            <th className="border border-slate-300 px-2 py-2 text-left font-bold text-slate-700">DESCRIPTION / รายละเอียด</th>
+                            <th className="border border-slate-300 px-2 py-2 text-center font-bold text-slate-700 w-16">หน่วย</th>
+                            <th className="border border-slate-300 px-2 py-2 text-right font-bold text-purple-700 bg-purple-50/50 w-24">ปริมาณ</th>
+                            <th className="border border-slate-300 px-2 py-2 text-right font-bold text-purple-700 bg-purple-50/50 w-28">ราคา/หน่วย</th>
+                            <th className="border border-slate-300 px-2 py-2 text-right font-bold text-purple-700 bg-purple-50/50 w-32">จำนวนเงิน</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(po.items || []).length === 0 ? (
+                            <tr><td colSpan={6} className="py-8 text-center text-slate-400 text-xs border border-slate-200">ยังไม่มีรายการ</td></tr>
+                          ) : (po.items || []).map((it: any, i: number) => {
+                            const qty = Number(it.quantity) || 0;
+                            const price = Number(it.price) || Number(it.unitPrice) || 0;
+                            return (
+                              <tr key={i} className="border-b border-slate-200 hover:bg-slate-50/50">
+                                <td className="border border-slate-200 px-2 py-1.5 text-center text-slate-500">{i + 1}</td>
+                                <td className="border border-slate-200 px-2 py-1.5 text-slate-700 font-medium">{it.description || "-"}</td>
+                                <td className="border border-slate-200 px-2 py-1.5 text-center text-slate-500">{it.unit || "-"}</td>
+                                <td className="border border-slate-200 px-2 py-1.5 text-right font-mono bg-purple-50/20">{qty.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                <td className="border border-slate-200 px-2 py-1.5 text-right font-mono bg-purple-50/20">{formatCurrency(price)}</td>
+                                <td className="border border-slate-200 px-2 py-1.5 text-right font-mono font-semibold bg-purple-50/20">{formatCurrency(qty * price)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        {(po.items || []).length > 0 && (
+                          <tfoot>
+                            <tr className="bg-slate-700 text-white font-bold">
+                              <td colSpan={5} className="border border-slate-600 px-3 py-2 text-right text-[11px] tracking-wide">ยอดรวมทั้งสิ้น / GRAND TOTAL</td>
+                              <td className="border border-slate-600 px-2 py-2 text-right font-mono text-sm">{formatCurrency(contractTotal)}</td>
+                            </tr>
+                          </tfoot>
+                        )}
+                      </table>
+                    </div>
+                  </div>
+                  {!activatingContractTitle.trim() && (
+                    <div className="flex items-center gap-2 bg-amber-50 border border-amber-300 rounded-lg px-4 py-2.5 text-xs text-amber-800">
+                      <AlertTriangle size={14} className="shrink-0 text-amber-600" />
+                      <span>กรุณากรอก <strong>ชื่อสัญญา / CONTRACT TITLE</strong> ก่อนกด Active</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="px-6 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-2 shrink-0 rounded-b-2xl">
+                <button
+                  disabled={actioning || !canActivate}
+                  onClick={async () => { await handleActivatePayment(po, activatingContractTitle.trim()); setActivatingPO(null); setActivatingContractTitle(""); }}
+                  className={`px-5 py-2 rounded-lg text-white text-sm font-semibold flex items-center gap-2 transition-colors ${canActivate ? "bg-green-600 hover:bg-green-700 disabled:opacity-60" : "bg-slate-300 cursor-not-allowed"}`}
+                  title={!canActivate ? "กรุณากรอกชื่อสัญญาก่อน" : undefined}
+                >
+                  {actioning ? <span className="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full" /> : <Zap size={14} />}
+                  Active
+                </button>
+                <button onClick={() => { setActivatingPO(null); setActivatingContractTitle(""); }} className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-600 text-sm font-medium hover:bg-slate-50 flex items-center gap-2">
+                  <XCircle size={15} /> ปิด
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })(), document.body)}
 
       {/* Create/Edit Modal ถูกลบออกแล้ว — Payment สร้างอัตโนมัติจาก PO (PM กด Active) */}
     </div>
