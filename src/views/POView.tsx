@@ -603,7 +603,16 @@ const POView = React.memo(() => {
     let total = 0;
     relevantPOs.forEach(po => {
       // ถ้ามี lockedPrAllocations — ใช้ยอดที่ล็อกไว้แทน (กรณีเลือก "ไม่คืนยอด PR")
+      // แต่ต้องตรวจก่อนว่า PO ยังมี items อ้างอิง PR นี้จริงๆ อยู่
+      // ถ้า items ถูกตัดออกหมดแล้ว = lockedPrAllocations ค่าล้าสมัย → ข้าม
       if (po.lockedPrAllocations && po.lockedPrAllocations[prId] != null) {
+        const hasActiveItemsForPr = Array.isArray(po.items) && po.items.some((item: any) => {
+          if (Array.isArray(item?.disPrAllocations) && item.disPrAllocations.length > 0) {
+            return item.disPrAllocations.some((a: any) => a?.prId === prId);
+          }
+          return item?.prId === prId;
+        });
+        if (!hasActiveItemsForPr) return; // lock ล้าสมัย — ข้ามโดยไม่นับ
         total += Number(po.lockedPrAllocations[prId]) || 0;
         return;
       }
