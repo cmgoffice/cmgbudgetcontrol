@@ -18,6 +18,7 @@ import {
   COST_CATEGORIES, PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, getPurchaseTypeDisplayLabel,
   PO_REVISION_PENDING_PCM, PO_REVISION_PENDING_GM, PR_PENDING_ACTIVE,
 } from "../lib/constants";
+import { getResumeStatusForPR } from "../lib/prAllocation";
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { useProportionalTableLayout, chainTableResizeHandlers } from "../hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
@@ -2800,9 +2801,19 @@ const BudgetView = React.memo(() => {
                                       variant="success"
                                       className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                       onClick={async () => {
-                                        const resume = pr.preCloseStatus || "Approved";
+                                        const { status: resume, usedAmount, totalAmount } = getResumeStatusForPR(pr, pos);
                                         await updateData("prs", pr.id, { status: resume, preCloseStatus: null, activeRequestedAt: null });
-                                        logAction("Approved Active PR", `อนุมัติ Active PR ${pr.prNo || pr.id} → ${resume}`, selectedProjectId);
+                                        logAction(
+                                          "Approved Active PR",
+                                          `อนุมัติ Active PR ${pr.prNo || pr.id} → ${resume} (PO linked ${formatCurrency(usedAmount)} / PR ${formatCurrency(totalAmount)})`,
+                                          selectedProjectId
+                                        );
+                                        const returnedAmount = Math.max(0, totalAmount - usedAmount);
+                                        showAlert(
+                                          "สำเร็จ",
+                                          `PR กลับสถานะ ${resume} แล้ว ยอดคงเหลือที่เปิดใช้ได้ ${formatCurrency(returnedAmount)}${usedAmount > 0 ? ` (ยังมี PO ผูกอยู่ ${formatCurrency(usedAmount)})` : ""}`,
+                                          "success"
+                                        );
                                       }}
                                     >
                                       <CheckCircle size={11} /> Active PR

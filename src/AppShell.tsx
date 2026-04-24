@@ -19,6 +19,7 @@ import {
 import { ref, uploadBytes, getDownloadURL, uploadBytesResumable, getBytes } from "firebase/storage";
 import { db, appId, storage, FORM_TEMPLATE_PATHS } from "./lib/firebase";
 import { generatePRPdfBytes, generatePOPdfBytes, downloadBytes, uploadGeneratedPdf, deleteGeneratedPdf } from "./lib/pdfForms";
+import { getResumeStatusForPR } from "./lib/prAllocation";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "./components/ui";
 import ResizableTh from "./components/ResizableTh";
 import { useProportionalTableLayout, chainTableResizeHandlers } from "./hooks/useProportionalTableLayout";
@@ -1562,10 +1563,19 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                           {/* PCM อนุมัติ Active PR */}
                           {canUseFunction(tableModule, "approveActivePR") && isPR && r.status === "Pending Active PR" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
                             <button type="button" className="p-1.5 rounded hover:bg-emerald-100 text-emerald-700 text-[10px] font-medium" title="อนุมัติ Active PR" onClick={() => openConfirm?.("อนุมัติ Active PR", "PR จะกลับไปสถานะก่อนถูกปิด", async () => {
-                              const resume = r.preCloseStatus || "Approved";
+                              const { status: resume, usedAmount, totalAmount } = getResumeStatusForPR(r, pos);
                               await updateData?.("prs", r.id, { status: resume, preCloseStatus: null, activeRequestedAt: null }, { skipLog: true });
-                              logAction?.("Approved Active PR", `อนุมัติ Active PR ${r.prNo || r.id} → ${resume}`, r.projectId);
-                              showAlert?.("สำเร็จ", `PR กลับสถานะ ${resume} แล้ว`, "success");
+                              logAction?.(
+                                "Approved Active PR",
+                                `อนุมัติ Active PR ${r.prNo || r.id} → ${resume} (PO linked ${formatCurrency(usedAmount)} / PR ${formatCurrency(totalAmount)})`,
+                                r.projectId
+                              );
+                              const returnedAmount = Math.max(0, totalAmount - usedAmount);
+                              showAlert?.(
+                                "สำเร็จ",
+                                `PR กลับสถานะ ${resume} แล้ว ยอดคงเหลือที่เปิดใช้ได้ ${formatCurrency(returnedAmount)}${usedAmount > 0 ? ` (ยังมี PO ผูกอยู่ ${formatCurrency(usedAmount)})` : ""}`,
+                                "success"
+                              );
                             })}>
                               Active PR
                             </button>
