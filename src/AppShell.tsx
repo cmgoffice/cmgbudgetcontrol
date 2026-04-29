@@ -215,28 +215,28 @@ const AppShell = () => {
       {shouldShowSidebar && (
         <aside
           className={`${isCompactViewport
-            ? `fixed inset-y-0 left-0 z-40 w-[17rem] max-w-[85vw] transform transition-transform duration-200 ease-out ${isSidebarOpenMobile ? "translate-x-0" : "-translate-x-full"}`
+            ? `fixed inset-y-0 left-0 z-40 w-[14.5rem] max-w-[78vw] transform transition-transform duration-200 ease-out ${isSidebarOpenMobile ? "translate-x-0" : "-translate-x-full"}`
             : `${sidebarCollapsed ? "w-[4.5rem]" : "w-64"} relative z-20 transition-[width] duration-200 ease-out`
-            } bg-slate-900 text-white flex flex-col shadow-xl overflow-hidden`}
+            } ${isCompactViewport ? "bg-white text-slate-800 border-r border-slate-200" : "bg-slate-900 text-white"} flex flex-col shadow-xl overflow-hidden`}
         >
-          <div className={`border-b border-slate-800 bg-slate-950 shrink-0 ${sidebarCollapsed && !isCompactViewport ? "p-2" : isCompactViewport ? "p-3" : "p-4"}`}>
-            <div className={`rounded-xl bg-slate-800/80 border border-slate-700 ${sidebarCollapsed && !isCompactViewport ? "p-2" : isCompactViewport ? "p-2.5" : "p-3"}`}>
+          <div className={`shrink-0 ${isCompactViewport ? "border-b border-slate-200 bg-white" : "border-b border-slate-800 bg-slate-950"} ${sidebarCollapsed && !isCompactViewport ? "p-2" : isCompactViewport ? "p-2.5" : "p-4"}`}>
+            <div className={`rounded-xl ${isCompactViewport ? "bg-slate-50 border border-slate-200" : "bg-slate-800/80 border border-slate-700"} ${sidebarCollapsed && !isCompactViewport ? "p-2" : isCompactViewport ? "p-2" : "p-3"}`}>
               <div className={`flex items-center ${sidebarCollapsed && !isCompactViewport ? "justify-center" : "gap-3"}`}>
                 <ProfileAvatar
                   src={userData?.profilePhotoUrl || user?.photoURL}
-                  className="w-11 h-11 rounded-full object-cover border-2 border-slate-600 shadow-md flex-shrink-0"
+                  className={`${isCompactViewport ? "w-9 h-9 border-slate-300" : "w-11 h-11 border-slate-600"} rounded-full object-cover border-2 shadow-md flex-shrink-0`}
                   fallback={
-                    <div className="w-11 h-11 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-md flex-shrink-0">
+                    <div className={`${isCompactViewport ? "w-9 h-9 text-xs" : "w-11 h-11 text-sm"} bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold shadow-md flex-shrink-0`}>
                       {userData?.firstName?.charAt(0) || user?.email?.charAt(0) || "?"}
                     </div>
                   }
                 />
                 {(!sidebarCollapsed || isCompactViewport) && (
                   <div className="min-w-0 flex-1">
-                    <p className={`font-bold text-white truncate ${isCompactViewport ? "text-[13px]" : "text-sm"}`}>
+                    <p className={`font-bold truncate ${isCompactViewport ? "text-[12px] text-slate-800" : "text-sm text-white"}`}>
                       {userData?.firstName} {userData?.lastName}
                     </p>
-                    <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wide flex flex-wrap gap-0.5">
+                    <p className={`font-medium uppercase tracking-wide flex flex-wrap gap-0.5 ${isCompactViewport ? "text-[9px] text-slate-500" : "text-[10px] text-slate-400"}`}>
                       {userRoles.join(", ")}
                     </p>
                   </div>
@@ -244,7 +244,7 @@ const AppShell = () => {
               </div>
             </div>
           </div>
-          <nav className={`flex-1 overflow-y-auto custom-scrollbar ${isCompactViewport ? "p-2.5 space-y-1" : "p-2 space-y-0.5"}`}>
+          <nav className={`flex-1 overflow-y-auto custom-scrollbar ${isCompactViewport ? "p-2 space-y-0.5" : "p-2 space-y-0.5"}`}>
             {canAccessModule("dashboard") && (
               <SidebarItem
                 icon={<LayoutDashboard size={20} />}
@@ -256,7 +256,7 @@ const AppShell = () => {
               />
             )}
             {(!sidebarCollapsed || isCompactViewport) && (
-              <div className={`font-bold text-slate-500 uppercase tracking-wider ${isCompactViewport ? "pt-3 pb-1.5 px-3 text-[10px]" : "pt-4 pb-2 px-4 text-xs"}`}>
+              <div className={`font-bold uppercase tracking-wider ${isCompactViewport ? "pt-2.5 pb-1 px-2.5 text-[9px] text-slate-400" : "pt-4 pb-2 px-4 text-xs text-slate-500"}`}>
                 Modules
               </div>
             )}
@@ -349,7 +349,7 @@ const AppShell = () => {
             )}
 
             {(!sidebarCollapsed || isCompactViewport) && (
-              <div className={`font-bold text-slate-500 uppercase tracking-wider ${isCompactViewport ? "pt-3 pb-1.5 px-3 text-[10px]" : "pt-4 pb-2 px-4 text-xs"}`}>
+              <div className={`font-bold uppercase tracking-wider ${isCompactViewport ? "pt-2.5 pb-1 px-2.5 text-[9px] text-slate-400" : "pt-4 pb-2 px-4 text-xs text-slate-500"}`}>
                 Database
               </div>
             )}
@@ -375,7 +375,7 @@ const AppShell = () => {
             )}
 
             {(!sidebarCollapsed || isCompactViewport) && (
-              <div className={`font-bold text-slate-500 uppercase tracking-wider ${isCompactViewport ? "pt-3 pb-1.5 px-3 text-[10px]" : "pt-4 pb-2 px-4 text-xs"}`}>
+              <div className={`font-bold uppercase tracking-wider ${isCompactViewport ? "pt-2.5 pb-1 px-2.5 text-[9px] text-slate-400" : "pt-4 pb-2 px-4 text-xs text-slate-500"}`}>
                 System
               </div>
             )}
@@ -400,25 +400,25 @@ const AppShell = () => {
               />
             )}
           </nav>
-          <div className={`border-t border-slate-800 shrink-0 flex items-center justify-center gap-1 ${isCompactViewport ? "p-3" : sidebarCollapsed ? "py-2 px-1" : "p-4"}`}>
+          <div className={`${isCompactViewport ? "border-t border-slate-200" : "border-t border-slate-800"} shrink-0 flex items-center justify-center gap-1 ${isCompactViewport ? "p-2.5" : sidebarCollapsed ? "py-2 px-1" : "p-4"}`}>
             <button
               type="button"
               onClick={toggleSidebar}
-              className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              className={`p-2 rounded-lg transition-colors ${isCompactViewport ? "text-slate-500 hover:text-slate-700 hover:bg-slate-100" : "text-slate-400 hover:text-white hover:bg-slate-800"}`}
               title={isCompactViewport ? "ปิดแถบเมนู" : sidebarCollapsed ? "ขยายแถบเมนู" : "ย่อแถบเมนู"}
             >
               {isCompactViewport ? <ChevronLeft size={18} /> : sidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
             </button>
             {(!sidebarCollapsed || isCompactViewport) && (
-              <span className="text-[10px] text-slate-500 text-center flex-1">CMG Budget Control V.20</span>
+              <span className={`text-center flex-1 ${isCompactViewport ? "text-[9px] text-slate-400" : "text-[10px] text-slate-500"}`}>CMG Budget Control V.20</span>
             )}
           </div>
         </aside>
       )}
 
-      <main className="app-shell-main min-w-0 flex-1 overflow-y-auto bg-slate-50/50">
+      <main className="app-shell-main min-w-0 flex-1 flex flex-col overflow-hidden bg-slate-50/50">
         {!isFullScreenModalOpen && (
-          <header className="bg-white/80 backdrop-blur-md shadow-sm px-3 py-2 md:px-5 md:py-2.5 flex flex-wrap items-center gap-2 md:gap-3 sticky top-0 z-20 border-b border-slate-100">
+          <header className="bg-white/80 backdrop-blur-md shadow-sm px-3 py-2 md:px-5 md:py-2.5 flex flex-wrap items-center gap-2 md:gap-3 sticky top-0 z-20 border-b border-slate-100 overflow-visible">
             {isCompactViewport && (
               <button
                 type="button"
@@ -460,7 +460,7 @@ const AppShell = () => {
 
             {/* Project Cards — อยู่ขวา ก่อนกระดิ่ง ขยายออกซ้ายเมื่อมีโครงการเพิ่ม */}
             {moduleMenus && visibleProjects.length > 0 && (
-              <div className={`${isCompactViewport ? "order-3 flex w-full overflow-x-auto no-scrollbar pb-0.5" : "flex items-center gap-1.5 shrink-0"}`}>
+              <div className={`${isCompactViewport ? "order-3 flex w-full overflow-x-auto overflow-y-visible no-scrollbar pt-1 pb-1" : "flex items-center gap-1.5 shrink-0"}`}>
                 <div className={`${isCompactViewport ? "flex min-w-max items-center gap-1.5" : "flex items-center gap-1.5 shrink-0"}`}>
                   {visibleProjects.map((p) => {
                     const projPending = pendingByProject?.find((x) => x.projectId === p.id);
@@ -486,7 +486,7 @@ const AppShell = () => {
                           return "J" + compact;
                         })()}
                         {pendingTotal > 0 && (
-                          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[8px] font-bold rounded-full min-w-[14px] h-3.5 flex items-center justify-center px-0.5 shadow animate-pulse">
+                          <span className="absolute top-0 right-0 translate-x-1/3 -translate-y-1/3 bg-red-500 text-white text-[8px] font-bold rounded-full min-w-[14px] h-3.5 flex items-center justify-center px-0.5 shadow animate-pulse">
                             {pendingTotal > 99 ? "99+" : pendingTotal}
                           </span>
                         )}
@@ -507,7 +507,7 @@ const AppShell = () => {
                 >
                   <Bell size={18} />
                   {totalPendingCount > 0 && (
-                    <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-[9px] font-bold rounded-full min-w-[16px] h-4 flex items-center justify-center px-1 shadow-md animate-pulse">
+                    <span className="absolute top-0 right-0 translate-x-1/3 -translate-y-1/3 bg-red-500 text-white text-[9px] font-bold rounded-full min-w-[16px] h-4 flex items-center justify-center px-1 shadow-md animate-pulse">
                       {totalPendingCount > 99 ? "99+" : totalPendingCount}
                     </span>
                   )}
@@ -634,8 +634,8 @@ const AppShell = () => {
           className={`app-shell-content ${["projects", "budget", "pr", "po", "payment-subcontract", "vendor", "material", "invoice", "receive", "admin"].includes(
             activeMenu
           )
-            ? "p-3 md:p-6 w-full max-w-none min-w-0"
-            : "p-3 md:p-8 max-w-[1600px] mx-auto"
+            ? "p-3 pt-4 md:p-6 w-full max-w-none min-w-0"
+            : "p-3 pt-4 md:p-8 max-w-[1600px] mx-auto"
             }`}
         >
           {!rolePermissionsReady ? (
@@ -1363,10 +1363,11 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
       {/* Table Card */}
       <Card className="overflow-hidden w-full min-w-0">
-        <div ref={prPoTableWrapRef} className="w-full min-w-0">
-          <table className="w-full text-left text-xs table-fixed">
+        <div ref={prPoTableWrapRef} className="w-full min-w-0 overflow-x-auto">
+          <table className="w-full min-w-[1040px] text-left text-xs table-fixed md:min-w-0">
             <thead>
               <tr className="bg-slate-800 text-white">
+                {isColumnVisible(tblId, "action") && <th className="px-2 py-0.5 font-semibold text-left md:hidden" style={{ width: prPoScaled.action }}>Action</th>}
                 {isColumnVisible(tblId, "rowNum") && <th className="px-2 py-0.5 font-semibold" style={{ width: prPoScaled.rowNum }}>#</th>}
                 {isColumnVisible(tblId, "no") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="no" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.no}>{isPR ? "PR No." : "PO No."}</ResizableTh>}
                 {isColumnVisible(tblId, "project") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="project" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.project}>โครงการ</ResizableTh>}
@@ -1423,6 +1424,24 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
                   return (
                     <tr key={r.id} className={`hover:bg-blue-50/40 transition-colors cursor-pointer ${isEven ? "bg-white" : "bg-slate-50/40"}`} onClick={() => { if (!isPR && r.pdfUrl) setPdfPreviewUrl(r.pdfUrl); }}>
+                      {isColumnVisible(tblId, "action") && <td className="px-2 py-0.5 md:hidden" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-start gap-1">
+                          {canUseFunction(tableModule, "email") && (
+                            <button type="button" disabled={pdfLoadingId === r.id} className="p-1 rounded hover:bg-slate-200 text-slate-600 hover:text-slate-800 disabled:opacity-40" title="ส่งไฟล์ PDF ทางเมล" onClick={() => { setEmailModal({ doc: r, kind: isPR ? "pr" : "po" }); setEmailTo(""); }}>
+                              <Mail size={13} />
+                            </button>
+                          )}
+                          {canUseFunction(tableModule, "download") && (
+                            <button type="button" disabled={pdfLoadingId === r.id} className="p-1 rounded hover:bg-slate-200 text-slate-600 hover:text-slate-800 disabled:opacity-40" title="Download PDF" onClick={() => isPR ? handlePRDownloadPDF(r) : handlePODownloadPDF(r)}>
+                              {pdfLoadingId === r.id ? (
+                                <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" strokeOpacity=".25" /><path d="M12 2a10 10 0 0 1 10 10" /></svg>
+                              ) : (
+                                <Download size={13} />
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      </td>}
                       {isColumnVisible(tblId, "rowNum") && <td className="px-2 py-0.5 text-slate-400 font-mono">{idx + 1}</td>}
                       {isColumnVisible(tblId, "no") && (
                         <td className="px-2 py-0.5 font-bold text-slate-800 whitespace-nowrap">

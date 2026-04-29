@@ -585,18 +585,20 @@ const InvoiceView = React.memo(() => {
 
                   {/* Group table */}
                   {isExpanded && (
-                    <table className="w-full text-left text-xs text-slate-600">
+                    <div className="overflow-x-auto">
+                    <table className="w-full min-w-[900px] text-left text-xs text-slate-600 md:min-w-0">
                       <thead
                         className={`${c.thead} text-slate-500 uppercase font-semibold`}
                       >
                         <tr>
+                          <th className="py-1.5 px-3 text-center md:hidden">Actions</th>
                           <th className="py-1.5 px-3">PO No.</th>
                           <th className="py-1.5 px-3">Vendor</th>
                           <th className="py-1.5 px-3">วันที่ PO</th>
                           <th className="py-1.5 px-3">รายละเอียด</th>
                           <th className="py-1.5 px-3 text-center">ใบตรวจรับ</th>
                           <th className="py-1.5 px-3 text-right">ยอดรวม</th>
-                          <th className="py-1.5 px-3 text-center">Actions</th>
+                          <th className="hidden py-1.5 px-3 text-center md:table-cell">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -610,6 +612,18 @@ const InvoiceView = React.memo(() => {
                                 className={`${c.rowHover} cursor-pointer transition-colors`}
                                 onClick={() => openPODetail(po)}
                               >
+                                <td className="py-1.5 px-3 text-center md:hidden">
+                                  <button
+                                    type="button"
+                                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[10px] font-medium transition-colors ${c.btn}`}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openPODetail(po);
+                                    }}
+                                  >
+                                    <FileText size={11} /> ลงข้อมูลใบแจ้งหนี้
+                                  </button>
+                                </td>
                                 <td
                                   className={`py-1.5 px-3 font-semibold ${c.poNo}`}
                                 >
@@ -627,7 +641,7 @@ const InvoiceView = React.memo(() => {
                                 >
                                   {poDescription(po)}
                                 </td>
-                                <td className="py-1.5 px-3 text-center">
+                                <td className="hidden py-1.5 px-3 text-center md:table-cell">
                                   {latestReceiveWithPdf ? (
                                     <button
                                       type="button"
@@ -667,6 +681,7 @@ const InvoiceView = React.memo(() => {
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   )}
                 </Card>
               );
@@ -697,21 +712,22 @@ const InvoiceView = React.memo(() => {
           </Card>
 
           {/* Pending invoice list stays in PO tab until paid */}
-          <Card className="overflow-hidden border-violet-100">
+          <Card className="overflow-x-auto border-violet-100">
             <div className="px-4 py-2 bg-violet-50/60 border-b border-violet-100 flex items-center justify-between">
               <h4 className="text-xs font-bold text-violet-700">Invoice รออนุมัติจ่าย</h4>
               <span className="text-[11px] text-violet-500">{pendingInvoices.length} รายการ</span>
             </div>
-            <table className="w-full text-left text-xs text-slate-600">
+            <table className="w-full min-w-[760px] text-left text-xs text-slate-600 md:min-w-0">
               <thead className="bg-violet-50/40 text-slate-500 uppercase font-semibold border-b border-violet-100">
                 <tr>
+                  <th className="py-1.5 px-3 text-center md:hidden">Actions</th>
                   <th className="py-1.5 px-3">Invoice No.</th>
                   <th className="py-1.5 px-3">Ref. PO</th>
                   <th className="py-1.5 px-3">Vendor</th>
                   <th className="py-1.5 px-3">วันที่</th>
                   <th className="py-1.5 px-3 text-right">จำนวนเงิน</th>
                   <th className="py-1.5 px-3 text-center">สถานะ</th>
-                  <th className="py-1.5 px-3 text-center">Actions</th>
+                  <th className="hidden py-1.5 px-3 text-center md:table-cell">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-violet-50">
@@ -729,6 +745,30 @@ const InvoiceView = React.memo(() => {
                         idx % 2 === 0 ? "bg-white" : "bg-violet-50/20"
                       } hover:bg-violet-50/40`}
                     >
+                      <td className="py-1.5 px-3 md:hidden">
+                        <div className="flex items-center justify-center gap-1">
+                          {canUseFunction("invoice", "approve") &&
+                            (userRoles.includes("PM") || userRoles.includes("Administrator")) &&
+                            inv.status === "Pending PM" && (
+                              <Button
+                                variant="success"
+                                size="sm"
+                                className="px-2 py-0.5 text-[10px]"
+                                onClick={() => handleApprove(inv.id)}
+                              >
+                                PM อนุมัติจ่าย
+                              </Button>
+                            )}
+                          {canUseFunction("invoice", "delete") && (
+                            <button
+                              className="text-red-400 hover:text-red-600 transition-colors"
+                              onClick={() => deleteData("invoices", inv.id)}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
                       <td className="py-1.5 px-3 font-semibold text-violet-700">{inv.invNo}</td>
                       <td className="py-1.5 px-3 font-medium text-amber-600">{inv.poNo || inv.poRef || "-"}</td>
                       <td className="py-1.5 px-3">{inv.vendorName || "-"}</td>
@@ -737,7 +777,7 @@ const InvoiceView = React.memo(() => {
                       <td className="py-1.5 px-3 text-center">
                         <Badge status={inv.status} />
                       </td>
-                      <td className="py-1.5 px-3">
+                      <td className="hidden py-1.5 px-3 md:table-cell">
                         <div className="flex items-center justify-center gap-1">
                           {canUseFunction("invoice", "approve") &&
                             (userRoles.includes("PM") || userRoles.includes("Administrator")) &&
@@ -806,10 +846,11 @@ const InvoiceView = React.memo(() => {
           </Card>
 
           {/* Invoice table */}
-          <Card className="overflow-hidden border-amber-100">
-            <table className="w-full text-left text-xs text-slate-600">
+          <Card className="overflow-x-auto border-amber-100">
+            <table className="w-full min-w-[860px] text-left text-xs text-slate-600 md:min-w-0">
               <thead className="bg-gradient-to-r from-amber-50 to-orange-50 text-slate-600 uppercase font-semibold border-b border-amber-100">
                 <tr>
+                  <th className="py-1.5 px-3 text-center md:hidden">Actions</th>
                   <th className="py-1.5 px-3">Invoice No.</th>
                   <th className="py-1.5 px-3">Ref. PO</th>
                   <th className="py-1.5 px-3">Vendor</th>
@@ -817,7 +858,7 @@ const InvoiceView = React.memo(() => {
                   <th className="py-1.5 px-3">ประเภทชำระ</th>
                   <th className="py-1.5 px-3 text-right">จำนวนเงิน</th>
                   <th className="py-1.5 px-3 text-center">สถานะ</th>
-                  <th className="py-1.5 px-3 text-center">Actions</th>
+                  <th className="hidden py-1.5 px-3 text-center md:table-cell">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-amber-50">
@@ -842,13 +883,25 @@ const InvoiceView = React.memo(() => {
                         idx % 2 === 0 ? "bg-white" : "bg-amber-50/25"
                       } hover:bg-amber-50/60`}
                     >
+                      <td className="py-1.5 px-3 md:hidden">
+                        <div className="flex items-center justify-center gap-1">
+                          {canUseFunction("invoice", "delete") && (
+                            <button
+                              className="text-red-400 hover:text-red-600 transition-colors"
+                              onClick={() => deleteData("invoices", inv.id)}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
                       <td className="py-1.5 px-3 font-semibold text-amber-700">
                         {inv.invNo}
                       </td>
                       <td className="py-1.5 px-3 font-medium text-violet-600">
                         {inv.poNo || inv.poRef || "-"}
                       </td>
-                      <td className="py-1.5 px-3">
+                      <td className="hidden py-1.5 px-3 md:table-cell">
                         {inv.vendorName || "-"}
                       </td>
                       <td className="py-1.5 px-3">

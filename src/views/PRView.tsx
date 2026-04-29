@@ -1238,6 +1238,7 @@ const PRView = React.memo(() => {
 
   const renderPrHeaderCells = () => (
     <>
+      {isColumnVisible("pr", "actions") && <th className="py-0.5 px-2 text-left md:hidden" style={{ width: prTableLayout.scaled.actions }}>Actions</th>}
       {isColumnVisible("pr", "prNo") && <ResizableTh tableId="pr" colKey="prNo" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.prNo} onClick={() => requestPrSort("prNo")}>PR No. <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("prNo")}</span></ResizableTh>}
       {isColumnVisible("pr", "date") && <ResizableTh tableId="pr" colKey="date" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.date} onClick={() => requestPrSort("date")}>Date <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("date")}</span></ResizableTh>}
       {isColumnVisible("pr", "costCode") && <ResizableTh tableId="pr" colKey="costCode" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.costCode} onClick={() => requestPrSort("costCode")}>Cost Code <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("costCode")}</span></ResizableTh>}
@@ -1248,7 +1249,7 @@ const PRView = React.memo(() => {
       {isColumnVisible("pr", "amount") && <ResizableTh tableId="pr" colKey="amount" className="py-0.5 px-2 text-right cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.amount} onClick={() => requestPrSort("amount")}>Amount <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("amount")}</span></ResizableTh>}
       {isColumnVisible("pr", "status") && <ResizableTh tableId="pr" colKey="status" className="py-0.5 px-2 text-center cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.status} onClick={() => requestPrSort("status")}>Status <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("status")}</span></ResizableTh>}
       {isColumnVisible("pr", "refDoc") && <ResizableTh tableId="pr" colKey="refDoc" className="py-0.5 px-2 text-center cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.refDoc} onClick={() => requestPrSort("refDoc")}>Ref Doc <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("refDoc")}</span></ResizableTh>}
-      {isColumnVisible("pr", "actions") && <th className="py-0.5 px-2 text-right" style={{ width: prTableLayout.scaled.actions }}>Actions</th>}
+      {isColumnVisible("pr", "actions") && <th className="hidden py-0.5 px-2 text-right md:table-cell" style={{ width: prTableLayout.scaled.actions }}>Actions</th>}
     </>
   );
 
@@ -1257,77 +1258,10 @@ const PRView = React.memo(() => {
       ? "hover:bg-teal-50/60 border-b cursor-pointer transition-colors odd:bg-white even:bg-teal-50/25"
       : "hover:bg-blue-50 border-b cursor-pointer transition-colors odd:bg-white even:bg-slate-50";
 
-  const renderPrDataRows = (groupPrs, variant) => {
-    const dataRowClass = dataRowClassForVariant(variant);
-    return groupPrs.map((pr) => (
-      <React.Fragment key={pr.id}>
-        <tr className={dataRowClass} onClick={() => setViewingPR(pr)}>
-          {isColumnVisible("pr", "prNo") && <td className="py-0.5 px-2 font-medium" title={pr.prNo}><span className="cell-text">{pr.prNo}</span></td>}
-          {isColumnVisible("pr", "date") && <td className="py-0.5 px-2" title={pr.requestDate}><span className="cell-text">{pr.requestDate}</span></td>}
-          {isColumnVisible("pr", "costCode") && <td className="py-0.5 px-2">
-            <span className="bg-gray-100 px-1.5 py-0 rounded text-xs border border-gray-200 cell-text" title={pr.costCode}>
-              {pr.costCode}
-            </span>
-          </td>}
-          {isColumnVisible("pr", "description") && <td
-            className="py-0.5 px-2 text-xs text-slate-500"
-            title={(() => {
-              const budgetItemName = getPrBudgetItemName(pr);
-              const itemDescs = pr.items && pr.items.length > 0
-                ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
-                : "-";
-              const displayText = budgetItemName || itemDescs;
-              return pr.rejectReason ? `${displayText} | ปฏิเสธ: ${pr.rejectReason}` : displayText;
-            })()}
-          >
-            <div className="leading-tight">
-              <span className="cell-text font-semibold text-slate-700">
-                {getPrBudgetItemName(pr) || (pr.items && pr.items.length > 0
-                  ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
-                  : "-")}
-              </span>
-              {pr.items && pr.items.length > 0 && (
-                <div className="cell-text text-[10px] text-slate-400 mt-0.5">
-                  {pr.items.map((it) => it.description).filter(Boolean).join(", ")}
-                </div>
-              )}
-            </div>
-          </td>}
-          {isColumnVisible("pr", "type") && <td className="py-0.5 px-2" title={pr.purchaseType}><span className="cell-text">{getPurchaseTypeDisplayLabel(pr.purchaseType)}</span></td>}
-          {isColumnVisible("pr", "requestor") && <td className="py-0.5 px-2" title={pr.requestor}><span className="cell-text">{pr.requestor}</span></td>}
-          {isColumnVisible("pr", "items") && <td className="py-0.5 px-2">
-            <span className="font-bold text-slate-700">
-              {pr.items?.length || 0} รายการ
-            </span>
-          </td>}
-          {isColumnVisible("pr", "amount") && <td className="py-0.5 px-2 text-right font-semibold">
-            {formatCurrency(pr.totalAmount || pr.amount)}
-          </td>}
-          {isColumnVisible("pr", "status") && <td className="py-0.5 px-2 text-center">
-            <Badge status={pr.status} />
-          </td>}
-          {isColumnVisible("pr", "refDoc") && <td className="py-0.5 px-2 text-center">
-            {(() => {
-              const { docNo, pdfUrl, docType } = getRefDocInfo(pr);
-              return pdfUrl ? (
-                <button
-                  className="text-blue-600 hover:text-blue-800 hover:underline text-xs font-medium transition-colors"
-                  onClick={(e) => handleRefDocClick(pdfUrl, docNo, e)}
-                  title={`เปิด ${docType} - ${docNo}`}
-                >
-                  {docNo}
-                </button>
-              ) : (
-                <span className="text-gray-400 text-xs">
-                  {docNo}
-                </span>
-              );
-            })()}
-          </td>}
-          {isColumnVisible("pr", "actions") && <td
-            className="py-0.5 px-2 text-right flex justify-end gap-1"
-            onClick={(e) => e.stopPropagation()}
-          >
+  const renderPrActionCell = (pr, className) => (
+    isColumnVisible("pr", "actions") && (
+      <td className={`py-0.5 px-2 text-right ${className}`} onClick={(e) => e.stopPropagation()}>
+        <div className="flex justify-start gap-1 md:justify-end">
             {canApprovePR && (userRoles.includes("CM") || userRoles.includes("PM") || userRoles.includes("Administrator")) && pr.status === "Pending CM" && !isPrApproveInFlight(pr) && (
               <>
                 <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>CM Approve</Button>
@@ -1415,7 +1349,80 @@ const PRView = React.memo(() => {
                 ยืนยัน Close
               </Button>
             )}
+        </div>
+      </td>
+    )
+  );
+
+  const renderPrDataRows = (groupPrs, variant) => {
+    const dataRowClass = dataRowClassForVariant(variant);
+    return groupPrs.map((pr) => (
+      <React.Fragment key={pr.id}>
+        <tr className={dataRowClass} onClick={() => setViewingPR(pr)}>
+          {renderPrActionCell(pr, "md:hidden")}
+          {isColumnVisible("pr", "prNo") && <td className="py-0.5 px-2 font-medium" title={pr.prNo}><span className="cell-text">{pr.prNo}</span></td>}
+          {isColumnVisible("pr", "date") && <td className="py-0.5 px-2" title={pr.requestDate}><span className="cell-text">{pr.requestDate}</span></td>}
+          {isColumnVisible("pr", "costCode") && <td className="py-0.5 px-2">
+            <span className="bg-gray-100 px-1.5 py-0 rounded text-xs border border-gray-200 cell-text" title={pr.costCode}>
+              {pr.costCode}
+            </span>
           </td>}
+          {isColumnVisible("pr", "description") && <td
+            className="py-0.5 px-2 text-xs text-slate-500"
+            title={(() => {
+              const budgetItemName = getPrBudgetItemName(pr);
+              const itemDescs = pr.items && pr.items.length > 0
+                ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
+                : "-";
+              const displayText = budgetItemName || itemDescs;
+              return pr.rejectReason ? `${displayText} | ปฏิเสธ: ${pr.rejectReason}` : displayText;
+            })()}
+          >
+            <div className="leading-tight">
+              <span className="cell-text font-semibold text-slate-700">
+                {getPrBudgetItemName(pr) || (pr.items && pr.items.length > 0
+                  ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
+                  : "-")}
+              </span>
+              {pr.items && pr.items.length > 0 && (
+                <div className="cell-text text-[10px] text-slate-400 mt-0.5">
+                  {pr.items.map((it) => it.description).filter(Boolean).join(", ")}
+                </div>
+              )}
+            </div>
+          </td>}
+          {isColumnVisible("pr", "type") && <td className="py-0.5 px-2" title={pr.purchaseType}><span className="cell-text">{getPurchaseTypeDisplayLabel(pr.purchaseType)}</span></td>}
+          {isColumnVisible("pr", "requestor") && <td className="py-0.5 px-2" title={pr.requestor}><span className="cell-text">{pr.requestor}</span></td>}
+          {isColumnVisible("pr", "items") && <td className="py-0.5 px-2">
+            <span className="font-bold text-slate-700">
+              {pr.items?.length || 0} รายการ
+            </span>
+          </td>}
+          {isColumnVisible("pr", "amount") && <td className="py-0.5 px-2 text-right font-semibold">
+            {formatCurrency(pr.totalAmount || pr.amount)}
+          </td>}
+          {isColumnVisible("pr", "status") && <td className="py-0.5 px-2 text-center">
+            <Badge status={pr.status} />
+          </td>}
+          {isColumnVisible("pr", "refDoc") && <td className="py-0.5 px-2 text-center">
+            {(() => {
+              const { docNo, pdfUrl, docType } = getRefDocInfo(pr);
+              return pdfUrl ? (
+                <button
+                  className="text-blue-600 hover:text-blue-800 hover:underline text-xs font-medium transition-colors"
+                  onClick={(e) => handleRefDocClick(pdfUrl, docNo, e)}
+                  title={`เปิด ${docType} - ${docNo}`}
+                >
+                  {docNo}
+                </button>
+              ) : (
+                <span className="text-gray-400 text-xs">
+                  {docNo}
+                </span>
+              );
+            })()}
+          </td>}
+          {renderPrActionCell(pr, "hidden md:table-cell")}
         </tr>
       </React.Fragment>
     ));
@@ -1426,7 +1433,7 @@ const PRView = React.memo(() => {
     return entries.map(([type, groupPrs]) => (
       <React.Fragment key={`main-${type}`}>
         <tr className={groupRowClass}>
-          <td colSpan={["prNo", "date", "costCode", "description", "type", "requestor", "items", "amount", "status", "actions"].filter(k => isColumnVisible("pr", k)).length} className="py-1 px-2 font-bold text-slate-700">
+          <td colSpan={["prNo", "date", "costCode", "description", "type", "requestor", "items", "amount", "status", "refDoc", "actions"].filter(k => isColumnVisible("pr", k)).length} className="py-1 px-2 font-bold text-slate-700">
             {type} ({groupPrs.length})
           </td>
         </tr>
@@ -1605,8 +1612,8 @@ const PRView = React.memo(() => {
               PR — รอดำเนินการ (รอ Approve / รอแก้ไข)
             </h3>
           </div>
-          <div ref={prTableRef} className="w-full min-w-0">
-            <table className="w-full text-left text-xs text-slate-600 table-fixed">
+          <div ref={prTableRef} className="w-full min-w-0 overflow-x-auto">
+            <table className="w-full min-w-[980px] text-left text-xs text-slate-600 table-fixed md:min-w-0">
               <thead className="bg-rose-100/60 text-slate-900 uppercase font-semibold">
                 <tr>
                   {renderPrHeaderCells()}
@@ -1622,8 +1629,8 @@ const PRView = React.memo(() => {
 
       {/* ── ตารางกลาง: รายการปกติ (ไม่รอ Action) ── */}
       <Card className="overflow-hidden w-full min-w-0">
-        <div ref={prTableRef} className="w-full min-w-0">
-          <table className="w-full text-left text-xs text-slate-600 table-fixed">
+        <div ref={prTableRef} className="w-full min-w-0 overflow-x-auto">
+          <table className="w-full min-w-[980px] text-left text-xs text-slate-600 table-fixed md:min-w-0">
             <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
               <tr>
                 {renderPrHeaderCells()}
@@ -1644,8 +1651,8 @@ const PRView = React.memo(() => {
               PR — สถานะ PO Issued (เรียงตามเลข PR · ทุกประเภทรวมกัน)
             </h3>
           </div>
-          <div className="w-full min-w-0">
-            <table className="w-full text-left text-xs text-slate-600 table-fixed">
+          <div className="w-full min-w-0 overflow-x-auto">
+            <table className="w-full min-w-[980px] text-left text-xs text-slate-600 table-fixed md:min-w-0">
               <thead className="bg-teal-100/60 text-slate-900 uppercase font-semibold">
                 <tr>
                   {renderPrHeaderCells()}

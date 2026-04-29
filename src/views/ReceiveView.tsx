@@ -756,9 +756,11 @@ const ReceiveView = React.memo(() => {
               <p className="text-sm">ไม่พบรายการที่ตรงกับการค้นหา</p>
             </div>
           ) : (
-            <table className="w-full text-left text-xs text-slate-600">
+            <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] text-left text-xs text-slate-600 md:min-w-0">
               <thead className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-100">
                 <tr>
+                  <th className="py-1 px-3 text-center md:hidden">Actions</th>
                   {isColumnVisible("receive-history", "rpNo") && <th className="py-1 px-3">RP No.</th>}
                   {isColumnVisible("receive-history", "date") && <th className="py-1 px-3">วันที่ทำรับ</th>}
                   {isColumnVisible("receive-history", "poNo") && <th className="py-1 px-3">PO No.</th>}
@@ -767,7 +769,7 @@ const ReceiveView = React.memo(() => {
                   {isColumnVisible("receive-history", "items") && <th className="py-1 px-3 text-center">รายการสินค้า</th>}
                   {isColumnVisible("receive-history", "receivedBy") && <th className="py-1 px-3">ผู้รับของ</th>}
                   {isColumnVisible("receive-history", "note") && <th className="py-1 px-3">หมายเหตุ</th>}
-                  <th className="py-1 px-3 text-center">Actions</th>
+                  <th className="hidden py-1 px-3 text-center md:table-cell">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -781,6 +783,26 @@ const ReceiveView = React.memo(() => {
                       className="hover:bg-blue-50/40 cursor-pointer transition-colors"
                       onClick={() => setViewingRcv({ rcv, po, vendor })}
                     >
+                      <td className="py-1 px-3 text-center md:hidden" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-[10px] font-medium transition-colors"
+                            onClick={() => setViewingRcv({ rcv, po, vendor })}
+                          >
+                            <Eye size={11} /> ดู
+                          </button>
+                          {canUseFunction("receive", "delete") && (
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-red-200 bg-white hover:bg-red-50 text-red-500 text-[10px] font-medium transition-colors"
+                              onClick={() => handleDeleteReceive(rcv)}
+                            >
+                              <Trash2 size={11} /> ลบ
+                            </button>
+                          )}
+                        </div>
+                      </td>
                       {isColumnVisible("receive-history", "rpNo") && (
                         <td className="py-1 px-3 font-medium text-blue-700 whitespace-nowrap">
                           {rcv.rpNo || rcv.receiveNo || "-"}
@@ -832,7 +854,7 @@ const ReceiveView = React.memo(() => {
                           {rcv.note || "-"}
                         </td>
                       )}
-                      <td className="py-1 px-3 text-center" onClick={(e) => e.stopPropagation()}>
+                      <td className="hidden py-1 px-3 text-center md:table-cell" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-center gap-1">
                           <button
                             type="button"
@@ -857,6 +879,7 @@ const ReceiveView = React.memo(() => {
                 })}
               </tbody>
             </table>
+            </div>
           )}
         </Card>
       )}
@@ -934,15 +957,17 @@ const ReceiveView = React.memo(() => {
                     </div>
                   </button>
                   {isExpanded && (
-                    <table className="w-full text-left text-xs text-slate-600">
+                    <div className="overflow-x-auto">
+                    <table className="w-full min-w-[760px] text-left text-xs text-slate-600 md:min-w-0">
                       <thead className="bg-slate-50/60 text-slate-500 uppercase font-semibold">
                         <tr>
+                          <th className="py-1 px-3 text-center md:hidden">Actions</th>
                           {isColumnVisible("receive-po", "poNo") && <th className="py-1 px-3">PO No.</th>}
                           {isColumnVisible("receive-po", "vendor") && <th className="py-1 px-3">Vendor</th>}
                           {isColumnVisible("receive-po", "description") && <th className="py-1 px-3">รายละเอียด</th>}
                           {isColumnVisible("receive-po", "amount") && <th className="py-1 px-3 text-right">ยอดรวม</th>}
                           {isColumnVisible("receive-po", "progress") && <th className="py-1 px-3 text-center">สถานะรับของ</th>}
-                          <th className="py-1 px-3 text-center">Actions</th>
+                          <th className="hidden py-1 px-3 text-center md:table-cell">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -957,6 +982,15 @@ const ReceiveView = React.memo(() => {
                               className="hover:bg-blue-50/40 cursor-pointer transition-colors"
                               onClick={() => openPODetail(po)}
                             >
+                              <td className="py-1 px-3 text-center md:hidden">
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-[10px] font-medium transition-colors"
+                                  onClick={(e) => { e.stopPropagation(); openPODetail(po); }}
+                                >
+                                  <Eye size={11} /> ดู
+                                </button>
+                              </td>
                               {isColumnVisible("receive-po", "poNo") && (
                                 <td className="py-1 px-3 font-medium text-blue-700">{po.poNo}</td>
                               )}
@@ -986,7 +1020,7 @@ const ReceiveView = React.memo(() => {
                                   </div>
                                 </td>
                               )}
-                              <td className="py-1 px-3 text-center">
+                              <td className="hidden py-1 px-3 text-center md:table-cell">
                                 <button
                                   type="button"
                                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-[10px] font-medium transition-colors"
@@ -1000,6 +1034,7 @@ const ReceiveView = React.memo(() => {
                         })}
                       </tbody>
                     </table>
+                    </div>
                   )}
                 </Card>
               );

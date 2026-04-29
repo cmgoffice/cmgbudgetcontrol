@@ -125,8 +125,8 @@ export const SidebarItem = React.memo(({ icon, label, active, onClick, collapsed
     onClick={onClick}
     title={collapsed ? label : undefined}
     className={`relative w-full flex items-center rounded-lg overflow-hidden group ${
-      collapsed ? "justify-center p-3" : dense ? "gap-2.5 px-3 py-2.5" : "gap-3 px-4 py-3"
-    } ${active ? "text-white" : "text-slate-400 hover:text-white hover:bg-slate-800/80"}`}
+      collapsed ? "justify-center p-3" : dense ? "gap-2 px-2.5 py-2" : "gap-3 px-4 py-3"
+    } ${active ? "text-white" : dense ? "text-slate-600 hover:text-slate-800 hover:bg-slate-100" : "text-slate-400 hover:text-white hover:bg-slate-800/80"}`}
     whileHover={{ scale: 1.02 }}
     whileTap={{ scale: 0.98 }}
     transition={{ type: "spring", stiffness: 400, damping: 25 }}
@@ -150,7 +150,7 @@ export const SidebarItem = React.memo(({ icon, label, active, onClick, collapsed
         )}
       </span>
       {!collapsed && (
-        <span className={`font-medium flex-1 flex items-center justify-between ${dense ? "text-[13px]" : "text-sm"}`}>
+        <span className={`font-medium flex-1 flex items-center justify-between ${dense ? "text-[12px]" : "text-sm"}`}>
           {label}
           {badge > 0 && (
             <span className="ml-2 bg-red-500 text-white text-[9px] font-bold rounded-full min-w-[16px] h-4 flex items-center justify-center px-1 shadow animate-pulse">

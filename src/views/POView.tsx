@@ -1953,6 +1953,7 @@ const POView = React.memo(() => {
 
   const renderPoHeaderCells = () => (
     <>
+      {isColumnVisible("po", "actions") && <th className="py-2 px-3 text-left md:hidden" style={{ width: poMainLayout.scaled.actions }}>Action</th>}
       {isColumnVisible("po", "poNo") && <ResizableTh tableId="po" colKey="poNo" className="py-2 px-3 cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.poNo} onClick={() => requestPoSort("poNo")}>{L.docNo} <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("poNo")}</span></ResizableTh>}
       {isColumnVisible("po", "poType") && <ResizableTh tableId="po" colKey="poType" className="py-2 px-3 text-center cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.poType} onClick={() => requestPoSort("poType")}>Type <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("poType")}</span></ResizableTh>}
       {isColumnVisible("po", "prNos") && <ResizableTh tableId="po" colKey="prNos" className="py-2 px-3 cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.prNos} onClick={() => requestPoSort("prNos")}>Ref PR No. <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("prNos")}</span></ResizableTh>}
@@ -1962,8 +1963,65 @@ const POView = React.memo(() => {
       {isColumnVisible("po", "items") && <ResizableTh tableId="po" colKey="items" className="py-2 px-3 text-center cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.items} onClick={() => requestPoSort("items")}>Item <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("items")}</span></ResizableTh>}
       {isColumnVisible("po", "amount") && <ResizableTh tableId="po" colKey="amount" className="py-2 px-3 text-right cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.amount} onClick={() => requestPoSort("amount")}>Amount <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("amount")}</span></ResizableTh>}
       {isColumnVisible("po", "status") && <ResizableTh tableId="po" colKey="status" className="py-2 px-3 text-center cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.status} onClick={() => requestPoSort("status")}>Status <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("status")}</span></ResizableTh>}
-      {isColumnVisible("po", "actions") && <th className="py-2 px-3 text-right" style={{ width: poMainLayout.scaled.actions }}>Action</th>}
+      {isColumnVisible("po", "actions") && <th className="hidden py-2 px-3 text-right md:table-cell" style={{ width: poMainLayout.scaled.actions }}>Action</th>}
     </>
+  );
+
+  const renderMobilePoActions = (po) => (
+    isColumnVisible("po", "actions") && (
+      <td className="py-2 px-3 md:hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="flex justify-start gap-1 flex-wrap">
+          {canApprovePO && po.status === "Pending PCM" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && !isPoApproveInFlight(po) && (
+            <>
+              <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(po.id, "approve")}>PCM Approve</Button>
+              {canRejectPO && <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>}
+            </>
+          )}
+          {canApprovePO && po.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator")) && !isPoApproveInFlight(po) && (
+            <>
+              <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(po.id, "approve")}>GM Approve</Button>
+              {canRejectPO && <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>}
+            </>
+          )}
+          {canUseFunction("po", "edit") && (po.status === "Rejected" || po.status === "Draft") && (userRoles.includes("Procurement") || userRoles.includes("Administrator")) && (
+            <Button variant="secondary" size="sm" className="px-2 py-0.5 text-[10px]" onClick={() => setViewingPO(po)}>
+              View
+            </Button>
+          )}
+          {po.pdfUrl && (
+            <a
+              href={po.pdfUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center p-1 rounded text-red-600 hover:text-red-800 hover:bg-red-50 transition-colors"
+              title="ดู PDF"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <FileOutput size={15} />
+            </a>
+          )}
+          {canUseFunction("po", "closePO") && po.status === "Pending Close PO" && (
+            <Button
+              variant="success"
+              size="sm"
+              className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+              onClick={() => {
+                openConfirm(
+                  "ยืนยันการปิด PO",
+                  `คุณต้องการปิด ${L.docName} ${po.poNo} ใช่หรือไม่?`,
+                  async () => {
+                    await updateData("pos", po.id, { status: "Closed PO" });
+                  },
+                  "success"
+                );
+              }}
+            >
+              ยืนยัน Close
+            </Button>
+          )}
+        </div>
+      </td>
+    )
   );
 
   return (
@@ -2213,8 +2271,8 @@ const POView = React.memo(() => {
                   PO — รอดำเนินการ (รอ Approve / รอแก้ไข)
                 </h3>
               </div>
-              <div ref={poTableRef} className="w-full min-w-0">
-                <table className="w-full text-left text-xs text-slate-600 table-fixed">
+              <div ref={poTableRef} className="w-full min-w-0 overflow-x-auto">
+                <table className="w-full min-w-[980px] text-left text-xs text-slate-600 table-fixed md:min-w-0">
                   <thead className="bg-amber-100/60 text-slate-900 uppercase font-semibold">
                     <tr>
                       {renderPoHeaderCells()}
@@ -2229,6 +2287,7 @@ const POView = React.memo(() => {
                               className="hover:bg-amber-50 cursor-pointer transition-colors border-b odd:bg-white even:bg-amber-50/25"
                               onClick={() => setViewingPO(po)}
                             >
+                              {renderMobilePoActions(po)}
                               {isColumnVisible("po", "poNo") && <td className="py-2 px-3 font-medium text-blue-700" title={po.poNo}><span className="cell-text">{po.poNo}</span></td>}
                               {isColumnVisible("po", "poType") && <td className="py-2 px-3 text-center">
                                 {po.poType && (
@@ -2265,7 +2324,7 @@ const POView = React.memo(() => {
                                 </div>
                               </td>}
                               {isColumnVisible("po", "actions") && <td
-                                className="py-2 px-3 text-right flex justify-end gap-1 flex-wrap"
+                                className="hidden py-2 px-3 text-right md:flex md:justify-end md:gap-1 md:flex-wrap"
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 {/* ขอแก้ไข PO — ตามสถานะส่งไป PCM หรือ GM */}
@@ -2431,8 +2490,8 @@ const POView = React.memo(() => {
 
           {/* ── ตารางกลาง: รายการปกติ (ไม่รอ Action) ── */}
           <Card className="overflow-hidden w-full min-w-0">
-            <div ref={poTableRef} className="w-full min-w-0">
-              <table className="w-full text-left text-xs text-slate-600 table-fixed">
+            <div ref={poTableRef} className="w-full min-w-0 overflow-x-auto">
+              <table className="w-full min-w-[980px] text-left text-xs text-slate-600 table-fixed md:min-w-0">
                 <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
                   <tr>
                     {renderPoHeaderCells()}
@@ -2447,6 +2506,7 @@ const POView = React.memo(() => {
                             className="hover:bg-blue-50 cursor-pointer transition-colors border-b odd:bg-white even:bg-slate-50"
                             onClick={() => setViewingPO(po)}
                           >
+                            {renderMobilePoActions(po)}
                             {isColumnVisible("po", "poNo") && <td className="py-2 px-3 font-medium text-blue-700" title={po.poNo}><span className="cell-text">{po.poNo}</span></td>}
                             {isColumnVisible("po", "poType") && <td className="py-2 px-3 text-center">
                               {po.poType && (
@@ -2483,7 +2543,7 @@ const POView = React.memo(() => {
                               </div>
                             </td>}
                             {isColumnVisible("po", "actions") && <td
-                              className="py-2 px-3 text-right flex justify-end gap-1 flex-wrap"
+                              className="hidden py-2 px-3 text-right md:flex md:justify-end md:gap-1 md:flex-wrap"
                               onClick={(e) => e.stopPropagation()}
                             >
                               {/* ขอแก้ไข PO — ตามสถานะส่งไป PCM หรือ GM */}

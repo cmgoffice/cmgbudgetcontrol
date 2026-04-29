@@ -877,10 +877,15 @@ const PaymentView = React.memo(() => {
       </div>
 
       {/* Table */}
-      <Card className="overflow-hidden w-full min-w-0">
-        <table className="w-full text-left text-xs text-slate-600 table-fixed">
+      <Card className="overflow-x-auto w-full min-w-0">
+        <table className="w-full min-w-[1120px] text-left text-xs text-slate-600 table-fixed md:min-w-0">
           <thead className="bg-slate-50 text-slate-900 uppercase font-semibold">
             <tr>
+              {isColumnVisible("payment", "actions") && (
+                <th className="py-2 px-3 text-left md:hidden" style={{ width: paymentMainColWidths.actions }}>
+                  Action
+                </th>
+              )}
               {isColumnVisible("payment", "paymentNo") && (
                 <ResizableTh tableId="paymentMain" colKey="paymentNo" isAdmin={isPaymentMainTableAdmin} onResize={handlePaymentMainColResize} currentWidth={paymentMainColWidths.paymentNo} className="py-2 px-3">
                   Payment No.
@@ -947,6 +952,21 @@ const PaymentView = React.memo(() => {
               );
               return (
                 <tr key={`po-draft-${po.id}`} className="bg-sky-50/60 border-b border-sky-100 hover:bg-sky-100/50 transition-colors cursor-pointer" onClick={() => { setActivatingPO(po); setActivatingContractTitle(po.contractTitle || ""); }}>
+                  {isColumnVisible("payment", "actions") && (
+                    <td className="py-2 px-3 md:hidden" onClick={(e) => e.stopPropagation()}>
+                      {canActivatePayment && (
+                        <Button
+                          variant="success"
+                          size="sm"
+                          className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                          disabled={actioning}
+                          onClick={(e) => { e.stopPropagation(); setActivatingPO(po); setActivatingContractTitle(po.contractTitle || ""); }}
+                        >
+                          Active
+                        </Button>
+                      )}
+                    </td>
+                  )}
                   {isColumnVisible("payment", "paymentNo") && (
                     <td className="py-2 px-3 font-medium text-sky-700">{po.poNo}</td>
                   )}
@@ -1030,6 +1050,60 @@ const PaymentView = React.memo(() => {
                       }`}
                     onClick={() => setViewingPayment(p)}
                   >
+                    {isColumnVisible("payment", "actions") && (
+                      <td
+                        className="py-2 px-3 md:hidden"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="flex justify-start gap-1 flex-wrap">
+                          {canApprovePeriod && isPeriodFlow(p.status) && isPeriodPendingForMe(p.status, myRoles) && (
+                            <>
+                              <Button
+                                variant="success"
+                                size="sm"
+                                className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                                onClick={() => handlePeriodApprove(p)}
+                              >
+                                {p.status === "งวดงาน Pending CM" ? "CM Check" : "PM Approve"}
+                              </Button>
+                              <Button
+                                variant="danger"
+                                size="sm"
+                                className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                                onClick={() => { setPeriodRejectModal(p); setPeriodRejectReason(""); }}
+                              >
+                                Reject
+                              </Button>
+                            </>
+                          )}
+                          {p.status === "Wait Pay" && (canPayPayment || canHoldPayment) && (
+                            <>
+                              {canPayPayment && <Button
+                                variant="success"
+                                size="sm"
+                                className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                                onClick={() => { setWaitPayModalPayment(p); setPaySlipFile(null); }}
+                              >
+                                Pay
+                              </Button>}
+                              {canHoldPayment && <Button
+                                variant="danger"
+                                size="sm"
+                                className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                                onClick={() => { setHoldModalPayment(p); setHoldReasonInput(""); setHoldDecision("keepHold"); }}
+                              >
+                                Hold
+                              </Button>}
+                            </>
+                          )}
+                          {(p.status || "Draft") === "Draft" && canDeletePayment && (
+                            <button title="ลบ" className="p-1 rounded text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors" onClick={() => handleDelete(p)}>
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    )}
                     {isColumnVisible("payment", "paymentNo") && (
                       <td className="py-2 px-3 font-medium text-orange-700">{p.paymentNo}</td>
                     )}

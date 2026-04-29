@@ -334,6 +334,16 @@ export const AppDataProvider = ({
         (err)  => console.error(`Error syncing ${collectionName}:`, err)
       );
     };
+    const stagedSync = (collectionName, setter, delayMs = 0) => {
+      let unsub = () => {};
+      const timer = setTimeout(() => {
+        unsub = syncCollection(collectionName, setter);
+      }, delayMs);
+      return () => {
+        clearTimeout(timer);
+        unsub();
+      };
+    };
 
     const colWidthsRef = doc(db, "artifacts", appId, "public", "data", "settings", "columnWidths");
     const unsubColWidths = onSnapshot(colWidthsRef, (snap) => {
@@ -366,22 +376,15 @@ export const AppDataProvider = ({
     loadProjects();
 
     // vendors, materials ไม่ sync ที่นี่ — ใช้ loadVendors() / loadMaterials() เมื่อเข้าหน้าที่ใช้
+    // Staged subscriptions:
+    // keep first screen responsive by loading critical data first,
+    // then progressively attach heavier listeners.
     const unsubs = [
-      syncCollection("budgets",   setBudgets),
-      syncCollection("prs",       setPrs),
-      syncCollection("pos",       setPos),
-      syncCollection("payments",  setPayments),
+      syncCollection("budgets", setBudgets),
+      stagedSync("prs", setPrs, 250),
+      stagedSync("pos", setPos, 900),
+      stagedSync("payments", setPayments, 1500),
     ];
-    if (canSyncInvoice) {
-      unsubs.push(syncCollection("invoices", setInvoices));
-    } else {
-      setInvoices([]);
-    }
-    if (canSyncReceive) {
-      unsubs.push(syncCollection("receives", setReceives));
-    } else {
-      setReceives([]);
-    }
 
     // Per-user column visibility
     let unsubColVis = () => {};
@@ -404,7 +407,35 @@ export const AppDataProvider = ({
       if (colSaveTimer.current) clearTimeout(colSaveTimer.current);
       if (colVisSaveTimer.current) clearTimeout(colVisSaveTimer.current);
     };
-  }, [user?.uid, loadProjects, canSyncInvoice, canSyncReceive]);
+  }, [user?.uid, loadProjects]);
+
+  // Separate effect for conditional collections (invoices, receives) to avoid recreating all listeners
+  useEffect(() => {
+    const syncCollection = (collectionName, setter) => {
+      const ref = collection(db, "artifacts", appId, "public", "data", collectionName);
+      return onSnapshot(
+        query(ref),
+        (snap) => setter(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+        (err)  => console.error(`Error syncing ${collectionName}:`, err)
+      );
+    };
+
+    const unsubs = [];
+    if (canSyncInvoice) {
+      unsubs.push(syncCollection("invoices", setInvoices));
+    } else {
+      setInvoices([]);
+    }
+    if (canSyncReceive) {
+      unsubs.push(syncCollection("receives", setReceives));
+    } else {
+      setReceives([]);
+    }
+
+    return () => {
+      unsubs.forEach((u) => u());
+    };
+  }, [canSyncInvoice, canSyncReceive]);
 
   // ── Column resize ──────────────────────────────────────────────────────────
   const handleColumnResize = useCallback((tableId, colKey, width) => {

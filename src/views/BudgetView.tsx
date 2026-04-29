@@ -54,7 +54,7 @@ const BudgetView = React.memo(() => {
     budgetCategory, setBudgetCategory,
     expandedBudgetRows, setExpandedBudgetRows,
     scrollToPendingAfterRender, setScrollToPendingAfterRender,
-    pendingSectionRef } = useUI();
+    pendingSectionRef, setIsFullScreenModalOpen } = useUI();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isRevisionModalOpen, setIsRevisionModalOpen] = useState(false);
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
@@ -395,6 +395,15 @@ const BudgetView = React.memo(() => {
     setIsSubItemModalOpen(false);
     setPendingSubAttachments([]);
   };
+
+  useEffect(() => {
+    const shouldHideShellChrome = isModalOpen || isSubItemModalOpen;
+    setIsFullScreenModalOpen(shouldHideShellChrome);
+
+    return () => {
+      setIsFullScreenModalOpen(false);
+    };
+  }, [isModalOpen, isSubItemModalOpen, setIsFullScreenModalOpen]);
 
   const onModalMainPendingFilesSelected = (e: any) => {
     const files: File[] = Array.from(e?.target?.files || []);
@@ -2310,8 +2319,8 @@ const BudgetView = React.memo(() => {
   return (
     <div className="space-y-4 w-full min-w-0">
       {/* ── Page Header + Tabs ── */}
-      <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white/40 p-2 rounded-2xl border border-slate-100/50 shadow-sm">
-        <div className="flex items-center gap-4">
+      <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white/40 p-2 rounded-2xl border border-slate-100/50 shadow-sm w-full min-w-0">
+        <div className="flex items-center gap-3 md:gap-4 w-full min-w-0 flex-wrap md:flex-nowrap">
           <div className="flex items-center gap-2">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 flex items-center justify-center shadow-sm">
               <Briefcase size={19} className="text-blue-600" />
@@ -2323,7 +2332,7 @@ const BudgetView = React.memo(() => {
           </div>
 
           {/* ── Tabs ── */}
-          <div className="flex items-center gap-1 bg-blue-50/50 rounded-xl border border-blue-100/50 p-1 w-fit overflow-x-auto no-scrollbar">
+          <div className="flex items-center gap-1 bg-blue-50/50 rounded-xl border border-blue-100/50 p-1 max-w-full min-w-0 overflow-x-auto no-scrollbar">
             <button
               onClick={() => setBudgetCategory("OVERVIEW")}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${budgetCategory === "OVERVIEW"
@@ -2349,20 +2358,20 @@ const BudgetView = React.memo(() => {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full md:w-auto justify-end">
           <ColumnVisibilityToggle tableId="budget" />
         </div>
       </div>
 
       {budgetCategory === "OVERVIEW" ? (
         <>
-          <Card className="overflow-hidden w-full min-w-0">
+          <Card className="overflow-x-auto w-full min-w-0">
             <div className="p-3 bg-slate-50 border-b">
               <h3 className="font-bold text-sm text-slate-800">
                 สรุปภาพรวมงบประมาณโครงการ (Project Budget Summary)
               </h3>
             </div>
-            <table className="w-full text-left text-sm text-slate-600 table-fixed">
+            <table className="w-full min-w-[760px] text-left text-sm text-slate-600 table-fixed md:min-w-0">
               <colgroup>
                 <col style={{ width: "7%" }} />
                 <col style={{ width: "28%" }} />
@@ -2740,10 +2749,11 @@ const BudgetView = React.memo(() => {
                       Purchase Request (PR) — รออนุมัติ ({pendingPRsForProject.length} รายการ)
                     </h4>
                   </div>
-                  <div ref={dashPrTableRef} className="w-full min-w-0">
-                    <table className="w-full text-left text-xs text-slate-600 table-fixed">
+                  <div ref={dashPrTableRef} className="w-full min-w-0 overflow-x-auto">
+                    <table className="w-full min-w-[860px] text-left text-xs text-slate-600 table-fixed md:min-w-0">
                       <thead className="bg-slate-200 text-slate-800 uppercase font-bold border-b text-sm">
                         <tr>
+                          <th className="py-0.5 px-2 text-center md:hidden" style={{ width: dashPrLayout.scaled.actions }}>Actions</th>
                           <ResizableTh tableId="dash-pr" colKey="prNo" className="py-0.5 px-2" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.prNo}>PR No.</ResizableTh>
                           <ResizableTh tableId="dash-pr" colKey="date" className="py-0.5 px-2" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.date}>วันที่</ResizableTh>
                           <ResizableTh tableId="dash-pr" colKey="costCode" className="py-0.5 px-2" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.costCode}>Cost Code</ResizableTh>
@@ -2751,7 +2761,7 @@ const BudgetView = React.memo(() => {
                           <ResizableTh tableId="dash-pr" colKey="requestor" className="py-0.5 px-2" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.requestor}>ผู้ขอซื้อ</ResizableTh>
                           <ResizableTh tableId="dash-pr" colKey="amount" className="py-0.5 px-2 text-right" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.amount}>จำนวนเงิน</ResizableTh>
                           <ResizableTh tableId="dash-pr" colKey="status" className="py-0.5 px-2 text-center" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.status}>สถานะ</ResizableTh>
-                          <th className="py-0.5 px-2 text-center" style={{ width: dashPrLayout.scaled.actions }}>Actions</th>
+                          <th className="hidden py-0.5 px-2 text-center md:table-cell" style={{ width: dashPrLayout.scaled.actions }}>Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -2779,6 +2789,50 @@ const BudgetView = React.memo(() => {
 
                           return (
                             <tr key={pr.id} className={`hover:bg-green-50/40 ${isActivePr ? "bg-teal-50/30" : ""}`}>
+                              <td className="py-0.5 px-2 text-center md:hidden">
+                                <div className="flex justify-center gap-1">
+                                  {isActivePr ? (
+                                    <Button
+                                      variant="success"
+                                      className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                                      onClick={async () => {
+                                        const { status: resume, usedAmount, totalAmount } = getResumeStatusForPR(pr, pos);
+                                        await updateData("prs", pr.id, { status: resume, preCloseStatus: null, activeRequestedAt: null });
+                                        logAction(
+                                          "Approved Active PR",
+                                          `อนุมัติ Active PR ${pr.prNo || pr.id} → ${resume} (PO linked ${formatCurrency(usedAmount)} / PR ${formatCurrency(totalAmount)})`,
+                                          selectedProjectId
+                                        );
+                                        const returnedAmount = Math.max(0, totalAmount - usedAmount);
+                                        showAlert(
+                                          "สำเร็จ",
+                                          `PR กลับสถานะ ${resume} แล้ว ยอดคงเหลือที่เปิดใช้ได้ ${formatCurrency(returnedAmount)}${usedAmount > 0 ? ` (ยังมี PO ผูกอยู่ ${formatCurrency(usedAmount)})` : ""}`,
+                                          "success"
+                                        );
+                                      }}
+                                    >
+                                      <CheckCircle size={11} /> Active PR
+                                    </Button>
+                                  ) : (
+                                    <>
+                                      <Button
+                                        variant="success"
+                                        className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                                        onClick={() => handlePRAction(pr.id, "approve")}
+                                      >
+                                        <CheckCircle size={11} /> {approveLabel}
+                                      </Button>
+                                      <Button
+                                        variant="danger"
+                                        className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                                        onClick={() => handlePRAction(pr.id, "reject")}
+                                      >
+                                        <XCircle size={11} /> Reject
+                                      </Button>
+                                    </>
+                                  )}
+                                </div>
+                              </td>
                               <td className="py-0.5 px-2 font-medium text-slate-800" title={pr.prNo}><span className="cell-text">{pr.prNo}</span></td>
                               <td className="py-0.5 px-2 text-slate-500" title={pr.requestDate}><span className="cell-text">{pr.requestDate}</span></td>
                               <td className="py-0.5 px-2">
@@ -2791,7 +2845,7 @@ const BudgetView = React.memo(() => {
                               <td className="py-0.5 px-2 text-right font-semibold text-green-700">
                                 {formatCurrency(pr.totalAmount || pr.amount)}
                               </td>
-                              <td className="py-0.5 px-2 text-center">
+                              <td className="hidden py-0.5 px-2 text-center md:table-cell">
                                 <Badge status={pr.status} />
                               </td>
                               <td className="py-0.5 px-2 text-center">
@@ -2856,16 +2910,17 @@ const BudgetView = React.memo(() => {
                       Purchase Order (PO) — รออนุมัติ ({pendingPOsForProject.length} รายการ)
                     </h4>
                   </div>
-                  <div ref={dashPoTableRef} className="w-full min-w-0">
-                    <table className="w-full text-left text-xs text-slate-600 table-fixed">
+                  <div ref={dashPoTableRef} className="w-full min-w-0 overflow-x-auto">
+                    <table className="w-full min-w-[780px] text-left text-xs text-slate-600 table-fixed md:min-w-0">
                       <thead className="bg-slate-200 text-slate-800 uppercase font-bold border-b text-sm">
                         <tr>
+                          <th className="py-1.5 px-3 text-center md:hidden" style={{ width: dashPoLayout.scaled.actions }}>Actions</th>
                           <ResizableTh tableId="dash-po" colKey="poNo" className="py-1.5 px-3" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.poNo}>PO No.</ResizableTh>
                           <ResizableTh tableId="dash-po" colKey="date" className="py-1.5 px-3" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.date}>วันที่</ResizableTh>
                           <ResizableTh tableId="dash-po" colKey="costCode" className="py-1.5 px-3" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.costCode}>Cost Code</ResizableTh>
                           <ResizableTh tableId="dash-po" colKey="amount" className="py-1.5 px-3 text-right" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.amount}>จำนวนเงิน</ResizableTh>
                           <ResizableTh tableId="dash-po" colKey="status" className="py-1.5 px-3 text-center" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.status}>สถานะ</ResizableTh>
-                          <th className="py-1.5 px-3 text-center" style={{ width: dashPoLayout.scaled.actions }}>Actions</th>
+                          <th className="hidden py-1.5 px-3 text-center md:table-cell" style={{ width: dashPoLayout.scaled.actions }}>Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -2891,6 +2946,45 @@ const BudgetView = React.memo(() => {
 
                           return (
                             <tr key={po.id} className="hover:bg-orange-50/40">
+                              <td className="py-2 px-3 text-center md:hidden">
+                                <div className="flex justify-center gap-1 flex-wrap">
+                                  {(canAllowPoRevisionFromBudget || canDenyPoRevisionFromBudget) && (isPoRevPcm || isPoRevGm) ? (
+                                    <>
+                                      {canAllowPoRevisionFromBudget && <Button
+                                        variant="success"
+                                        className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                                        onClick={() => handlePORevisionAllow(po.id)}
+                                      >
+                                        <CheckCircle size={11} /> อนุญาตแก้ไข
+                                      </Button>}
+                                      {canDenyPoRevisionFromBudget && <Button
+                                        variant="danger"
+                                        className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                                        onClick={() => handlePORevisionDeny(po.id)}
+                                      >
+                                        <XCircle size={11} /> ไม่อนุญาต
+                                      </Button>}
+                                    </>
+                                  ) : (canApprovePoFromBudget || canRejectPoFromBudget) ? (
+                                    <>
+                                      {canApprovePoFromBudget && <Button
+                                        variant="success"
+                                        className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                                        onClick={() => handlePOAction(po.id, "approve")}
+                                      >
+                                        <CheckCircle size={11} /> {approveLabel}
+                                      </Button>}
+                                      {canRejectPoFromBudget && <Button
+                                        variant="danger"
+                                        className="px-2 py-0.5 text-[10px] whitespace-nowrap"
+                                        onClick={() => handlePOAction(po.id, "reject")}
+                                      >
+                                        <XCircle size={11} /> Reject
+                                      </Button>}
+                                    </>
+                                  ) : null}
+                                </div>
+                              </td>
                               <td className="py-2 px-3 font-medium text-slate-800" title={po.poNo}><span className="cell-text">{po.poNo}</span></td>
                               <td className="py-2 px-3 text-slate-500" title={po.date || po.poDate}><span className="cell-text">{po.date || po.poDate}</span></td>
                               <td className="py-2 px-3">
@@ -2901,7 +2995,7 @@ const BudgetView = React.memo(() => {
                               <td className="py-2 px-3 text-right font-semibold text-orange-700">
                                 {formatCurrency(po.amount || po.totalAmount || po.grandTotal)}
                               </td>
-                              <td className="py-2 px-3 text-center">
+                              <td className="hidden py-2 px-3 text-center md:table-cell">
                                 <div className="flex flex-col items-center gap-0.5">
                                   <Badge status={po.status} />
                                   {po.poEditRevisionReason ? (
@@ -3064,9 +3158,12 @@ const BudgetView = React.memo(() => {
               )}
             </div>
           </div>
-          <Card className="overflow-hidden w-full min-w-0">
-            <div ref={budgetTableContainerRef} className="w-full min-w-0">
-              <table className="w-full text-left text-xs text-slate-600 table-fixed">
+          <Card className="overflow-hidden w-full min-w-0 max-w-full">
+            <div
+              ref={budgetTableContainerRef}
+              className="w-full min-w-0 max-w-full overflow-x-auto overscroll-x-contain"
+            >
+              <table className="w-full min-w-[1120px] text-left text-xs text-slate-600 table-fixed md:min-w-0">
                 <thead className="bg-slate-200 text-slate-900 uppercase font-bold border-b text-sm">
                   <tr>
                     {budgetCategory !== "OVERVIEW" && isColumnVisible("budget", "checkbox") && (
@@ -3657,8 +3754,8 @@ const BudgetView = React.memo(() => {
         </div>
       )}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md mx-4">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start justify-center z-[10010] animate-in fade-in duration-200 p-4 pt-8 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md mb-4">
             {/* Header */}
             <div className="px-6 py-4 bg-slate-700 rounded-t-2xl flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -3859,8 +3956,8 @@ const BudgetView = React.memo(() => {
         </div>
       )}
       {isSubItemModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200" onClick={() => setUnitDropdownOpen(false)}>
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md mx-4" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start justify-center z-[10010] animate-in fade-in duration-200 p-4 pt-8 overflow-y-auto" onClick={() => setUnitDropdownOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md mb-4" onClick={(e) => e.stopPropagation()}>
             {/* Header */}
             <div className="px-6 py-4 bg-slate-700 rounded-t-2xl flex items-center justify-between">
               <div className="flex items-center gap-3">
