@@ -132,8 +132,13 @@ export const AuthProvider = ({ children }) => {
   );
 
   // ดึงรูปโปรไฟล์จาก URL (เช่น Google) แล้วอัปโหลดไป Storage ของเรา เพื่อไม่ให้รูปหายเมื่อลิงก์หมดอายุ
+  // ใช้ in-memory flag กัน fetch ซ้ำในกรณีที่ onAuthStateChanged ถูกเรียกหลายครั้ง
+  const uploadInProgress = React.useRef<Set<string>>(new Set());
   const pullAndUploadProfilePhoto = useCallback(async (uid, photoURL, userDocRef) => {
     if (!photoURL) return null;
+    // ถ้ากำลัง upload อยู่แล้ว ให้ข้ามไป ไม่ fetch ซ้ำ
+    if (uploadInProgress.current.has(uid)) return null;
+    uploadInProgress.current.add(uid);
     try {
       const res = await fetch(photoURL, { mode: "cors" });
       if (!res.ok) return null;
@@ -147,6 +152,8 @@ export const AuthProvider = ({ children }) => {
     } catch (e) {
       console.warn("[pullAndUploadProfilePhoto]", e);
       return null;
+    } finally {
+      uploadInProgress.current.delete(uid);
     }
   }, []);
 
