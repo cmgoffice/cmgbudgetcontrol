@@ -103,11 +103,13 @@ export const TABLE_COLUMN_DEFS: Record<string, ColumnDef[]> = {
     { key: "jobNo",         label: "Job No.",         defaultVisible: true },
     { key: "name",          label: "Project Name",    defaultVisible: true },
     { key: "location",      label: "Location",        defaultVisible: true },
+    { key: "projectStatus", label: "Project Status",  defaultVisible: true },
     { key: "contractValue", label: "Contract Value",  defaultVisible: true },
     { key: "start",         label: "Start",           defaultVisible: true },
     { key: "finish",        label: "Finish",          defaultVisible: true },
     { key: "pm",            label: "PM",              defaultVisible: true },
     { key: "cm",            label: "CM",              defaultVisible: true },
+    { key: "projectType",   label: "Project Type",    defaultVisible: true },
     { key: "actions",       label: "Actions",         defaultVisible: true, locked: true },
   ],
   vendor: [

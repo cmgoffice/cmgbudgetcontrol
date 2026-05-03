@@ -171,6 +171,8 @@ export const MODULE_ACCESS: Record<string, string[]> = {
   "payment-subcontract": ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff"],
   profile: ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff", "Admin Site"],
   admin: ["Administrator"],
+  "budget-summary": ["Administrator", "MD", "GM"],
+  "project-spending": ["Administrator", "MD", "GM"],
 };
 
 /**

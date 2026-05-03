@@ -40,6 +40,8 @@ import POView from "./views/POView";
 import PaymentView from "./views/PaymentView";
 import PaymentTableView from "./views/PaymentTableView";
 import BudgetView from "./views/BudgetView";
+import BudgetSummaryReportView from "./views/BudgetSummaryReportView";
+import ProjectSpendingView from "./views/ProjectSpendingView";
 import ColumnVisibilityToggle from "./components/ColumnVisibilityToggle";
 
 /** รูปโปรไฟล์ — ถ้าโหลดไม่สำเร็จ (ลิงก์หมดอายุ/ถูกบล็อก) จะแสดง fallback แทนไอคอนรูปพัง */
@@ -156,7 +158,8 @@ const AppShell = () => {
   // ── Initial menu redirect — เด้งไปเมนูแรกที่มีสิทธิ์ทันทีที่ permissions พร้อม ──
   const MENU_ORDER = [
     "dashboard", "projects", "budget", "pr",
-    "po", "payment-subcontract", "vendor", "material", "receive", "invoice", "profile", "admin",
+    "po", "payment-subcontract", "vendor", "material", "receive", "invoice",
+    "budget-summary", "project-spending", "profile", "admin",
   ];
   const initialRedirectDone = useRef(false);
   useEffect(() => {
@@ -348,6 +351,36 @@ const AppShell = () => {
               />
             )}
 
+            {(canAccessModule("budget-summary") || canAccessModule("project-spending")) && (
+              <>
+                {(!sidebarCollapsed || isCompactViewport) && (
+                  <div className={`font-bold uppercase tracking-wider ${isCompactViewport ? "pt-2.5 pb-1 px-2.5 text-[9px] text-slate-400" : "pt-4 pb-2 px-4 text-xs text-slate-500"}`}>
+                    Management Report
+                  </div>
+                )}
+                {canAccessModule("budget-summary") && (
+                  <SidebarItem
+                    icon={<BarChart3 size={20} className="text-indigo-300" />}
+                    label="Budget Summary Report"
+                    active={activeMenu === "budget-summary"}
+                    onClick={() => changeMenu("budget-summary")}
+                    collapsed={sidebarCollapsed}
+                    dense={sidebarDense}
+                  />
+                )}
+                {canAccessModule("project-spending") && (
+                  <SidebarItem
+                    icon={<FileSpreadsheet size={20} className="text-pink-300" />}
+                    label="Project Spending"
+                    active={activeMenu === "project-spending"}
+                    onClick={() => changeMenu("project-spending")}
+                    collapsed={sidebarCollapsed}
+                    dense={sidebarDense}
+                  />
+                )}
+              </>
+            )}
+
             {(!sidebarCollapsed || isCompactViewport) && (
               <div className={`font-bold uppercase tracking-wider ${isCompactViewport ? "pt-2.5 pb-1 px-2.5 text-[9px] text-slate-400" : "pt-4 pb-2 px-4 text-xs text-slate-500"}`}>
                 Database
@@ -454,7 +487,11 @@ const AppShell = () => {
                                     ? "Admin Dashboard"
                                   : activeMenu === "payment-subcontract"
                                     ? "Payment Subcontractor"
-                                    : "Module View"}
+                                    : activeMenu === "budget-summary"
+                                      ? "Budget Summary Report"
+                                      : activeMenu === "project-spending"
+                                        ? "Project Spending Separate Code"
+                                        : "Module View"}
             </h1>
             {!isCompactViewport && <div className="flex-1" />}
 
@@ -631,7 +668,7 @@ const AppShell = () => {
           </header>
         )}
         <div
-          className={`app-shell-content ${["projects", "budget", "pr", "po", "payment-subcontract", "vendor", "material", "invoice", "receive", "admin"].includes(
+          className={`app-shell-content ${["projects", "budget", "pr", "po", "payment-subcontract", "vendor", "material", "invoice", "receive", "admin", "budget-summary", "project-spending"].includes(
             activeMenu
           )
             ? "p-3 pt-4 md:p-6 w-full max-w-none min-w-0"
@@ -798,6 +835,16 @@ const AppShell = () => {
               <div data-menu-page="receive" style={{ display: activeMenu === "receive" ? undefined : "none" }}>
                 {activeMenu === "receive" && <ReceiveView />}
               </div>
+              {activeMenu === "budget-summary" && canAccessModule("budget-summary") && (
+                <div data-menu-page="budget-summary">
+                  <BudgetSummaryReportView />
+                </div>
+              )}
+              {activeMenu === "project-spending" && canAccessModule("project-spending") && (
+                <div data-menu-page="project-spending">
+                  <ProjectSpendingView />
+                </div>
+              )}
               {activeMenu === "profile" && (
                 <div data-menu-page="profile">
                   <UserProfile />

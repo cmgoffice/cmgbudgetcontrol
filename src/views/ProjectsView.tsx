@@ -21,7 +21,10 @@ const ProjectsView = React.memo(() => {
   });
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProjectId, setEditingProjectId] = useState(null);
-  const [formData, setFormData] = useState({
+  const PROJECT_STATUSES = ["Active", "Complete", "Hold", "Cancel", "Close"];
+  const PROJECT_TYPES = ["Profit Project", "Spent Project"];
+
+  const EMPTY_FORM = {
     jobNo: "",
     name: "",
     location: "",
@@ -30,29 +33,20 @@ const ProjectsView = React.memo(() => {
     endDate: "",
     pmName: "",
     cmName: "",
-  });
+    status: "",
+    projectType: "",
+  };
+
+  const [formData, setFormData] = useState(EMPTY_FORM);
 
   const handleSave = async () => {
     if (!formData.jobNo || !formData.name) return;
 
     if (editingProjectId) {
-      const success = await updateData(
-        "projects",
-        editingProjectId,
-        formData
-      );
+      const success = await updateData("projects", editingProjectId, formData);
       if (success) {
         setIsModalOpen(false);
-        setFormData({
-          jobNo: "",
-          name: "",
-          location: "",
-          contractValue: 0,
-          startDate: "",
-          endDate: "",
-          pmName: "",
-          cmName: "",
-        });
+        setFormData(EMPTY_FORM);
         setEditingProjectId(null);
         showAlert("สำเร็จ", "แก้ไขข้อมูลโครงการเรียบร้อย", "success");
       }
@@ -60,16 +54,7 @@ const ProjectsView = React.memo(() => {
       const success = await addData("projects", formData, formData.jobNo);
       if (success) {
         setIsModalOpen(false);
-        setFormData({
-          jobNo: "",
-          name: "",
-          location: "",
-          contractValue: 0,
-          startDate: "",
-          endDate: "",
-          pmName: "",
-          cmName: "",
-        });
+        setFormData(EMPTY_FORM);
         showAlert("สำเร็จ", "เพิ่มโครงการใหม่เรียบร้อยแล้ว", "success");
       }
     }
@@ -104,16 +89,7 @@ const ProjectsView = React.memo(() => {
           <Button
             onClick={() => {
               setEditingProjectId(null);
-              setFormData({
-                jobNo: "",
-                name: "",
-                location: "",
-                contractValue: 0,
-                startDate: "",
-                endDate: "",
-                pmName: "",
-                cmName: "",
-              });
+              setFormData(EMPTY_FORM);
               setIsModalOpen(true);
             }}
           >
@@ -130,11 +106,13 @@ const ProjectsView = React.memo(() => {
               {isColumnVisible("project", "jobNo") && <ResizableTh tableId="project" colKey="jobNo" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.jobNo}>Job No.</ResizableTh>}
               {isColumnVisible("project", "name") && <ResizableTh tableId="project" colKey="name" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.name}>Project Name</ResizableTh>}
               {isColumnVisible("project", "location") && <ResizableTh tableId="project" colKey="location" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.location}>Location</ResizableTh>}
+              {isColumnVisible("project", "projectStatus") && <ResizableTh tableId="project" colKey="projectStatus" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.projectStatus}>Project Status</ResizableTh>}
               {isColumnVisible("project", "contractValue") && <ResizableTh tableId="project" colKey="contractValue" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.contractValue}>Contract Value</ResizableTh>}
               {isColumnVisible("project", "start") && <ResizableTh tableId="project" colKey="start" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.start}>Start</ResizableTh>}
               {isColumnVisible("project", "finish") && <ResizableTh tableId="project" colKey="finish" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.finish}>Finish</ResizableTh>}
               {isColumnVisible("project", "pm") && <ResizableTh tableId="project" colKey="pm" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.pm}>PM</ResizableTh>}
               {isColumnVisible("project", "cm") && <ResizableTh tableId="project" colKey="cm" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.cm}>CM</ResizableTh>}
+              {isColumnVisible("project", "projectType") && <ResizableTh tableId="project" colKey="projectType" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.projectType}>Project Type</ResizableTh>}
               {isColumnVisible("project", "actions") && <th className="py-2 px-3 text-right" style={{ width: projectTableLayout.scaled.actions }}>Actions</th>}
             </tr>
           </thead>
@@ -151,6 +129,20 @@ const ProjectsView = React.memo(() => {
                 )}
                 {isColumnVisible("project", "location") && (
                 <td className="py-2 px-3 text-slate-500" title={p.location}><span className="cell-text">{p.location}</span></td>
+                )}
+                {isColumnVisible("project", "projectStatus") && (
+                <td className="py-2 px-3">
+                  {p.status ? (
+                    <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                      p.status === "Active" ? "bg-green-100 text-green-700" :
+                      p.status === "Complete" ? "bg-blue-100 text-blue-700" :
+                      p.status === "Hold" ? "bg-yellow-100 text-yellow-700" :
+                      p.status === "Cancel" ? "bg-red-100 text-red-700" :
+                      p.status === "Close" ? "bg-slate-100 text-slate-600" :
+                      "bg-gray-100 text-gray-600"
+                    }`}>{p.status}</span>
+                  ) : "-"}
+                </td>
                 )}
                 {isColumnVisible("project", "contractValue") && (
                 <td className="py-2 px-3 text-right font-semibold text-blue-700">
@@ -171,6 +163,17 @@ const ProjectsView = React.memo(() => {
                 {isColumnVisible("project", "cm") && (
                 <td className="py-2 px-3 text-green-600 font-medium" title={p.cmName}>
                   <span className="cell-text">{p.cmName}</span>
+                </td>
+                )}
+                {isColumnVisible("project", "projectType") && (
+                <td className="py-2 px-3">
+                  {p.projectType ? (
+                    <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                      p.projectType === "Profit Project" ? "bg-indigo-100 text-indigo-700" :
+                      p.projectType === "Spent Project" ? "bg-orange-100 text-orange-700" :
+                      "bg-gray-100 text-gray-600"
+                    }`}>{p.projectType}</span>
+                  ) : "-"}
                 </td>
                 )}
                 {isColumnVisible("project", "actions") && (
@@ -298,6 +301,30 @@ const ProjectsView = React.memo(() => {
                     setFormData({ ...formData, cmName: e.target.value })
                   }
                 />
+              </InputGroup>
+              <InputGroup label="Project Status">
+                <select
+                  className="w-full border rounded p-2 text-sm bg-white"
+                  value={formData.status || ""}
+                  onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+                >
+                  <option value="">-- เลือก Status --</option>
+                  {PROJECT_STATUSES.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </InputGroup>
+              <InputGroup label="Project Type">
+                <select
+                  className="w-full border rounded p-2 text-sm bg-white"
+                  value={formData.projectType || ""}
+                  onChange={(e) => setFormData({ ...formData, projectType: e.target.value })}
+                >
+                  <option value="">-- เลือก Type --</option>
+                  {PROJECT_TYPES.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
               </InputGroup>
             </div>
             <div className="flex justify-end gap-2 mt-6 border-t pt-4">

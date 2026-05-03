@@ -98,11 +98,13 @@ export const TABLE_LAYOUT_DEFAULTS: Record<string, Record<string, number>> = {
     jobNo: 100,
     name: 200,
     location: 160,
+    projectStatus: 110,
     contractValue: 120,
     start: 96,
     finish: 96,
     pm: 100,
     cm: 100,
+    projectType: 110,
     actions: 140,
   },
   vendor: {
