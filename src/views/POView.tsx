@@ -3137,25 +3137,26 @@ const POView = React.memo(() => {
               transition={overlayTransition}
             >
               <motion.div
-                className="w-[90vw] max-w-[90vw] max-h-[92vh] flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+                className="w-[95vw] sm:w-[90vw] max-w-[95vw] sm:max-w-[90vw] max-h-[92vh] flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
                 initial="hidden"
                 animate="visible"
                 variants={modalContentVariants}
                 transition={modalTransition}
               >
                 {/* Sticky Header - โทนแดง ขาว ดำ */}
-                <div className="relative px-6 py-4 border-b border-black/10 bg-gradient-to-r from-red-600 via-red-700 to-red-900 shrink-0 overflow-hidden">
+                <div className="relative px-4 sm:px-6 py-3 sm:py-4 border-b border-black/10 bg-gradient-to-r from-red-600 via-red-700 to-red-900 shrink-0 overflow-hidden">
                   <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMjAiIGN5PSIyMCIgcj0iMSIgZmlsbD0icmdiYSgyNTUsMjU1LDI1NSwwLjA4KSIvPjwvc3ZnPg==')] opacity-50"></div>
                   <div className="relative flex justify-between items-center">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center shadow-lg shadow-black/20 border border-white/30">
-                        <ShoppingCart size={22} className="text-white" />
+                    <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+                      <div className="w-8 h-8 sm:w-10 sm:h-10 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center shadow-lg shadow-black/20 border border-white/30 shrink-0">
+                        <ShoppingCart size={18} className="sm:hidden text-white" />
+                        <ShoppingCart size={22} className="hidden sm:block text-white" />
                       </div>
-                      <div>
-                        <h3 className="text-lg font-bold text-white tracking-wide">
+                      <div className="min-w-0 flex-1">
+                        <h3 className="text-base sm:text-lg font-bold text-white tracking-wide truncate">
                           {L.createTitle}
                         </h3>
-                        <p className="text-white/80 text-xs mt-0.5">
+                        <p className="text-white/80 text-[10px] sm:text-xs mt-0.5 truncate">
                           {L.createDesc}
                         </p>
                       </div>
@@ -3169,29 +3170,31 @@ const POView = React.memo(() => {
                         setIsModalOpen(false);
                         setIsFullScreenModalOpen(false);
                       }}
-                      className="text-white/70 hover:text-white hover:bg-white/20 p-2 rounded-xl transition-all duration-200 border border-transparent hover:border-white/30"
+                      className="text-white/70 hover:text-white hover:bg-white/20 p-1.5 sm:p-2 rounded-xl transition-all duration-200 border border-transparent hover:border-white/30 shrink-0"
                     >
-                      <XCircle size={22} />
+                      <XCircle size={18} className="sm:hidden" />
+                      <XCircle size={22} className="hidden sm:block" />
                     </button>
                   </div>
                 </div>
 
                 {/* Scrollable Content */}
-                <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5 bg-gradient-to-b from-slate-50/50 to-white">
+                <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-5 space-y-4 sm:space-y-5 bg-gradient-to-b from-slate-50/50 to-white">
                   {/* 1. ข้อมูลส่วนหัว (Header) - Layout กระชับ + โซน Vendor Details ขวามือ */}
                   <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-visible">
-                    <div className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-red-50 to-red-100/80 border-b border-red-200">
-                      <div className="w-6 h-6 bg-red-600 rounded-lg flex items-center justify-center">
-                        <FileText size={13} className="text-white" />
+                    <div className="flex items-center gap-2 px-3 sm:px-5 py-2 sm:py-2.5 bg-gradient-to-r from-red-50 to-red-100/80 border-b border-red-200">
+                      <div className="w-5 h-5 sm:w-6 sm:h-6 bg-red-600 rounded-lg flex items-center justify-center shrink-0">
+                        <FileText size={11} className="sm:hidden text-white" />
+                        <FileText size={13} className="hidden sm:block text-white" />
                       </div>
-                      <span className="text-xs font-bold text-red-900 tracking-wide uppercase">{L.headerSection}</span>
+                      <span className="text-[10px] sm:text-xs font-bold text-red-900 tracking-wide uppercase">{L.headerSection}</span>
                     </div>
-                    <div className="p-2 flex flex-col sm:flex-row gap-2 sm:gap-3">
+                    <div className="p-2 flex flex-col gap-2">
                       {/* ซ้าย: ฟอร์ม + Select PRs */}
                       <div className="flex-1 min-w-0 flex flex-col gap-2">
-                        <div className="grid grid-cols-2 sm:grid-cols-[11rem_11rem_1fr] gap-x-2 gap-y-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-2 gap-y-2">
                           {/* PO Type / Payment Type */}
-                          <div className="min-w-0">
+                          <div className="min-w-0 col-span-1">
                             <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1 uppercase tracking-wider">
                               <Tag size={11} className="text-red-500 shrink-0" /> {L.docType}
                             </label>
@@ -3228,7 +3231,7 @@ const POView = React.memo(() => {
                             </select>
                           </div>
                           {/* PO No. / Payment No. */}
-                          <div className="min-w-0">
+                          <div className="min-w-0 col-span-1">
                             <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1 uppercase tracking-wider">
                               <Hash size={11} className="text-red-500 shrink-0" /> {L.docNo}
                               {!editingPoId && canUseFunction("po", "manualPoOverride") && (
@@ -3265,7 +3268,7 @@ const POView = React.memo(() => {
                             )}
                           </div>
                           {/* วันที่เปิด + สถานที่ส่งสินค้า */}
-                          <div className="min-w-0 flex gap-2">
+                          <div className="min-w-0 flex flex-col sm:flex-row gap-2 col-span-1 sm:col-span-2">
                             {/* วันที่เปิด — ย่อครึ่งหนึ่ง */}
                             <div className="flex-1 min-w-0">
                               <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1 uppercase tracking-wider">
@@ -3350,7 +3353,7 @@ const POView = React.memo(() => {
                             </div>
                           </div>
                           {/* กำหนดส่ง / รอบวางบิล */}
-                          <div className="min-w-0">
+                          <div className="min-w-0 col-span-1">
                             <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1 uppercase tracking-wider">
                               <Calendar size={11} className="text-emerald-500 shrink-0" /> กำหนดส่ง
                             </label>
@@ -3366,7 +3369,7 @@ const POView = React.memo(() => {
                             </div>
                           </div>
                           {/* Receive Type / เอกสารแนบ */}
-                          <div className="min-w-0">
+                          <div className="min-w-0 col-span-1">
                             <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1 uppercase tracking-wider">
                               <Package size={11} className="text-red-500 shrink-0" /> Receive Type
                             </label>
@@ -3382,7 +3385,7 @@ const POView = React.memo(() => {
                             </select>
                           </div>
                           {/* Vendor / ผู้รับเหมา */}
-                          <div className="col-span-2 sm:col-span-1">
+                          <div className="col-span-1 sm:col-span-2">
                             <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1 uppercase tracking-wider">
                               <Building2 size={11} className="text-red-500 shrink-0" /> {L.vendorLabel}
                             </label>
@@ -3498,7 +3501,7 @@ const POView = React.memo(() => {
                       </div>{/* end left column */}
 
                       {/* ขวา: Vendor Details — ขยายความกว้าง + ยืดเต็มความสูง */}
-                      <div className="w-full sm:w-[42rem] shrink-0 border border-slate-200 rounded-xl bg-slate-50/80 overflow-hidden self-stretch flex flex-col">
+                      <div className="w-full shrink-0 border border-slate-200 rounded-xl bg-slate-50/80 overflow-hidden self-stretch flex flex-col">
                         <div className="px-4 py-2.5 bg-slate-200/80 border-b border-slate-200 flex items-center gap-2">
                           <Building2 size={16} className="text-slate-600" />
                           <span className="text-sm font-bold text-slate-700 uppercase tracking-wide">Vendor Details</span>
@@ -3914,9 +3917,9 @@ const POView = React.memo(() => {
                   </div>
 
                   {/* Footer / ยอดรวม PO + เหตุผล */}
-                  <div className="mt-4 mb-6 grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+                  <div className="mt-4 mb-6 grid grid-cols-1 gap-4 items-start">
                     {/* Left: reason input */}
-                    <div className="lg:col-span-8 border border-slate-200 rounded-xl bg-white shadow-sm overflow-hidden">
+                    <div className="border border-slate-200 rounded-xl bg-white shadow-sm overflow-hidden">
                       <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
                         <div className="text-[11px] font-bold text-slate-700">เหตุผล / Reason</div>
                         <div className="text-[10px] text-slate-400">ระบบจะนำไปใส่ใน PDF ช่อง <span className="font-semibold">reason</span></div>
@@ -3933,7 +3936,7 @@ const POView = React.memo(() => {
                     </div>
 
                     {/* Right: VAT + totals panel */}
-                    <div className="lg:col-span-4 border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm">
+                    <div className="border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm">
                       <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 flex flex-wrap items-center gap-2">
                         <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">ภาษี</span>
                         <label className="flex items-center gap-1 cursor-pointer text-[11px] px-2 py-0.5 rounded border border-slate-200 hover:border-red-300 hover:bg-red-50/50 transition-colors">
@@ -3944,7 +3947,7 @@ const POView = React.memo(() => {
                           <input type="radio" name="vat" value="inc-vat" checked={formData.vatType === "inc-vat"} onChange={() => setFormData({ ...formData, vatType: "inc-vat" })} className="text-red-600 w-3 h-3" />
                           <span className={formData.vatType === "inc-vat" ? "font-semibold text-red-700" : "text-slate-600"}>ไม่มี Vat</span>
                         </label>
-                        <div className="w-px h-3 bg-slate-300 mx-1" />
+                        <div className="w-px h-3 bg-slate-300 mx-1 hidden sm:block" />
                         <label className="flex items-center gap-1 text-[11px] text-slate-600 cursor-pointer">
                           <input type="checkbox" checked={discountEnabled} onChange={e => { const checked = e.target.checked; setDiscountEnabled(checked); if (!checked) setFormData({ ...formData, discount: 0 }); }} className="rounded text-red-600 w-3 h-3" />
                           <span>ส่วนลด</span>
@@ -3953,7 +3956,7 @@ const POView = React.memo(() => {
                           <input type="text" className="w-20 border border-slate-200 rounded px-1.5 py-0.5 text-[11px] text-right focus:border-red-400 focus:ring-1 focus:ring-red-100 outline-none" placeholder="0.00" value={formData.discount ? String(formData.discount) : ""} onChange={e => { const v = e.target.value.replace(/,/g, ""); const n = parseFloat(v); setFormData({ ...formData, discount: isNaN(n) ? 0 : Math.max(0, n) }); }} />
                         )}
                         {selectedPrsTotalAmount > 0 && (
-                          <div className="ml-auto flex flex-col items-end leading-tight">
+                          <div className="ml-auto flex flex-col items-end leading-tight w-full sm:w-auto mt-2 sm:mt-0">
                             <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">คงเหลือ PR</span>
                             <span className="text-xl font-bold text-blue-600 tabular-nums">{formatCurrency(selectedPrsTotalAmount)}</span>
                           </div>
@@ -3982,12 +3985,12 @@ const POView = React.memo(() => {
                           </div>
                         </div>
 
-                        <div className="mt-3 flex justify-end gap-2 flex-wrap">
+                        <div className="mt-3 flex flex-col sm:flex-row justify-end gap-2">
                           <Button
                             size="sm"
                             variant="secondary"
                             disabled={poDraftInFlight || poSendInFlight}
-                            className="px-4 rounded-lg flex items-center gap-1.5 text-xs font-semibold shrink-0"
+                            className="px-4 rounded-lg flex items-center justify-center gap-1.5 text-xs font-semibold w-full sm:w-auto"
                             onClick={handleSavePODraft}
                           >
                             <FileText size={13} /> {L.draftBtn}
@@ -3995,7 +3998,7 @@ const POView = React.memo(() => {
                           <Button
                             size="sm"
                             disabled={poDraftInFlight || poSendInFlight}
-                            className="px-5 rounded-lg flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold shrink-0"
+                            className="px-5 rounded-lg flex items-center justify-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold w-full sm:w-auto"
                             onClick={handleSavePO}
                           >
                             <Save size={13} /> {poSendInFlight ? "กำลังส่ง..." : L.saveBtn}
