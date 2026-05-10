@@ -6,6 +6,7 @@ import {
   CreditCard, AlertTriangle, CheckCircle, RotateCcw,
   ThumbsUp, ThumbsDown, Zap, Clock, ShieldCheck,
   ChevronLeft, ChevronRight, Paperclip, Send,
+  FileText, Download,
 } from "lucide-react";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
@@ -13,6 +14,7 @@ import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 import ResizableTh from "../components/ResizableTh";
 import { Card, Button, formatCurrency } from "../components/ui";
 import { uploadAttachment, deleteStorageFile } from "../lib/uploadAttachment";
+import { generatePaymentPdfBytes } from "../lib/pdfForms";
 
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -115,6 +117,12 @@ const PaymentView = React.memo(() => {
   const [saving, setSaving] = useState(false);
   const [actioning, setActioning] = useState(false);
 
+  // ─── Tabs & PDF Preview ─────────────────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState<"payment" | "log">("payment");
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
+  const [pdfPreviewPayment, setPdfPreviewPayment] = useState<any>(null);
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+
   // ─── Activate PO Modal ────────────────────────────────────────────────────
   const [activatingPO, setActivatingPO] = useState<any>(null);
   const [activatingContractTitle, setActivatingContractTitle] = useState("");
@@ -135,7 +143,27 @@ const PaymentView = React.memo(() => {
   const [rejectReason, setRejectReason] = useState("");
   const [waitPayModalPayment, setWaitPayModalPayment] = useState<any>(null);
   const [paySlipFile, setPaySlipFile] = useState<File | null>(null);
-  const [payJobComplete, setPayJobComplete] = useState<boolean>(false);
+  // (removed payJobStatus selection — status determined by progress percentage)
+
+  // ─── Job Complete + Subcontractor Evaluation ────────────────────────────────
+  const [evalModalPayment, setEvalModalPayment] = useState<any>(null);
+  const [evalForm, setEvalForm] = useState({
+    jobName: "",
+    jobNo: "",
+    evaluatorName: "",
+    evaluationDate: new Date().toISOString().split("T")[0],
+    q6: "",
+    q7: "",
+    q8: "",
+    q9: "",
+    q10: "",
+    q11: "",
+    q12: "",
+    q13: "",
+    recommendations: "",
+  });
+  const [evaluating, setEvaluating] = useState(false);
+
   const [holdModalPayment, setHoldModalPayment] = useState<any>(null);
   const [holdReasonInput, setHoldReasonInput] = useState("");
   const [holdDecision, setHoldDecision] = useState<"backToEdit" | "keepHold">("keepHold");
@@ -209,6 +237,7 @@ const PaymentView = React.memo(() => {
     && canUseFunction?.("payment-subcontract", "hold") !== false
   );
   const canStartNextPeriod = !myRoles.some(r => r === "Procurement") && (myRoles.includes("Administrator") || canUseFunction?.("payment-subcontract", "startNextPeriod") !== false);
+  const canCompleteJob = myRoles.includes("Administrator") || myRoles.some((r) => ["PM", "CM"].includes(r));
   // ── aliases ที่ชัดเจนเพื่อส่งให้ ResizableTh (ใช้ handleColumnResize จาก AppDataContext)
   const handlePaymentMainColResize = handleColumnResize;
   const handlePayItemColResize = handleColumnResize;
@@ -558,8 +587,7 @@ const PaymentView = React.memo(() => {
         ? items.reduce((s: number, it: any) => s + (Number(it.prevAccumAmount) || 0) + (Number(it.thisPeriodAmount) || 0), 0)
         : Number(waitPayModalPayment.amount) || 0;
       const progressPct = contractTotal > 0 ? (accumTotal / contractTotal) * 100 : 0;
-      // ถ้าเลือก "จบงาน" → force Paid, มิฉะนั้นใช้ logic เดิม (>= 99.99% → Paid, อื่น → In Process)
-      const nextStatus = payJobComplete ? "Paid" : (progressPct >= 99.99 ? "Paid" : "In Process");
+      const nextStatus = progressPct >= 99.99 ? "Paid" : "In Process";
 
       const safeNo = (waitPayModalPayment.paymentNo || "payment").replace(/[^a-zA-Z0-9\-_]/g, "_");
       const path = `payments/${selectedProjectId}/pay-slip/${safeNo}_${Date.now()}`;
@@ -571,7 +599,6 @@ const PaymentView = React.memo(() => {
         paySlipUrl: slipUrl,
         paySlipName: slipName,
         holdReason: null,
-        ...(payJobComplete ? { jobCompleted: true } : {}),
       }, { skipLog: true });
 
       // หาก Payment เป็น "Paid" (ครบ 100% หรือเลือกจบงาน) ให้เปลี่ยนสถานะ PO เป็น "Closed PO"
@@ -588,10 +615,9 @@ const PaymentView = React.memo(() => {
         }
       }
 
-      await logAction("Pay Payment", `จ่าย Payment ${waitPayModalPayment.paymentNo} → ${nextStatus}${payJobComplete ? " (จบงาน)" : ""}`, selectedProjectId);
+      await logAction("Pay Payment", `จ่าย Payment ${waitPayModalPayment.paymentNo} → ${nextStatus}`, selectedProjectId);
       setWaitPayModalPayment(null);
       setPaySlipFile(null);
-      setPayJobComplete(false);
       if (viewingPayment?.id === waitPayModalPayment.id) {
         setViewingPayment((prev: any) => prev ? ({
           ...prev,
@@ -601,7 +627,6 @@ const PaymentView = React.memo(() => {
           paySlipUrl: slipUrl,
           paySlipName: slipName,
           holdReason: null,
-          ...(payJobComplete ? { jobCompleted: true } : {}),
         }) : prev);
       }
     } catch (e) {
@@ -649,6 +674,125 @@ const PaymentView = React.memo(() => {
     } finally {
       setActioning(false);
     }
+  };
+
+  // ─── Job Complete + Evaluation Submit ────────────────────────────────────────
+  const handleEvalSubmit = async () => {
+    if (!evalModalPayment) return;
+    if (!canCompleteJob) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์จบงาน", "warning");
+    const missing = [];
+    if (!evalForm.evaluatorName.trim()) missing.push("ชื่อผู้ประเมิน");
+    if (!evalForm.jobName.trim()) missing.push("ระบุชื่องาน");
+    if (!evalForm.q6) missing.push("ข้อ 6");
+    if (!evalForm.q7) missing.push("ข้อ 7");
+    if (!evalForm.q8) missing.push("ข้อ 8");
+    if (!evalForm.q9) missing.push("ข้อ 9");
+    if (!evalForm.q10) missing.push("ข้อ 10");
+    if (!evalForm.q11) missing.push("ข้อ 11");
+    if (!evalForm.q12) missing.push("ข้อ 12");
+    if (!evalForm.q13) missing.push("ข้อ 13");
+    if (missing.length > 0) {
+      showAlert("ข้อมูลไม่ครบ", `กรุณากรอก: ${missing.join(", ")}`, "warning");
+      return;
+    }
+    setEvaluating(true);
+    try {
+      const contractor = vendors.find((v: any) => v.id === evalModalPayment.contractorId);
+      const project = (projects || []).find((p: any) => p.id === evalModalPayment.projectId);
+      const rateMap: Record<string, number> = { good: 1, fair: 0.75, poor: 0.5 };
+      const questions = [
+        { key: "q6", max: 10, label: "การกำหนดนโยบายด้านความปลอดภัยและอาชีวอนามัย" },
+        { key: "q7", max: 5, label: "อัตราความรุนแรงในการบาดเจ็บ/อุบัติเหตุ" },
+        { key: "q8", max: 10, label: "การประสานงานและให้การสนับสนุนที่เกี่ยวข้อง" },
+        { key: "q9", max: 20, label: "วัสดุที่นำมาใช้ต้องมีคุณภาพและตรงตามข้อกำหนด" },
+        { key: "q10", max: 15, label: "การจัดสรรแรงงานที่มีความรู้และเชี่ยวชาญต่องาน" },
+        { key: "q11", max: 5, label: "การปฏิบัติตามกฎหมาย ข้อกำหนดของโครงการ และกฎระเบียบข้อบังคับด้านความปลอดภัยและอาชีวอนามัย" },
+        { key: "q12", max: 15, label: "การจัดสรรเครื่องมือและอุปกรณ์ที่พร้อมใช้งานและตรงตามข้อกำหนดของโครงการและความปลอดภัย" },
+        { key: "q13", max: 20, label: "การส่งมอบงานตามเวลาที่กำหนด" },
+      ];
+      let totalScore = 0;
+      const scores: any = {};
+      for (const q of questions) {
+        const rate = evalForm[q.key as keyof typeof evalForm] as string;
+        const rateValue = rateMap[rate] || 0;
+        const score = q.max * rateValue;
+        totalScore += score;
+        scores[q.key] = { rate, rateValue, maxScore: q.max, score, label: q.label };
+      }
+      const evalPayload = {
+        vendorId: evalModalPayment.contractorId || "",
+        vendorName: contractor?.name || "",
+        paymentId: evalModalPayment.id,
+        paymentNo: evalModalPayment.paymentNo,
+        projectId: evalModalPayment.projectId || "",
+        projectName: project?.name || "",
+        evaluatorName: evalForm.evaluatorName.trim(),
+        evaluationDate: evalForm.evaluationDate,
+        jobName: evalForm.jobName.trim(),
+        jobNo: evalForm.jobNo.trim(),
+        scores,
+        totalScore,
+        maxTotalScore: 100,
+        recommendations: evalForm.recommendations.trim(),
+        createdAt: new Date().toISOString(),
+        createdBy: userData?.name || user?.email || "",
+      };
+      await addData("vendorEvaluations", evalPayload, null, { skipLog: true });
+      await updateData("payments", evalModalPayment.id, {
+        status: "Paid",
+        jobCompleted: true,
+        completedAt: new Date().toISOString(),
+        completedBy: userData?.name || user?.email || "",
+      }, { skipLog: true });
+      const selectedPrIds = evalModalPayment.selectedPrIds || [];
+      for (const poId of selectedPrIds) {
+        const po = (pos || []).find((x: any) => x.id === poId);
+        if (po && po.status !== "Closed PO") {
+          await updateData("pos", poId, { status: "Closed PO", statusNow: "Closed PO" }, { skipLog: true });
+        }
+      }
+      await logAction("Complete Job & Evaluate", `จบงานและประเมินผู้รับเหมา ${evalModalPayment.paymentNo} → Paid`, selectedProjectId);
+      setEvalModalPayment(null);
+      setViewingPayment(null);
+      setEvalForm({
+        jobName: "", jobNo: "", evaluatorName: "",
+        evaluationDate: new Date().toISOString().split("T")[0],
+        q6: "", q7: "", q8: "", q9: "", q10: "", q11: "", q12: "", q13: "",
+        recommendations: "",
+      });
+    } catch (e) {
+      showAlert("เกิดข้อผิดพลาด", String(e), "error");
+    } finally {
+      setEvaluating(false);
+    }
+  };
+
+  // ─── View Payment PDF ───────────────────────────────────────────────────────
+  const handleViewPdf = async (payment: any) => {
+    if (generatingPdf) return;
+    setGeneratingPdf(true);
+    try {
+      const contractor = vendors.find((v: any) => v.id === payment.contractorId);
+      const project = (projects || []).find((p: any) => p.id === payment.projectId);
+      const bytes = await generatePaymentPdfBytes(payment, { project, contractor, pos });
+      const blob = new Blob([bytes], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      setPdfPreviewUrl(url);
+      setPdfPreviewPayment(payment);
+    } catch (e) {
+      console.warn("[Payment PDF] Generation failed:", e);
+      showAlert("ไม่สามารถสร้าง PDF", String(e), "error");
+    } finally {
+      setGeneratingPdf(false);
+    }
+  };
+
+  const handleClosePdfPreview = () => {
+    if (pdfPreviewUrl) {
+      URL.revokeObjectURL(pdfPreviewUrl);
+    }
+    setPdfPreviewUrl(null);
+    setPdfPreviewPayment(null);
   };
 
   // ─── Start next period (Create NEW Document for Next Period) ──────────────
@@ -747,6 +891,11 @@ const PaymentView = React.memo(() => {
   // ─── Filtered payments for current project ───────────────────────────────────
   const projectPayments = useMemo(() => {
     return (payments || []).filter((p: any) => p.projectId === selectedProjectId && p.status !== "Paid");
+  }, [payments, selectedProjectId]);
+
+  // ─── Log payments (all including Paid) ─────────────────────────────────────────
+  const logPayments = useMemo(() => {
+    return (payments || []).filter((p: any) => p.projectId === selectedProjectId);
   }, [payments, selectedProjectId]);
 
   // ─── PO SP/DC ที่ Approved แต่ยังไม่มี Payment document (Auto Draft) ────────
@@ -871,6 +1020,34 @@ const PaymentView = React.memo(() => {
           </div>
         </div>
 
+        {/* ── Tabs ── */}
+        <div className="flex items-center gap-1 bg-orange-50/50 rounded-xl border border-orange-100/50 p-1 w-fit">
+          <button
+            type="button"
+            onClick={() => setActiveTab("payment")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              activeTab === "payment"
+                ? "bg-white text-orange-600 shadow-sm ring-1 ring-orange-200"
+                : "text-orange-400 hover:text-orange-600 hover:bg-white/60"
+            }`}
+          >
+            <CreditCard size={14} />
+            Payment Subcontractor
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("log")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              activeTab === "log"
+                ? "bg-white text-amber-600 shadow-sm ring-1 ring-amber-200"
+                : "text-amber-400 hover:text-amber-600 hover:bg-white/60"
+            }`}
+          >
+            <FileText size={14} />
+            Log Payment
+          </button>
+        </div>
+
         <div className="flex items-center gap-2">
           {/* ปุ่มสร้าง Payment ถูกลบออกแล้ว — PO SP/DC ที่ Approved จะแสดง Auto เป็น Draft */}
         </div>
@@ -945,7 +1122,7 @@ const PaymentView = React.memo(() => {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {/* ── Draft rows: PO SP/DC ที่ Approved แต่ยังไม่ Activate ── */}
-            {unlinkedSPDCPos.map((po: any) => {
+            {activeTab === "payment" && unlinkedSPDCPos.map((po: any) => {
               const vendor = vendors.find((v: any) => v.id === po.vendorId);
               const contractTotal = (po.items || []).reduce(
                 (s: number, it: any) => s + ((Number(it.quantity) || 0) * (Number(it.price) || Number(it.unitPrice) || 0)), 0
@@ -1030,14 +1207,16 @@ const PaymentView = React.memo(() => {
               );
             })}
             {/* ── Empty state เมื่อไม่มีทั้ง Draft PO และ Payment docs ── */}
-            {unlinkedSPDCPos.length === 0 && projectPayments.length === 0 ? (
+            {(activeTab === "payment" ? unlinkedSPDCPos.length === 0 && projectPayments.length === 0 : logPayments.length === 0) ? (
               <tr>
                 <td colSpan={["paymentNo", "type", "contractor", "contractTitle", "billingCycle", "totalAmount", "accumAmount", "periodAmount", "progress", "status", "actions"].filter(k => isColumnVisible("payment", k)).length} className="py-10 text-center text-slate-400 text-sm">
-                  ยังไม่มีรายการ Payment — PO ประเภท SP/DC ที่ได้รับการอนุมัติจะแสดงที่นี่โดยอัตโนมัติ
+                  {activeTab === "payment"
+                    ? "ยังไม่มีรายการ Payment — PO ประเภท SP/DC ที่ได้รับการอนุมัติจะแสดงที่นี่โดยอัตโนมัติ"
+                    : "ยังไม่มีรายการ Payment ในประวัติ"}
                 </td>
               </tr>
             ) : (
-              projectPayments.map((p: any) => {
+              (activeTab === "payment" ? projectPayments : logPayments).map((p: any) => {
 
                 const contractor = vendors.find((v: any) => v.id === p.contractorId);
                 const progressPct = getPaymentProgressPct(p);
@@ -1328,6 +1507,18 @@ const PaymentView = React.memo(() => {
               <div className="flex items-center justify-between px-6 py-3 bg-gradient-to-r from-blue-900 to-blue-700 shrink-0 rounded-t-2xl">
                 <h3 className="text-sm font-bold text-white tracking-wide">แบบฟอร์มเบิกงวดงาน / PAYMENT APPLICATION</h3>
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleViewPdf(vp)}
+                    disabled={generatingPdf}
+                    className="text-white/70 hover:text-white hover:bg-white/20 p-1.5 rounded-lg transition-all disabled:opacity-50"
+                    title="ดู PDF"
+                  >
+                    {generatingPdf && pdfPreviewPayment?.id === vp.id ? (
+                      <span className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full inline-block" />
+                    ) : (
+                      <FileText size={18} />
+                    )}
+                  </button>
                   <PaymentStatusBadge status={vp.status || "Draft"} />
                   {vp.revisionRequested && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500 text-white">
@@ -1929,6 +2120,23 @@ const PaymentView = React.memo(() => {
                       </button>}
                     </>
                   )}
+                  {/* In Process → จบงาน (PM/CM) */}
+                  {vp.status === "In Process" && canCompleteJob && (
+                    <button
+                      disabled={actioning}
+                      onClick={() => {
+                        setEvalModalPayment(vp);
+                        setEvalForm((prev) => ({
+                          ...prev,
+                          jobName: vp.contractTitle || "",
+                          evaluatorName: userData?.name || user?.email || "",
+                        }));
+                      }}
+                      className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+                    >
+                      <CheckCircle size={14} /> จบงาน
+                    </button>
+                  )}
                   {/* In Process / Paid → ใส่ปริมาณ (start next period) — ซ่อนเมื่อครบ 100% ทุกรายการ หรือ Procurement */}
                   {(vp.status === "Paid" || vp.status === "In Process") && !vp.hasNextPeriodStarted && !isViewingOldPeriod && !allItemsComplete && !myRoles.some(r => r === "Procurement") && canStartNextPeriod && (
                     <button
@@ -2102,45 +2310,6 @@ const PaymentView = React.memo(() => {
               กรุณาแนบไฟล์ Payin หรือสลิปเพื่อยืนยันการชำระเงิน
             </p>
 
-            {/* ── ตัวเลือกสถานะงาน ── */}
-            <div className="border border-slate-200 rounded-xl p-3 bg-slate-50 space-y-2">
-              <p className="text-xs font-semibold text-slate-700 mb-1">สถานะงาน</p>
-              <label className={`flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer border transition-all text-xs font-medium ${
-                !payJobComplete
-                  ? "bg-blue-50 border-blue-400 text-blue-800"
-                  : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100"
-              }`}>
-                <input
-                  type="checkbox"
-                  checked={!payJobComplete}
-                  onChange={() => setPayJobComplete(false)}
-                  className="accent-blue-500 w-3.5 h-3.5"
-                />
-                ยังไม่จบงาน
-                <span className="ml-auto text-[10px] text-blue-500 font-normal">จ่ายตามปกติ (In Process)</span>
-              </label>
-              <label className={`flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer border transition-all text-xs font-medium ${
-                payJobComplete
-                  ? "bg-emerald-50 border-emerald-400 text-emerald-800"
-                  : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100"
-              }`}>
-                <input
-                  type="checkbox"
-                  checked={payJobComplete}
-                  onChange={() => setPayJobComplete(true)}
-                  className="accent-emerald-500 w-3.5 h-3.5"
-                />
-                จบงาน
-                <span className="ml-auto text-[10px] text-emerald-600 font-normal">สถานะจะเปลี่ยนเป็น Paid</span>
-              </label>
-              {payJobComplete && (
-                <p className="text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 flex items-start gap-1.5">
-                  <AlertTriangle size={11} className="mt-0.5 shrink-0" />
-                  เมื่อจบงาน รายการนี้จะเปลี่ยนเป็น <strong>Paid</strong> และไม่สามารถใส่ปริมาณเพิ่มได้อีก
-                </p>
-              )}
-            </div>
-
             <div className="space-y-1">
               <label className="text-xs font-semibold text-slate-700">Upload File Payin / สลิป</label>
               <input
@@ -2152,18 +2321,16 @@ const PaymentView = React.memo(() => {
               <p className="text-[11px] text-slate-400">{paySlipFile ? `ไฟล์ที่เลือก: ${paySlipFile.name}` : "ยังไม่ได้เลือกไฟล์"}</p>
             </div>
             <div className="flex justify-end gap-2">
-              <button onClick={() => { setWaitPayModalPayment(null); setPaySlipFile(null); setPayJobComplete(false); }} className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm hover:bg-slate-50">
+              <button onClick={() => { setWaitPayModalPayment(null); setPaySlipFile(null); }} className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm hover:bg-slate-50">
                 ยกเลิก
               </button>
               <button
                 disabled={actioning}
                 onClick={handlePayConfirm}
-                className={`px-4 py-2 rounded-lg text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60 ${
-                  payJobComplete ? "bg-emerald-600 hover:bg-emerald-700" : "bg-blue-600 hover:bg-blue-700"
-                }`}
+                className="px-4 py-2 rounded-lg text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60 bg-emerald-600 hover:bg-emerald-700"
               >
                 {actioning ? <span className="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full" /> : <Upload size={13} />}
-                {payJobComplete ? "Pay & จบงาน" : "Pay"}
+                Pay
               </button>
             </div>
           </div>
@@ -2228,6 +2395,199 @@ const PaymentView = React.memo(() => {
           </div>
         </div>
       ), document.body)}
+
+      {/* ─── Subcontractor Evaluation Modal ─────────────────────────────────────── */}
+      {evalModalPayment && createPortal((() => {
+        const contractor = vendors.find((v: any) => v.id === evalModalPayment.contractorId);
+        const project = (projects || []).find((p: any) => p.id === evalModalPayment.projectId);
+        const rateMap: Record<string, number> = { good: 1, fair: 0.75, poor: 0.5 };
+        const questions = [
+          {
+            key: "q6", max: 10, label: "6. การกำหนดนโยบายด้านความปลอดภัยและอาชีวอนามัย (Safety & Occupational Health Policy)",
+            desc: "เต็ม 10 คะแนน",
+            criteria: {
+              good: "มีนโยบายความปลอดภัยชัดเจนเป็นลายลักษณ์อักษร มีเจ้าหน้าที่ความปลอดภัย (Safety Officer) ประจำโครงการ จัดประชุมเซฟตี้ประจำสัปดาห์/เดือน มี Checklist ตรวจสอบความปลอดภัย จัดหาอุปกรณ์ป้องกันอันตรายส่วนบุคคล (PPE) ให้ครบทุกคน ไม่มีอุบัติเหตุในโครงการ",
+              fair: "มีนโยบายความปลอดภัยเบื้องต้น แต่การบังคับใช้ไม่สม่ำเสมอ มีเจ้าหน้าที่ความปลอดภัยแต่ไม่ประจำ มีการประชุมเซฟตี้บ้างแต่ไม่สม่ำเสมอ มีอุปกรณ์ป้องกันอันตรายแต่ไม่ครบทุกคน ไม่มีอุบัติเหตุร้ายแรง",
+              poor: "ไม่มีนโยบายความปลอดภัย ไม่มีเจ้าหน้าที่ความปลอดภัย ไม่มีการประชุมเซฟตี้ อุปกรณ์ป้องกันอันตรายไม่เพียงพอ มีอุบัติเหตุเกิดขึ้นในโครงการ",
+            },
+          },
+          {
+            key: "q7", max: 5, label: "7. อัตราความรุนแรงในการบาดเจ็บ/อุบัติเหตุ (Injury/Accident Severity Rate)",
+            desc: "เต็ม 5 คะแนน",
+            criteria: {
+              good: "ไม่มีอุบัติเหตุ/อุบัติภัยใดๆ ในระหว่างดำเนินโครงการ (Zero Accident) มีรายงานสถิติความปลอดภัยประจำเดือนส่งให้ฝ่ายบริหารโครงการ มีการตรวจสอบและบำรุงรักษาเครื่องมือ/อุปกรณ์อย่างสม่ำเสมอ",
+              fair: "มีอุบัติเหตุเล็กน้อยเท่านั้น (First Aid Case) อัตราความถี่อุบัติเหตุอยู่ในเกณฑ์ที่ยอมรับได้ มีรายงานอุบัติเหตุและมาตรการแก้ไข",
+              poor: "มีอุบัติเหตุร้ายแรง (Lost Time Injury / หยุดงาน) อัตราความถี่อุบัติเหตุสูง ไม่มีรายงานอุบัติเหตุหรือไม่มีมาตรการแก้ไข เกิดความเสียหายต่อทรัพย์สินของบริษัท",
+            },
+          },
+          {
+            key: "q8", max: 10, label: "8. การประสานงานและให้การสนับสนุนที่เกี่ยวข้อง (Coordination & Support)",
+            desc: "เต็ม 10 คะแนน",
+            criteria: {
+              good: "ประสานงานได้ดีเยี่ยม ติดต่อสื่อสารได้สะดวกรวดเร็ว ตอบสนองปัญหาได้ทันท่วงที ให้ความร่วมมือสนับสนุนงานอื่นที่เกี่ยวข้องได้เป็นอย่างดี เข้าร่วมประชุมงานตามที่นัดหมายทุกครั้ง",
+              fair: "ประสานงานได้ในระดับพอใช้ ติดต่อสื่อสารได้บ้างแต่บางครั้งล่าช้า ให้ความร่วมมือได้แต่ต้องมีการติดตาม มีการขาดประชุมบ้างแต่ไม่บ่อย",
+              poor: "ประสานงานได้แย่ ติดต่อยาก ไม่ตอบสนองปัญหา ไม่ให้ความร่วมมือกับงานอื่น ขาดประชุมงานบ่อยครั้ง ทำให้เกิดความล่าช้าในการทำงานของสาขาอื่น",
+            },
+          },
+          {
+            key: "q9", max: 20, label: "9. วัสดุที่นำมาใช้ต้องมีคุณภาพและตรงตามข้อกำหนด (Material Quality & Specification Compliance)",
+            desc: "เต็ม 20 คะแนน",
+            criteria: {
+              good: "วัสดุทุกรายการมีคุณภาพตรงตามข้อกำหนดสัญญา (Shop Drawing / Spec) มีใบรับรองคุณภาพวัสดุ (Mill Test Certificate / COA) ครบถ้วน ไม่มีวัสดุถูกปฏิเสธ (Reject) การจัดเก็บวัสดุเป็นระเบียบถูกต้องตามมาตรฐาน",
+              fair: "วัสดุส่วนใหญ่ตรงตามข้อกำหนด มีวัสดุบางรายการที่ต้องแก้ไขปรับปรุงแต่สามารถแก้ไขได้ทันท่วงที มีเอกสารรับรองคุณภาพส่วนใหญ่ มีการปฏิเสธวัสดุเล็กน้อย",
+              poor: "วัสดุไม่ตรงตามข้อกำหนดสัญญา คุณภาพต่ำกว่ามาตรฐาน ไม่มีเอกสารรับรองคุณภาพ มีวัสดุถูกปฏิเสธบ่อยครั้ง การจัดเก็บวัสดุไม่เป็นระเบียบ ส่งผลกระทบต่อคุณภาพงาน",
+            },
+          },
+          {
+            key: "q10", max: 15, label: "10. การจัดสรรแรงงานที่มีความรู้และเชี่ยวชาญต่องาน (Skilled Labor Allocation)",
+            desc: "เต็ม 15 คะแนน",
+            criteria: {
+              good: "มีแรงงานที่มีทักษะและประสบการณ์เพียงพอต่อปริมาณงาน มี Foreman/หัวหน้างานที่มีความรู้และความสามารถ ควบคุมดูแลงานได้ดี อัตราการลาออก/เปลี่ยนแปลงแรงงานต่ำ มีการฝึกอบรมแรงงานอย่างสม่ำเสมอ",
+              fair: "มีแรงงานเพียงพอแต่ทักษะบางส่วนยังไม่เพียงพอ มีหัวหน้างานแต่ควบคุมดูแลได้ไม่เต็มที่ มีการเปลี่ยนแปลงแรงงานบ้างแต่ไม่กระทบต่อความก้าวหน้าของงาน",
+              poor: "แรงงานไม่เพียงพอต่อปริมาณงาน ขาดแรงงานที่มีทักษะ ไม่มีหัวหน้างานหรือหัวหน้างานไม่มีความสามารถ มีการเปลี่ยนแปลงแรงงานบ่อยครั้ง ส่งผลให้งานล่าช้าและคุณภาพต่ำ",
+            },
+          },
+          {
+            key: "q11", max: 5, label: "11. การปฏิบัติตามกฎหมาย ข้อกำหนดของโครงการ และกฎระเบียบข้อบังคับด้านความปลอดภัยและอาชีวอนามัย (Legal & Project Compliance)",
+            desc: "เต็ม 5 คะแนน",
+            criteria: {
+              good: "ปฏิบัติตามกฎหมายแรงงานและกฎหมายที่เกี่ยวข้องครบถ้วน มีใบอนุญาตประกอบกิจการและใบอนุญาตที่เกี่ยวข้องถูกต้องและไม่หมดอายุ ลูกจ้างทุกคนมีสัญญาจ้างและประกันสังคม ปฏิบัติตามข้อกำหนดของโครงการและกฎระเบียบข้อบังคับด้านความปลอดภัยทุกประการ ไม่มีผู้ร้องเรียน",
+              fair: "ปฏิบัติตามกฎหมายโดยทั่วไป มีเอกสารส่วนใหญ่แต่บางรายการอาจมีข้อบกพร่องเล็กน้อย มีสัญญาจ้างและประกันสังคมส่วนใหญ่ มีการปฏิบัติตามข้อกำหนดของโครงการโดยทั่วไป",
+              poor: "ไม่ปฏิบัติตามกฎหมายที่เกี่ยวข้อง ใบอนุญาตหมดอายุหรือไม่มี ไม่มีสัญญาจ้างหรือประกันสังคม ลูกจ้างไม่ได้รับการจดทะเบียนตามกฎหมาย ฝ่าฝืนข้อกำหนดของโครงการ มีผู้ร้องเรียน",
+            },
+          },
+          {
+            key: "q12", max: 15, label: "12. การจัดสรรเครื่องมือและอุปกรณ์ที่พร้อมใช้งานและตรงตามข้อกำหนดของโครงการและความปลอดภัย (Tools & Equipment)",
+            desc: "เต็ม 15 คะแนน",
+            criteria: {
+              good: "มีเครื่องมือและอุปกรณ์ที่เหมาะสมและเพียงพอต่อการทำงานทุกประเภท อุปกรณ์อยู่ในสภาพดีและมีการบำรุงรักษาอย่างสม่ำเสมอ ตรงตามข้อกำหนดของโครงการและมาตรฐานความปลอดภัย มีเอกสารตรวจสอบและบำรุงรักษา (PM Checklist) ไม่มีอุปกรณ์ที่ทำให้เกิดอันตราย",
+              fair: "มีเครื่องมือและอุปกรณ์พื้นฐานเพียงพอต่อการทำงานส่วนใหญ่ อุปกรณ์บางชิ้นเก่าแต่ยังใช้งานได้ มีการบำรุงรักษาบ้างแต่ไม่สม่ำเสมอ ตรงตามข้อกำหนดของโครงการโดยทั่วไป",
+              poor: "ขาดแคลนเครื่องมือและอุปกรณ์ที่จำเป็น อุปกรณ์ชำรุด/เสื่อมสภาพ ไม่มีการบำรุงรักษา ไม่ตรงตามข้อกำหนดของโครงการและมาตรฐานความปลอดภัย ส่งผลให้งานล่าช้าและอาจเกิดอันตราย",
+            },
+          },
+          {
+            key: "q13", max: 20, label: "13. การส่งมอบงานตามเวลาที่กำหนด (On-time Delivery)",
+            desc: "เต็ม 20 คะแนน",
+            criteria: {
+              good: "ส่งมอบงานตามกำหนดเวลาที่ตกลงไว้ทุกครั้ง มีการวางแผนงานและติดตามความก้าวหน้าอย่างเป็นระบบ มีการแจ้งเตือนล่วงหน้าหากมีปัญหาที่อาจทำให้งานล่าช้า งานเสร็จตามเป้าหมายหรือเร็วกว่ากำหนด",
+              fair: "ส่งมอบงานส่วนใหญ่ตามกำหนดเวลา มีความล่าช้าเล็กน้อยในบางครั้งแต่มีเหตุผลที่สมเหตุสมผล มีการแจ้งเหตุล่าช้าแต่บางครั้งไม่ทันท่วงที งานเสร็จช้ากว่ากำหนดเล็กน้อยแต่ไม่กระทบต่อภาพรวมโครงการ",
+              poor: "ส่งมอบงานล่าช้าบ่อยครั้ง ไม่มีการวางแผนงานที่ดี ไม่แจ้งเตือนปัญหาล่วงหน้า งานเสร็จช้ากว่ากำหนดมาก ส่งผลกระทบต่อความก้าวหน้าของโครงการโดยรวมและสาขาอื่นที่เกี่ยวข้อง",
+            },
+          },
+        ];
+        const totalScore = questions.reduce((s, q) => {
+          const rate = evalForm[q.key as keyof typeof evalForm] as string;
+          return s + (q.max * (rateMap[rate] || 0));
+        }, 0);
+        const ratingLabels: Record<string, string> = { good: "ดี", fair: "พอใช้", poor: "ปรับปรุง" };
+        return (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10030] p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden">
+              <div className="px-6 py-3 bg-gradient-to-r from-blue-900 to-blue-700 shrink-0 flex items-center justify-between rounded-t-2xl">
+                <h3 className="text-sm font-bold text-white tracking-wide">แบบประเมินผู้รับเหมาช่วง / Subcontractor Evaluation Form</h3>
+                <button onClick={() => setEvalModalPayment(null)} className="text-white/60 hover:text-white hover:bg-white/20 p-1.5 rounded-lg transition-all">
+                  <XCircle size={18} />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-6 space-y-5">
+                <p className="text-xs text-slate-500">
+                  Payment: <strong>{evalModalPayment.paymentNo}</strong> | ผู้รับเหมา: <strong>{contractor?.name || "-"}</strong> | โครงการ: <strong>{project?.name || "-"}</strong>
+                </p>
+                {/* ── Basic info (1-5) ── */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border border-slate-200 rounded-lg p-4 bg-slate-50/50">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-semibold text-slate-700">1. ข้อมูลผู้จำหน่าย / SUBCONTRACTOR</label>
+                    <input type="text" readOnly value={contractor?.name || ""} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs bg-slate-100 text-slate-600" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-semibold text-slate-700">2. ระบุชื่องาน <span className="text-red-500">*</span></label>
+                    <input type="text" value={evalForm.jobName} onChange={(e) => setEvalForm((prev) => ({ ...prev, jobName: e.target.value }))} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" placeholder="ระบุชื่องาน..." />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-semibold text-slate-700">3. โครงการ / JOB No.</label>
+                    <input type="text" value={evalForm.jobNo} onChange={(e) => setEvalForm((prev) => ({ ...prev, jobNo: e.target.value }))} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" placeholder="เช่น J50 J52 J55" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-semibold text-slate-700">4. ชื่อผู้ประเมิน <span className="text-red-500">*</span></label>
+                    <input type="text" value={evalForm.evaluatorName} onChange={(e) => setEvalForm((prev) => ({ ...prev, evaluatorName: e.target.value }))} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" placeholder="ชื่อผู้ประเมิน..." />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-semibold text-slate-700">5. วันที่ประเมิน <span className="text-red-500">*</span></label>
+                    <input type="date" value={evalForm.evaluationDate} onChange={(e) => setEvalForm((prev) => ({ ...prev, evaluationDate: e.target.value }))} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                  </div>
+                </div>
+                {/* ── Questions (6-13) ── */}
+                <div className="space-y-4">
+                  {questions.map((q) => (
+                    <div key={q.key} className="border border-slate-200 rounded-lg p-4 space-y-3 bg-white">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-xs font-bold text-slate-800 leading-relaxed">{q.label}</p>
+                        <span className="text-[10px] text-slate-500 shrink-0 bg-slate-100 px-2 py-0.5 rounded">{q.desc}</span>
+                      </div>
+                      {/* ── Criteria descriptions ── */}
+                      <div className="space-y-1.5 text-[11px] text-slate-600 bg-slate-50 rounded-lg p-3 border border-slate-100">
+                        <p><span className="inline-block w-16 font-semibold text-green-700 shrink-0">ดี :</span>{q.criteria.good}</p>
+                        <p><span className="inline-block w-16 font-semibold text-amber-700 shrink-0">พอใช้ :</span>{q.criteria.fair}</p>
+                        <p><span className="inline-block w-16 font-semibold text-red-700 shrink-0">ปรับปรุง :</span>{q.criteria.poor}</p>
+                      </div>
+                      <div className="flex flex-wrap gap-3 pt-1">
+                        {(["good", "fair", "poor"] as const).map((r) => (
+                          <label key={r} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border cursor-pointer text-[11px] font-medium transition-all ${
+                            evalForm[q.key as keyof typeof evalForm] === r
+                              ? r === "good" ? "bg-green-50 border-green-400 text-green-800"
+                                : r === "fair" ? "bg-amber-50 border-amber-400 text-amber-800"
+                                : "bg-red-50 border-red-400 text-red-800"
+                              : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                          }`}>
+                            <input
+                              type="radio"
+                              name={q.key}
+                              value={r}
+                              checked={evalForm[q.key as keyof typeof evalForm] === r}
+                              onChange={() => setEvalForm((prev) => ({ ...prev, [q.key]: r }))}
+                              className="accent-blue-600 w-3.5 h-3.5"
+                            />
+                            {ratingLabels[r]}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {/* ── Recommendations (14) ── */}
+                <div className="space-y-1 border border-slate-200 rounded-lg p-4 bg-white">
+                  <label className="text-[11px] font-semibold text-slate-700">14. คำแนะนำเพิ่มเติมที่ต้องการให้ผู้รับเหมาช่วงแก้ไขปรับปรุง</label>
+                  <textarea
+                    rows={4}
+                    value={evalForm.recommendations}
+                    onChange={(e) => setEvalForm((prev) => ({ ...prev, recommendations: e.target.value }))}
+                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    placeholder="ระบุคำแนะนำ..."
+                  />
+                </div>
+                {/* ── Score summary ── */}
+                <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
+                  <span className="text-xs font-semibold text-blue-800">คะแนนรวมทั้งหมด / TOTAL SCORE</span>
+                  <span className="text-sm font-bold text-blue-900">{totalScore.toFixed(2)} / 100</span>
+                </div>
+              </div>
+              <div className="px-6 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0 rounded-b-2xl">
+                <button onClick={() => setEvalModalPayment(null)} className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-600 text-sm font-medium hover:bg-slate-50 flex items-center gap-2">
+                  <XCircle size={15} /> ยกเลิก
+                </button>
+                <button
+                  disabled={evaluating}
+                  onClick={handleEvalSubmit}
+                  className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+                >
+                  {evaluating ? <span className="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full" /> : <CheckCircle size={14} />}
+                  ส่งการประเมินและจบงาน
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })(), document.body)}
 
       {/* ─── Activate PO Modal (แบบฟอร์มเบิกงวดงาน) ─────────────────────────── */}
       {activatingPO && createPortal((() => {
@@ -2343,6 +2703,43 @@ const PaymentView = React.memo(() => {
           </div>
         );
       })(), document.body)}
+
+      {/* ─── PDF Preview Modal ───────────────────────────────────────────────────── */}
+      {pdfPreviewUrl && createPortal((
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-[10050]">
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 bg-white rounded-none shadow-2xl w-[95vw] max-w-[1400px] h-screen flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-3 bg-gradient-to-r from-slate-800 to-slate-700 shrink-0">
+              <h3 className="text-sm font-bold text-white tracking-wide flex items-center gap-2">
+                <FileText size={16} />
+                แบบฟอร์มเบิกงวดงาน / PAYMENT APPLICATION
+              </h3>
+              <div className="flex items-center gap-2">
+                <a
+                  href={pdfPreviewUrl}
+                  download={`${pdfPreviewPayment?.paymentNo || "payment"}.pdf`}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-colors"
+                >
+                  <Download size={14} />
+                  ดาวน์โหลด PDF
+                </a>
+                <button
+                  onClick={handleClosePdfPreview}
+                  className="text-white/60 hover:text-white hover:bg-white/20 p-1.5 rounded-lg transition-all"
+                >
+                  <XCircle size={18} />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 bg-slate-100 overflow-hidden">
+              <iframe
+                src={`${pdfPreviewUrl}#view=FitH&toolbar=1&navpanes=0&scrollbar=1`}
+                title="Payment PDF Preview"
+                className="w-full h-full border-0"
+              />
+            </div>
+          </div>
+        </div>
+      ), document.body)}
 
       {/* Create/Edit Modal ถูกลบออกแล้ว — Payment สร้างอัตโนมัติจาก PO (PM กด Active) */}
     </div>

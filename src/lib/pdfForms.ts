@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb, PDFName, PDFString } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 import { getDownloadURL, ref, uploadBytes, getBytes, deleteObject } from "firebase/storage";
 import { storage, FORM_TEMPLATE_PATHS } from "./firebase";
@@ -10,7 +10,7 @@ const fmtMoney = (n: any) => nf2.format(Number(n || 0));
 const fmtQty = (n: any) => {
   const num = Number(n);
   if (!Number.isFinite(num)) return "";
-  return Number.isInteger(num) ? nf0.format(num) : String(num);
+  return Number.isInteger(num) ? nf0.format(num) : nf2.format(num);
 };
 
 function safeDate(dateLike: any) {
@@ -39,14 +39,23 @@ function setTextIfExists(form: any, fieldNames: string[], value: any, customFont
   return false;
 }
 
-function setMultilineIfExists(form: any, fieldNames: string[], value: any, customFont?: any) {
+function setMultilineIfExists(form: any, fieldNames: string[], value: any) {
   const v = value == null ? "" : String(value);
   for (const name of fieldNames) {
     try {
       const f = form.getTextField(name);
-      try { f.enableMultiline(); } catch (_) {}
+      // Only enable multiline if not already set in template — prevents pdf-lib
+      // from corrupting fields that were already configured as multiline in Acrobat.
+      let alreadyMultiline = false;
+      try {
+        const flags = f.acroField.getFlags();
+        if (flags) alreadyMultiline = (flags.value() & (1 << 12)) !== 0;
+      } catch (_) {}
+      if (!alreadyMultiline) {
+        try { f.enableMultiline(); } catch (_) {}
+      }
       f.setText(v);
-      if (customFont) try { f.updateAppearances(customFont); } catch (_) {}
+      // NEVER updateAppearances — let the PDF reader use the template's own formatting
       return true;
     } catch (_) {}
   }
@@ -68,8 +77,12 @@ async function tryLoadPdfFromUrl(url: string, timeoutMs = 6000): Promise<ArrayBu
 
 let globalFontBytes: ArrayBuffer | null = null;
 
-async function loadTemplate(kind: "pr" | "po" | "rp"): Promise<{ pdfDoc: any; hasForm: boolean; customFont?: any; templateBytes?: ArrayBuffer }> {
-  const base = kind === "pr" ? "pr-form-lib" : kind === "rp" ? "rp-form-lib" : "po-form-lib";
+async function loadTemplate(kind: "pr" | "po" | "rp" | "payment"): Promise<{ pdfDoc: any; hasForm: boolean; customFont?: any; templateBytes?: ArrayBuffer }> {
+  const base =
+    kind === "pr" ? "pr-form-lib" :
+    kind === "rp" ? "rp-form-lib" :
+    kind === "payment" ? "payment-lib" :
+    "po-form-lib";
 
   const localCandidates = [
     `/${base}.pdf`,
@@ -162,6 +175,55 @@ function fillItemsTable(form: any, items: any[], maxRows = 20, customFont?: any,
     setTextIfExists(form, [`item_discount_${idx2}`, `discount_${idx2}`, `fill_${18 + i}`], item?.discount ? fmtMoney(item.discount) : "", customFont);
     setTextIfExists(form, [`item_amount_${idx2}`, `amount_${idx2}`, `fill_${19 + i}`], item ? fmtMoney(item.amount ?? (Number(item.quantity) * Number(item.price))) : "", customFont);
   }
+}
+
+function safePct(num: number, den: number) {
+  if (den <= 0) return "";
+  return String(Math.round((num / den) * 10000) / 100) + "%";
+}
+
+function fillPaymentRow(
+  form: any,
+  rowIndex: number,
+  item: any,
+  displayNum: string,
+  customFont?: any
+) {
+  const idx = String(rowIndex);
+
+  setTextIfExists(form, [`No${idx}`, `no${idx}`, `item_no_${idx}`, `fill_no_${idx}`, `No0`, `no0`, `item_no_0`, `fill_no_0`], displayNum, customFont);
+
+  setTextIfExists(form, [`description${idx}`, `desc${idx}`, `item_desc_${idx}`, `description_${idx}`, `description0`, `desc0`, `item_desc_0`, `description_0`], item?.description || "", customFont);
+
+  setTextIfExists(form, [`unit${idx}`, `item_unit_${idx}`, `unit_${idx}`, `unit0`, `item_unit_0`, `unit_0`], item?.unit || "", customFont);
+
+  setTextIfExists(form, [`qty${idx}`, `item_qty_${idx}`, `quantity_${idx}`, `qty0`, `item_qty_0`, `quantity_0`], item ? fmtQty(item.contractQty) : "", customFont);
+
+  setTextIfExists(form, [`price${idx}`, `item_price_${idx}`, `unit_price_${idx}`, `price0`, `item_price_0`, `unit_price_0`], item ? fmtMoney(item.contractPrice) : "", customFont);
+
+  setTextIfExists(form, [`amount${idx}`, `item_amount_${idx}`, `amount0`, `item_amount_0`], item ? fmtMoney(item.contractAmount) : "", customFont);
+
+  const sumQty = item ? (item.prevAccumQty + item.thisPeriodQty) : 0;
+  setTextIfExists(form, [`sumtotalqty${idx}`, `sum_total_qty_${idx}`, `sum_qty_${idx}`, `sumtotalqty0`, `sum_total_qty_0`, `sum_qty_0`], item ? fmtQty(sumQty) : "", customFont);
+
+  const sumAmt = item ? (item.prevAccumAmount + item.thisPeriodAmount) : 0;
+  setTextIfExists(form, [`sumamount${idx}`, `sum_amount_${idx}`, `sum_amt_${idx}`, `sumamount`, `sum_amount`, `sum_amt`], item ? fmtMoney(sumAmt) : "", customFont);
+
+  const sumProgress = item ? safePct(sumAmt, item.contractAmount) : "";
+  setTextIfExists(form, [`sumprogress${idx}`, `sum_progress_${idx}`, `progress_${idx}`, `sumprogress0`, `sum_progress_0`, `progress_0`], sumProgress, customFont);
+
+  setTextIfExists(form, [`preqty${idx}`, `prev_qty_${idx}`, `pre_qty_${idx}`, `preqty0`, `prev_qty_0`, `pre_qty_0`], item ? fmtQty(item.prevAccumQty) : "", customFont);
+
+  setTextIfExists(form, [`preamount${idx}`, `prev_amount_${idx}`, `pre_amount_${idx}`, `preamount0`, `prev_amount_0`, `pre_amount_0`], item ? fmtMoney(item.prevAccumAmount) : "", customFont);
+
+  const prevProgress = item ? safePct(item.prevAccumAmount, item.contractAmount) : "";
+  setTextIfExists(form, [`prev${idx}`, `prev_progress_${idx}`, `prev0`, `prev_progress_0`], prevProgress, customFont);
+
+  setTextIfExists(form, [`nowqty${idx}`, `now_qty_${idx}`, `curr_qty_${idx}`, `nowqty0`, `now_qty_0`, `curr_qty_0`], item ? fmtQty(item.thisPeriodQty) : "", customFont);
+
+  setTextIfExists(form, [`nowamount${idx}`, `now_amount_${idx}`, `curr_amount_${idx}`, `nowamount0`, `now_amount_0`, `curr_amount_0`], item ? fmtMoney(item.thisPeriodAmount) : "", customFont);
+
+  setTextIfExists(form, [`nowcurr${idx}`, `now_curr_${idx}`, `curr_progress_${idx}`, `nowcurr0`, `now_curr_0`, `curr_progress_0`], item ? (String(item.thisPeriodPct) + "%") : "", customFont);
 }
 
 export async function generatePRPdfBytes(pr: any, { projectName = "", budgetDesc = "" } = {}) {
@@ -458,6 +520,173 @@ export async function generatePOPdfBytes(po: any, { vendor = null, project = nul
       `* หมายเหตุ: ไม่พบ Template PDF กรุณาอัปโหลด PO Form ในหน้า Admin → แบบฟอร์ม PDF`,
     ].filter(l => l !== undefined);
     await buildBasicPage(initialDoc, lines as string[]);
+    return await initialDoc.save();
+  }
+}
+
+/**
+ * Generate Payment Application PDF bytes from payment-lib.pdf template.
+ *
+ * Form field names (from template):
+ *   projects, contractname, pono, contract, due, attachment,
+ *   payno, preiod, month, today, createdate, cmdate, pmdate
+ *   No1..No5, description1..description5, unit1..unit5,
+ *   qty1..qty5, price1..price5, amount1..amount5,
+ *   sumtotalqty1..sumtotalqty5, sumamount1..sumamount5, sumprogress1..sumprogress5,
+ *   preqty1..preqty5, preamount1..preamount5, prev1..prev5,
+ *   nowqty1..nowqty5, nowamount1..nowamount5, nowcurr1..nowcurr5
+ *   (also supports legacy 0-index field names)
+ */
+export async function generatePaymentPdfBytes(
+  payment: any,
+  { project = null, contractor = null, pos = [] }: { project?: any; contractor?: any; pos?: any[] } = {}
+): Promise<Uint8Array> {
+  const { pdfDoc: initialDoc, hasForm, customFont, templateBytes } = await loadTemplate("payment");
+
+  const items = (payment.items || []).map((it: any) => ({
+    description: it.description || "",
+    unit: it.unit || "",
+    contractQty: Number(it.contractQty) || 0,
+    contractPrice: Number(it.contractPrice) || 0,
+    contractAmount: (Number(it.contractQty) || 0) * (Number(it.contractPrice) || 0),
+    prevAccumQty: Number(it.prevAccumQty) || 0,
+    prevAccumAmount: Number(it.prevAccumAmount) || 0,
+    thisPeriodQty: Number(it.thisPeriodQty) || 0,
+    thisPeriodAmount: Number(it.thisPeriodAmount) || 0,
+    thisPeriodPct: Number(it.thisPeriodPct) || 0,
+  }));
+
+  const poNos = (payment.selectedPrIds || [])
+    .map((id: string) => {
+      const po = (pos || []).find((p: any) => p.id === id);
+      return po?.poNo || "";
+    })
+    .filter(Boolean)
+    .join(", ");
+
+  const thaiMonths = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
+  const todayDate = new Date();
+  const monthValue = payment.billingCycle
+    ? payment.billingCycle
+    : `${thaiMonths[todayDate.getMonth()]} ${todayDate.getFullYear() + 543}`;
+
+  const headerData = {
+    projects: project?.name || payment.projectId || "",
+    contractname: contractor?.name || payment.contractorName || "",
+    pono: poNos || payment.poNo || "",
+    contract: payment.contractTitle || "",
+    due: payment.billingCycle || "",
+    attachment: (payment.paymentAttachments || []).length > 0 ? String((payment.paymentAttachments || []).length) : "",
+    payno: payment.paymentNo || payment.id || "",
+    preiod: payment.periodNo || "1",
+    month: monthValue,
+    today: safeDate(payment.createdAt || new Date().toISOString()),
+    createdate: safeDate(payment.createdAt || new Date().toISOString()),
+    cmdate: safeDate(payment.cmApprovedAt || payment.cmApprovedDate || ""),
+    pmdate: safeDate(payment.pmApprovedAt || payment.pmApprovedDate || ""),
+  };
+
+  if (hasForm) {
+    const mergedPdf = await PDFDocument.create();
+    const MAX_ROWS = 17;
+
+    // Estimate how many "line units" an item consumes based on description length
+    function estimateLineCost(description: string): number {
+      const len = (description || "").length;
+      if (len <= 40) return 1;
+      if (len <= 80) return 2;
+      return 3;
+    }
+
+    const itemChunks: any[][] = [];
+    if (items.length === 0) {
+      itemChunks.push([]);
+    } else {
+      let currentChunk: any[] = [];
+      let currentLines = 0;
+      for (const item of items) {
+        const cost = estimateLineCost(item.description);
+        if (currentLines + cost > MAX_ROWS && currentChunk.length > 0) {
+          itemChunks.push(currentChunk);
+          currentChunk = [item];
+          currentLines = cost;
+        } else {
+          currentChunk.push(item);
+          currentLines += cost;
+        }
+      }
+      if (currentChunk.length > 0) itemChunks.push(currentChunk);
+    }
+
+    let itemsFilled = 0;
+    for (let c = 0; c < itemChunks.length; c++) {
+      const chunk = itemChunks[c];
+      let pdfDoc = c === 0 ? initialDoc : await PDFDocument.load(templateBytes as ArrayBuffer);
+      let pageCustomFont = customFont;
+
+      if (c > 0) {
+        pdfDoc.registerFontkit(fontkit);
+        if (globalFontBytes) pageCustomFont = await pdfDoc.embedFont(globalFontBytes);
+        else {
+          pageCustomFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+        }
+      }
+
+      const form = pdfDoc.getForm();
+
+      // 1. Fill item rows
+      const startIndex = itemsFilled + 1;
+      for (let r = 0; r < MAX_ROWS; r++) {
+        const item = chunk[r] || null;
+        const displayNum = item ? String(startIndex + r) : "";
+        fillPaymentRow(form, r + 1, item, displayNum, pageCustomFont);
+      }
+      itemsFilled += chunk.length;
+
+      // 2. Fill header fields
+      setTextIfExists(form, ["projects"], headerData.projects, pageCustomFont);
+      setTextIfExists(form, ["contractname"], headerData.contractname, pageCustomFont);
+      setTextIfExists(form, ["pono"], headerData.pono, pageCustomFont);
+      setTextIfExists(form, ["contract"], headerData.contract, pageCustomFont);
+      setTextIfExists(form, ["due"], headerData.due, pageCustomFont);
+      setTextIfExists(form, ["attachment"], headerData.attachment, pageCustomFont);
+      setTextIfExists(form, ["payno"], headerData.payno, pageCustomFont);
+      setTextIfExists(form, ["preiod"], headerData.preiod, pageCustomFont);
+      setTextIfExists(form, ["month"], headerData.month, pageCustomFont);
+      setTextIfExists(form, ["today"], headerData.today, pageCustomFont);
+      setTextIfExists(form, ["createdate"], headerData.createdate, pageCustomFont);
+      setTextIfExists(form, ["cmdate"], headerData.cmdate, pageCustomFont);
+      setTextIfExists(form, ["pmdate"], headerData.pmdate, pageCustomFont);
+
+      try { form.flatten(); } catch (_) {}
+
+      const [copiedPage] = await mergedPdf.copyPages(pdfDoc, [0]);
+      mergedPdf.addPage(copiedPage);
+    }
+
+    return await mergedPdf.save();
+  } else {
+    const lines: string[] = [
+      `## แบบฟอร์มเบิกงวดงาน / PAYMENT APPLICATION`, ``,
+      `เลขที่เบิก      : ${payment.paymentNo || payment.id || "-"}`,
+      `โครงการ        : ${headerData.projects}`,
+      `ผู้รับเหมา      : ${headerData.contractname}`,
+      `ชื่อสัญญา      : ${headerData.contract}`,
+      `รอบวางบิล      : ${headerData.due}`,
+      `งวดงาน        : ${headerData.preiod}`,
+      `วันที่          : ${headerData.today}`,
+      ``,
+      `## รายการ`,
+      `${"No.".padEnd(4)} ${"รายการ".padEnd(30)} ${"หน่วย".padEnd(8)} ${"ปริมาณ".padEnd(12)} ${"ราคา/หน่วย".padEnd(12)} ${"จำนวนเงิน"}`,
+      `${"-".repeat(80)}`,
+      ...items.map((it: any, i: number) =>
+        `${String(i + 1).padEnd(4)} ${String(it.description).substring(0, 28).padEnd(30)} ${String(it.unit).padEnd(8)} ${fmtQty(it.contractQty).padEnd(12)} ${fmtMoney(it.contractPrice).padEnd(12)} ${fmtMoney(it.contractAmount)}`
+      ),
+      `${"-".repeat(80)}`,
+      ``,
+      `* หมายเหตุ: ไม่พบ Template PDF กรุณาอัปโหลด Payment Form ในหน้า Admin → แบบฟอร์ม PDF`,
+    ];
+    await buildBasicPage(initialDoc, lines);
     return await initialDoc.save();
   }
 }

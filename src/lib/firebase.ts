@@ -84,6 +84,7 @@ export const FORM_TEMPLATE_PATHS = {
   pr: "forms/pr-form-lib.pdf",
   po: "forms/po-form-lib.pdf",
   rp: "forms/rp-form-lib.pdf",
+  payment: "forms/payment-lib.pdf",
 } as const;
 
 export const appId =
