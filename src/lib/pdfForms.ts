@@ -658,6 +658,21 @@ export async function generatePaymentPdfBytes(
       setTextIfExists(form, ["cmdate"], headerData.cmdate, pageCustomFont);
       setTextIfExists(form, ["pmdate"], headerData.pmdate, pageCustomFont);
 
+      // 3. Fill grand total fields
+      const totalContractAmount = items.reduce((s: number, it: any) => s + Number(it.contractAmount || 0), 0);
+      const totalAccumQty       = items.reduce((s: number, it: any) => s + (Number(it.prevAccumQty || 0) + Number(it.thisPeriodQty || 0)), 0);
+      const totalAccumAmount    = items.reduce((s: number, it: any) => s + (Number(it.prevAccumAmount || 0) + Number(it.thisPeriodAmount || 0)), 0);
+      const totalPrevAmount     = items.reduce((s: number, it: any) => s + Number(it.prevAccumAmount || 0), 0);
+      const totalThisAmount     = items.reduce((s: number, it: any) => s + Number(it.thisPeriodAmount || 0), 0);
+
+      setTextIfExists(form, ["grandamount"], fmtMoney(totalContractAmount), pageCustomFont);
+      setTextIfExists(form, ["grandtotal"], fmtMoney(totalAccumAmount), pageCustomFont);
+      setTextIfExists(form, ["grandprogress", "grandprog"], safePct(totalAccumAmount, totalContractAmount), pageCustomFont);
+      setTextIfExists(form, ["grandprev"], fmtMoney(totalPrevAmount), pageCustomFont);
+      setTextIfExists(form, ["grandpercentprev", "grandperc"], safePct(totalPrevAmount, totalContractAmount), pageCustomFont);
+      setTextIfExists(form, ["grandcurr"], fmtMoney(totalThisAmount), pageCustomFont);
+      setTextIfExists(form, ["grandpercentcurr", "grandper"], safePct(totalThisAmount, totalContractAmount), pageCustomFont);
+
       try { form.flatten(); } catch (_) {}
 
       const [copiedPage] = await mergedPdf.copyPages(pdfDoc, [0]);
