@@ -2179,6 +2179,13 @@ const AdminDashboard = () => {
   });
   const [users, setUsers] = useState([]);
   const [logs, setLogs] = useState([]); // V.16 Logs State
+  const [logsPage, setLogsPage] = useState(1);
+  const LOGS_PER_PAGE = 50;
+  const paginatedLogs = useMemo(() => {
+    const start = (logsPage - 1) * LOGS_PER_PAGE;
+    return logs.slice(start, start + LOGS_PER_PAGE);
+  }, [logs, logsPage]);
+  const totalPages = Math.max(1, Math.ceil(logs.length / LOGS_PER_PAGE));
   const [projects, setProjects] = useState([]);
   const [editUser, setEditUser] = useState(null);
   const [editForm, setEditForm] = useState({
@@ -2218,7 +2225,19 @@ const AdminDashboard = () => {
       setProjects(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     });
 
-    // V.16 Fetch Logs
+    return () => {
+      unsubUsers();
+      unsubProjects();
+    };
+  }, []);
+
+  // Logs — lazy load เฉพาะเมื่อ activeTab === "logs"
+  useEffect(() => {
+    if (activeTab !== "logs") {
+      setLogs([]);
+      setLogsPage(1);
+      return;
+    }
     const qLogs = query(
       collection(db, "artifacts", appId, "public", "data", "logs"),
       orderBy("timestamp", "desc"),
@@ -2231,13 +2250,8 @@ const AdminDashboard = () => {
           .filter((log) => log.action !== "Navigate")
       );
     });
-
-    return () => {
-      unsubUsers();
-      unsubProjects();
-      unsubLogs();
-    };
-  }, []);
+    return () => unsubLogs();
+  }, [activeTab]);
 
   // Sync local state when Firestore data loads
   useEffect(() => {
@@ -2711,7 +2725,7 @@ const AdminDashboard = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {logs.map((log) => {
+                {paginatedLogs.map((log) => {
                   const projectName = getLogProjectName(log);
                   return (
                     <tr
@@ -2745,7 +2759,7 @@ const AdminDashboard = () => {
                     </tr>
                   );
                 })}
-                {logs.length === 0 && (
+                {paginatedLogs.length === 0 && (
                   <tr>
                     <td colSpan={5} className="p-8 text-center text-slate-400">
                       No logs available
@@ -2754,6 +2768,40 @@ const AdminDashboard = () => {
                 )}
               </tbody>
             </table>
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between px-3 py-2 border-t bg-slate-50 text-xs">
+                <span className="text-slate-500">
+                  หน้า {logsPage} / {totalPages} ({logs.length} รายการ)
+                </span>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => setLogsPage((p) => Math.max(1, p - 1))}
+                    disabled={logsPage <= 1}
+                    className="px-2 py-1 rounded border bg-white disabled:opacity-40 hover:bg-slate-100"
+                  >
+                    &larr; ก่อนหน้า
+                  </button>
+                  {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => setLogsPage(p)}
+                      className={`px-2 py-1 rounded border min-w-[1.75rem] ${
+                        p === logsPage ? "bg-blue-600 text-white border-blue-600" : "bg-white hover:bg-slate-100"
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => setLogsPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={logsPage >= totalPages}
+                    className="px-2 py-1 rounded border bg-white disabled:opacity-40 hover:bg-slate-100"
+                  >
+                    ถัดไป &rarr;
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </Card>
       )}
