@@ -175,15 +175,19 @@ const AppShell = () => {
 
   // Auto-select first visible project when selection is invalid (ไม่ใส่ selectedProjectId ใน deps เพื่อลดการรัน effect และกัน loop)
   useEffect(() => {
-    if (visibleProjects.length === 0) {
+    const selectableProjects = activeMenu === "projects" || activeMenu === "budget"
+      ? visibleProjects.filter((p) => p.status !== "Close")
+      : visibleProjects.filter((p) => (p.status || "Active") === "Active");
+
+    if (selectableProjects.length === 0) {
       setSelectedProjectId(null);
       return;
     }
     setSelectedProjectId((current) => {
-      if (!current || !visibleProjects.some((p) => p.id === current)) return visibleProjects[0].id;
+      if (!current || !selectableProjects.some((p) => p.id === current)) return selectableProjects[0].id;
       return current;
     });
-  }, [visibleProjects]);
+  }, [visibleProjects, activeMenu]);
 
   // โหลด vendors เมื่อเข้าหน้า PO / ตาราง PO / Vendor (ลดโควต้า — โหลดเฉพาะเมื่อใช้)
   useEffect(() => {
@@ -516,10 +520,18 @@ const AppShell = () => {
             {!isCompactViewport && <div className="flex-1" />}
 
             {/* Project Cards — อยู่ขวา ก่อนกระดิ่ง ขยายออกซ้ายเมื่อมีโครงการเพิ่ม */}
-            {moduleMenus && visibleProjects.length > 0 && (
+            {(() => {
+              const selectableProjects = activeMenu === "projects" || activeMenu === "budget"
+                ? visibleProjects.filter((p) => p.status !== "Close")
+                : visibleProjects.filter((p) => (p.status || "Active") === "Active");
+              return moduleMenus && selectableProjects.length > 0;
+            })() && (
               <div className={`${isCompactViewport ? "order-3 flex w-full overflow-x-auto overflow-y-visible no-scrollbar pt-1 pb-1" : "flex items-center gap-1.5 shrink-0"}`}>
                 <div className={`${isCompactViewport ? "flex min-w-max items-center gap-1.5" : "flex items-center gap-1.5 shrink-0"}`}>
-                  {visibleProjects.map((p) => {
+                  {(activeMenu === "projects" || activeMenu === "budget"
+                    ? visibleProjects.filter((p) => p.status !== "Close")
+                    : visibleProjects.filter((p) => (p.status || "Active") === "Active")
+                  ).map((p) => {
                     const projPending = pendingByProject?.find((x) => x.projectId === p.id);
                     const pendingTotal = projPending?.total || 0;
                     return (

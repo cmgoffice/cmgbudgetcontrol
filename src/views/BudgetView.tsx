@@ -208,6 +208,42 @@ const BudgetView = React.memo(() => {
     (b) => b.projectId === selectedProjectId && b.category === budgetCategory
   );
 
+  const selectedProject = projects.find((p) => p.id === selectedProjectId);
+  const isSelectedProjectActive = (selectedProject?.status || "Active") === "Active";
+  const latestRevisionBudgetTotal = Number(selectedProject?.budgetTotal || 0);
+  const shouldEnforceRevisionBudgetTotal = isSelectedProjectActive && latestRevisionBudgetTotal > 0;
+  const budgetSetupDisabledByActiveProject = isSelectedProjectActive;
+  const currentBudgetRevisionNo = Number.isFinite(Number(selectedProject?.currentBudgetRevision))
+    ? Number(selectedProject.currentBudgetRevision)
+    : -1;
+  const isBudgetNewInCurrentRevisionCycle = useCallback((budget) => {
+    if (!budget || selectedProject?.status !== "Prepare Budget") return false;
+    if (budget.createdAfterRevision === undefined || budget.createdAfterRevision === null) return false;
+    return Number(budget.createdAfterRevision) === currentBudgetRevisionNo;
+  }, [selectedProject?.status, currentBudgetRevisionNo]);
+
+  const getProjectBudgetGrandTotal = useCallback((overrideBudgetId = null, overrideAmount = null, extraAmount = 0) => {
+    const baseTotal = budgets
+      .filter((b) => b.projectId === selectedProjectId)
+      .reduce((sum, b) => {
+        if (overrideBudgetId && b.id === overrideBudgetId) return sum + (Number(overrideAmount) || 0);
+        return sum + (Number(b.amount) || 0);
+      }, 0);
+    if (!overrideBudgetId && overrideAmount != null) return baseTotal + (Number(overrideAmount) || 0) + (Number(extraAmount) || 0);
+    return baseTotal + (Number(extraAmount) || 0);
+  }, [budgets, selectedProjectId]);
+
+  const validateGrandTotalWithinLatestRevision = useCallback((nextGrandTotal, actionLabel = "ดำเนินการ") => {
+    if (!shouldEnforceRevisionBudgetTotal) return true;
+    if (Number(nextGrandTotal || 0) <= latestRevisionBudgetTotal) return true;
+    showAlert(
+      "เกิน Budget Total ล่าสุด",
+      `${actionLabel}ไม่ได้ เนื่องจาก Grand Total ${formatCurrency(nextGrandTotal)} เกิน Budget Total ของ Revision ล่าสุด ${formatCurrency(latestRevisionBudgetTotal)}`,
+      "warning"
+    );
+    return false;
+  }, [shouldEnforceRevisionBudgetTotal, latestRevisionBudgetTotal, showAlert]);
+
   // V.20: Explicitly define pending lists with Admin Super-Powers
   const pendingBudgetsForProject = useMemo(() => {
     if (!selectedProjectId) return [];
@@ -493,6 +529,10 @@ const BudgetView = React.memo(() => {
       showAlert("แจ้งเตือน", "กรุณาเลือกโครงการก่อนดาวน์โหลด Template", "warning");
       return;
     }
+    if (budgetSetupDisabledByActiveProject) {
+      showAlert("ไม่สามารถ Download Template ได้", "Project สถานะ Active ปิดใช้งาน Download Template ในเมนู Budget", "warning");
+      return;
+    }
     // ฟังก์ชัน escape ค่าสำหรับ CSV
     const esc = (val: any) => {
       const s = String(val ?? "");
@@ -556,6 +596,11 @@ const BudgetView = React.memo(() => {
   };
 
   const handleFileUpload = (event) => {
+    if (budgetSetupDisabledByActiveProject) {
+      showAlert("ไม่สามารถ Import CSV ได้", "Project สถานะ Active ปิดใช้งาน Import CSV ในเมนู Budget", "warning");
+      if (event?.target) event.target.value = "";
+      return;
+    }
     const file = event.target.files[0];
     if (!file) return;
     setImportFile(file);
@@ -684,6 +729,8 @@ const BudgetView = React.memo(() => {
   const handleConfirmImport = async () => {
     if (!selectedProjectId)
       return showAlert("Error", "กรุณาเลือกโครงการก่อน Import", "error");
+    if (budgetSetupDisabledByActiveProject)
+      return showAlert("ไม่สามารถ Import CSV ได้", "Project สถานะ Active ปิดใช้งาน Import CSV ในเมนู Budget", "warning");
 
     const normalizeDesc = (s: string) => (s || "").trim().toLowerCase();
 
@@ -700,6 +747,24 @@ const BudgetView = React.memo(() => {
       const isLegacyTemplate = rows.every((r: any) => r.isLegacy);
 
       if (isLegacyTemplate) {
+        rows.forEach((row: any) => {
+          const existingBudget = budgets.find(
+            (b) =>
+              b.projectId === selectedProjectId &&
+              b.code === row.mainCode &&
+              normalizeDesc(b.description) === normalizeDesc(row.mainDescription)
+          );
+          if (existingBudget) {
+            const minAmount = getMinimumBudgetAmountForNonNegativeBalance(existingBudget);
+            const nextAmount = Number(row.amount) || 0;
+            if (nextAmount < minAmount) {
+              allViolationMessages.push(
+                `❌ ${row.mainCode} — ${row.mainDescription || ""}\n` +
+                `   Amount ใหม่: ${formatCurrency(nextAmount)}  |  ขั้นต่ำที่ต้องมีเพื่อไม่ให้ Balance ติดลบ: ${formatCurrency(minAmount)}`
+              );
+            }
+          }
+        });
         allBudgetMaps.push({ cat, isLegacy: true, legacyRows: rows });
       } else {
         // สร้าง budgetMap สำหรับ category นี้
@@ -816,6 +881,33 @@ const BudgetView = React.memo(() => {
       return;
     }
 
+    const importNewBudgetTotal = allBudgetMaps.reduce((sum, entry: any) => {
+      if (entry.isLegacy) {
+        return sum + (entry.legacyRows || []).reduce((s: number, row: any) => {
+          const existingBudget = budgets.find(
+            (b) =>
+              b.projectId === selectedProjectId &&
+              b.code === row.mainCode &&
+              normalizeDesc(b.description) === normalizeDesc(row.mainDescription)
+          );
+          return existingBudget ? s : s + (Number(row.amount) || 0);
+        }, 0);
+      }
+      return sum + Object.values(entry.budgetMap || {}).reduce((s: number, budgetItem: any) => {
+        const existingBudget = budgets.find(
+          (b) =>
+            b.projectId === selectedProjectId &&
+            b.code === budgetItem.code &&
+            normalizeDesc(b.description) === normalizeDesc(budgetItem.description)
+        );
+        return existingBudget ? s : s + (Number(budgetItem.amount) || 0);
+      }, 0);
+    }, 0);
+    const nextImportGrandTotal = getProjectBudgetGrandTotal(null, null, importNewBudgetTotal);
+    if (!validateGrandTotalWithinLatestRevision(nextImportGrandTotal, "Import CSV ")) {
+      return;
+    }
+
     // ---- Phase 2: ไม่มี violation → อัปโหลดไฟล์แนบ แล้ว write Firestore ทั้งหมด ----
     try {
       if (importFile) {
@@ -841,6 +933,9 @@ const BudgetView = React.memo(() => {
             amount: row.amount,
             status: "Draft",
             subItems: [],
+            createdAfterRevision: currentBudgetRevisionNo,
+            createdAsRevisionNewItem: true,
+            createdAsRevisionNewItemAt: new Date().toISOString(),
           };
           const safeDesc = (budgetItem.description || "")
             .replace(/\//g, "-").replace(/[.#$[\]]/g, "").trim();
@@ -865,7 +960,12 @@ const BudgetView = React.memo(() => {
               updateData("budgets", existingBudget.id, { subItems: mergedSubItems })
             );
           } else {
-            batchPromises.push(addData("budgets", budgetItem, budgetDocId));
+            batchPromises.push(addData("budgets", {
+              ...budgetItem,
+              createdAfterRevision: currentBudgetRevisionNo,
+              createdAsRevisionNewItem: true,
+              createdAsRevisionNewItemAt: new Date().toISOString(),
+            }, budgetDocId));
           }
           importCount++;
         });
@@ -1049,6 +1149,19 @@ const BudgetView = React.memo(() => {
       0
     );
     return { prTotal, poTotal, invoiceTotal, relatedPRs, relatedPOs };
+  };
+
+  const getMinimumBudgetAmountForNonNegativeBalance = (budget) => {
+    if (!budget) return 0;
+    const hasSubItems = Array.isArray(budget.subItems) && budget.subItems.length > 0;
+    if (hasSubItems) {
+      return budget.subItems.reduce((sum, sub) => {
+        const amount = Number(sub?.amount);
+        if (Number.isFinite(amount)) return sum + amount;
+        return sum + (Number(sub?.quantity || 0) * Number(sub?.unitPrice || 0));
+      }, 0);
+    }
+    return Number(getBudgetStats(budget).invoiceTotal || 0);
   };
 
   const NOW_STATUS_COLOR_MAP = {
@@ -1515,8 +1628,31 @@ const BudgetView = React.memo(() => {
       showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ตั้งงบประมาณ", "warning");
       return;
     }
+    if (!editingBudgetId && budgetSetupDisabledByActiveProject) {
+      showAlert("ไม่สามารถตั้งงบประมาณได้", "Project สถานะ Active ปิดใช้งานการตั้งงบประมาณในเมนู Budget", "warning");
+      return;
+    }
     if (newStatus === "Wait MD Approve" && !canSubmitBudget) {
       showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
+      return;
+    }
+    if (editingBudgetId) {
+      const editingBudget = budgets.find((b) => b.id === editingBudgetId);
+      const minAmount = getMinimumBudgetAmountForNonNegativeBalance(editingBudget);
+      const nextAmount = Number(formData.amount) || 0;
+      if (nextAmount < minAmount) {
+        showAlert(
+          "ไม่สามารถบันทึก Amount ได้",
+          `Amount ใหม่ต้องไม่ต่ำกว่า ${formatCurrency(minAmount)} เพื่อไม่ให้ Balance ของรายการนี้ติดลบ`,
+          "warning"
+        );
+        return;
+      }
+    }
+    const nextGrandTotal = editingBudgetId
+      ? getProjectBudgetGrandTotal(editingBudgetId, Number(formData.amount) || 0)
+      : getProjectBudgetGrandTotal(null, Number(formData.amount) || 0);
+    if (!validateGrandTotalWithinLatestRevision(nextGrandTotal, editingBudgetId ? "แก้ไขงบประมาณ " : "ตั้งงบประมาณ ")) {
       return;
     }
     let success = false;
@@ -1551,6 +1687,9 @@ const BudgetView = React.memo(() => {
           status: "Draft",
           revisionReason: "",
           subItems: [],
+          createdAfterRevision: currentBudgetRevisionNo,
+          createdAsRevisionNewItem: true,
+          createdAsRevisionNewItemAt: new Date().toISOString(),
         };
         const budgetDocId = `${selectedProjectId}-${budgetData.code}-${budgetData.description}`;
         await setDoc(
@@ -3097,15 +3236,17 @@ const BudgetView = React.memo(() => {
                 </div>
               )}
               <div className="flex items-center gap-1">
-                <Button
-                  variant="outline"
-                  onClick={handleDownloadTemplate}
-                  className="text-[10px] h-8 px-2 border-slate-200 text-slate-500"
-                  title="Download Template"
-                >
-                  <Download size={12} />
-                </Button>
-                {canUseFunction("budget", "import") && (
+                {!budgetSetupDisabledByActiveProject && (
+                  <Button
+                    variant="outline"
+                    onClick={handleDownloadTemplate}
+                    className="text-[10px] h-8 px-2 border-slate-200 text-slate-500"
+                    title="Download Template"
+                  >
+                    <Download size={12} />
+                  </Button>
+                )}
+                {canUseFunction("budget", "import") && !budgetSetupDisabledByActiveProject && (
                   <label className="flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-100 hover:bg-emerald-100 cursor-pointer transition-colors" title="Import CSV">
                     <FileSpreadsheet size={14} />
                     <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
@@ -3142,7 +3283,7 @@ const BudgetView = React.memo(() => {
                 </Button>
               )}
 
-              {canUseFunction("budget", "add") && (
+              {canUseFunction("budget", "add") && !budgetSetupDisabledByActiveProject && (
                 <Button
                   className="bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-100 border-none rounded-xl px-4 py-2 text-sm font-bold flex items-center gap-2 transition-all active:scale-95"
                   onClick={() => {
@@ -3228,10 +3369,17 @@ const BudgetView = React.memo(() => {
                     const canEdit =
                       !isLocked && b.status !== "Revision Pending" && canUseFunction("budget", "edit");
                     const isRevisionPending = b.status === "Revision Pending";
+                    const isNewRevisionBudget = isBudgetNewInCurrentRevisionCycle(b);
                     return (
                       <React.Fragment key={b.id}>
                         <tr
-                          className={`cursor-pointer transition-colors group ${isExpanded ? "bg-amber-50/80 ring-1 ring-amber-200 ring-inset" : "hover:bg-blue-50 odd:bg-white even:bg-slate-50"}`}
+                          className={`cursor-pointer transition-colors group ${
+                            isNewRevisionBudget
+                              ? "bg-emerald-50 ring-2 ring-emerald-300 ring-inset hover:bg-emerald-100"
+                              : isExpanded
+                                ? "bg-amber-50/80 ring-1 ring-amber-200 ring-inset"
+                                : "hover:bg-blue-50 odd:bg-white even:bg-slate-50"
+                          }`}
                           onClick={() => toggleRow(b.id)}
                         >
                           {budgetCategory !== "OVERVIEW" && isColumnVisible("budget", "checkbox") && (
@@ -3266,7 +3414,12 @@ const BudgetView = React.memo(() => {
                                   <span className="w-2 h-2 rounded-full bg-slate-200" aria-hidden />
                                 </span>
                               )}
-                              {b.code}
+                              <span>{b.code}</span>
+                              {isNewRevisionBudget && (
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[9px] font-bold shadow-sm">
+                                  NEW REV ITEM
+                                </span>
+                              )}
                             </div>
                           </td>}
                           {isColumnVisible("budget", "description") && <td className="py-1 px-3 border-r min-w-0 overflow-hidden" title={b.description}>
