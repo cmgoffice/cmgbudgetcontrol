@@ -9,7 +9,7 @@ import {
   Clock, Package, Tag, ClipboardList, CheckSquare, Square,
   Paperclip, Mail, Flame, MapPinned, CircleDot, Zap, Building2, MapPin,
   DollarSign, Calendar, PlusCircle, ChevronRight, ChevronLeft, ChevronUp, Play, BarChart3, Menu,
-  FileSpreadsheet, Download, Upload, CreditCard
+  FileSpreadsheet, Download, Upload, CreditCard, BookOpen
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -42,6 +42,7 @@ import PaymentTableView from "./views/PaymentTableView";
 import BudgetView from "./views/BudgetView";
 import BudgetSummaryReportView from "./views/BudgetSummaryReportView";
 import ProjectSpendingView from "./views/ProjectSpendingView";
+import UserManualView from "./views/UserManualView";
 import ColumnVisibilityToggle from "./components/ColumnVisibilityToggle";
 
 /** รูปโปรไฟล์ — ถ้าโหลดไม่สำเร็จ (ลิงก์หมดอายุ/ถูกบล็อก) จะแสดง fallback แทนไอคอนรูปพัง */
@@ -159,7 +160,7 @@ const AppShell = () => {
   const MENU_ORDER = [
     "dashboard", "projects", "budget", "pr",
     "po", "payment-subcontract", "vendor", "material", "receive", "invoice",
-    "budget-summary", "project-spending", "profile", "admin",
+    "budget-summary", "project-spending", "user-manual", "profile", "admin",
   ];
   const initialRedirectDone = useRef(false);
   useEffect(() => {
@@ -412,6 +413,23 @@ const AppShell = () => {
                 System
               </div>
             )}
+            {canAccessModule("user-manual") && (
+              <>
+                {(!sidebarCollapsed || isCompactViewport) && (
+                  <div className={`font-bold uppercase tracking-wider ${isCompactViewport ? "pt-2.5 pb-1 px-2.5 text-[9px] text-slate-400" : "pt-4 pb-2 px-4 text-xs text-slate-500"}`}>
+                    Help
+                  </div>
+                )}
+                <SidebarItem
+                  icon={<BookOpen size={20} className="text-cyan-300" />}
+                  label="User Manual"
+                  active={activeMenu === "user-manual"}
+                  onClick={() => changeMenu("user-manual")}
+                  collapsed={sidebarCollapsed}
+                  dense={sidebarDense}
+                />
+              </>
+            )}
             {canAccessModule("profile") && (
               <SidebarItem
                 icon={<User size={20} />}
@@ -491,6 +509,8 @@ const AppShell = () => {
                                       ? "Budget Summary Report"
                                       : activeMenu === "project-spending"
                                         ? "Project Spending Separate Code"
+                                      : activeMenu === "user-manual"
+                                        ? "User Manual"
                                         : "Module View"}
             </h1>
             {!isCompactViewport && <div className="flex-1" />}
@@ -668,7 +688,7 @@ const AppShell = () => {
           </header>
         )}
         <div
-          className={`app-shell-content ${["projects", "budget", "pr", "po", "payment-subcontract", "vendor", "material", "invoice", "receive", "admin", "budget-summary", "project-spending"].includes(
+          className={`app-shell-content ${["projects", "budget", "pr", "po", "payment-subcontract", "vendor", "material", "invoice", "receive", "admin", "budget-summary", "project-spending", "user-manual"].includes(
             activeMenu
           )
             ? "p-3 pt-4 md:p-6 w-full max-w-none min-w-0"
@@ -835,6 +855,11 @@ const AppShell = () => {
               <div data-menu-page="receive" style={{ display: activeMenu === "receive" ? undefined : "none" }}>
                 {activeMenu === "receive" && <ReceiveView />}
               </div>
+              {activeMenu === "user-manual" && canAccessModule("user-manual") && (
+                <div data-menu-page="user-manual">
+                  <UserManualView />
+                </div>
+              )}
               {activeMenu === "budget-summary" && canAccessModule("budget-summary") && (
                 <div data-menu-page="budget-summary">
                   <BudgetSummaryReportView />

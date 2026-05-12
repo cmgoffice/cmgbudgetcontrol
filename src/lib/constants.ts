@@ -173,6 +173,7 @@ export const MODULE_ACCESS: Record<string, string[]> = {
   admin: ["Administrator"],
   "budget-summary": ["Administrator", "MD", "GM"],
   "project-spending": ["Administrator", "MD", "GM"],
+  "user-manual": ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff", "Admin Site"],
 };
 
 /**
