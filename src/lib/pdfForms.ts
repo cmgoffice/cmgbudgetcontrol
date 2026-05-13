@@ -160,6 +160,48 @@ async function buildBasicPage(pdfDoc: any, lines: string[]) {
   }
 }
 
+/**
+ * ลบ background สีฟ้าออกจาก form fields ทั้งหมดใน PO PDF
+ * ขั้นตอน:
+ *  1) ลบ /AP (pre-baked appearance stream ที่มีสีฟ้า bake อยู่แล้ว)
+ *  2) ลบ /MK /BG และ /BC (appearance characteristics)
+ *  3) เรียก form.updateFieldAppearances(customFont) เพื่อ regenerate ใหม่โดยไม่มีสีฟ้า
+ * เรียกใช้เฉพาะใน generatePOPdfBytes ก่อน form.flatten()
+ */
+function clearFieldBackgrounds(pdfDoc: any, customFont?: any) {
+  try {
+    const form = pdfDoc.getForm();
+    const fields = form.getFields();
+    for (const field of fields) {
+      try {
+        const widgets = field.acroField.getWidgets();
+        for (const widget of widgets) {
+          try {
+            // 1) ลบ pre-baked appearance stream (/AP) ที่มีสีฟ้า bake อยู่แล้ว
+            //    pdf-lib จะ regenerate ใหม่จาก /V และ /MK เมื่อ updateFieldAppearances ถูกเรียก
+            try { widget.delete(PDFName.of("AP")); } catch (_) {}
+            // 2) ลบ /MK background color เพื่อให้ regenerated appearance ไม่มีสีฟ้า
+            const mk = widget.get(PDFName.of("MK"));
+            if (mk) {
+              try { mk.delete(PDFName.of("BG")); } catch (_) {}
+              try { mk.delete(PDFName.of("BC")); } catch (_) {}
+            }
+            try { widget.delete(PDFName.of("BG")); } catch (_) {}
+          } catch (_) {}
+        }
+      } catch (_) {}
+    }
+    // 3) Regenerate appearance streams ใหม่ (ไม่มีสีฟ้าแล้ว) ก่อนส่งต่อให้ flatten
+    try {
+      if (customFont) {
+        form.updateFieldAppearances(customFont);
+      } else {
+        form.updateFieldAppearances();
+      }
+    } catch (_) {}
+  } catch (_) {}
+}
+
 function fillItemsTable(form: any, items: any[], maxRows = 20, customFont?: any, startIndex = 1) {
   for (let i = 1; i <= maxRows; i++) {
     const idx2 = String(i).padStart(2, "0");
@@ -465,6 +507,8 @@ export async function generatePOPdfBytes(po: any, { vendor = null, project = nul
       });
       ["pcmdate", "gmdate", "reason", "createdate", "create_date", "date_create", "sig1date"].forEach(saveFieldRect);
 
+      // ลบ background สีฟ้าของ form fields และ regenerate appearances ก่อน flatten
+      clearFieldBackgrounds(pdfDoc, pageCustomFont);
       try { form.flatten(); } catch (_) {}
       const [copiedPage] = await mergedPdf.copyPages(pdfDoc, [0]);
       mergedPdf.addPage(copiedPage);

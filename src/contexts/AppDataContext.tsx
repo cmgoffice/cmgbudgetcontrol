@@ -253,10 +253,8 @@ export const AppDataProvider = ({
   // ── Lazy / one-shot loaded collections (getDocs แทน onSnapshot — ลด Firebase read quota) ──
   const [vendorsLoading,   setVendorsLoading]   = useState(false);
   const [materialsLoading, setMaterialsLoading] = useState(false);
-  const [projectsLoading,  setProjectsLoading]  = useState(false);
   const vendorsLoadedRef   = useRef(false);
   const materialsLoadedRef = useRef(false);
-  const projectsLoadedRef  = useRef(false);
 
   const loadVendors = useCallback(async () => {
     if (!rolePermissionsReady) return;
@@ -300,26 +298,8 @@ export const AppDataProvider = ({
     }
   }, [rolePermissionsReady, hasModuleAccessForCurrentRoles]);
 
-  const loadProjects = useCallback(async () => {
-    if (projectsLoadedRef.current) return;
-    projectsLoadedRef.current = true;
-    setProjectsLoading(true);
-    try {
-      const snap = await getDocs(collection(db, "artifacts", appId, "public", "data", "projects"));
-      setProjects(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    } catch (err) {
-      console.error("Error loading projects:", err);
-      projectsLoadedRef.current = false;
-    } finally {
-      setProjectsLoading(false);
-    }
-  }, []);
-
-  /** บังคับ re-fetch projects (เรียกหลัง add/edit/delete project โดย view อื่นที่ write ตรง Firestore) */
-  const refreshProjects = useCallback(async () => {
-    projectsLoadedRef.current = false;
-    await loadProjects();
-  }, [loadProjects]);
+  // projects ใช้ onSnapshot (realtime) — sync ทันทีทุก tab/user โดยไม่ต้องรีเฟรช
+  // (ย้ายจาก getDocs one-shot เพื่อแก้ปัญหาหน้าโครงการไม่ realtime บน production)
 
   const canSyncInvoice = rolePermissionsReady && hasModuleAccessForCurrentRoles("invoice");
   const canSyncReceive = rolePermissionsReady && hasModuleAccessForCurrentRoles("receive");
@@ -372,8 +352,8 @@ export const AppDataProvider = ({
       setFunctionPermissions(mergeFunctionPermissionsWithDefaults(raw));
     });
 
-    // projects โหลดครั้งเดียว (getDocs) — ลด onSnapshot listener และ Firebase read quota
-    loadProjects();
+    // projects ใช้ onSnapshot realtime — sync ทันทีเมื่อมีการเปลี่ยนแปลงใด ๆ
+    const unsubProjects = syncCollection("projects", setProjects);
 
     // vendors, materials ไม่ sync ที่นี่ — ใช้ loadVendors() / loadMaterials() เมื่อเข้าหน้าที่ใช้
     // Staged subscriptions:
@@ -399,6 +379,7 @@ export const AppDataProvider = ({
 
     return () => {
       unsubs.forEach((u) => u());
+      unsubProjects();
       unsubColWidths();
       unsubRolePerms();
       unsubUserRoles();
@@ -407,7 +388,7 @@ export const AppDataProvider = ({
       if (colSaveTimer.current) clearTimeout(colSaveTimer.current);
       if (colVisSaveTimer.current) clearTimeout(colVisSaveTimer.current);
     };
-  }, [user?.uid, loadProjects]);
+  }, [user?.uid]);
 
   // Separate effect for conditional collections (invoices, receives) to avoid recreating all listeners
   useEffect(() => {
@@ -908,7 +889,6 @@ export const AppDataProvider = ({
     // lazy / one-shot load (ลดโควต้า — โหลดเมื่อเข้าหน้าที่ใช้)
     loadVendors, loadMaterials,
     vendorsLoading, materialsLoading,
-    loadProjects, refreshProjects, projectsLoading,
     // column widths
     columnWidths, handleColumnResize,
     // column visibility (per-user)
@@ -935,7 +915,6 @@ export const AppDataProvider = ({
     addData, updateData, deleteData,
     loadVendors, loadMaterials,
     vendorsLoading, materialsLoading,
-    loadProjects, refreshProjects, projectsLoading,
     columnWidths, handleColumnResize,
     columnVisibility, saveColumnVisibility, isColumnVisible,
     handlePRAction, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,

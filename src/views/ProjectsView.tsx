@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useState, useEffect, useMemo, useCallback, useRef, useContext } from "react";
 import { Plus, Trash2, Edit, Upload, Download, Lock, Unlock, Users, UserCheck, History } from "lucide-react";
-import { addDoc, collection, deleteDoc, doc, getDocs, onSnapshot, query, where } from "firebase/firestore";
+import { addDoc, collection, deleteDoc, doc, getDocs, query, where } from "firebase/firestore";
 import { useAppData } from "../contexts/AppDataContext";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "../components/ui";
 import ResizableTh from "../components/ResizableTh";
@@ -25,7 +25,6 @@ const ProjectsView = React.memo(() => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProjectId, setEditingProjectId] = useState(null);
   const [selectedProject, setSelectedProject] = useState(null);
-  const [realtimeProjects, setRealtimeProjects] = useState(null);
   const [budgetAttachmentFiles, setBudgetAttachmentFiles] = useState([]);
   const [budgetRevisionNote, setBudgetRevisionNote] = useState("");
   const [budgetActioning, setBudgetActioning] = useState(false);
@@ -55,12 +54,8 @@ const ProjectsView = React.memo(() => {
   const canRequestRevBudget = hasRole("PM") || hasRole("MD") || hasRole("Administrator");
   const canEditProjectStatus = hasRole("MD") || hasRole("Administrator");
 
-  const projectRows = useMemo(() => {
-    if (!realtimeProjects) return visibleProjects;
-    if (hasRole("Administrator")) return realtimeProjects;
-    const ids = userData?.assignedProjectIds || [];
-    return realtimeProjects.filter((p) => ids.includes(p.id));
-  }, [realtimeProjects, visibleProjects, userData, userRole, userRoles]);
+  // visibleProjects จาก AppDataContext เป็น realtime (onSnapshot) แล้ว — ใช้ตรงๆ
+  const projectRows = useMemo(() => visibleProjects, [visibleProjects]);
 
   const getProjectBudgetTotal = useCallback((projectId) => {
     if (!projectId) return 0;
@@ -106,27 +101,12 @@ const ProjectsView = React.memo(() => {
     if (selectedProject?.id) loadBudgetRevisions(selectedProject.id);
   }, [selectedProject?.id, loadBudgetRevisions]);
 
+  // sync selectedProject เมื่อ visibleProjects อัปเดต (realtime จาก AppDataContext)
   useEffect(() => {
-    const ref = collection(db, "artifacts", appId, "public", "data", "projects");
-    const unsub = onSnapshot(
-      query(ref),
-      (snap) => {
-        const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        setRealtimeProjects(rows);
-      },
-      (err) => {
-        console.error("[ProjectsView] realtime projects error:", err);
-        showAlert("Error", "โหลดข้อมูลโครงการแบบ Realtime ไม่สำเร็จ", "error");
-      }
-    );
-    return () => unsub();
-  }, [db, appId, showAlert]);
-
-  useEffect(() => {
-    if (!selectedProject?.id || !realtimeProjects) return;
-    const latest = realtimeProjects.find((p) => p.id === selectedProject.id);
+    if (!selectedProject?.id) return;
+    const latest = visibleProjects.find((p) => p.id === selectedProject.id);
     if (latest) setSelectedProject(latest);
-  }, [realtimeProjects, selectedProject?.id]);
+  }, [visibleProjects, selectedProject?.id]);
 
   useEffect(() => {
     setBudgetRevisionNote(selectedProject?.budgetRevisionRequest?.note || "");
@@ -436,7 +416,7 @@ const ProjectsView = React.memo(() => {
                 Request Rev Budget
               </button>
             )}
-            {canApproveRevBudget && (
+            {canApproveRevBudget && project?.status !== "Active" && (
               <button
                 type="button"
                 className="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 disabled:opacity-50"
