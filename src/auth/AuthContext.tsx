@@ -94,7 +94,10 @@ export const AuthProvider = ({ children }) => {
         for (const rule of normalizeRules) {
           if (rule.match.test(rawAction)) {
             normalizedAction = rule.base;
-            normalizedDetails = rawDetails ? `${rawAction} — ${rawDetails}` : rawAction;
+            const shouldPrefix = rawAction && rawAction.toLowerCase() !== rule.base.toLowerCase();
+            normalizedDetails = rawDetails
+              ? (shouldPrefix ? `${rawAction} — ${rawDetails}` : rawDetails)
+              : rawAction;
             break;
           }
         }

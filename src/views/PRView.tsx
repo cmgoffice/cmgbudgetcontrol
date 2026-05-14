@@ -20,18 +20,20 @@ import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 import { PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, PURCHASE_TYPE_EQUIPMENT, DELIVERY_LOCATIONS, getPurchaseTypeDisplayLabel, COST_CATEGORIES } from "../lib/constants";
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
+import { computeBudgetUsedAfterPrRevision, getLinkedPoRefsForPr, getPrBudgetReturnInfo, restorePrItemsFromRevision, scalePrItemsToTotal } from "../lib/prBudgetReturn";
 import { motion, AnimatePresence } from "framer-motion";
 import { doc, runTransaction } from "firebase/firestore";
 import { ref, getDownloadURL } from "firebase/storage";
 import { appId, db, storage } from "../lib/firebase";
 const PRView = React.memo(() => {
   const { prs, pos, projects, budgets, vendors, materials, addData, updateData, deleteData,
-    showAlert, openConfirm, userRole, userRoles, userData, user, columnWidths, handleColumnResize,
+    showAlert, openConfirm, logAction, userRole, userRoles, userData, user, columnWidths, handleColumnResize,
     visibleProjects, handlePRAction, canUseFunction, isColumnVisible, getAllowedPRTypes } = useAppData();
   const allowedPRTypes = getAllowedPRTypes();
   const canApprovePR = canUseFunction("pr", "approve");
   const canRejectPR = canUseFunction("pr", "reject");
   const canEditBudgetPR = canUseFunction("pr", "editBudget");
+  const canViewPrBalance = ["PCM", "GM", "MD", "Administrator"].some((role) => userRoles.includes(role));
 
   /**
    * คำนวณยอดใช้งานทั้งหมดของ budget จาก PRs ที่ตรงกันทั้ง budgetId หรือ costCode
@@ -121,6 +123,10 @@ const PRView = React.memo(() => {
   const [isEditBudgetModalOpen, setIsEditBudgetModalOpen] = useState(false);
   const [selectedPrForEditBudget, setSelectedPrForEditBudget] = useState(null);
   const [editBudgetReason, setEditBudgetReason] = useState("");
+  const [isReturnBalanceModalOpen, setIsReturnBalanceModalOpen] = useState(false);
+  const [returnBalanceContext, setReturnBalanceContext] = useState<any>(null);
+  const [returnBalanceValue, setReturnBalanceValue] = useState("");
+  const [returnBalanceReason, setReturnBalanceReason] = useState("");
   const [viewingPR, setViewingPR] = useState(null); // PR View Modal
   /** ขณะรอ Approve: ค่า = สถานะ PR ตอนกด — ซ่อนปุ่มจน snapshot เปลี่ยนสถานะ หรือล้างเมื่อ update ล้มเหลว */
   const [prApproveFlightFromStatus, setPrApproveFlightFromStatus] = useState({});
@@ -190,6 +196,255 @@ const PRView = React.memo(() => {
     setSelectedPrForEditBudget(null);
     showAlert("ส่งคำขอแก้ไขแล้ว", "PR ถูกตั้งสถานะ Edit Budget — ผู้เปิด PR ต้องแก้ไขและส่งอนุมัติใหม่", "info");
   };
+
+  const handleReturnPrBalanceToBudget = useCallback((pr) => {
+    if (!pr?.id) return;
+    if (!canViewPrBalance) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์คืน Balance PR", "warning");
+      return;
+    }
+
+    const info = getPrBudgetReturnInfo(pr, pos);
+    if (info.returnAmount <= 0) {
+      showAlert("ไม่มี Balance ให้คืน", "ยอด PR ปัจจุบันไม่มากกว่า PO Grand Total ที่ใช้ไปแล้ว", "info");
+      return;
+    }
+
+    const prNo = pr.prNo || pr.id;
+    const confirmMessage =
+      `PR: ${prNo}\n` +
+      `ยอด PR ปัจจุบัน: ${formatCurrency(info.currentTotal)}\n` +
+      `PO Grand Total ที่ใช้ไปแล้ว: ${formatCurrency(info.poGrandTotalUsed)}\n` +
+      `ยอดที่จะคืน Budget: ${formatCurrency(info.returnAmount)}\n` +
+      `ยอด PR หลัง Rev: ${formatCurrency(info.revisedTotal)}\n\n` +
+      "ระบบจะคง PR ID / PR No. เดิม และแก้เฉพาะยอดตัวเลขกับประวัติ Rev ของ PR นี้";
+
+    openConfirm(
+      "คืน Balance PR กลับ Budget",
+      confirmMessage,
+      () => {
+        setReturnBalanceContext({ prId: pr.id });
+        setReturnBalanceValue(String(Math.round(info.returnAmount * 100) / 100));
+        setReturnBalanceReason("");
+        setIsReturnBalanceModalOpen(true);
+      },
+      "warning"
+    );
+  }, [budgets, canViewPrBalance, logAction, openConfirm, pos, prs, showAlert, updateData, user?.email, userData, userRole]);
+
+  const handleConfirmReturnBalance = useCallback(async () => {
+    const prId = returnBalanceContext?.prId;
+    if (!prId) return;
+    const latestPr = prs.find((p: any) => p.id === prId);
+    if (!latestPr) {
+      showAlert("ไม่พบ PR", "ไม่พบข้อมูล PR ล่าสุด", "warning");
+      return;
+    }
+    const latestInfo = getPrBudgetReturnInfo(latestPr, pos);
+    const maxReturn = Number(latestInfo.returnAmount || 0);
+    if (maxReturn <= 0) {
+      showAlert("ไม่มี Balance ให้คืน", "ข้อมูลล่าสุดไม่มียอดคงเหลือที่สามารถคืน Budget ได้", "info");
+      setIsReturnBalanceModalOpen(false);
+      setReturnBalanceContext(null);
+      setReturnBalanceValue("");
+      setReturnBalanceReason("");
+      return;
+    }
+
+    const requested = Number(returnBalanceValue);
+    if (!Number.isFinite(requested) || requested <= 0) {
+      return showAlert("ยอดไม่ถูกต้อง", "กรุณากรอกยอดเงินที่ต้องการคืนมากกว่า 0", "warning");
+    }
+    if (requested > maxReturn) {
+      return showAlert("ยอดเกิน Balance", `คืนได้สูงสุด ${formatCurrency(maxReturn)} เท่านั้น`, "warning");
+    }
+    const reason = (returnBalanceReason || "").trim();
+    if (!reason) {
+      return showAlert("กรุณาระบุเหตุผล", "กรุณากรอกเหตุผลการคืน Budget จาก PR", "warning");
+    }
+
+    const revisedTotalRaw = Math.max(0, latestInfo.currentTotal - requested);
+    const revisedTotal = Math.round(revisedTotalRaw * 100) / 100;
+    const nextStatus = revisedTotal <= 0 ? "Closed PR Auto" : (latestPr.status || "Approved");
+    const history = Array.isArray(latestPr.budgetReturnRevisions) ? latestPr.budgetReturnRevisions : [];
+    const byName = userData ? `${userData.firstName || ""} ${userData.lastName || ""}`.trim() : "";
+    const revision = {
+      revNo: history.length + 1,
+      at: new Date().toISOString(),
+      by: byName || user?.email || userRole || "Unknown",
+      oldStatus: latestPr.status || null,
+      oldTotalAmount: latestInfo.currentTotal,
+      newTotalAmount: revisedTotal,
+      oldItems: Array.isArray(latestPr.items) ? latestPr.items : [],
+      poGrandTotalUsed: latestInfo.poGrandTotalUsed,
+      returnedAmount: requested,
+      returnReason: reason,
+      budgetId: latestPr.budgetId || null,
+      costCode: latestPr.costCode || null,
+      subItemId: latestPr.selectedSubItemId || latestPr.subItemId || latestPr.items?.[0]?.budgetSubItemId || latestPr.items?.[0]?.subItemId || null,
+      poRefs: getLinkedPoRefsForPr(pos, latestPr.id),
+    };
+    const revisedItems = scalePrItemsToTotal(latestPr.items || [], revisedTotal);
+    const payload = {
+      items: revisedItems,
+      totalAmount: revisedTotal,
+      amount: revisedTotal,
+      status: nextStatus,
+      budgetReturnRevisions: [...history, revision],
+      budgetReturnRevNo: revision.revNo,
+      lastBudgetReturnAt: revision.at,
+      lastBudgetReturnAmount: requested,
+      lastBudgetReturnReason: reason,
+    };
+
+    const ok = await updateData("prs", latestPr.id, payload, { skipLog: true });
+    if (!ok) return;
+
+    const budget = latestPr.budgetId
+      ? budgets.find((b: any) => b.id === latestPr.budgetId)
+      : budgets.find((b: any) => b.projectId === latestPr.projectId && b.code === latestPr.costCode);
+    if (budget?.id) {
+      const usedAmount = computeBudgetUsedAfterPrRevision(prs, latestPr, revisedTotal);
+      await updateData("budgets", budget.id, { usedAmount }, { skipLog: true });
+      const returnNotifications = Array.isArray(budget.budgetReturnNotifications) ? budget.budgetReturnNotifications : [];
+      const notification = {
+        id: `ret-${latestPr.id}-${revision.revNo}-${Date.now()}`,
+        status: "pending",
+        createdAt: revision.at,
+        createdBy: revision.by,
+        prId: latestPr.id,
+        prNo: latestPr.prNo || latestPr.id,
+        revNo: revision.revNo,
+        amount: requested,
+        reason,
+        subItemId: revision.subItemId || null,
+        oldPrTotal: latestInfo.currentTotal,
+        newPrTotal: revisedTotal,
+      };
+      await updateData("budgets", budget.id, { budgetReturnNotifications: [...returnNotifications, notification] }, { skipLog: true });
+    }
+
+    await logAction?.(
+      "Rev PR Return Balance",
+      `Rev PR ${latestPr.prNo || latestPr.id}: คืน Budget ${formatCurrency(requested)} (${formatCurrency(latestInfo.currentTotal)} → ${formatCurrency(revisedTotal)}, PO Grand Total ${formatCurrency(latestInfo.poGrandTotalUsed)})`,
+      latestPr.projectId
+    );
+    setViewingPR((prev) => prev?.id === latestPr.id ? { ...prev, ...payload } : prev);
+    setIsReturnBalanceModalOpen(false);
+    setReturnBalanceContext(null);
+    setReturnBalanceValue("");
+    setReturnBalanceReason("");
+    showAlert("คืนยอดสำเร็จ", `คืน Budget จาก PR ${latestPr.prNo || latestPr.id} จำนวน ${formatCurrency(requested)} แล้ว (รอรับยอดใน Budget)`, "success");
+  }, [budgets, logAction, pos, prs, returnBalanceContext?.prId, returnBalanceReason, returnBalanceValue, showAlert, updateData, user?.email, userData, userRole]);
+
+  const handleDeletePrBudgetReturnRevision = useCallback((pr, revision) => {
+    if (!userRoles.includes("Administrator")) {
+      showAlert("ไม่มีสิทธิ์", "เฉพาะ Administrator เท่านั้นที่ลบประวัติ Rev ได้", "warning");
+      return;
+    }
+    if (!pr?.id || !revision) return;
+
+    const history = Array.isArray(pr.budgetReturnRevisions) ? pr.budgetReturnRevisions : [];
+    const targetRevNo = Number(revision.revNo || 0);
+    if (!targetRevNo) return;
+    const prNo = pr.prNo || pr.id;
+    const keptHistory = history
+      .filter((rev: any) => Number(rev.revNo || 0) < targetRevNo)
+      .sort((a: any, b: any) => Number(a.revNo || 0) - Number(b.revNo || 0))
+      .map((rev: any, idx: number) => ({ ...rev, revNo: idx + 1 }));
+    const lastKept = keptHistory[keptHistory.length - 1] || null;
+    const restoreTotal = Number(revision.oldTotalAmount || 0);
+    const restoreItems = restorePrItemsFromRevision(pr.items || [], revision);
+    const restoreStatus = revision.oldStatus || pr.status;
+
+    openConfirm(
+      "ลบประวัติ Rev คืน Balance",
+      `PR: ${prNo}\nลบ Rev ${targetRevNo} และย้อน PR กลับเป็นยอดก่อน Rev นี้\n\nยอด PR ที่จะกลับไป: ${formatCurrency(restoreTotal)}\nRev หลังจากนี้จะถูกลบออกจากประวัติด้วย เพื่อให้ timeline ตรงกัน`,
+      async () => {
+        const latestPr = prs.find((p: any) => p.id === pr.id) || pr;
+        const payload = {
+          items: restoreItems,
+          totalAmount: restoreTotal,
+          amount: restoreTotal,
+          status: restoreStatus,
+          budgetReturnRevisions: keptHistory,
+          budgetReturnRevNo: lastKept?.revNo || null,
+          lastBudgetReturnAt: lastKept?.at || null,
+          lastBudgetReturnAmount: lastKept?.returnedAmount || null,
+          lastBudgetReturnReason: lastKept?.returnReason || null,
+        };
+
+        const ok = await updateData("prs", latestPr.id, payload, { skipLog: true });
+        if (!ok) return;
+
+        const budget = latestPr.budgetId
+          ? budgets.find((b: any) => b.id === latestPr.budgetId)
+          : budgets.find((b: any) => b.projectId === latestPr.projectId && b.code === latestPr.costCode);
+        if (budget?.id) {
+          const usedAmount = computeBudgetUsedAfterPrRevision(prs, latestPr, restoreTotal);
+          const allNotifications = Array.isArray(budget.budgetReturnNotifications) ? budget.budgetReturnNotifications : [];
+          const removedRevNos = new Set(
+            history
+              .filter((rev: any) => Number(rev.revNo || 0) >= targetRevNo)
+              .map((rev: any) => Number(rev.revNo || 0))
+          );
+          const removedNotifications = allNotifications.filter((n: any) =>
+            n?.prId === latestPr.id && removedRevNos.has(Number(n?.revNo || 0))
+          );
+          const nextNotifications = allNotifications.filter((n: any) =>
+            !(n?.prId === latestPr.id && removedRevNos.has(Number(n?.revNo || 0)))
+          );
+
+          let rollbackMainAmount = 0;
+          const rollbackBySubId: Record<string, number> = {};
+          removedNotifications.forEach((n: any) => {
+            if ((n?.status || "pending") !== "accepted") return;
+            const amt = Number(n?.amount || 0);
+            if (!Number.isFinite(amt) || amt <= 0) return;
+            if (n?.subItemId) {
+              rollbackBySubId[n.subItemId] = Number(rollbackBySubId[n.subItemId] || 0) + amt;
+            } else {
+              rollbackMainAmount += amt;
+            }
+          });
+
+          const budgetPayload: any = { usedAmount, budgetReturnNotifications: nextNotifications };
+          if (rollbackMainAmount > 0) {
+            budgetPayload.amount = Math.max(0, Number(budget.amount || 0) - rollbackMainAmount);
+          }
+          if (Object.keys(rollbackBySubId).length > 0 && Array.isArray(budget.subItems)) {
+            budgetPayload.subItems = budget.subItems.map((sub: any) => {
+              const rollback = Number(rollbackBySubId[sub?.id] || 0);
+              if (!(rollback > 0)) return sub;
+              const currentAmount = Number(sub?.amount || 0);
+              const nextAmount = currentAmount + rollback;
+              const qty = Number(sub?.quantity || 0);
+              return {
+                ...sub,
+                amount: nextAmount,
+                unitPrice: qty > 0 ? nextAmount / qty : Number(sub?.unitPrice || 0),
+              };
+            });
+          }
+          await updateData("budgets", budget.id, budgetPayload, { skipLog: true });
+        }
+
+        await logAction?.(
+          "Delete PR Balance Rev",
+          `ลบ Rev คืน Balance PR ${prNo}: Rev ${targetRevNo}, ย้อนยอด PR กลับเป็น ${formatCurrency(restoreTotal)} และย้อนผล Budget Return ที่เกี่ยวข้อง`,
+          latestPr.projectId
+        );
+        setViewingPR((prev) => prev?.id === latestPr.id ? { ...prev, ...payload } : prev);
+        showAlert("ลบ Rev แล้ว", `PR ${prNo} กลับไปเป็นยอดก่อน Rev ${targetRevNo} แล้ว`, "success");
+      },
+      "danger",
+      {
+        requireText: "Confirm",
+        requireTextLabel: "พิมพ์ Confirm เพื่อยืนยันการลบ Rev และย้อนยอด PR",
+        requireTextPlaceholder: "Confirm",
+      }
+    );
+  }, [budgets, logAction, openConfirm, prs, showAlert, updateData, userRoles]);
 
   // ให้ PR Modal อัปเดตข้อมูลตามรายการล่าสุดเสมอ (แก้ปัญหา preview PDF ค้างเป็นไฟล์เก่า)
   useEffect(() => {
@@ -1106,6 +1361,7 @@ const PRView = React.memo(() => {
   }, [budgets]);
 
   const getPrSortValue = useCallback((pr, key) => {
+    const balanceAmount = getPrBudgetReturnInfo(pr, pos).returnAmount;
     switch (key) {
       case "prNo": return String(pr.prNo || pr.id || "");
       case "date": return String(pr.requestDate || "");
@@ -1119,11 +1375,12 @@ const PRView = React.memo(() => {
       case "requestor": return String(pr.requestor || "");
       case "items": return Number(pr.items?.length || 0);
       case "amount": return Number(pr.totalAmount || pr.amount || 0);
+      case "balance": return balanceAmount;
       case "status": return String(pr.status || "");
       case "refDoc": return String(getRefDocInfo(pr)?.docNo || "");
       default: return "";
     }
-  }, [getPrBudgetItemName]);
+  }, [getPrBudgetItemName, pos]);
 
   const requestPrSort = useCallback((key) => {
     setPrSortConfig((prev) => ({
@@ -1247,6 +1504,7 @@ const PRView = React.memo(() => {
       {isColumnVisible("pr", "requestor") && <ResizableTh tableId="pr" colKey="requestor" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.requestor} onClick={() => requestPrSort("requestor")}>Requestor <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("requestor")}</span></ResizableTh>}
       {isColumnVisible("pr", "items") && <ResizableTh tableId="pr" colKey="items" className="py-0.5 px-2 cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.items} onClick={() => requestPrSort("items")}>Items <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("items")}</span></ResizableTh>}
       {isColumnVisible("pr", "amount") && <ResizableTh tableId="pr" colKey="amount" className="py-0.5 px-2 text-right cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.amount} onClick={() => requestPrSort("amount")}>Amount <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("amount")}</span></ResizableTh>}
+      {canViewPrBalance && isColumnVisible("pr", "balance") && <ResizableTh tableId="pr" colKey="balance" className="py-0.5 px-2 text-right cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.balance} onClick={() => requestPrSort("balance")}>Balance <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("balance")}</span></ResizableTh>}
       {isColumnVisible("pr", "status") && <ResizableTh tableId="pr" colKey="status" className="py-0.5 px-2 text-center cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.status} onClick={() => requestPrSort("status")}>Status <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("status")}</span></ResizableTh>}
       {isColumnVisible("pr", "refDoc") && <ResizableTh tableId="pr" colKey="refDoc" className="py-0.5 px-2 text-center cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={prTableLayout.handleResize} currentWidth={prTableLayout.scaled.refDoc} onClick={() => requestPrSort("refDoc")}>Ref Doc <span className="text-[10px] ml-1 opacity-70">{getPrSortIndicator("refDoc")}</span></ResizableTh>}
       {isColumnVisible("pr", "actions") && <th className="hidden py-0.5 px-2 text-right md:table-cell" style={{ width: prTableLayout.scaled.actions }}>Actions</th>}
@@ -1288,7 +1546,7 @@ const PRView = React.memo(() => {
             )}
             {canEditBudgetPR && (userRoles.includes("Procurement") || userRoles.includes("PCM") || userRoles.includes("Administrator")) && pr.status === "Approved" && (
               <button
-                className="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition-colors whitespace-nowrap"
+                className="text-red-600 hover:bg-red-50 p-1 rounded-full transition-colors"
                 title="ส่งคืนให้แก้ไข Budget"
                 onClick={() => {
                   setSelectedPrForEditBudget(pr);
@@ -1296,9 +1554,22 @@ const PRView = React.memo(() => {
                   setIsEditBudgetModalOpen(true);
                 }}
               >
-                Edit Budget
+                <Settings size={13} />
               </button>
             )}
+            {canViewPrBalance && (() => {
+              const info = getPrBudgetReturnInfo(pr, pos);
+              if (info.returnAmount <= 0) return null;
+              return (
+                <button
+                  className="text-emerald-600 hover:bg-emerald-50 p-1 rounded-full transition-colors"
+                  title={`คืน Balance PR กลับ Budget (${formatCurrency(info.returnAmount)})`}
+                  onClick={() => handleReturnPrBalanceToBudget(pr)}
+                >
+                  <Wallet size={13} />
+                </button>
+              );
+            })()}
             {canUseFunction("pr", "edit") && (pr.status === "Rejected" || pr.status === "Edit Budget") && (
               <button
                 className="text-blue-500 hover:bg-blue-50 p-1 rounded-full transition-colors"
@@ -1358,6 +1629,9 @@ const PRView = React.memo(() => {
     const dataRowClass = dataRowClassForVariant(variant);
     return groupPrs.map((pr) => (
       <React.Fragment key={pr.id}>
+        {(() => {
+          const balanceAmount = getPrBudgetReturnInfo(pr, pos).returnAmount;
+          return (
         <tr className={dataRowClass} onClick={() => setViewingPR(pr)}>
           {renderPrActionCell(pr, "md:hidden")}
           {isColumnVisible("pr", "prNo") && <td className="py-0.5 px-2 font-medium" title={pr.prNo}><span className="cell-text">{pr.prNo}</span></td>}
@@ -1401,6 +1675,9 @@ const PRView = React.memo(() => {
           {isColumnVisible("pr", "amount") && <td className="py-0.5 px-2 text-right font-semibold">
             {formatCurrency(pr.totalAmount || pr.amount)}
           </td>}
+          {canViewPrBalance && isColumnVisible("pr", "balance") && <td className="py-0.5 px-2 text-right font-semibold text-emerald-700">
+            {formatCurrency(balanceAmount)}
+          </td>}
           {isColumnVisible("pr", "status") && <td className="py-0.5 px-2 text-center">
             <Badge status={pr.status} />
           </td>}
@@ -1424,6 +1701,8 @@ const PRView = React.memo(() => {
           </td>}
           {renderPrActionCell(pr, "hidden md:table-cell")}
         </tr>
+          );
+        })()}
       </React.Fragment>
     ));
   };
@@ -1433,7 +1712,7 @@ const PRView = React.memo(() => {
     return entries.map(([type, groupPrs]) => (
       <React.Fragment key={`main-${type}`}>
         <tr className={groupRowClass}>
-          <td colSpan={["prNo", "date", "costCode", "description", "type", "requestor", "items", "amount", "status", "refDoc", "actions"].filter(k => isColumnVisible("pr", k)).length} className="py-1 px-2 font-bold text-slate-700">
+          <td colSpan={["prNo", "date", "costCode", "description", "type", "requestor", "items", "amount", "balance", "status", "refDoc", "actions"].filter(k => (!canViewPrBalance && k === "balance" ? false : isColumnVisible("pr", k))).length} className="py-1 px-2 font-bold text-slate-700">
             {type} ({groupPrs.length})
           </td>
         </tr>
@@ -1903,7 +2182,7 @@ const PRView = React.memo(() => {
                           <td className="px-3 py-1.5 font-medium text-slate-700">{it.description}</td>
                           <td className="px-3 py-1.5 text-right text-slate-500">{it.quantity} {it.unit}</td>
                           <td className="px-3 py-1.5 text-right text-slate-500">{formatCurrency(it.price)}</td>
-                          <td className="px-3 py-1.5 text-right font-semibold text-slate-700">{formatCurrency(it.quantity * it.price)}</td>
+                          <td className="px-3 py-1.5 text-right font-semibold text-slate-700">{formatCurrency(it.amount ?? (it.quantity * it.price))}</td>
                           <td className="px-3 py-1.5 text-center text-slate-400">{it.requiredDate || "-"}</td>
                         </tr>
                       ))}
@@ -1917,6 +2196,58 @@ const PRView = React.memo(() => {
                     </tfoot>
                   </table>
                 </div>
+
+                {Array.isArray(prLive.budgetReturnRevisions) && prLive.budgetReturnRevisions.length > 0 && (
+                  <div className="rounded-xl border border-emerald-200 overflow-hidden bg-emerald-50/40">
+                    <div className="bg-emerald-100 px-4 py-2 flex items-center justify-between">
+                      <span className="text-xs font-bold text-emerald-900 uppercase tracking-wide">ประวัติคืน Balance PR กลับ Budget</span>
+                      <span className="bg-white text-emerald-700 text-[10px] font-semibold px-2 py-0.5 rounded-full border border-emerald-200">
+                        {prLive.budgetReturnRevisions.length} Rev
+                      </span>
+                    </div>
+                    <table className="w-full text-xs text-left">
+                      <thead className="bg-white/70 text-emerald-900 font-semibold border-b border-emerald-100">
+                        <tr>
+                          <th className="px-3 py-2">Rev</th>
+                          <th className="px-3 py-2">วันที่</th>
+                          <th className="px-3 py-2 text-right">ยอดเดิม</th>
+                          <th className="px-3 py-2 text-right">PO Grand Total</th>
+                          <th className="px-3 py-2 text-right">คืน Budget</th>
+                          <th className="px-3 py-2 text-right">ยอด PR ใหม่</th>
+                          <th className="px-3 py-2">ผู้ทำรายการ</th>
+                          {userRoles.includes("Administrator") && <th className="px-3 py-2 text-center">Action</th>}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-emerald-100 bg-white/60">
+                        {[...prLive.budgetReturnRevisions].sort((a, b) => Number(b.revNo || 0) - Number(a.revNo || 0)).map((rev) => (
+                          <tr key={`${rev.revNo}-${rev.at}`} className="hover:bg-emerald-50">
+                            <td className="px-3 py-1.5 font-bold text-emerald-800">Rev {rev.revNo}</td>
+                            <td className="px-3 py-1.5 text-slate-500 whitespace-nowrap">
+                              {rev.at ? new Date(rev.at).toLocaleString("th-TH") : "-"}
+                            </td>
+                            <td className="px-3 py-1.5 text-right">{formatCurrency(rev.oldTotalAmount)}</td>
+                            <td className="px-3 py-1.5 text-right">{formatCurrency(rev.poGrandTotalUsed)}</td>
+                            <td className="px-3 py-1.5 text-right font-semibold text-emerald-700">{formatCurrency(rev.returnedAmount)}</td>
+                            <td className="px-3 py-1.5 text-right font-semibold">{formatCurrency(rev.newTotalAmount)}</td>
+                            <td className="px-3 py-1.5 text-slate-600" title={rev.by}>{rev.by || "-"}</td>
+                            {userRoles.includes("Administrator") && (
+                              <td className="px-3 py-1.5 text-center">
+                                <button
+                                  type="button"
+                                  className="p-1.5 rounded-md text-red-600 hover:bg-red-50"
+                                  title="ลบ Rev และย้อน PR กลับก่อน Rev นี้"
+                                  onClick={() => handleDeletePrBudgetReturnRevision(prLive, rev)}
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </td>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
 
               {/* Footer — ปุ่ม Approve/Reject ตาม Role */}
@@ -1925,6 +2256,15 @@ const PRView = React.memo(() => {
                   <XCircle size={15} /> ปิด
                 </button>
                 <div className="flex items-center gap-2">
+                  {canViewPrBalance && (() => {
+                    const info = getPrBudgetReturnInfo(prLive, pos);
+                    if (info.returnAmount <= 0) return null;
+                    return (
+                      <Button variant="success" className="px-4 py-2 text-sm" onClick={() => handleReturnPrBalanceToBudget(prLive)}>
+                        คืน Balance
+                      </Button>
+                    );
+                  })()}
                   {canApprovePR && (userRoles.includes("CM") || userRoles.includes("PM") || userRoles.includes("Administrator")) && prLive.status === "Pending CM" && !isPrApproveInFlight(prLive) && (
                     <>
                       {canRejectPR && <Button variant="danger" className="px-4 py-2 text-sm" onClick={() => { setViewingPR(null); handleAction(prLive.id, "reject"); }}>Reject</Button>}
@@ -2031,6 +2371,102 @@ const PRView = React.memo(() => {
           </div>
         </div>
       )}
+      {isReturnBalanceModalOpen && (() => {
+        const latestPr = prs.find((p: any) => p.id === returnBalanceContext?.prId);
+        const latestInfo = latestPr ? getPrBudgetReturnInfo(latestPr, pos) : null;
+        const maxReturn = Number(latestInfo?.returnAmount || 0);
+        const requested = Number(returnBalanceValue);
+        const isRequestedValid = Number.isFinite(requested) && requested > 0 && requested <= maxReturn;
+        return (
+          <div className="fixed inset-0 bg-black/55 backdrop-blur-sm flex items-center justify-center z-[10011] p-4">
+            <div className="bg-white rounded-2xl shadow-2xl border border-emerald-200 p-6 w-full max-w-md">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
+                  <Wallet size={19} className="text-emerald-700" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-800">ยืนยันคืน Balance PR</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    PR: <span className="font-semibold text-slate-700">{latestPr?.prNo || latestPr?.id || "-"}</span>
+                  </p>
+                </div>
+              </div>
+
+              {latestInfo ? (
+                <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 p-3 text-xs text-slate-700 space-y-1.5 mb-4">
+                  <div className="flex justify-between gap-3">
+                    <span className="text-slate-500">ยอด PR ปัจจุบัน</span>
+                    <span className="font-semibold">{formatCurrency(latestInfo.currentTotal)}</span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-slate-500">PO Grand Total ที่ใช้ไปแล้ว</span>
+                    <span className="font-semibold">{formatCurrency(latestInfo.poGrandTotalUsed)}</span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-slate-500">Balance คืนได้สูงสุด</span>
+                    <span className="font-bold text-emerald-700">{formatCurrency(maxReturn)}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 mb-4">
+                  ไม่พบข้อมูล PR ล่าสุด กรุณาปิดแล้วลองใหม่
+                </div>
+              )}
+
+              <label className="block text-xs font-bold text-slate-600 mb-1.5">
+                ยอดเงินที่จะคืนเข้า Budget <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={maxReturn > 0 ? maxReturn : undefined}
+                step="0.01"
+                value={returnBalanceValue}
+                onChange={(e) => setReturnBalanceValue(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-300 focus:border-emerald-400"
+                placeholder="กรอกยอดที่ต้องการคืน"
+                autoFocus
+              />
+              <p className={`mt-1.5 text-[11px] ${isRequestedValid ? "text-emerald-700" : "text-slate-500"}`}>
+                {isRequestedValid
+                  ? `ยอด PR หลัง Rev: ${formatCurrency(Math.max(0, Number(latestInfo?.currentTotal || 0) - requested))}`
+                  : `กรอกจำนวนมากกว่า 0 และไม่เกิน ${formatCurrency(maxReturn)}`}
+              </p>
+              <label className="block text-xs font-bold text-slate-600 mt-3 mb-1.5">
+                เหตุผลการคืน Budget <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                rows={3}
+                value={returnBalanceReason}
+                onChange={(e) => setReturnBalanceReason(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:ring-2 focus:ring-emerald-300 focus:border-emerald-400"
+                placeholder="ระบุเหตุผลที่ต้องคืนยอดจาก PR รายการนี้..."
+              />
+
+              <div className="flex justify-end gap-2 mt-4">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setIsReturnBalanceModalOpen(false);
+                    setReturnBalanceContext(null);
+                    setReturnBalanceValue("");
+                    setReturnBalanceReason("");
+                  }}
+                >
+                  ยกเลิก
+                </Button>
+                <button
+                  className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-all disabled:opacity-50"
+                  disabled={!latestPr || maxReturn <= 0 || !isRequestedValid || !String(returnBalanceReason || "").trim()}
+                  onClick={handleConfirmReturnBalance}
+                >
+                  ยืนยันคืนยอด
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Modal สร้าง/แก้ไข PR — ทับ Header, เต็มความสูง, Footer เลื่อนตามเนื้อหา */}
       {isModalOpen && (

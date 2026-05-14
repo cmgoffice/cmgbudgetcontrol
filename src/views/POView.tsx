@@ -217,6 +217,12 @@ const POView = React.memo(() => {
 
     return [...new Set([...itemPrIds, ...selectedPrIds, ...prRefIds].filter(Boolean))];
   }, []);
+  const formatPrStatusChangesForLog = useCallback((changes: Array<{ prNo?: string; from?: string; to: string }>) => {
+    if (!Array.isArray(changes) || changes.length === 0) return "";
+    return ` | PR: ${changes
+      .map((change) => `${change.prNo || "-"}: ${change.from || "-"} → ${change.to}`)
+      .join(", ")}`;
+  }, []);
   const [disPrPickerRect, setDisPrPickerRect] = useState<DOMRect | null>(null);
   const [vendorSearchText, setVendorSearchText] = useState("");
   const [vendorSearchQuery, setVendorSearchQuery] = useState("");
@@ -1176,12 +1182,17 @@ const POView = React.memo(() => {
 
       let ok = false;
       if (editingPoId) {
-        ok = await updateData("pos", editingPoId, draftPayload);
+        ok = await updateData("pos", editingPoId, draftPayload, { skipLog: true });
       } else {
-        ok = await addData("pos", draftPayload);
+        ok = await addData("pos", draftPayload, null, { skipLog: true });
       }
 
       if (ok) {
+        await logAction(
+          editingPoId ? "Update" : "Create",
+          `${editingPoId ? "บันทึกดราฟ" : "สร้างดราฟ"} PO ${resolvedPoNo}`,
+          selectedProjectId
+        );
         setPoPendingFiles([]);
         setPoSavedAttachments(attachments);
         showAlert("สำเร็จ", L.draftSuccess, "success");
@@ -1456,6 +1467,7 @@ const POView = React.memo(() => {
       };
 
       let success = false;
+      const prStatusChanges: Array<{ prNo?: string; from?: string; to: string }> = [];
 
       // ─── doPostSave ต้องนิยามก่อนใช้ใน callback ────────────────────────────
       const doPostSave = (resolvedPdfUrl: string | undefined, resolvedPdfError: string | null) => {
@@ -1546,8 +1558,20 @@ const POView = React.memo(() => {
               extraFields.lockedPrAllocations = null;
             }
             const finalPayload = { ...basePayload, ...extraFields };
-            const ok = await updateData("pos", editingPoId, finalPayload);
-            if (ok) { setP(100, "เสร็จสิ้น!"); await new Promise(r => setTimeout(r, 600)); doPostSave(pdfUrl, pdfError); }
+            const ok = await updateData("pos", editingPoId, finalPayload, { skipLog: true });
+            if (ok) {
+              const revisionSuffix = returnToPR
+                ? ` | คืนยอด PR ${formatCurrency(diff)}`
+                : ` | คงยอด PR เดิม ${formatCurrency(diff)}`;
+              await logAction(
+                "Update",
+                `อัปเดต PO ${resolvedPoNo} → Pending PCM${revisionSuffix}`,
+                selectedProjectId
+              );
+              setP(100, "เสร็จสิ้น!");
+              await new Promise(r => setTimeout(r, 600));
+              doPostSave(pdfUrl, pdfError);
+            }
             else setSavePoProgress({ show: false, pct: 0, step: "" });
           });
           setPrReturnConfirmOpen(true);
@@ -1556,9 +1580,9 @@ const POView = React.memo(() => {
 
         // ปกติ (ยอดไม่ลด หรือไม่ใช่ revision edit) — ล้าง lock เดิมถ้ามี
         const normalPayload = { ...basePayload, originalPoAmount: null, lockedPrAllocations: null };
-        success = await updateData("pos", editingPoId, normalPayload);
+        success = await updateData("pos", editingPoId, normalPayload, { skipLog: true });
       } else {
-        success = await addData("pos", basePayload);
+        success = await addData("pos", basePayload, null, { skipLog: true });
         if (success) {
           setProgress(93, "อัปเดตสถานะใบขอซื้อ...");
           const uniquePrIds = [...new Set(
@@ -1584,15 +1608,24 @@ const POView = React.memo(() => {
             const totalUsed = existingUsed + (newPoAllocByPr[prId] || 0);
             if (prTotal > 0 && totalUsed >= prTotal - 0.01) {
               // ยอด Dis PR ครบ → ปิด PR อัตโนมัติ
-              await updateData("prs", prId, { status: "Closed PR Auto", preCloseStatus: pr.status });
+              await updateData("prs", prId, { status: "Closed PR Auto", preCloseStatus: pr.status }, { skipLog: true });
+              prStatusChanges.push({ prNo: pr.prNo || prId, from: pr.status, to: "Closed PR Auto" });
             } else {
-              await updateData("prs", prId, { status: "PO Issued" });
+              await updateData("prs", prId, { status: "PO Issued" }, { skipLog: true });
+              if (pr.status !== "PO Issued") {
+                prStatusChanges.push({ prNo: pr.prNo || prId, from: pr.status, to: "PO Issued" });
+              }
             }
           }
         }
       }
 
       if (success) {
+        await logAction(
+          editingPoId ? "Update" : "Create",
+          `${editingPoId ? "อัปเดต" : "สร้าง"} PO ${resolvedPoNo} → Pending PCM${formatPrStatusChangesForLog(prStatusChanges)}`,
+          selectedProjectId
+        );
         setProgress(100, "เสร็จสิ้น!");
         await new Promise(r => setTimeout(r, 600));
         doPostSave(pdfUrl, pdfError);
@@ -1604,6 +1637,52 @@ const POView = React.memo(() => {
       setPoSendInFlight(false);
     }
   };
+
+  const handleDeletePo = useCallback((po: any) => {
+    openConfirm("ยืนยันการลบ", `คุณต้องการลบ ${L.docName} นี้ใช่หรือไม่?`, async () => {
+      const prIds = getPoRefPrIds(po);
+      const reopenedPrs: Array<{ prNo?: string; from?: string; to: string }> = [];
+      if (po.pdfUrl) {
+        const safePONo = (po.poNo || po.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
+        const safeProjId = po.projectId || "unknown";
+        await deleteGeneratedPdf(`generated/pos/${safeProjId}/${safePONo}.pdf`);
+      }
+      const deleted = await deleteData("pos", po.id, { skipLog: true });
+      if (!deleted) return;
+
+      if (prIds.length > 0) {
+        for (const prId of prIds) {
+          const pr = prs.find((p: any) => p.id === prId);
+          const stillUsedByOtherPO = pos.some((p: any) => p.id !== po.id && getPoRefPrIds(p).includes(prId));
+          if (!stillUsedByOtherPO && pr) {
+            await updateData("prs", prId, { status: "Approved" }, { skipLog: true });
+            if (pr.status !== "Approved") {
+              reopenedPrs.push({ prNo: pr.prNo || prId, from: pr.status, to: "Approved" });
+            }
+          }
+        }
+      }
+
+      await logAction(
+        "Delete",
+        `ลบ PO ${po.poNo || po.id}${formatPrStatusChangesForLog(reopenedPrs)}`,
+        po.projectId || selectedProjectId
+      );
+    }, "danger");
+  }, [deleteData, formatPrStatusChangesForLog, getPoRefPrIds, logAction, openConfirm, pos, prs, selectedProjectId, updateData]);
+
+  const handleConfirmClosePo = useCallback((po: any) => {
+    openConfirm(
+      "ยืนยันการปิด PO",
+      `คุณต้องการปิด ${L.docName} ${po.poNo} ใช่หรือไม่?`,
+      async () => {
+        const ok = await updateData("pos", po.id, { status: "Closed PO" }, { skipLog: true });
+        if (!ok) return;
+        await logAction("Approve", `Confirm Close PO ${po.poNo || po.id}: ${po.status} → Closed PO`, po.projectId || selectedProjectId);
+      },
+      "success"
+    );
+  }, [logAction, openConfirm, selectedProjectId, updateData]);
 
   // Quick Add Vendor
   const handleQuickAddVendor = async () => {
@@ -2449,25 +2528,7 @@ const POView = React.memo(() => {
                                 {canUseFunction("po", "delete") && (
                                   <button
                                     className="text-red-500 hover:text-red-700 p-1"
-                                    onClick={() => {
-                                      openConfirm("ยืนยันการลบ", `คุณต้องการลบ ${L.docName} นี้ใช่หรือไม่?`, async () => {
-                                        const prIds = getPoRefPrIds(po);
-                                        if (po.pdfUrl) {
-                                          const safePONo = (po.poNo || po.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
-                                          const safeProjId = po.projectId || "unknown";
-                                          await deleteGeneratedPdf(`generated/pos/${safeProjId}/${safePONo}.pdf`);
-                                        }
-                                        const deleted = await deleteData("pos", po.id);
-                                        if (deleted && prIds.length > 0) {
-                                          for (const prId of prIds) {
-                                            const stillUsedByOtherPO = pos.some((p: any) => p.id !== po.id && p.items?.some((i: any) => i.prId === prId));
-                                            if (!stillUsedByOtherPO) {
-                                              await updateData("prs", prId, { status: "Approved" });
-                                            }
-                                          }
-                                        }
-                                      }, "danger");
-                                    }}
+                                    onClick={() => handleDeletePo(po)}
                                   >
                                     <Trash2 size={14} />
                                   </button>
@@ -2478,16 +2539,7 @@ const POView = React.memo(() => {
                                     variant="success"
                                     size="sm"
                                     className="px-2 py-0.5 text-[10px] whitespace-nowrap"
-                                    onClick={() => {
-                                      openConfirm(
-                                        "ยืนยันการปิด PO",
-                                        `คุณต้องการปิด ${L.docName} ${po.poNo} ใช่หรือไม่?`,
-                                        async () => {
-                                          await updateData("pos", po.id, { status: "Closed PO" });
-                                        },
-                                        "success"
-                                      );
-                                    }}
+                                    onClick={() => handleConfirmClosePo(po)}
                                   >
                                     ยืนยัน Close
                                   </Button>
@@ -2668,25 +2720,7 @@ const POView = React.memo(() => {
                               {canUseFunction("po", "delete") && (
                                 <button
                                   className="text-red-500 hover:text-red-700 p-1"
-                                  onClick={() => {
-                                    openConfirm("ยืนยันการลบ", `คุณต้องการลบ ${L.docName} นี้ใช่หรือไม่?`, async () => {
-                                      const prIds = getPoRefPrIds(po);
-                                      if (po.pdfUrl) {
-                                        const safePONo = (po.poNo || po.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
-                                        const safeProjId = po.projectId || "unknown";
-                                        await deleteGeneratedPdf(`generated/pos/${safeProjId}/${safePONo}.pdf`);
-                                      }
-                                      const deleted = await deleteData("pos", po.id);
-                                      if (deleted && prIds.length > 0) {
-                                        for (const prId of prIds) {
-                                          const stillUsedByOtherPO = pos.some((p: any) => p.id !== po.id && p.items?.some((i: any) => i.prId === prId));
-                                          if (!stillUsedByOtherPO) {
-                                            await updateData("prs", prId, { status: "Approved" });
-                                          }
-                                        }
-                                      }
-                                    }, "danger");
-                                  }}
+                                  onClick={() => handleDeletePo(po)}
                                 >
                                   <Trash2 size={14} />
                                 </button>
@@ -2697,16 +2731,7 @@ const POView = React.memo(() => {
                                   variant="success"
                                   size="sm"
                                   className="px-2 py-0.5 text-[10px] whitespace-nowrap"
-                                  onClick={() => {
-                                    openConfirm(
-                                      "ยืนยันการปิด PO",
-                                      `คุณต้องการปิด ${L.docName} ${po.poNo} ใช่หรือไม่?`,
-                                      async () => {
-                                        await updateData("pos", po.id, { status: "Closed PO" });
-                                      },
-                                      "success"
-                                    );
-                                  }}
+                                  onClick={() => handleConfirmClosePo(po)}
                                 >
                                   ยืนยัน Close
                                 </Button>

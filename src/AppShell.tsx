@@ -20,6 +20,7 @@ import { ref, uploadBytes, getDownloadURL, uploadBytesResumable, getBytes } from
 import { db, appId, storage, FORM_TEMPLATE_PATHS } from "./lib/firebase";
 import { generatePRPdfBytes, generatePOPdfBytes, downloadBytes, uploadGeneratedPdf, deleteGeneratedPdf } from "./lib/pdfForms";
 import { getResumeStatusForPR } from "./lib/prAllocation";
+import { computeBudgetUsedAfterPrRevision, getLinkedPoRefsForPr, getPrBudgetReturnInfo, scalePrItemsToTotal } from "./lib/prBudgetReturn";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "./components/ui";
 import ResizableTh from "./components/ResizableTh";
 import { useProportionalTableLayout, chainTableResizeHandlers } from "./hooks/useProportionalTableLayout";
@@ -1063,12 +1064,15 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   openConfirm?: (title: string, message: string, onConfirm: () => void | Promise<void>, variant?: string) => void;
   selectedProjectId?: string | null;
 }) => {
-  const { canUseFunction, userRoles = [], logAction, isColumnVisible, invoices = [], receives = [] } = useAppData();
+  const { canUseFunction, userRoles = [], userData, user, logAction, isColumnVisible, invoices = [], receives = [] } = useAppData();
+  const PAGE_SIZE = 50;
   const tableModule = mode === "pr" ? "pr-table" : "po-table";
   const tblId = mode === "pr" ? "pr-table" : "po-table";
   const [searchTerm, setSearchTerm] = React.useState("");
   const [filterStatus, setFilterStatus] = React.useState("all");
   const [filterProject, setFilterProject] = React.useState(selectedProjectId || "all");
+  const [activeTypeTab, setActiveTypeTab] = React.useState("");
+  const [currentPage, setCurrentPage] = React.useState(1);
 
   // ซิงก์ filterProject เมื่อ selectedProjectId เปลี่ยน (เช่นกดเปลี่ยนโครงการที่ header)
   React.useEffect(() => {
@@ -1078,8 +1082,13 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   const [emailTo, setEmailTo] = React.useState("");
   const [pdfLoadingId, setPdfLoadingId] = React.useState<string | null>(null);
   const [pdfPreviewUrl, setPdfPreviewUrl] = React.useState<string | null>(null);
+  const [isReturnBalanceModalOpen, setIsReturnBalanceModalOpen] = React.useState(false);
+  const [returnBalanceContext, setReturnBalanceContext] = React.useState<any>(null);
+  const [returnBalanceValue, setReturnBalanceValue] = React.useState("");
+  const [returnBalanceReason, setReturnBalanceReason] = React.useState("");
 
   const isPR = mode === "pr";
+  const canViewPrBalance = isPR && ["PCM", "GM", "MD", "Administrator"].some((role) => userRoles.includes(role));
 
   const getRelatedInvoicesForPo = React.useCallback((po: any) => {
     if (!po) return [];
@@ -1264,6 +1273,148 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     return { prNos, costCodes };
   }, [prs]);
 
+  const getPrBalanceAmount = React.useCallback((pr: any) => {
+    return getPrBudgetReturnInfo(pr, pos).returnAmount;
+  }, [pos]);
+
+  const handleReturnPrBalanceToBudget = React.useCallback((pr: any) => {
+    if (!pr?.id) return;
+    if (!canViewPrBalance) {
+      showAlert?.("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์คืน Balance PR", "warning");
+      return;
+    }
+
+    const info = getPrBudgetReturnInfo(pr, pos);
+    if (info.returnAmount <= 0) {
+      showAlert?.("ไม่มี Balance ให้คืน", "ยอด PR ปัจจุบันไม่มากกว่า PO Grand Total ที่ใช้ไปแล้ว", "info");
+      return;
+    }
+
+    const prNo = pr.prNo || pr.id;
+    openConfirm?.(
+      "คืน Balance PR กลับ Budget",
+      `PR: ${prNo}\nยอด PR ปัจจุบัน: ${formatCurrency(info.currentTotal)}\nPO Grand Total ที่ใช้ไปแล้ว: ${formatCurrency(info.poGrandTotalUsed)}\nยอดที่จะคืน Budget: ${formatCurrency(info.returnAmount)}\nยอด PR หลัง Rev: ${formatCurrency(info.revisedTotal)}\n\nระบบจะคง PR ID / PR No. เดิม และแก้เฉพาะยอดตัวเลขกับประวัติ Rev ของ PR นี้`,
+      () => {
+        setReturnBalanceContext({ prId: pr.id });
+        setReturnBalanceValue(String(Math.round(Number(info.returnAmount || 0) * 100) / 100));
+        setReturnBalanceReason("");
+        setIsReturnBalanceModalOpen(true);
+      },
+      "warning"
+    );
+  }, [budgets, canViewPrBalance, logAction, openConfirm, pos, prs, showAlert, updateData, user?.email, userData, userRole]);
+
+  const handleConfirmReturnBalance = React.useCallback(async () => {
+    const prId = returnBalanceContext?.prId;
+    if (!prId) return;
+    const latestPr = prs.find((p: any) => p.id === prId);
+    if (!latestPr) {
+      showAlert?.("ไม่พบ PR", "ไม่พบข้อมูล PR ล่าสุด", "warning");
+      return;
+    }
+
+    const latestInfo = getPrBudgetReturnInfo(latestPr, pos);
+    const maxReturn = Number(latestInfo.returnAmount || 0);
+    if (maxReturn <= 0) {
+      showAlert?.("ไม่มี Balance ให้คืน", "ข้อมูลล่าสุดไม่มียอดคงเหลือที่สามารถคืน Budget ได้", "info");
+      setIsReturnBalanceModalOpen(false);
+      setReturnBalanceContext(null);
+      setReturnBalanceValue("");
+      setReturnBalanceReason("");
+      return;
+    }
+
+    const requested = Number(returnBalanceValue);
+    if (!Number.isFinite(requested) || requested <= 0) {
+      showAlert?.("ยอดไม่ถูกต้อง", "กรุณากรอกยอดเงินที่ต้องการคืนมากกว่า 0", "warning");
+      return;
+    }
+    if (requested > maxReturn) {
+      showAlert?.("ยอดเกิน Balance", `คืนได้สูงสุด ${formatCurrency(maxReturn)} เท่านั้น`, "warning");
+      return;
+    }
+    const reason = (returnBalanceReason || "").trim();
+    if (!reason) {
+      showAlert?.("กรุณาระบุเหตุผล", "กรุณากรอกเหตุผลการคืน Budget จาก PR", "warning");
+      return;
+    }
+
+    const revisedTotalRaw = Math.max(0, latestInfo.currentTotal - requested);
+    const revisedTotal = Math.round(revisedTotalRaw * 100) / 100;
+    const nextStatus = revisedTotal <= 0 ? "Closed PR Auto" : (latestPr.status || "Approved");
+    const history = Array.isArray(latestPr.budgetReturnRevisions)
+      ? latestPr.budgetReturnRevisions
+      : [];
+    const byName = userData
+      ? `${userData.firstName || ""} ${userData.lastName || ""}`.trim()
+      : "";
+    const revision = {
+      revNo: history.length + 1,
+      at: new Date().toISOString(),
+      by: byName || user?.email || userRole || "Unknown",
+      oldStatus: latestPr.status || null,
+      oldTotalAmount: latestInfo.currentTotal,
+      newTotalAmount: revisedTotal,
+      oldItems: Array.isArray(latestPr.items) ? latestPr.items : [],
+      poGrandTotalUsed: latestInfo.poGrandTotalUsed,
+      returnedAmount: requested,
+      returnReason: reason,
+      budgetId: latestPr.budgetId || null,
+      costCode: latestPr.costCode || null,
+      subItemId: latestPr.selectedSubItemId || latestPr.subItemId || latestPr.items?.[0]?.budgetSubItemId || latestPr.items?.[0]?.subItemId || null,
+      poRefs: getLinkedPoRefsForPr(pos, latestPr.id),
+    };
+    const payload = {
+      items: scalePrItemsToTotal(latestPr.items || [], revisedTotal),
+      totalAmount: revisedTotal,
+      amount: revisedTotal,
+      status: nextStatus,
+      budgetReturnRevisions: [...history, revision],
+      budgetReturnRevNo: revision.revNo,
+      lastBudgetReturnAt: revision.at,
+      lastBudgetReturnAmount: requested,
+      lastBudgetReturnReason: reason,
+    };
+
+    const ok = await updateData?.("prs", latestPr.id, payload, { skipLog: true });
+    if (!ok) return;
+
+    const budget = latestPr.budgetId
+      ? budgets.find((b: any) => b.id === latestPr.budgetId)
+      : budgets.find((b: any) => b.projectId === latestPr.projectId && b.code === latestPr.costCode);
+    if (budget?.id) {
+      const usedAmount = computeBudgetUsedAfterPrRevision(prs, latestPr, revisedTotal);
+      await updateData?.("budgets", budget.id, { usedAmount }, { skipLog: true });
+      const returnNotifications = Array.isArray(budget.budgetReturnNotifications) ? budget.budgetReturnNotifications : [];
+      const notification = {
+        id: `ret-${latestPr.id}-${revision.revNo}-${Date.now()}`,
+        status: "pending",
+        createdAt: revision.at,
+        createdBy: revision.by,
+        prId: latestPr.id,
+        prNo: latestPr.prNo || latestPr.id,
+        revNo: revision.revNo,
+        amount: requested,
+        reason,
+        subItemId: revision.subItemId || null,
+        oldPrTotal: latestInfo.currentTotal,
+        newPrTotal: revisedTotal,
+      };
+      await updateData?.("budgets", budget.id, { budgetReturnNotifications: [...returnNotifications, notification] }, { skipLog: true });
+    }
+
+    await logAction?.(
+      "Rev PR Return Balance",
+      `Rev PR ${latestPr.prNo || latestPr.id}: คืน Budget ${formatCurrency(requested)} (${formatCurrency(latestInfo.currentTotal)} → ${formatCurrency(revisedTotal)}, PO Grand Total ${formatCurrency(latestInfo.poGrandTotalUsed)})`,
+      latestPr.projectId
+    );
+    setIsReturnBalanceModalOpen(false);
+    setReturnBalanceContext(null);
+    setReturnBalanceValue("");
+    setReturnBalanceReason("");
+    showAlert?.("คืนยอดสำเร็จ", `คืน Budget จาก PR ${latestPr.prNo || latestPr.id} จำนวน ${formatCurrency(requested)} แล้ว (รอรับยอดใน Budget)`, "success");
+  }, [budgets, logAction, pos, prs, returnBalanceContext?.prId, returnBalanceReason, returnBalanceValue, showAlert, updateData, user?.email, userData, userRole]);
+
   const allStatuses = isPR
     ? ["Approved", "PO Issued", "Edit Budget", "Pending Close", "Closed PR", "Closed PR Auto", "Pending Active PR", "Pending MD", "Pending GM", "Pending PM", "Pending CM", "Rejected"]
     : ["Approved", "Pending PCM", "Pending GM", "PO Edit Pending PCM", "PO Edit Pending GM", "Rejected", "Paid", "Partial", "Draft", "Pending Close PO", "Wait Invoice", "Invoice Issue", "Received", "Closed PO"];
@@ -1338,7 +1489,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
   const rows = isPR ? prs : pos;
 
-  const filtered = rows.filter((r: any) => {
+  const filtered = React.useMemo(() => rows.filter((r: any) => {
     const noField = isPR ? r.prNo : r.poNo;
     const lowerSearch = (searchTerm || "").toLowerCase();
     const poRefText = isPR
@@ -1387,14 +1538,61 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     const matchStatus = filterStatus === "all" || r.status === filterStatus;
     const matchProject = filterProject === "all" || r.projectId === filterProject;
     return matchSearch && matchStatus && matchProject;
-  });
+  }), [filterProject, filterStatus, getPoLinkedPrMeta, isPR, pos, projects, rows, searchTerm, vendors]);
+
+  const getShortTypeLabel = React.useCallback((typeValue: any) => {
+    const raw = String(typeValue || "").trim();
+    if (!raw) return "N/A";
+    const codePart = raw.includes(">") ? raw.split(">").pop()?.trim() || raw : raw;
+    return codePart.replace(/\s*,\s*/g, "/").replace(/\s+/g, "");
+  }, []);
+
+  const typeTabs = React.useMemo(() => {
+    const groups = new Map<string, { key: string; label: string; rows: any[] }>();
+    filtered.forEach((row: any) => {
+      const rawType = isPR ? row.purchaseType : row.poType;
+      const key = String(rawType || "ไม่ระบุ Type");
+      if (!groups.has(key)) {
+        groups.set(key, { key, label: getShortTypeLabel(rawType), rows: [] });
+      }
+      groups.get(key)!.rows.push(row);
+    });
+    return Array.from(groups.values()).sort((a, b) =>
+      a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: "base" })
+    );
+  }, [filtered, getShortTypeLabel, isPR]);
+
+  React.useEffect(() => {
+    if (typeTabs.length === 0) {
+      if (activeTypeTab) setActiveTypeTab("");
+      if (currentPage !== 1) setCurrentPage(1);
+      return;
+    }
+    if (!typeTabs.some((tab) => tab.key === activeTypeTab)) {
+      setActiveTypeTab(typeTabs[0].key);
+      setCurrentPage(1);
+    }
+  }, [activeTypeTab, currentPage, typeTabs]);
+
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, filterStatus, filterProject, mode]);
+
+  const activeTypeGroup = typeTabs.find((tab) => tab.key === activeTypeTab) || typeTabs[0] || null;
+  const activeRows = activeTypeGroup?.rows || [];
+  const totalPages = Math.max(1, Math.ceil(activeRows.length / PAGE_SIZE));
+  const safePage = Math.min(Math.max(currentPage, 1), totalPages);
+  const pageStart = (safePage - 1) * PAGE_SIZE;
+  const pageRows = activeRows.slice(pageStart, pageStart + PAGE_SIZE);
+  const pageFrom = activeRows.length === 0 ? 0 : pageStart + 1;
+  const pageTo = Math.min(pageStart + PAGE_SIZE, activeRows.length);
 
   const allProjects = Array.from(new Set(rows.map((r: any) => r.projectId))).filter(Boolean);
 
   return (
     <div className="space-y-4">
       {/* Header bar */}
-      <div className="flex flex-col md:flex-row gap-3 items-start md:items-center justify-between">
+      <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-2 md:flex-row md:items-center md:justify-between">
         <div className="flex items-center gap-3">
           <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm ${isPR ? "bg-slate-700" : "bg-red-600"}`}>
             {isPR ? <FileText size={18} className="text-white" /> : <ShoppingCart size={18} className="text-white" />}
@@ -1407,13 +1605,42 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
               <ColumnVisibilityToggle tableId={tblId} />
             </div>
             <p className="text-xs text-slate-500">
-              {filtered.length} รายการ {filterStatus !== "all" ? `(${filterStatus})` : "ทั้งหมด"}
+              {activeRows.length} รายการใน Type นี้ / {filtered.length} รายการทั้งหมด {filterStatus !== "all" ? `(${filterStatus})` : ""}
             </p>
           </div>
         </div>
 
+        {typeTabs.length > 0 && (
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 md:px-3">
+            {typeTabs.map((tab) => {
+              const active = (activeTypeGroup?.key || "") === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => {
+                    setActiveTypeTab(tab.key);
+                    setCurrentPage(1);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${active
+                    ? isPR
+                      ? "bg-slate-800 border-slate-800 text-white"
+                      : "bg-red-600 border-red-600 text-white"
+                    : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                    }`}
+                >
+                  {tab.label}
+                  <span className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] ${active ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"}`}>
+                    {tab.rows.length}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {/* Filters */}
-        <div className="flex flex-wrap gap-2">
+        <div className="flex shrink-0 flex-wrap gap-2">
           <div className="relative">
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
@@ -1465,13 +1692,14 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                 {isPR && isColumnVisible("pr-table", "type") && <ResizableTh tableId="pr-table" colKey="type" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.type}>ประเภท</ResizableTh>}
                 {isColumnVisible(tblId, "items") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="items" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.items}>จำนวนรายการ</ResizableTh>}
                 {isColumnVisible(tblId, "amount") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="amount" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.amount}>ยอดรวม</ResizableTh>}
+                {canViewPrBalance && isColumnVisible("pr-table", "balance") && <ResizableTh tableId="pr-table" colKey="balance" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.balance}>Balance</ResizableTh>}
                 {isColumnVisible(tblId, "status") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="status" className="px-2 py-0.5 font-semibold text-center" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.status}>สถานะ</ResizableTh>}
                 {isPR && isColumnVisible("pr-table", "poRef") && <ResizableTh tableId="pr-table" colKey="poRef" className="px-2 py-0.5 font-semibold text-center" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.poRef}>Ref PO</ResizableTh>}
                 {isColumnVisible(tblId, "action") && <th className="px-2 py-0.5 font-semibold text-center" style={{ width: prPoScaled.action }}>Action</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filtered.length === 0 ? (
+              {pageRows.length === 0 ? (
                 <tr>
                   <td colSpan={99} className="py-16 text-center text-slate-400">
                     <div className="flex flex-col items-center gap-2">
@@ -1481,7 +1709,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                   </td>
                 </tr>
               ) : (
-                filtered.map((r: any, idx: number) => {
+                pageRows.map((r: any, idx: number) => {
                   const noField = isPR ? r.prNo : r.poNo;
                   const dateField = isPR ? r.requestDate : (r.poDate || r.createdDate);
                   const amount = isPR ? r.totalAmount : (r.grandTotal ?? r.amount ?? 0);
@@ -1505,6 +1733,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                       .filter(Boolean)
                       .join(", ")
                     : "";
+                  const prBalance = isPR ? getPrBalanceAmount(r) : 0;
 
                   return (
                     <tr key={r.id} className={`hover:bg-blue-50/40 transition-colors cursor-pointer ${isEven ? "bg-white" : "bg-slate-50/40"}`} onClick={() => { if (!isPR && r.pdfUrl) setPdfPreviewUrl(r.pdfUrl); }}>
@@ -1526,7 +1755,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                           )}
                         </div>
                       </td>}
-                      {isColumnVisible(tblId, "rowNum") && <td className="px-2 py-0.5 text-slate-400 font-mono">{idx + 1}</td>}
+                      {isColumnVisible(tblId, "rowNum") && <td className="px-2 py-0.5 text-slate-400 font-mono">{pageStart + idx + 1}</td>}
                       {isColumnVisible(tblId, "no") && (
                         <td className="px-2 py-0.5 font-bold text-slate-800 whitespace-nowrap">
                           <div className="flex items-center gap-1">
@@ -1607,6 +1836,11 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                           ฿{Number(amount || 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
                         </td>
                       )}
+                      {canViewPrBalance && isColumnVisible("pr-table", "balance") && (
+                        <td className="px-2 py-0.5 text-right font-semibold text-emerald-700">
+                          ฿{Number(prBalance || 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
+                        </td>
+                      )}
                       {isColumnVisible(tblId, "status") && (
                         <td className="px-2 py-0.5 text-center">
                           <span className={`inline-flex items-center px-2 py-0 rounded-full border text-[10px] font-semibold whitespace-nowrap ${statusClass}`}>
@@ -1683,6 +1917,20 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                               Active PR
                             </button>
                           )}
+                          {canViewPrBalance && isPR && (() => {
+                            const info = getPrBudgetReturnInfo(r, pos);
+                            if (info.returnAmount <= 0) return null;
+                            return (
+                              <button
+                                type="button"
+                                className="p-1.5 rounded hover:bg-emerald-100 text-emerald-700"
+                                title={`คืน Balance PR กลับ Budget (${formatCurrency(info.returnAmount)})`}
+                                onClick={() => handleReturnPrBalanceToBudget(r)}
+                              >
+                                <Wallet size={14} />
+                              </button>
+                            );
+                          })()}
                           {canUseFunction(tableModule, "requestClosePO") && !isPR && r.status !== "Closed PO" && r.status !== "Pending Close PO" && r.status !== "Received" && (
                             <button type="button" className="p-1.5 rounded hover:bg-amber-100 text-amber-700" title="ขอปิด PO (รอ PCM ยืนยัน)" onClick={() => openConfirm?.("ขอปิด PO", "เมื่อ PCM ยืนยันแล้ว สถานะจะเป็น Closed PO", async () => {
                               await updateData?.("pos", r.id, { status: "Pending Close PO", closeRequestedAt: new Date().toISOString() }, { skipLog: true });
@@ -1766,13 +2014,39 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
         </div>
 
         {/* Footer summary */}
-        {filtered.length > 0 && (
-          <div className="px-4 py-3 bg-slate-50 border-t border-slate-100 flex justify-between items-center text-xs text-slate-500">
-            <span>แสดง {filtered.length} รายการ</span>
-            <div className="flex gap-4">
+        {activeRows.length > 0 && (
+          <div className="px-4 py-3 bg-slate-50 border-t border-slate-100 flex flex-col gap-3 text-xs text-slate-500 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-wrap items-center gap-3">
+              <span>
+                แสดง {pageFrom}-{pageTo} จาก {activeRows.length} รายการ
+                {activeTypeGroup ? ` (${activeTypeGroup.label})` : ""}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={safePage <= 1}
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  className="px-2.5 py-1 rounded-md border border-slate-200 bg-white text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100"
+                >
+                  ก่อนหน้า
+                </button>
+                <span className="font-semibold text-slate-600">
+                  หน้า {safePage} / {totalPages}
+                </span>
+                <button
+                  type="button"
+                  disabled={safePage >= totalPages}
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  className="px-2.5 py-1 rounded-md border border-slate-200 bg-white text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100"
+                >
+                  ถัดไป
+                </button>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-4">
               {!isPR && (
                 <span className="font-bold text-slate-600">
-                  ยอดรวมทั้งหมด (Ex VAT): ฿{filtered.reduce((s: number, r: any) => {
+                  ยอดรวม Type นี้ (Ex VAT): ฿{activeRows.reduce((s: number, r: any) => {
                     // Calculate amount ex VAT for each PO
                     let subtotal = 0;
                     if (r.items && r.items.length > 0) {
@@ -1785,12 +2059,109 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                 </span>
               )}
               <span className="font-bold text-slate-700">
-                ยอดรวมทั้งหมด: ฿{filtered.reduce((s: number, r: any) => s + Number(isPR ? r.totalAmount : r.grandTotal || r.amount || 0), 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
+                ยอดรวม Type นี้: ฿{activeRows.reduce((s: number, r: any) => s + Number(isPR ? r.totalAmount : r.grandTotal || r.amount || 0), 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
               </span>
             </div>
           </div>
         )}
       </Card>
+
+      {isReturnBalanceModalOpen && (() => {
+        const latestPr = prs.find((p: any) => p.id === returnBalanceContext?.prId);
+        const latestInfo = latestPr ? getPrBudgetReturnInfo(latestPr, pos) : null;
+        const maxReturn = Number(latestInfo?.returnAmount || 0);
+        const requested = Number(returnBalanceValue);
+        const isRequestedValid = Number.isFinite(requested) && requested > 0 && requested <= maxReturn;
+        return (
+          <div className="fixed inset-0 bg-black/55 backdrop-blur-sm flex items-center justify-center z-[10011] p-4">
+            <div className="bg-white rounded-2xl shadow-2xl border border-emerald-200 p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
+                  <Wallet size={19} className="text-emerald-700" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-800">ยืนยันคืน Balance PR</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    PR: <span className="font-semibold text-slate-700">{latestPr?.prNo || latestPr?.id || "-"}</span>
+                  </p>
+                </div>
+              </div>
+
+              {latestInfo ? (
+                <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 p-3 text-xs text-slate-700 space-y-1.5 mb-4">
+                  <div className="flex justify-between gap-3">
+                    <span className="text-slate-500">ยอด PR ปัจจุบัน</span>
+                    <span className="font-semibold">{formatCurrency(latestInfo.currentTotal)}</span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-slate-500">PO Grand Total ที่ใช้ไปแล้ว</span>
+                    <span className="font-semibold">{formatCurrency(latestInfo.poGrandTotalUsed)}</span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-slate-500">Balance คืนได้สูงสุด</span>
+                    <span className="font-bold text-emerald-700">{formatCurrency(maxReturn)}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 mb-4">
+                  ไม่พบข้อมูล PR ล่าสุด กรุณาปิดแล้วลองใหม่
+                </div>
+              )}
+
+              <label className="block text-xs font-bold text-slate-600 mb-1.5">
+                ยอดเงินที่จะคืนเข้า Budget <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={maxReturn > 0 ? maxReturn : undefined}
+                step="0.01"
+                value={returnBalanceValue}
+                onChange={(e) => setReturnBalanceValue(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:border-emerald-400"
+                placeholder="กรอกยอดที่ต้องการคืน"
+                autoFocus
+              />
+              <p className={`mt-1.5 text-[11px] ${isRequestedValid ? "text-emerald-700" : "text-slate-500"}`}>
+                {isRequestedValid
+                  ? `ยอด PR หลัง Rev: ${formatCurrency(Math.max(0, Number(latestInfo?.currentTotal || 0) - requested))}`
+                  : `กรอกจำนวนมากกว่า 0 และไม่เกิน ${formatCurrency(maxReturn)}`}
+              </p>
+              <label className="block text-xs font-bold text-slate-600 mt-3 mb-1.5">
+                เหตุผลการคืน Budget <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                rows={3}
+                value={returnBalanceReason}
+                onChange={(e) => setReturnBalanceReason(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:border-emerald-400"
+                placeholder="ระบุเหตุผลที่ต้องคืนยอดจาก PR รายการนี้..."
+              />
+
+              <div className="flex justify-end gap-2 mt-4">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setIsReturnBalanceModalOpen(false);
+                    setReturnBalanceContext(null);
+                    setReturnBalanceValue("");
+                    setReturnBalanceReason("");
+                  }}
+                >
+                  ยกเลิก
+                </Button>
+                <button
+                  className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition-all disabled:opacity-50"
+                  disabled={!latestPr || maxReturn <= 0 || !isRequestedValid || !String(returnBalanceReason || "").trim()}
+                  onClick={handleConfirmReturnBalance}
+                >
+                  ยืนยันคืนยอด
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Email modal for PR/PO PDF */}
       {emailModal && (

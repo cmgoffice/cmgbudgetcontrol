@@ -204,11 +204,100 @@ const BudgetView = React.memo(() => {
     }
   }, [budgetCategory, scrollToPendingAfterRender]);
 
-  const currentBudgets = budgets.filter(
-    (b) => b.projectId === selectedProjectId && b.category === budgetCategory
+  const selectedProjectBudgets = useMemo(
+    () => budgets.filter((b) => b.projectId === selectedProjectId),
+    [budgets, selectedProjectId]
   );
 
-  const selectedProject = projects.find((p) => p.id === selectedProjectId);
+  const budgetsByCategory = useMemo(() => {
+    const grouped = new Map<string, any[]>();
+    selectedProjectBudgets.forEach((budget) => {
+      const key = budget.category || "";
+      const rows = grouped.get(key);
+      if (rows) rows.push(budget);
+      else grouped.set(key, [budget]);
+    });
+    return grouped;
+  }, [selectedProjectBudgets]);
+
+  const currentBudgets = useMemo(
+    () => budgetsByCategory.get(budgetCategory) || [],
+    [budgetsByCategory, budgetCategory]
+  );
+
+  const selectedProject = useMemo(
+    () => projects.find((p) => p.id === selectedProjectId),
+    [projects, selectedProjectId]
+  );
+  const projectPrs = useMemo(
+    () => prs.filter((pr) => pr.projectId === selectedProjectId),
+    [prs, selectedProjectId]
+  );
+  const projectPos = useMemo(
+    () => pos.filter((po) => po.projectId === selectedProjectId),
+    [pos, selectedProjectId]
+  );
+  const projectReceives = useMemo(
+    () => (receives || []).filter((receive: any) => receive.projectId === selectedProjectId),
+    [receives, selectedProjectId]
+  );
+  const projectPayments = useMemo(
+    () => (payments || []).filter((payment: any) => payment.projectId === selectedProjectId),
+    [payments, selectedProjectId]
+  );
+  const projectPrById = useMemo(() => {
+    const map = new Map();
+    projectPrs.forEach((pr) => map.set(pr.id, pr));
+    return map;
+  }, [projectPrs]);
+  const duplicateBudgetCodeSet = useMemo(() => {
+    const counts = new Map<string, number>();
+    selectedProjectBudgets.forEach((budget) => {
+      const code = budget.code || "";
+      counts.set(code, (counts.get(code) || 0) + 1);
+    });
+    return new Set(
+      Array.from(counts.entries())
+        .filter(([, count]) => count > 1)
+        .map(([code]) => code)
+    );
+  }, [selectedProjectBudgets]);
+  const invoiceAmountByPoRef = useMemo(() => {
+    const map = new Map<string, number>();
+    invoices.forEach((invoice: any) => {
+      if (!invoice?.poRef) return;
+      map.set(invoice.poRef, (map.get(invoice.poRef) || 0) + (Number(invoice.amount) || 0));
+    });
+    return map;
+  }, [invoices]);
+  const receiveQtyByPoItemKey = useMemo(() => {
+    const map = new Map<string, number>();
+    projectReceives.forEach((receive: any) => {
+      (receive.items || []).forEach((item: any) => {
+        const key = `${receive.poId}:${item.poItemIndex}`;
+        map.set(key, (map.get(key) || 0) + (Number(item.receivedQty) || 0));
+      });
+    });
+    return map;
+  }, [projectReceives]);
+  const spPaymentsForProject = useMemo(
+    () => projectPayments.filter((payment: any) => payment.paymentType === "SP" && Array.isArray(payment.selectedPrIds) && payment.selectedPrIds.length > 0),
+    [projectPayments]
+  );
+  const getItemAmount = useCallback((item) => {
+    const amount = Number(item?.amount);
+    if (Number.isFinite(amount)) return amount;
+    const qty = Number(item?.quantity || 0);
+    const price = Number(item?.price || 0);
+    return qty * price;
+  }, []);
+  const sumSubItemAmounts = useCallback((subItems = []) => {
+    return subItems.reduce((sum, sub) => {
+      const amount = Number(sub?.amount);
+      if (Number.isFinite(amount)) return sum + amount;
+      return sum + (Number(sub?.quantity || 0) * Number(sub?.unitPrice || 0));
+    }, 0);
+  }, []);
   const isSelectedProjectActive = (selectedProject?.status || "Active") === "Active";
   const latestRevisionBudgetTotal = Number(selectedProject?.budgetTotal || 0);
   const shouldEnforceRevisionBudgetTotal = isSelectedProjectActive && latestRevisionBudgetTotal > 0;
@@ -223,15 +312,13 @@ const BudgetView = React.memo(() => {
   }, [selectedProject?.status, currentBudgetRevisionNo]);
 
   const getProjectBudgetGrandTotal = useCallback((overrideBudgetId = null, overrideAmount = null, extraAmount = 0) => {
-    const baseTotal = budgets
-      .filter((b) => b.projectId === selectedProjectId)
-      .reduce((sum, b) => {
+    const baseTotal = selectedProjectBudgets.reduce((sum, b) => {
         if (overrideBudgetId && b.id === overrideBudgetId) return sum + (Number(overrideAmount) || 0);
         return sum + (Number(b.amount) || 0);
       }, 0);
     if (!overrideBudgetId && overrideAmount != null) return baseTotal + (Number(overrideAmount) || 0) + (Number(extraAmount) || 0);
     return baseTotal + (Number(extraAmount) || 0);
-  }, [budgets, selectedProjectId]);
+  }, [selectedProjectBudgets]);
 
   const validateGrandTotalWithinLatestRevision = useCallback((nextGrandTotal, actionLabel = "ดำเนินการ") => {
     if (!shouldEnforceRevisionBudgetTotal) return true;
@@ -250,17 +337,15 @@ const BudgetView = React.memo(() => {
     // MD or Admin sees pending budgets
     if (userRole !== "MD" && userRole !== "Administrator") return [];
 
-    return budgets.filter(
+    return selectedProjectBudgets.filter(
       (b) =>
-        b.projectId === selectedProjectId &&
         (b.status === "Wait MD Approve" || b.status === "Revision Pending")
     );
-  }, [budgets, selectedProjectId, userRole]);
+  }, [selectedProjectBudgets, selectedProjectId, userRole]);
 
   const pendingPRsForProject = useMemo(() => {
     if (!selectedProjectId) return [];
-    return prs.filter((pr) => {
-      if (pr.projectId !== selectedProjectId) return false;
+    return projectPrs.filter((pr) => {
       if (pr.status === "Rejected" || pr.status === "Approved" || pr.status === "PO Issued") return false;
 
       if (userRoles.includes("Administrator")) return true;
@@ -273,25 +358,25 @@ const BudgetView = React.memo(() => {
 
       return false;
     });
-  }, [prs, selectedProjectId, userRoles]);
+  }, [projectPrs, selectedProjectId, userRoles]);
 
   const pendingSubItemsForProject = useMemo(() => {
     if (!selectedProjectId) return [];
     if (userRole !== "MD" && userRole !== "Administrator") return [];
     const pendingSubs = [];
-    budgets.forEach((b) => {
-      if (b.projectId === selectedProjectId && b.subItems?.length > 0) {
+    selectedProjectBudgets.forEach((b) => {
+      if (b.subItems?.length > 0) {
         b.subItems.forEach((sub) => {
-          if (sub.status === "Wait MD Approve" || sub.status === "Revision Pending")
+          if (sub.status === "Wait MD Approve" || sub.status === "Revision Pending") {
             pendingSubs.push({ ...sub, budgetId: b.id, budgetCode: b.code });
+          }
         });
       }
     });
     return pendingSubs;
-  }, [budgets, selectedProjectId, userRole]);
+  }, [selectedProjectBudgets, selectedProjectId, userRole]);
 
-  const pendingPOsForProject = useMemo(() => pos.filter((po) => {
-    if (po.projectId !== selectedProjectId) return false;
+  const pendingPOsForProject = useMemo(() => projectPos.filter((po) => {
     if (userRoles.includes("Administrator") && (
       po.status?.startsWith("Pending") ||
       po.status === PO_REVISION_PENDING_PCM ||
@@ -300,7 +385,7 @@ const BudgetView = React.memo(() => {
     if (userRoles.includes("PCM") && (po.status === "Pending PCM" || po.status === PO_REVISION_PENDING_PCM)) return true;
     if (userRoles.includes("GM") && (po.status === "Pending GM" || po.status === PO_REVISION_PENDING_GM)) return true;
     return false;
-  }), [pos, selectedProjectId, userRoles]);
+  }), [projectPos, selectedProjectId, userRoles]);
 
   const sortedBudgets = useMemo(() => {
     let sortableItems = [...currentBudgets];
@@ -992,57 +1077,47 @@ const BudgetView = React.memo(() => {
     return item.amount;
   };
 
-  const getBudgetStats = (budget) => {
+  const getBudgetStats = useCallback((budget) => {
     const budgetCode = budget.code;
     const budgetDocId = budget.id;
     const hasSubItems = budget.subItems && budget.subItems.length > 0;
     const budgetDesc = (budget.description || "").trim();
-    const hasDuplicateCostCode = budgets.some(
-      (b) => b.projectId === selectedProjectId && b.code === budgetCode && b.id !== budgetDocId
-    );
+    const hasDuplicateCostCode = duplicateBudgetCodeSet.has(budgetCode);
 
     // Collect all sub-item IDs for this budget
-    const subItemIds = hasSubItems ? budget.subItems.map(sub => sub.id) : [];
-
-    const getItemAmount = (item) => {
-      const amount = Number(item?.amount);
-      if (Number.isFinite(amount)) return amount;
-      const qty = Number(item?.quantity || 0);
-      const price = Number(item?.price || 0);
-      return qty * price;
-    };
+    const subItemIds = hasSubItems ? new Set((budget.subItems || []).map((sub) => sub.id).filter(Boolean)) : null;
 
     const itemBelongsToBudget = (item, parentDoc = null) => {
       // For budgets with sub-items, only match items that reference specific sub-items
       if (hasSubItems) {
         if (item?.budgetId && item.budgetId === budgetDocId) return true;
         // Check if item has budgetSubItemId that matches one of our sub-items
-        if (item.budgetSubItemId && subItemIds.includes(item.budgetSubItemId)) return true;
-        if (item.subItemId && subItemIds.includes(item.subItemId)) return true;
+        if (item.budgetSubItemId && subItemIds?.has(item.budgetSubItemId)) return true;
+        if (item.subItemId && subItemIds?.has(item.subItemId)) return true;
 
         // IMPORTANT: For PO items created from PR items, trace back to find the original sub-item ID
         if (item.prId != null && item.prItemIndex != null) {
-          const pr = prs.find(p => p.id === item.prId);
+          const pr = projectPrById.get(item.prId);
           const prItem = pr?.items?.[item.prItemIndex];
           if (prItem) {
             if (prItem.budgetId && prItem.budgetId === budgetDocId) return true;
-            if (prItem.budgetSubItemId && subItemIds.includes(prItem.budgetSubItemId)) return true;
-            if (prItem.subItemId && subItemIds.includes(prItem.subItemId)) return true;
+            if (prItem.budgetSubItemId && subItemIds?.has(prItem.budgetSubItemId)) return true;
+            if (prItem.subItemId && subItemIds?.has(prItem.subItemId)) return true;
           }
         }
 
         // Fallback for Dis PR allocations or legacy mixed items without direct sub-item fields
         if (Array.isArray(item.disPrAllocations) && item.disPrAllocations.length > 0) {
           return item.disPrAllocations.some((alloc) => {
-            const pr = prs.find((p) => p.id === alloc?.prId);
+            const pr = projectPrById.get(alloc?.prId);
             if (!pr) return false;
             if (pr.budgetId && pr.budgetId === budgetDocId) return true;
             if (!hasDuplicateCostCode && pr.costCode === budgetCode) return true;
             if (Array.isArray(pr.items)) {
               return pr.items.some((prItem) =>
                 (prItem.budgetId && prItem.budgetId === budgetDocId) ||
-                (prItem.budgetSubItemId && subItemIds.includes(prItem.budgetSubItemId)) ||
-                (prItem.subItemId && subItemIds.includes(prItem.subItemId))
+                (prItem.budgetSubItemId && subItemIds?.has(prItem.budgetSubItemId)) ||
+                (prItem.subItemId && subItemIds?.has(prItem.subItemId))
               );
             }
             return false;
@@ -1061,7 +1136,7 @@ const BudgetView = React.memo(() => {
       // Fallback for Dis PR allocations
       if (Array.isArray(item.disPrAllocations) && item.disPrAllocations.length > 0) {
         if (item.disPrAllocations.some((alloc) => {
-          const pr = prs.find((p) => p.id === alloc?.prId);
+          const pr = projectPrById.get(alloc?.prId);
           return !!pr && (pr.budgetId === budgetDocId || (!hasDuplicateCostCode && pr.costCode === budgetCode));
         })) {
           return true;
@@ -1074,8 +1149,7 @@ const BudgetView = React.memo(() => {
       return iDesc === budgetDesc;
     };
 
-    const relatedPRs = prs.filter((pr) => {
-      if (pr.projectId !== selectedProjectId) return false;
+    const relatedPRs = projectPrs.filter((pr) => {
       if (pr.status === "Rejected") return false;
 
       // For budgets with sub-items, only include PRs that have items belonging to this budget
@@ -1094,8 +1168,7 @@ const BudgetView = React.memo(() => {
       return false;
     });
 
-    const relatedPOs = pos.filter((po) => {
-      if (po.projectId !== selectedProjectId) return false;
+    const relatedPOs = projectPos.filter((po) => {
       if (po.status === "Rejected") return false;
 
       // For budgets with sub-items, only include POs that have items belonging to this budget
@@ -1141,27 +1214,28 @@ const BudgetView = React.memo(() => {
       return sum;
     }, 0);
 
-    const relatedInvoices = invoices.filter((inv) =>
-      relatedPOs.some((po) => po.poNo === inv.poRef && po.status !== "Rejected")
-    );
-    const invoiceTotal = relatedInvoices.reduce(
-      (sum, inv) => sum + Number(inv.amount),
-      0
-    );
+    const invoiceTotal = relatedPOs.reduce((sum, po) => {
+      if (po.status === "Rejected") return sum;
+      return sum + (invoiceAmountByPoRef.get(po.poNo) || 0);
+    }, 0);
     return { prTotal, poTotal, invoiceTotal, relatedPRs, relatedPOs };
-  };
+  }, [duplicateBudgetCodeSet, invoiceAmountByPoRef, projectPos, projectPrById, projectPrs, getItemAmount]);
+
+  const budgetStatsById = useMemo(() => {
+    const statsMap = new Map();
+    selectedProjectBudgets.forEach((budget) => {
+      statsMap.set(budget.id, getBudgetStats(budget));
+    });
+    return statsMap;
+  }, [selectedProjectBudgets, getBudgetStats]);
 
   const getMinimumBudgetAmountForNonNegativeBalance = (budget) => {
     if (!budget) return 0;
     const hasSubItems = Array.isArray(budget.subItems) && budget.subItems.length > 0;
     if (hasSubItems) {
-      return budget.subItems.reduce((sum, sub) => {
-        const amount = Number(sub?.amount);
-        if (Number.isFinite(amount)) return sum + amount;
-        return sum + (Number(sub?.quantity || 0) * Number(sub?.unitPrice || 0));
-      }, 0);
+      return sumSubItemAmounts(budget.subItems);
     }
-    return Number(getBudgetStats(budget).invoiceTotal || 0);
+    return Number(budgetStatsById.get(budget.id)?.invoiceTotal || 0);
   };
 
   const NOW_STATUS_COLOR_MAP = {
@@ -1192,22 +1266,25 @@ const BudgetView = React.memo(() => {
     "SP Progress": "bg-blue-50 text-blue-800 border-blue-200",
   };
 
-  const getNowStatus = (budget, stats, filterMode = "ALL", targetSubId = null) => {
+  const getNowStatus = useCallback((budget, stats, filterMode = "ALL", targetSubId = null) => {
     const budgetCode = budget.code;
     const budgetDocId = budget.id;
     const hasSubItems = Array.isArray(budget.subItems) && budget.subItems.length > 0;
-
-    const getItemAmount = (item) => {
-      const amount = Number(item?.amount);
-      if (Number.isFinite(amount)) return amount;
-      return Number(item?.quantity || 0) * Number(item?.price || 0);
-    };
+    const budgetSubItemIdSet = hasSubItems
+      ? new Set((budget.subItems || []).map((sub) => sub.id).filter(Boolean))
+      : null;
+    const budgetSubDescriptionSet = hasSubItems
+      ? new Set((budget.subItems || []).map((sub) => (sub.description || "").trim()).filter(Boolean))
+      : null;
+    const targetSub = filterMode === "SUB_ITEM" && targetSubId
+      ? (budget.subItems || []).find((s) => s.id === targetSubId)
+      : null;
 
     const resolveSubItemId = (item) => {
       if (item?.budgetSubItemId) return item.budgetSubItemId;
       if (item?.subItemId) return item.subItemId;
       if (item?.prId != null && item?.prItemIndex != null) {
-        const pr = prs.find((p) => p.id === item.prId);
+        const pr = projectPrById.get(item.prId);
         return pr?.items?.[item.prItemIndex]?.budgetSubItemId
           || pr?.items?.[item.prItemIndex]?.subItemId
           || pr?.subItemId
@@ -1219,7 +1296,7 @@ const BudgetView = React.memo(() => {
     const matchesTargetSubByAllocations = (item, targetSub) => {
       if (!targetSub || !Array.isArray(item?.disPrAllocations) || item.disPrAllocations.length === 0) return false;
       return item.disPrAllocations.some((alloc) => {
-        const pr = prs.find((p) => p.id === alloc?.prId);
+        const pr = projectPrById.get(alloc?.prId);
         if (!pr) return false;
 
         // Most precise: PR item linked via index from allocation
@@ -1241,7 +1318,6 @@ const BudgetView = React.memo(() => {
 
     const matchesFilter = (item, itemCostCode, parentDoc = null) => {
       if (filterMode === "SUB_ITEM" && targetSubId) {
-        const targetSub = hasSubItems ? budget.subItems.find((s) => s.id === targetSubId) : null;
         if (!targetSub) return false;
         const matchedByAlloc = matchesTargetSubByAllocations(item, targetSub);
 
@@ -1272,9 +1348,9 @@ const BudgetView = React.memo(() => {
 
       if (filterMode === "MAIN_ONLY" && hasSubItems) {
         if (effectiveSubItemId) {
-          return !budget.subItems.some((sub) => sub.id === effectiveSubItemId);
+          return !budgetSubItemIdSet?.has(effectiveSubItemId);
         }
-        return !budget.subItems.some((sub) => (sub.description || "").trim() === iDesc);
+        return !budgetSubDescriptionSet?.has(iDesc);
       }
 
       return true;
@@ -1297,9 +1373,6 @@ const BudgetView = React.memo(() => {
     const statusesToReturn = [];
 
     // Budget stage
-    const targetSub = filterMode === "SUB_ITEM" && targetSubId
-      ? (budget.subItems || []).find((s) => s.id === targetSubId)
-      : null;
     const budgetStage = targetSub?.status || budget.status || "Draft";
     if (budgetStage === "Wait MD Approve") {
       statusesToReturn.push({ label: "Budget รอ MD อนุมัติ", color: "purple", amount: null });
@@ -1349,7 +1422,7 @@ const BudgetView = React.memo(() => {
     (stats.relatedPOs || []).forEach((po) => {
       let amount = 0;
       (po.items || []).forEach((i, idx) => {
-        const itemCode = i.costCode || prs.find((p) => p.id === i.prId)?.costCode;
+        const itemCode = i.costCode || projectPrById.get(i.prId)?.costCode;
         if (!matchesFilter(i, itemCode, po)) return;
         amount += getItemAmount(i);
         matchedPoItemKeys.push({ poId: po.id, idx, orderedQty: Number(i.quantity || 0) });
@@ -1377,18 +1450,10 @@ const BudgetView = React.memo(() => {
     if (matchedPoItemKeys.length > 0) {
       let orderedQty = 0;
       let receivedQty = 0;
-      const keySet = new Set(matchedPoItemKeys.map((k) => `${k.poId}:${k.idx}`));
       matchedPoItemKeys.forEach((k) => { orderedQty += Number(k.orderedQty || 0); });
-
-      (receives || [])
-        .filter((r: any) => r.projectId === budget.projectId)
-        .forEach((r: any) => {
-          (r.items || []).forEach((ri: any) => {
-            const key = `${r.poId}:${ri.poItemIndex}`;
-            if (!keySet.has(key)) return;
-            receivedQty += Number(ri.receivedQty || 0);
-          });
-        });
+      matchedPoItemKeys.forEach((k) => {
+        receivedQty += Number(receiveQtyByPoItemKey.get(`${k.poId}:${k.idx}`) || 0);
+      });
 
       const receivePercent = orderedQty > 0
         ? Math.max(0, Math.min(100, Math.round((receivedQty / orderedQty) * 100)))
@@ -1413,7 +1478,7 @@ const BudgetView = React.memo(() => {
           (stats.relatedPOs || [])
             .filter((po) =>
               (po.items || []).some((item) => {
-                const itemCode = item.costCode || prs.find((p) => p.id === item.prId)?.costCode;
+                const itemCode = item.costCode || projectPrById.get(item.prId)?.costCode;
                 return matchesFilter(item, itemCode, po);
               })
             )
@@ -1421,10 +1486,7 @@ const BudgetView = React.memo(() => {
         )
       : new Set((stats.relatedPOs || []).map((po) => po.id));
 
-    const spPayments = (payments || []).filter((pmt) => {
-      if (pmt.projectId !== budget.projectId) return false;
-      if (pmt.paymentType !== "SP") return false;
-      if (!Array.isArray(pmt.selectedPrIds) || pmt.selectedPrIds.length === 0) return false;
+    const spPayments = spPaymentsForProject.filter((pmt) => {
       return pmt.selectedPrIds.some((id) => spRelevantPoIds.has(id));
     });
 
@@ -1472,7 +1534,7 @@ const BudgetView = React.memo(() => {
     }
 
     return statusesToReturn;
-  };
+  }, [getItemAmount, projectPrById, receiveQtyByPoItemKey, spPaymentsForProject]);
 
   const renderNowStatusBadges = (statuses = []) => {
     if (!statuses.length) return <span className="text-[10px] text-slate-400">-</span>;
@@ -1543,19 +1605,28 @@ const BudgetView = React.memo(() => {
     return [...statuses].sort((a, b) => getRank(b.label) - getRank(a.label))[0] || null;
   };
 
+  const getBudgetReturnNotifications = (budget) => {
+    if (!budget || !Array.isArray(budget.budgetReturnNotifications)) return [];
+    return [...budget.budgetReturnNotifications].sort(
+      (a: any, b: any) => Number(new Date(b?.createdAt || 0)) - Number(new Date(a?.createdAt || 0))
+    );
+  };
+
+  const getPendingBudgetReturnNotifications = (budget) =>
+    getBudgetReturnNotifications(budget).filter((n: any) => (n?.status || "pending") !== "accepted");
+
+  const getPendingSubBudgetReturnNotifications = (budget, subItemId) =>
+    getPendingBudgetReturnNotifications(budget).filter((n: any) => (n?.subItemId || null) === (subItemId || null));
+
   const getCategorySummary = () => {
     return Object.entries(COST_CATEGORIES).map(([code, name]) => {
-      const catBudgets = budgets.filter(
-        (b) => b.projectId === selectedProjectId && b.category === code
-      );
+      const catBudgets = budgetsByCategory.get(code) || [];
       // Overview summary ต้องมาจากผลรวม Main item ของแต่ละหน้า (001-009)
       const mainRows = catBudgets.map((b) => {
         const totalBudget = Number(calculateTotalBudget(b)) || 0;
-        const stats = getBudgetStats(b);
+        const stats = budgetStatsById.get(b.id) || { prTotal: 0, poTotal: 0, invoiceTotal: 0 };
         const hasSubItems = Array.isArray(b.subItems) && b.subItems.length > 0;
-        const sumSubItems = hasSubItems
-          ? b.subItems.reduce((sum, sub) => sum + (Number(sub.amount) || 0), 0)
-          : 0;
+        const sumSubItems = hasSubItems ? sumSubItemAmounts(b.subItems) : 0;
         // ใช้สูตรเดียวกับหน้า category ของแถว Main
         const balance = hasSubItems
           ? totalBudget - sumSubItems
@@ -1602,13 +1673,9 @@ const BudgetView = React.memo(() => {
   };
 
   const categorySummary = useMemo(() => getCategorySummary(), [
-    budgets,
-    selectedProjectId,
-    prs,
-    pos,
-    invoices,
-    userRole,
-    userRoles,
+    budgetsByCategory,
+    budgetStatsById,
+    sumSubItemAmounts,
   ]);
 
   const categorySummaryTotals = useMemo(() => ({
@@ -2117,6 +2184,74 @@ const BudgetView = React.memo(() => {
     const raw = (sub?.description ?? "").trim() || "(no description)";
     return raw.length > 120 ? `${raw.slice(0, 117)}…` : raw;
   };
+
+  const handleAcceptBudgetReturnNotification = useCallback((budget, notification) => {
+    if (!budget?.id || !notification?.id) return;
+    const sub = budget?.subItems?.find((s) => s.id === notification.subItemId);
+    const amount = Number(notification.amount || 0);
+    const reason = String(notification.reason || "-");
+    const createdAtText = notification.createdAt ? new Date(notification.createdAt).toLocaleString("th-TH") : "-";
+
+    openConfirm(
+      "รับยอด Budget คืนจาก PR",
+      `PR: ${notification.prNo || notification.prId || "-"}\nยอดคืน: ${formatCurrency(amount)}\nเหตุผล: ${reason}\nเวลาแจ้งคืน: ${createdAtText}\n\nกด "ยืนยัน" เพื่อรับยอดคืนเข้ารายการ Budget`,
+      async () => {
+        const latestBudget = budgets.find((b) => b.id === budget.id);
+        if (!latestBudget) {
+          showAlert("ไม่พบข้อมูล", "ไม่พบ Budget ล่าสุด", "warning");
+          return;
+        }
+
+        const latestNotifications = Array.isArray(latestBudget.budgetReturnNotifications) ? latestBudget.budgetReturnNotifications : [];
+        const latestNotification = latestNotifications.find((n: any) => n?.id === notification.id);
+        if (!latestNotification || (latestNotification?.status || "pending") === "accepted") {
+          showAlert("รายการไม่พร้อมใช้งาน", "รายการนี้ถูกรับยอดแล้วหรือไม่พบข้อมูลล่าสุด", "info");
+          return;
+        }
+
+        const payload: any = {};
+        const acceptedBy = userData ? `${userData.firstName || ""} ${userData.lastName || ""}`.trim() : (userRole || "Unknown");
+
+        if (latestNotification.subItemId) {
+          const subItems = Array.isArray(latestBudget.subItems) ? [...latestBudget.subItems] : [];
+          const subIndex = subItems.findIndex((s: any) => s.id === latestNotification.subItemId);
+          if (subIndex === -1) {
+            showAlert("ไม่พบ Subitem", "ไม่พบรายการย่อยสำหรับรับยอดคืน", "warning");
+            return;
+          }
+          const targetSub = subItems[subIndex];
+          const currentAmount = Number(targetSub?.amount || 0);
+          const nextAmount = Math.max(0, currentAmount - amount);
+          const qty = Number(targetSub?.quantity || 0);
+          subItems[subIndex] = {
+            ...targetSub,
+            amount: nextAmount,
+            unitPrice: qty > 0 ? nextAmount / qty : Number(targetSub?.unitPrice || 0),
+          };
+          payload.subItems = subItems;
+        } else {
+          payload.amount = (Number(latestBudget.amount || 0) + amount);
+        }
+
+        payload.budgetReturnNotifications = latestNotifications.map((n: any) =>
+          n?.id === latestNotification.id
+            ? { ...n, status: "accepted", acceptedAt: new Date().toISOString(), acceptedBy: acceptedBy || "Unknown" }
+            : n
+        );
+
+        const ok = await updateData("budgets", latestBudget.id, payload, { skipLog: true });
+        if (!ok) return;
+
+        await logAction?.(
+          "Accept Budget Return",
+          `รับยอดคืน Budget ${latestBudget.code} จาก PR ${latestNotification.prNo || latestNotification.prId}: ${formatCurrency(amount)} | เหตุผล: ${reason}`,
+          latestBudget.projectId || selectedProjectId
+        );
+        showAlert("รับยอดสำเร็จ", `รับยอดคืน ${formatCurrency(amount)} เข้างบประมาณเรียบร้อย`, "success");
+      },
+      "warning"
+    );
+  }, [budgets, logAction, openConfirm, selectedProjectId, showAlert, updateData, userData, userRole]);
 
   const handleApproveSubItem = async (budgetId, subItemId) => {
     if (!canApproveSubItem) {
@@ -3356,8 +3491,10 @@ const BudgetView = React.memo(() => {
                   {sortedBudgets.map((b) => {
                     const totalBudget = calculateTotalBudget(b);
                     const hasSubItems = b.subItems && b.subItems.length > 0;
-                    const sumSubItems = hasSubItems ? b.subItems.reduce((sum, sub) => sum + sub.amount, 0) : 0;
-                    const stats = getBudgetStats(b); // Pass the whole budget object
+                    const sumSubItems = hasSubItems ? sumSubItemAmounts(b.subItems) : 0;
+                    const pendingReturnNotifications = getPendingBudgetReturnNotifications(b);
+                    const hasPendingBudgetReturn = pendingReturnNotifications.length > 0;
+                    const stats = budgetStatsById.get(b.id) || { prTotal: 0, poTotal: 0, invoiceTotal: 0, relatedPRs: [], relatedPOs: [] };
                     // Calculate balance based on whether budget has subitems
                     // For budgets with subitems: Balance = Budget Total - Sum of Subitems
                     // For budgets without subitems: Balance = Budget Total - Invoice Total
@@ -3374,7 +3511,9 @@ const BudgetView = React.memo(() => {
                       <React.Fragment key={b.id}>
                         <tr
                           className={`cursor-pointer transition-colors group ${
-                            isNewRevisionBudget
+                            hasPendingBudgetReturn
+                              ? "bg-yellow-50 ring-1 ring-yellow-300 ring-inset hover:bg-yellow-100"
+                              : isNewRevisionBudget
                               ? "bg-emerald-50 ring-2 ring-emerald-300 ring-inset hover:bg-emerald-100"
                               : isExpanded
                                 ? "bg-amber-50/80 ring-1 ring-amber-200 ring-inset"
@@ -3435,6 +3574,19 @@ const BudgetView = React.memo(() => {
                                   <span className="text-xs text-red-600 bg-red-50 px-1.5 py-0.5 rounded border border-red-200 w-fit mt-1 inline-block truncate max-w-full" title={b.rejectReason}>
                                     เหตุผลปฏิเสธ: {b.rejectReason}
                                   </span>
+                                )}
+                                {hasPendingBudgetReturn && (
+                                  <button
+                                    type="button"
+                                    className="mt-1 w-fit text-[10px] px-1.5 py-0.5 rounded border border-yellow-300 bg-yellow-100 text-yellow-800 hover:bg-yellow-200"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleAcceptBudgetReturnNotification(b, pendingReturnNotifications[0]);
+                                    }}
+                                    title="คลิกเพื่อดูรายละเอียดและกดรับยอดคืน"
+                                  >
+                                    แจ้งเตือนคืน Budget {pendingReturnNotifications.length} รายการ
+                                  </button>
                                 )}
                               </div>
                               {b.status === "Approved" && canAddSubItem && (
@@ -3612,9 +3764,13 @@ const BudgetView = React.memo(() => {
                           b.subItems &&
                           <>
                             {b.subItems.map((sub, index) => (
+                              (() => {
+                                const pendingSubReturns = getPendingSubBudgetReturnNotifications(b, sub.id);
+                                const hasPendingSubReturn = pendingSubReturns.length > 0;
+                                return (
                               <tr
                                 key={sub.id}
-                                className="bg-slate-50/50 text-xs group"
+                                className={`text-xs group ${hasPendingSubReturn ? "bg-red-50 ring-1 ring-red-200 ring-inset hover:bg-red-100" : "bg-slate-50/50"}`}
                               >
                                 {budgetCategory !== "OVERVIEW" && isColumnVisible("budget", "checkbox") && (
                                   <td className="py-0.5 px-2 border-r bg-slate-50/50" />
@@ -3635,6 +3791,19 @@ const BudgetView = React.memo(() => {
                                         <span className="text-[9px] text-red-500 truncate shrink-0" title={sub.rejectReason}>
                                           ({sub.rejectReason})
                                         </span>
+                                      )}
+                                      {hasPendingSubReturn && (
+                                        <button
+                                          type="button"
+                                          className="text-[9px] px-1.5 py-0.5 rounded border border-red-300 bg-red-100 text-red-700 hover:bg-red-200"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleAcceptBudgetReturnNotification(b, pendingSubReturns[0]);
+                                          }}
+                                          title="คลิกเพื่อดูรายละเอียดและกดรับยอดคืน"
+                                        >
+                                          รอรับยอดคืน {pendingSubReturns.length}
+                                        </button>
                                       )}
                                     </div>
                                     <div className="text-slate-400 text-[10px] shrink-0">@ {formatCurrency(sub.unitPrice)}</div>
@@ -3775,6 +3944,8 @@ const BudgetView = React.memo(() => {
                                   </div>
                                 </td>}
                               </tr>
+                                );
+                              })()
                             ))}
                             {/* เว้นพื้นที่ว่างใต้รายการ Sub เมื่อกาง (แยกตารางย่อยจากตารางหลัก) */}
                             <tr className="bg-transparent" aria-hidden="true">
