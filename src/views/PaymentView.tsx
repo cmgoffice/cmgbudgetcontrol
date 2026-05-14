@@ -697,7 +697,10 @@ const PaymentView = React.memo(() => {
     }
     setEvaluating(true);
     try {
-      const contractor = vendors.find((v: any) => v.id === evalModalPayment.contractorId);
+      // ใช้ข้อมูล Vendor จาก Payment object โดยตรง (fallback ไปที่ vendors array ถ้าไม่มี)
+      const contractor = evalModalPayment.contractorName 
+        ? { id: evalModalPayment.contractorId, name: evalModalPayment.contractorName, code: evalModalPayment.contractorCode, type: evalModalPayment.contractorType }
+        : vendors.find((v: any) => v.id === evalModalPayment.contractorId);
       const project = (projects || []).find((p: any) => p.id === evalModalPayment.projectId);
       const rateMap: Record<string, number> = { good: 1, fair: 0.75, poor: 0.5 };
       const questions = [
@@ -772,7 +775,10 @@ const PaymentView = React.memo(() => {
     if (generatingPdf) return;
     setGeneratingPdf(true);
     try {
-      const contractor = vendors.find((v: any) => v.id === payment.contractorId);
+      // ใช้ข้อมูล Vendor จาก Payment object โดยตรง (fallback ไปที่ vendors array ถ้าไม่มี)
+      const contractor = payment.contractorName 
+        ? { id: payment.contractorId, name: payment.contractorName, code: payment.contractorCode, type: payment.contractorType }
+        : vendors.find((v: any) => v.id === payment.contractorId);
       const project = (projects || []).find((p: any) => p.id === payment.projectId);
       const bytes = await generatePaymentPdfBytes(payment, { project, contractor, pos });
       const blob = new Blob([bytes], { type: "application/pdf" });
@@ -948,10 +954,19 @@ const PaymentView = React.memo(() => {
         budgetId: item.budgetId || null,
         budgetSubItemId: item.budgetSubItemId || null,
       }));
+      
+      // เพิ่มข้อมูล Vendor จาก PO เพื่อให้ Role อื่นๆ ที่ไม่มีสิทธิ์เข้าถึง Vendor Management สามารถเห็นชื่อ Vendor ได้
+      const vendorInfo = {
+        contractorName: po.vendorName || '',
+        contractorCode: po.vendorCode || '',
+        contractorType: po.vendorType || '',
+      };
+      
       const payload = {
         paymentNo: `${po.poNo || po.id}-001`,
         paymentType: po.poType,
         contractorId: po.vendorId || '',
+        ...vendorInfo,
         contractTitle: contractTitleOverride || po.contractTitle || po.poNo || '',
         periodNo: '1',
         openDate: new Date().toISOString().split('T')[0],
@@ -1123,7 +1138,10 @@ const PaymentView = React.memo(() => {
           <tbody className="divide-y divide-slate-100">
             {/* ── Draft rows: PO SP/DC ที่ Approved แต่ยังไม่ Activate ── */}
             {activeTab === "payment" && unlinkedSPDCPos.map((po: any) => {
-              const vendor = vendors.find((v: any) => v.id === po.vendorId);
+              // ใช้ข้อมูล Vendor จาก PO object โดยตรง (fallback ไปที่ vendors array ถ้าไม่มี)
+              const vendor = po.vendorName 
+                ? { id: po.vendorId, name: po.vendorName, code: po.vendorCode, type: po.vendorType }
+                : vendors.find((v: any) => v.id === po.vendorId);
               const contractTotal = (po.items || []).reduce(
                 (s: number, it: any) => s + ((Number(it.quantity) || 0) * (Number(it.price) || Number(it.unitPrice) || 0)), 0
               );
@@ -1218,7 +1236,10 @@ const PaymentView = React.memo(() => {
             ) : (
               (activeTab === "payment" ? projectPayments : logPayments).map((p: any) => {
 
-                const contractor = vendors.find((v: any) => v.id === p.contractorId);
+                // ใช้ข้อมูล Vendor จาก Payment object โดยตรง (fallback ไปที่ vendors array ถ้าไม่มี)
+                const contractor = p.contractorName 
+                  ? { id: p.contractorId, name: p.contractorName, code: p.contractorCode, type: p.contractorType }
+                  : vendors.find((v: any) => v.id === p.contractorId);
                 const progressPct = getPaymentProgressPct(p);
                 return (
                   <tr
@@ -1449,7 +1470,10 @@ const PaymentView = React.memo(() => {
       {/* ─── View Modal — Payment Application Form (Portal → document.body) ── */}
       {viewingPayment && createPortal((() => {
         const vp = viewingPayment;
-        const contractor = vendors.find((v: any) => v.id === vp.contractorId);
+        // ใช้ข้อมูล Vendor จาก Payment object โดยตรง (fallback ไปที่ vendors array ถ้าไม่มี)
+        const contractor = vp.contractorName 
+          ? { id: vp.contractorId, name: vp.contractorName, code: vp.contractorCode, type: vp.contractorType }
+          : vendors.find((v: any) => v.id === vp.contractorId);
         const project = (projects || []).find((p: any) => p.id === vp.projectId);
         const refPRs = (vp.selectedPrIds || []).map((id: string) => (pos || []).find((p: any) => p.id === id)).filter(Boolean);
         const contractTitle = refPRs.map((po: any) => po.poNo).join(", ");
@@ -2398,7 +2422,10 @@ const PaymentView = React.memo(() => {
 
       {/* ─── Subcontractor Evaluation Modal ─────────────────────────────────────── */}
       {evalModalPayment && createPortal((() => {
-        const contractor = vendors.find((v: any) => v.id === evalModalPayment.contractorId);
+        // ใช้ข้อมูล Vendor จาก Payment object โดยตรง (fallback ไปที่ vendors array ถ้าไม่มี)
+        const contractor = evalModalPayment.contractorName 
+          ? { id: evalModalPayment.contractorId, name: evalModalPayment.contractorName, code: evalModalPayment.contractorCode, type: evalModalPayment.contractorType }
+          : vendors.find((v: any) => v.id === evalModalPayment.contractorId);
         const project = (projects || []).find((p: any) => p.id === evalModalPayment.projectId);
         const rateMap: Record<string, number> = { good: 1, fair: 0.75, poor: 0.5 };
         const questions = [
@@ -2592,7 +2619,10 @@ const PaymentView = React.memo(() => {
       {/* ─── Activate PO Modal (แบบฟอร์มเบิกงวดงาน) ─────────────────────────── */}
       {activatingPO && createPortal((() => {
         const po = activatingPO;
-        const vendor = vendors.find((v: any) => v.id === po.vendorId);
+        // ใช้ข้อมูล Vendor จาก PO object โดยตรง (fallback ไปที่ vendors array ถ้าไม่มี)
+        const vendor = po.vendorName 
+          ? { id: po.vendorId, name: po.vendorName, code: po.vendorCode, type: po.vendorType }
+          : vendors.find((v: any) => v.id === po.vendorId);
         const project = (projects || []).find((p: any) => p.id === (po.projectId || selectedProjectId));
         const contractTotal = (po.items || []).reduce(
           (s: number, it: any) => s + ((Number(it.quantity) || 0) * (Number(it.price) || Number(it.unitPrice) || 0)), 0

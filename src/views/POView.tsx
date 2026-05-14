@@ -1413,12 +1413,21 @@ const POView = React.memo(() => {
       setProgress(85, L.savingStep);
 
       const existingPoForCreator = editingPoId ? pos.find((p) => p.id === editingPoId) : null;
+      // เพิ่มข้อมูล Vendor เพื่อให้ Role อื่นๆ ที่ไม่มีสิทธิ์เข้าถึง Vendor Management สามารถเห็นชื่อ Vendor ได้
+      const selectedVendor = vendors.find((v: any) => v.id === formData.vendorId);
+      const vendorInfo = selectedVendor ? {
+        vendorName: selectedVendor.name || "",
+        vendorCode: selectedVendor.code || "",
+        vendorType: selectedVendor.type || "",
+      } : {};
+      
       const basePayload = {
         poNo: resolvedPoNo,
         poType: formData.poType,
         ...(formData.receiveType ? { receiveType: formData.receiveType } : {}),
         projectId: selectedProjectId,
         vendorId: formData.vendorId,
+        ...vendorInfo,
         requiredDate: formData.requiredDate,
         vatType: formData.vatType,
         items: itemsWithAllocations,
@@ -1836,7 +1845,10 @@ const POView = React.memo(() => {
     const base = pos
       .filter((po) => po.projectId === selectedProjectId && pendingActionStatuses.includes(po.status))
       .map((po) => {
-        const vendor = vendors.find((v) => v.id === po.vendorId);
+        // ใช้ข้อมูล Vendor จาก PO object โดยตรง (fallback ไปที่ vendors array ถ้าไม่มี)
+        const vendor = po.vendorName 
+          ? { id: po.vendorId, name: po.vendorName, code: po.vendorCode, type: po.vendorType }
+          : vendors.find((v) => v.id === po.vendorId);
         const prIds = getPoRefPrIds(po);
         const prNos = prIds.map(id => prs.find(p => p.id === id)?.prNo || "-").join(", ");
         const firstDesc = po.items && po.items.length > 0 ? po.items[0].description : "-";
@@ -1900,7 +1912,10 @@ const POView = React.memo(() => {
         !pendingActionStatuses.includes(po.status)
       )
       .map((po) => {
-        const vendor = vendors.find((v) => v.id === po.vendorId);
+        // ใช้ข้อมูล Vendor จาก PO object โดยตรง (fallback ไปที่ vendors array ถ้าไม่มี)
+        const vendor = po.vendorName 
+          ? { id: po.vendorId, name: po.vendorName, code: po.vendorCode, type: po.vendorType }
+          : vendors.find((v) => v.id === po.vendorId);
         const prIds = getPoRefPrIds(po);
         const prNos = prIds.map(id => prs.find(p => p.id === id)?.prNo || "-").join(", ");
         const firstDesc = po.items && po.items.length > 0 ? po.items[0].description : "-";
@@ -2768,7 +2783,10 @@ const POView = React.memo(() => {
 
           {/* PO View Modal — ดูข้อมูล + Approve/Reject */}
           {viewingPO && (() => {
-            const poVendor = vendors.find((v: any) => v.id === viewingPO.vendorId);
+            // ใช้ข้อมูล Vendor จาก PO object โดยตรง (fallback ไปที่ vendors array ถ้าไม่มี)
+            const poVendor = viewingPO.vendorName 
+              ? { id: viewingPO.vendorId, name: viewingPO.vendorName, code: viewingPO.vendorCode, type: viewingPO.vendorType }
+              : vendors.find((v: any) => v.id === viewingPO.vendorId);
             const poPrIds = getPoRefPrIds(viewingPO);
             const poPrNos = poPrIds.map((id: string) => prs.find((p: any) => p.id === id)?.prNo || "-").join(", ");
             const subtotal = (viewingPO.items || []).reduce((s: number, i: any) => s + Number(i.quantity) * Number(i.price), 0);
