@@ -64,6 +64,8 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
     { key: "approve",    label: "อนุมัติ PR" },
     { key: "reject",     label: "ปฏิเสธ PR" },
     { key: "editBudget", label: "Edit Budget PR" },
+    { key: "viewBalance", label: "ดูคอลัมน์ Balance" },
+    { key: "returnBalance", label: "คืนยอด Balance PR" },
     { key: "closePR",    label: "ยืนยัน Close PR" },
     { key: "viewPRType", label: "กำหนด PR Type ที่มองเห็น" },
   ],
@@ -71,6 +73,8 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
     { key: "export",  label: "Export CSV" },
     { key: "email",   label: "ส่ง Email PDF" },
     { key: "download",label: "Download PDF" },
+    { key: "viewBalance", label: "ดูคอลัมน์ Balance" },
+    { key: "returnBalance", label: "คืนยอด Balance PR" },
     { key: "requestClosePR", label: "ขอปิด PR" },
     { key: "requestActivePR", label: "ขอ Active PR" },
     { key: "approveActivePR", label: "อนุมัติ Active PR" },
@@ -202,15 +206,19 @@ export function mergeFunctionPermissionsWithDefaults(
   };
   const defaultByModuleAndKey: Record<string, Record<string, string[]>> = {
     pr: {
+      viewBalance: ["PCM", "GM", "MD"],
+      returnBalance: ["PCM", "GM", "MD"],
       closePR: ["PCM"],
     },
-    po: {
-      closePO: ["PCM"],
-    },
     "pr-table": {
+      viewBalance: ["PCM", "GM", "MD"],
+      returnBalance: ["PCM", "GM", "MD"],
       requestClosePR: ["Procurement"],
       requestActivePR: ["Procurement", "PCM"],
       approveActivePR: ["PCM"],
+    },
+    po: {
+      closePO: ["PCM"],
     },
     "po-table": {
       requestClosePO: ["Procurement"],

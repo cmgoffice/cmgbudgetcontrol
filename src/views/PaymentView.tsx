@@ -117,8 +117,7 @@ const PaymentView = React.memo(() => {
   const [saving, setSaving] = useState(false);
   const [actioning, setActioning] = useState(false);
 
-  // ─── Tabs & PDF Preview ─────────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState<"payment" | "log">("payment");
+  // ─── PDF Preview ────────────────────────────────────────────────────────────
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
   const [pdfPreviewPayment, setPdfPreviewPayment] = useState<any>(null);
   const [generatingPdf, setGeneratingPdf] = useState(false);
@@ -440,7 +439,11 @@ const PaymentView = React.memo(() => {
     try {
       const totalAmt = updatedItems.reduce((s: number, it: any) => s + (Number(it.thisPeriodAmount) || 0), 0);
       const now = new Date().toISOString();
-      const extraFields: Record<string, any> = { billingCycle: periodBillingCycle };
+      const normalizedContractTitle = typeof p.contractTitle === "string" ? p.contractTitle.trim() : "";
+      const extraFields: Record<string, any> = {
+        billingCycle: periodBillingCycle,
+        contractTitle: normalizedContractTitle,
+      };
 
       if (manualPeriodNo && manualPeriodNo !== String(p.periodNo)) {
         extraFields.periodNo = String(manualPeriodNo);
@@ -899,11 +902,6 @@ const PaymentView = React.memo(() => {
     return (payments || []).filter((p: any) => p.projectId === selectedProjectId && p.status !== "Paid");
   }, [payments, selectedProjectId]);
 
-  // ─── Log payments (all including Paid) ─────────────────────────────────────────
-  const logPayments = useMemo(() => {
-    return (payments || []).filter((p: any) => p.projectId === selectedProjectId);
-  }, [payments, selectedProjectId]);
-
   // ─── PO SP/DC ที่ Approved แต่ยังไม่มี Payment document (Auto Draft) ────────
   const linkedPoIds = useMemo(() => {
     const set = new Set<string>();
@@ -1035,34 +1033,6 @@ const PaymentView = React.memo(() => {
           </div>
         </div>
 
-        {/* ── Tabs ── */}
-        <div className="flex items-center gap-1 bg-orange-50/50 rounded-xl border border-orange-100/50 p-1 w-fit">
-          <button
-            type="button"
-            onClick={() => setActiveTab("payment")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              activeTab === "payment"
-                ? "bg-white text-orange-600 shadow-sm ring-1 ring-orange-200"
-                : "text-orange-400 hover:text-orange-600 hover:bg-white/60"
-            }`}
-          >
-            <CreditCard size={14} />
-            Payment Subcontractor
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("log")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              activeTab === "log"
-                ? "bg-white text-amber-600 shadow-sm ring-1 ring-amber-200"
-                : "text-amber-400 hover:text-amber-600 hover:bg-white/60"
-            }`}
-          >
-            <FileText size={14} />
-            Log Payment
-          </button>
-        </div>
-
         <div className="flex items-center gap-2">
           {/* ปุ่มสร้าง Payment ถูกลบออกแล้ว — PO SP/DC ที่ Approved จะแสดง Auto เป็น Draft */}
         </div>
@@ -1137,7 +1107,7 @@ const PaymentView = React.memo(() => {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {/* ── Draft rows: PO SP/DC ที่ Approved แต่ยังไม่ Activate ── */}
-            {activeTab === "payment" && unlinkedSPDCPos.map((po: any) => {
+            {unlinkedSPDCPos.map((po: any) => {
               // ใช้ข้อมูล Vendor จาก PO object โดยตรง (fallback ไปที่ vendors array ถ้าไม่มี)
               const vendor = po.vendorName 
                 ? { id: po.vendorId, name: po.vendorName, code: po.vendorCode, type: po.vendorType }
@@ -1225,16 +1195,14 @@ const PaymentView = React.memo(() => {
               );
             })}
             {/* ── Empty state เมื่อไม่มีทั้ง Draft PO และ Payment docs ── */}
-            {(activeTab === "payment" ? unlinkedSPDCPos.length === 0 && projectPayments.length === 0 : logPayments.length === 0) ? (
+            {unlinkedSPDCPos.length === 0 && projectPayments.length === 0 ? (
               <tr>
                 <td colSpan={["paymentNo", "type", "contractor", "contractTitle", "billingCycle", "totalAmount", "accumAmount", "periodAmount", "progress", "status", "actions"].filter(k => isColumnVisible("payment", k)).length} className="py-10 text-center text-slate-400 text-sm">
-                  {activeTab === "payment"
-                    ? "ยังไม่มีรายการ Payment — PO ประเภท SP/DC ที่ได้รับการอนุมัติจะแสดงที่นี่โดยอัตโนมัติ"
-                    : "ยังไม่มีรายการ Payment ในประวัติ"}
+                  ยังไม่มีรายการ Payment — PO ประเภท SP/DC ที่ได้รับการอนุมัติจะแสดงที่นี่โดยอัตโนมัติ
                 </td>
               </tr>
             ) : (
-              (activeTab === "payment" ? projectPayments : logPayments).map((p: any) => {
+              projectPayments.map((p: any) => {
 
                 // ใช้ข้อมูล Vendor จาก Payment object โดยตรง (fallback ไปที่ vendors array ถ้าไม่มี)
                 const contractor = p.contractorName 
@@ -1577,7 +1545,17 @@ const PaymentView = React.memo(() => {
                       </div>
                       <div className="flex">
                         <span className="w-52 text-slate-500 font-semibold shrink-0">ชื่อสัญญา / CONTRACT TITLE :</span>
-                        <span className="font-medium text-slate-700">{vp.contractTitle || "-"}</span>
+                        {isQtyEditMode && !isViewingOldPeriod && (vp.status || "Draft") === "Draft" ? (
+                          <input
+                            type="text"
+                            value={vp.contractTitle || ""}
+                            onChange={(e) => setViewingPayment((prev: any) => prev ? { ...prev, contractTitle: e.target.value } : prev)}
+                            placeholder="กรอกชื่อสัญญา"
+                            className="w-full max-w-[28rem] border border-orange-400 bg-orange-50 text-orange-800 rounded px-2 py-1 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-orange-400"
+                          />
+                        ) : (
+                          <span className="font-medium text-slate-700">{vp.contractTitle || "-"}</span>
+                        )}
                       </div>
                     </div>
                     {/* Right */}

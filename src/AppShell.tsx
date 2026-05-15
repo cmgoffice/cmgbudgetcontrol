@@ -1066,6 +1066,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 }) => {
   const { canUseFunction, userRoles = [], userData, user, logAction, isColumnVisible, invoices = [], receives = [] } = useAppData();
   const PAGE_SIZE = 50;
+  const ALL_TYPE_TAB_KEY = "__all__";
   const tableModule = mode === "pr" ? "pr-table" : "po-table";
   const tblId = mode === "pr" ? "pr-table" : "po-table";
   const [searchTerm, setSearchTerm] = React.useState("");
@@ -1087,8 +1088,30 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   const [returnBalanceValue, setReturnBalanceValue] = React.useState("");
   const [returnBalanceReason, setReturnBalanceReason] = React.useState("");
 
+  const parseReturnBalanceInput = (value: any) => {
+    const n = Number(String(value || "").replace(/,/g, ""));
+    return Number.isFinite(n) ? n : NaN;
+  };
+  const formatReturnBalanceFixed2 = (value: number) => {
+    if (!Number.isFinite(Number(value))) return "";
+    return Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+  const normalizeReturnBalanceInput = (raw: string) => {
+    const cleaned = String(raw || "").replace(/,/g, "").replace(/[^\d.]/g, "");
+    if (!cleaned) return "";
+    const hasDot = cleaned.includes(".");
+    const parts = cleaned.split(".");
+    const intRaw = parts[0] || "0";
+    const intPart = intRaw.replace(/^0+(?=\d)/, "") || "0";
+    const decPart = (parts.slice(1).join("") || "").slice(0, 2);
+    const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    if (!hasDot) return grouped;
+    return decPart.length > 0 ? `${grouped}.${decPart}` : `${grouped}.`;
+  };
+
   const isPR = mode === "pr";
-  const canViewPrBalance = isPR && ["PCM", "GM", "MD", "Administrator"].some((role) => userRoles.includes(role));
+  const canViewPrBalance = isPR && canUseFunction("pr-table", "viewBalance");
+  const canReturnPrBalance = isPR && canUseFunction("pr-table", "returnBalance");
 
   const getRelatedInvoicesForPo = React.useCallback((po: any) => {
     if (!po) return [];
@@ -1279,30 +1302,30 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
   const handleReturnPrBalanceToBudget = React.useCallback((pr: any) => {
     if (!pr?.id) return;
-    if (!canViewPrBalance) {
+    if (!canReturnPrBalance) {
       showAlert?.("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์คืน Balance PR", "warning");
       return;
     }
 
     const info = getPrBudgetReturnInfo(pr, pos);
     if (info.returnAmount <= 0) {
-      showAlert?.("ไม่มี Balance ให้คืน", "ยอด PR ปัจจุบันไม่มากกว่า PO Grand Total ที่ใช้ไปแล้ว", "info");
+      showAlert?.("ไม่มี Balance ให้คืน", "ยอด PR ปัจจุบันไม่มากกว่า PO Sub Total ที่ใช้ไปแล้ว", "info");
       return;
     }
 
     const prNo = pr.prNo || pr.id;
     openConfirm?.(
       "คืน Balance PR กลับ Budget",
-      `PR: ${prNo}\nยอด PR ปัจจุบัน: ${formatCurrency(info.currentTotal)}\nPO Grand Total ที่ใช้ไปแล้ว: ${formatCurrency(info.poGrandTotalUsed)}\nยอดที่จะคืน Budget: ${formatCurrency(info.returnAmount)}\nยอด PR หลัง Rev: ${formatCurrency(info.revisedTotal)}\n\nระบบจะคง PR ID / PR No. เดิม และแก้เฉพาะยอดตัวเลขกับประวัติ Rev ของ PR นี้`,
+      `PR: ${prNo}\nยอด PR ปัจจุบัน: ${formatCurrency(info.currentTotal)}\nPO Sub Total ที่ใช้ไปแล้ว: ${formatCurrency(info.poSubTotalUsed ?? info.poGrandTotalUsed)}\nยอดที่จะคืน Budget: ${formatCurrency(info.returnAmount)}\nยอด PR หลัง Rev: ${formatCurrency(info.revisedTotal)}\n\nระบบจะคง PR ID / PR No. เดิม และแก้เฉพาะยอดตัวเลขกับประวัติ Rev ของ PR นี้`,
       () => {
         setReturnBalanceContext({ prId: pr.id });
-        setReturnBalanceValue(String(Math.round(Number(info.returnAmount || 0) * 100) / 100));
+        setReturnBalanceValue(formatReturnBalanceFixed2(Math.round(Number(info.returnAmount || 0) * 100) / 100));
         setReturnBalanceReason("");
         setIsReturnBalanceModalOpen(true);
       },
       "warning"
     );
-  }, [budgets, canViewPrBalance, logAction, openConfirm, pos, prs, showAlert, updateData, user?.email, userData, userRole]);
+  }, [budgets, canReturnPrBalance, logAction, openConfirm, pos, prs, showAlert, updateData, user?.email, userData, userRole]);
 
   const handleConfirmReturnBalance = React.useCallback(async () => {
     const prId = returnBalanceContext?.prId;
@@ -1314,7 +1337,8 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     }
 
     const latestInfo = getPrBudgetReturnInfo(latestPr, pos);
-    const maxReturn = Number(latestInfo.returnAmount || 0);
+    const maxReturnRaw = Number(latestInfo.returnAmount || 0);
+    const maxReturn = Math.max(0, Math.round(maxReturnRaw * 100) / 100);
     if (maxReturn <= 0) {
       showAlert?.("ไม่มี Balance ให้คืน", "ข้อมูลล่าสุดไม่มียอดคงเหลือที่สามารถคืน Budget ได้", "info");
       setIsReturnBalanceModalOpen(false);
@@ -1324,7 +1348,8 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       return;
     }
 
-    const requested = Number(returnBalanceValue);
+    const requestedRaw = parseReturnBalanceInput(returnBalanceValue);
+    const requested = Math.round(requestedRaw * 100) / 100;
     if (!Number.isFinite(requested) || requested <= 0) {
       showAlert?.("ยอดไม่ถูกต้อง", "กรุณากรอกยอดเงินที่ต้องการคืนมากกว่า 0", "warning");
       return;
@@ -1356,7 +1381,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       oldTotalAmount: latestInfo.currentTotal,
       newTotalAmount: revisedTotal,
       oldItems: Array.isArray(latestPr.items) ? latestPr.items : [],
-      poGrandTotalUsed: latestInfo.poGrandTotalUsed,
+      poGrandTotalUsed: latestInfo.poSubTotalUsed ?? latestInfo.poGrandTotalUsed,
       returnedAmount: requested,
       returnReason: reason,
       budgetId: latestPr.budgetId || null,
@@ -1405,7 +1430,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
     await logAction?.(
       "Rev PR Return Balance",
-      `Rev PR ${latestPr.prNo || latestPr.id}: คืน Budget ${formatCurrency(requested)} (${formatCurrency(latestInfo.currentTotal)} → ${formatCurrency(revisedTotal)}, PO Grand Total ${formatCurrency(latestInfo.poGrandTotalUsed)})`,
+      `Rev PR ${latestPr.prNo || latestPr.id}: คืน Budget ${formatCurrency(requested)} (${formatCurrency(latestInfo.currentTotal)} → ${formatCurrency(revisedTotal)}, PO Sub Total ${formatCurrency(latestInfo.poSubTotalUsed ?? latestInfo.poGrandTotalUsed)})`,
       latestPr.projectId
     );
     setIsReturnBalanceModalOpen(false);
@@ -1557,10 +1582,11 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       }
       groups.get(key)!.rows.push(row);
     });
-    return Array.from(groups.values()).sort((a, b) =>
+    const tabs = Array.from(groups.values()).sort((a, b) =>
       a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: "base" })
     );
-  }, [filtered, getShortTypeLabel, isPR]);
+    return [...tabs, { key: ALL_TYPE_TAB_KEY, label: "All", rows: filtered }];
+  }, [ALL_TYPE_TAB_KEY, filtered, getShortTypeLabel, isPR]);
 
   React.useEffect(() => {
     if (typeTabs.length === 0) {
@@ -1605,7 +1631,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
               <ColumnVisibilityToggle tableId={tblId} />
             </div>
             <p className="text-xs text-slate-500">
-              {activeRows.length} รายการใน Type นี้ / {filtered.length} รายการทั้งหมด {filterStatus !== "all" ? `(${filterStatus})` : ""}
+              {activeRows.length} รายการในแท็บนี้ / {filtered.length} รายการทั้งหมด {filterStatus !== "all" ? `(${filterStatus})` : ""}
             </p>
           </div>
         </div>
@@ -1917,7 +1943,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                               Active PR
                             </button>
                           )}
-                          {canViewPrBalance && isPR && (() => {
+                          {canReturnPrBalance && isPR && (() => {
                             const info = getPrBudgetReturnInfo(r, pos);
                             if (info.returnAmount <= 0) return null;
                             return (
@@ -2069,8 +2095,8 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       {isReturnBalanceModalOpen && (() => {
         const latestPr = prs.find((p: any) => p.id === returnBalanceContext?.prId);
         const latestInfo = latestPr ? getPrBudgetReturnInfo(latestPr, pos) : null;
-        const maxReturn = Number(latestInfo?.returnAmount || 0);
-        const requested = Number(returnBalanceValue);
+        const maxReturn = Math.max(0, Math.round(Number(latestInfo?.returnAmount || 0) * 100) / 100);
+        const requested = Math.round(parseReturnBalanceInput(returnBalanceValue) * 100) / 100;
         const isRequestedValid = Number.isFinite(requested) && requested > 0 && requested <= maxReturn;
         return (
           <div className="fixed inset-0 bg-black/55 backdrop-blur-sm flex items-center justify-center z-[10011] p-4">
@@ -2094,8 +2120,8 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                     <span className="font-semibold">{formatCurrency(latestInfo.currentTotal)}</span>
                   </div>
                   <div className="flex justify-between gap-3">
-                    <span className="text-slate-500">PO Grand Total ที่ใช้ไปแล้ว</span>
-                    <span className="font-semibold">{formatCurrency(latestInfo.poGrandTotalUsed)}</span>
+                    <span className="text-slate-500">PO Sub Total ที่ใช้ไปแล้ว</span>
+                    <span className="font-semibold">{formatCurrency(latestInfo.poSubTotalUsed ?? latestInfo.poGrandTotalUsed)}</span>
                   </div>
                   <div className="flex justify-between gap-3">
                     <span className="text-slate-500">Balance คืนได้สูงสุด</span>
@@ -2112,14 +2138,16 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                 ยอดเงินที่จะคืนเข้า Budget <span className="text-red-500">*</span>
               </label>
               <input
-                type="number"
-                min={0}
-                max={maxReturn > 0 ? maxReturn : undefined}
-                step="0.01"
+                type="text"
+                inputMode="decimal"
                 value={returnBalanceValue}
-                onChange={(e) => setReturnBalanceValue(e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:border-emerald-400"
-                placeholder="กรอกยอดที่ต้องการคืน"
+                onChange={(e) => setReturnBalanceValue(normalizeReturnBalanceInput(e.target.value))}
+                onBlur={() => {
+                  const n = parseReturnBalanceInput(returnBalanceValue);
+                  if (Number.isFinite(n)) setReturnBalanceValue(formatReturnBalanceFixed2(n));
+                }}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-lg font-extrabold text-red-600 focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:border-emerald-400"
+                placeholder="0.00"
                 autoFocus
               />
               <p className={`mt-1.5 text-[11px] ${isRequestedValid ? "text-emerald-700" : "text-slate-500"}`}>

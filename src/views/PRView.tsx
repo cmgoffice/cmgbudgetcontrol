@@ -33,7 +33,8 @@ const PRView = React.memo(() => {
   const canApprovePR = canUseFunction("pr", "approve");
   const canRejectPR = canUseFunction("pr", "reject");
   const canEditBudgetPR = canUseFunction("pr", "editBudget");
-  const canViewPrBalance = ["PCM", "GM", "MD", "Administrator"].some((role) => userRoles.includes(role));
+  const canViewPrBalance = canUseFunction("pr", "viewBalance");
+  const canReturnPrBalance = canUseFunction("pr", "returnBalance");
 
   /**
    * คำนวณยอดใช้งานทั้งหมดของ budget จาก PRs ที่ตรงกันทั้ง budgetId หรือ costCode
@@ -152,6 +153,27 @@ const PRView = React.memo(() => {
   const [selectedPrForReject, setSelectedPrForReject] = useState(null);
   const [expandedBudgetIdsInModal, setExpandedBudgetIdsInModal] = useState({});
 
+  const parseReturnBalanceInput = (value: any) => {
+    const n = Number(String(value || "").replace(/,/g, ""));
+    return Number.isFinite(n) ? n : NaN;
+  };
+  const formatReturnBalanceFixed2 = (value: number) => {
+    if (!Number.isFinite(Number(value))) return "";
+    return Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+  const normalizeReturnBalanceInput = (raw: string) => {
+    const cleaned = String(raw || "").replace(/,/g, "").replace(/[^\d.]/g, "");
+    if (!cleaned) return "";
+    const hasDot = cleaned.includes(".");
+    const parts = cleaned.split(".");
+    const intRaw = parts[0] || "0";
+    const intPart = intRaw.replace(/^0+(?=\d)/, "") || "0";
+    const decPart = (parts.slice(1).join("") || "").slice(0, 2);
+    const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    if (!hasDot) return grouped;
+    return decPart.length > 0 ? `${grouped}.${decPart}` : `${grouped}.`;
+  };
+
   const toggleBudgetInModal = (id) => {
     setExpandedBudgetIdsInModal(prev => ({ ...prev, [id]: !prev[id] }));
   };
@@ -199,14 +221,14 @@ const PRView = React.memo(() => {
 
   const handleReturnPrBalanceToBudget = useCallback((pr) => {
     if (!pr?.id) return;
-    if (!canViewPrBalance) {
+    if (!canReturnPrBalance) {
       showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์คืน Balance PR", "warning");
       return;
     }
 
     const info = getPrBudgetReturnInfo(pr, pos);
     if (info.returnAmount <= 0) {
-      showAlert("ไม่มี Balance ให้คืน", "ยอด PR ปัจจุบันไม่มากกว่า PO Grand Total ที่ใช้ไปแล้ว", "info");
+      showAlert("ไม่มี Balance ให้คืน", "ยอด PR ปัจจุบันไม่มากกว่า PO Sub Total ที่ใช้ไปแล้ว", "info");
       return;
     }
 
@@ -214,7 +236,7 @@ const PRView = React.memo(() => {
     const confirmMessage =
       `PR: ${prNo}\n` +
       `ยอด PR ปัจจุบัน: ${formatCurrency(info.currentTotal)}\n` +
-      `PO Grand Total ที่ใช้ไปแล้ว: ${formatCurrency(info.poGrandTotalUsed)}\n` +
+      `PO Sub Total ที่ใช้ไปแล้ว: ${formatCurrency(info.poSubTotalUsed ?? info.poGrandTotalUsed)}\n` +
       `ยอดที่จะคืน Budget: ${formatCurrency(info.returnAmount)}\n` +
       `ยอด PR หลัง Rev: ${formatCurrency(info.revisedTotal)}\n\n` +
       "ระบบจะคง PR ID / PR No. เดิม และแก้เฉพาะยอดตัวเลขกับประวัติ Rev ของ PR นี้";
@@ -224,13 +246,13 @@ const PRView = React.memo(() => {
       confirmMessage,
       () => {
         setReturnBalanceContext({ prId: pr.id });
-        setReturnBalanceValue(String(Math.round(info.returnAmount * 100) / 100));
+        setReturnBalanceValue(formatReturnBalanceFixed2(Math.round(info.returnAmount * 100) / 100));
         setReturnBalanceReason("");
         setIsReturnBalanceModalOpen(true);
       },
       "warning"
     );
-  }, [budgets, canViewPrBalance, logAction, openConfirm, pos, prs, showAlert, updateData, user?.email, userData, userRole]);
+  }, [budgets, canReturnPrBalance, logAction, openConfirm, pos, prs, showAlert, updateData, user?.email, userData, userRole]);
 
   const handleConfirmReturnBalance = useCallback(async () => {
     const prId = returnBalanceContext?.prId;
@@ -241,7 +263,8 @@ const PRView = React.memo(() => {
       return;
     }
     const latestInfo = getPrBudgetReturnInfo(latestPr, pos);
-    const maxReturn = Number(latestInfo.returnAmount || 0);
+    const maxReturnRaw = Number(latestInfo.returnAmount || 0);
+    const maxReturn = Math.max(0, Math.round(maxReturnRaw * 100) / 100);
     if (maxReturn <= 0) {
       showAlert("ไม่มี Balance ให้คืน", "ข้อมูลล่าสุดไม่มียอดคงเหลือที่สามารถคืน Budget ได้", "info");
       setIsReturnBalanceModalOpen(false);
@@ -251,7 +274,8 @@ const PRView = React.memo(() => {
       return;
     }
 
-    const requested = Number(returnBalanceValue);
+    const requestedRaw = parseReturnBalanceInput(returnBalanceValue);
+    const requested = Math.round(requestedRaw * 100) / 100;
     if (!Number.isFinite(requested) || requested <= 0) {
       return showAlert("ยอดไม่ถูกต้อง", "กรุณากรอกยอดเงินที่ต้องการคืนมากกว่า 0", "warning");
     }
@@ -276,7 +300,7 @@ const PRView = React.memo(() => {
       oldTotalAmount: latestInfo.currentTotal,
       newTotalAmount: revisedTotal,
       oldItems: Array.isArray(latestPr.items) ? latestPr.items : [],
-      poGrandTotalUsed: latestInfo.poGrandTotalUsed,
+      poGrandTotalUsed: latestInfo.poSubTotalUsed ?? latestInfo.poGrandTotalUsed,
       returnedAmount: requested,
       returnReason: reason,
       budgetId: latestPr.budgetId || null,
@@ -326,7 +350,7 @@ const PRView = React.memo(() => {
 
     await logAction?.(
       "Rev PR Return Balance",
-      `Rev PR ${latestPr.prNo || latestPr.id}: คืน Budget ${formatCurrency(requested)} (${formatCurrency(latestInfo.currentTotal)} → ${formatCurrency(revisedTotal)}, PO Grand Total ${formatCurrency(latestInfo.poGrandTotalUsed)})`,
+      `Rev PR ${latestPr.prNo || latestPr.id}: คืน Budget ${formatCurrency(requested)} (${formatCurrency(latestInfo.currentTotal)} → ${formatCurrency(revisedTotal)}, PO Sub Total ${formatCurrency(latestInfo.poSubTotalUsed ?? latestInfo.poGrandTotalUsed)})`,
       latestPr.projectId
     );
     setViewingPR((prev) => prev?.id === latestPr.id ? { ...prev, ...payload } : prev);
@@ -1557,7 +1581,7 @@ const PRView = React.memo(() => {
                 <Settings size={13} />
               </button>
             )}
-            {canViewPrBalance && (() => {
+            {canReturnPrBalance && (() => {
               const info = getPrBudgetReturnInfo(pr, pos);
               if (info.returnAmount <= 0) return null;
               return (
@@ -2211,7 +2235,7 @@ const PRView = React.memo(() => {
                           <th className="px-3 py-2">Rev</th>
                           <th className="px-3 py-2">วันที่</th>
                           <th className="px-3 py-2 text-right">ยอดเดิม</th>
-                          <th className="px-3 py-2 text-right">PO Grand Total</th>
+                          <th className="px-3 py-2 text-right">PO Sub Total</th>
                           <th className="px-3 py-2 text-right">คืน Budget</th>
                           <th className="px-3 py-2 text-right">ยอด PR ใหม่</th>
                           <th className="px-3 py-2">ผู้ทำรายการ</th>
@@ -2256,7 +2280,7 @@ const PRView = React.memo(() => {
                   <XCircle size={15} /> ปิด
                 </button>
                 <div className="flex items-center gap-2">
-                  {canViewPrBalance && (() => {
+                  {canReturnPrBalance && (() => {
                     const info = getPrBudgetReturnInfo(prLive, pos);
                     if (info.returnAmount <= 0) return null;
                     return (
@@ -2374,8 +2398,8 @@ const PRView = React.memo(() => {
       {isReturnBalanceModalOpen && (() => {
         const latestPr = prs.find((p: any) => p.id === returnBalanceContext?.prId);
         const latestInfo = latestPr ? getPrBudgetReturnInfo(latestPr, pos) : null;
-        const maxReturn = Number(latestInfo?.returnAmount || 0);
-        const requested = Number(returnBalanceValue);
+        const maxReturn = Math.max(0, Math.round(Number(latestInfo?.returnAmount || 0) * 100) / 100);
+        const requested = Math.round(parseReturnBalanceInput(returnBalanceValue) * 100) / 100;
         const isRequestedValid = Number.isFinite(requested) && requested > 0 && requested <= maxReturn;
         return (
           <div className="fixed inset-0 bg-black/55 backdrop-blur-sm flex items-center justify-center z-[10011] p-4">
@@ -2399,8 +2423,8 @@ const PRView = React.memo(() => {
                     <span className="font-semibold">{formatCurrency(latestInfo.currentTotal)}</span>
                   </div>
                   <div className="flex justify-between gap-3">
-                    <span className="text-slate-500">PO Grand Total ที่ใช้ไปแล้ว</span>
-                    <span className="font-semibold">{formatCurrency(latestInfo.poGrandTotalUsed)}</span>
+                    <span className="text-slate-500">PO Sub Total ที่ใช้ไปแล้ว</span>
+                    <span className="font-semibold">{formatCurrency(latestInfo.poSubTotalUsed ?? latestInfo.poGrandTotalUsed)}</span>
                   </div>
                   <div className="flex justify-between gap-3">
                     <span className="text-slate-500">Balance คืนได้สูงสุด</span>
@@ -2417,14 +2441,16 @@ const PRView = React.memo(() => {
                 ยอดเงินที่จะคืนเข้า Budget <span className="text-red-500">*</span>
               </label>
               <input
-                type="number"
-                min={0}
-                max={maxReturn > 0 ? maxReturn : undefined}
-                step="0.01"
+                type="text"
+                inputMode="decimal"
                 value={returnBalanceValue}
-                onChange={(e) => setReturnBalanceValue(e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-300 focus:border-emerald-400"
-                placeholder="กรอกยอดที่ต้องการคืน"
+                onChange={(e) => setReturnBalanceValue(normalizeReturnBalanceInput(e.target.value))}
+                onBlur={() => {
+                  const n = parseReturnBalanceInput(returnBalanceValue);
+                  if (Number.isFinite(n)) setReturnBalanceValue(formatReturnBalanceFixed2(n));
+                }}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-lg font-extrabold text-red-600 focus:ring-2 focus:ring-emerald-300 focus:border-emerald-400"
+                placeholder="0.00"
                 autoFocus
               />
               <p className={`mt-1.5 text-[11px] ${isRequestedValid ? "text-emerald-700" : "text-slate-500"}`}>
