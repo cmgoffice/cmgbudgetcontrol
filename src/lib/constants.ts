@@ -112,6 +112,7 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
   ],
   invoice: [
     { key: "add",     label: "รับ Invoice" },
+    { key: "edit",    label: "แก้ไข Invoice" },
     { key: "approve", label: "อนุมัติ Invoice" },
     { key: "delete",  label: "ลบ Invoice" },
   ],
@@ -119,6 +120,16 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
     { key: "receive",     label: "ทำรับของ" },
     { key: "viewHistory", label: "ดูประวัติรับของ" },
     { key: "delete",      label: "ลบ Receive" },
+  ],
+  billing: [
+    { key: "create", label: "สร้าง Billing" },
+    { key: "edit",   label: "แก้ไข Billing" },
+    { key: "delete", label: "ลบ Billing" },
+  ],
+  pay: [
+    { key: "create", label: "สร้าง Pay" },
+    { key: "edit",   label: "แก้ไข Pay" },
+    { key: "delete", label: "ลบ Pay" },
   ],
   "payment-subcontract": [
     { key: "create",          label: "สร้าง Payment" },
@@ -172,6 +183,8 @@ export const MODULE_ACCESS: Record<string, string[]> = {
   material: ["Administrator", "MD", "GM", "PM", "PCM", "Procurement", "Staff"],
   invoice: ["Administrator", "MD", "GM", "PM", "PCM", "Staff"],
   receive: ["Administrator", "MD", "GM", "PM", "PCM", "Staff"],
+  billing: ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff"],
+  pay: ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff"],
   "payment-subcontract": ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff"],
   profile: ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff", "Admin Site"],
   admin: ["Administrator"],
@@ -222,6 +235,9 @@ export function mergeFunctionPermissionsWithDefaults(
     },
     "po-table": {
       requestClosePO: ["Procurement"],
+    },
+    invoice: {
+      edit: ["Administrator"],
     },
   };
   const fallbackKeyByModuleAndKey: Record<string, Record<string, string[]>> = {

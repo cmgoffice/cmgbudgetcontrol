@@ -559,19 +559,19 @@ const ReceiveView = React.memo(() => {
       );
 
       if (allFullyReceived) {
-        const isPayBeforeReceive = po.receiveType === "Pay before receive";
+        const isPayBeforeReceive = po.receiveType === "Pay before receive" || !!po.payBeforeReceiveChecked;
         await updateData(
           "pos",
           po.id,
           isPayBeforeReceive
-            ? { status: "Closed PO", statusNow: "Closed PO" }
+            ? { status: "Paid", statusNow: "Paid" }
             : { status: "Received", statusNow: "Received" },
           { skipLog: true }
         );
         showAlert(
           "รับของครบ",
           isPayBeforeReceive
-            ? `PO ${po.poNo} รับของครบทุกรายการ — สถานะเปลี่ยนเป็น Closed PO`
+            ? `PO ${po.poNo} รับของครบทุกรายการ — สถานะเปลี่ยนเป็น Paid`
             : `PO ${po.poNo} รับของครบทุกรายการ — สถานะเปลี่ยนเป็น Received`,
           "success"
         );

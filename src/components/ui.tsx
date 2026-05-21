@@ -70,6 +70,8 @@ export const Badge = ({ status }: any) => {
     "Edit Budget": "bg-red-100 text-red-800 border border-red-300",
     Rejected: "bg-red-50 text-red-700 border border-red-200",
     Paid: "bg-green-100 text-green-800",
+    paid: "bg-green-100 text-green-800",
+    INVCR: "bg-amber-100 text-amber-800 border border-amber-200",
     "Partial Receive": "bg-sky-50 text-sky-700 border border-sky-200",
     "Wait Invoice": "bg-amber-50 text-amber-800 border border-amber-300",
     "Invoice Issue": "bg-violet-50 text-violet-700 border border-violet-200",

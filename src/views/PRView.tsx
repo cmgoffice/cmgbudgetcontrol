@@ -1678,13 +1678,13 @@ const PRView = React.memo(() => {
           >
             <div className="leading-tight">
               <span className="cell-text font-semibold text-slate-700">
-                {getPrBudgetItemName(pr) || (pr.items && pr.items.length > 0
+                {pr.items && pr.items.length > 0
                   ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
-                  : "-")}
+                  : (getPrBudgetItemName(pr) || "-")}
               </span>
-              {pr.items && pr.items.length > 0 && (
+              {pr.items && pr.items.length > 0 && getPrBudgetItemName(pr) && (
                 <div className="cell-text text-[10px] text-slate-400 mt-0.5">
-                  {pr.items.map((it) => it.description).filter(Boolean).join(", ")}
+                  {getPrBudgetItemName(pr)}
                 </div>
               )}
             </div>

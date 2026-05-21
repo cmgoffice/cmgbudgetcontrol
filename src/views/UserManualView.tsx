@@ -274,7 +274,7 @@ const WORKFLOWS: WorkflowSection[] = [
       { role: "Administrator", duty: "ทำได้ทุกขั้นตอน", color: "bg-purple-900 text-purple-200 border-purple-600" },
     ],
     notes: [
-      "Receive Auto: PO จะข้ามขั้น Approved ไปเป็น Received ทันทีหลัง GM Approve",
+      "Receive Auto: ระบบจะสร้างรายการ Receive ให้อัตโนมัติ รับครบ 100% ทุกบรรทัด และเปลี่ยน PO เป็น Received ทันทีหลัง GM Approve",
       "Pay Before Receive: PO จะเป็น Wait Pay ก่อน รอจ่ายเงินแล้วค่อย Receive",
       "การขอแก้ไข PO ที่ Approved/Received/Closed PO แล้ว ต้องผ่านการอนุญาตจาก PCM หรือ GM",
     ],

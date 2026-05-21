@@ -33,6 +33,8 @@ export const UIProvider = ({ children, logAction }) => {
     vendor: "Vendor Management",
     material: "Material",
     invoice: "Invoice",
+    billing: "Billing",
+    pay: "Pay",
     receive: "Receive",
     profile: "ข้อมูลส่วนตัว",
     admin: "Admin Dashboard",

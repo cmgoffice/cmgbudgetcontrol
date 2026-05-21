@@ -27,6 +27,59 @@ import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTra
 import { motion, AnimatePresence } from "framer-motion";
 import { generatePOPdfBytes, uploadGeneratedPdf, stampSignatureToField, stampSignatureToPdf, deleteGeneratedPdf, stampTextToFieldRect } from "../lib/pdfForms";
 import { uploadAttachment } from "../lib/uploadAttachment";
+import {
+  buildAutoReceiveData,
+  findAutoReceiveForPO,
+  isReceiveAutoType,
+} from "../lib/receiveAuto";
+import {
+  buildConfiguredInvoiceData,
+  buildConfiguredReceiveData,
+  getPoFinalApprovalStatus,
+  hasConfiguredPayBeforeReceive,
+  hasConfiguredReceiveAfterPayment,
+  syncInvoiceSetupItems,
+  syncReceiveSetupItems,
+} from "../lib/poDocumentFlow";
+
+const getDefaultPoFormData = () => ({
+  poNo: "",
+  poType: "",
+  receiveType: "",
+  vendorId: "",
+  requiredDate: "",
+  poOpenDate: new Date().toISOString().split("T")[0],
+  vatType: "ex-vat",
+  selectedPrIds: [],
+  items: [],
+  reason: "",
+  note: "",
+  discount: 0,
+  location: "",
+  payBeforeReceiveChecked: false,
+  payBeforeReceiveInvoiceSetup: null,
+  receivedAfterPaymentChecked: false,
+  receivedAfterPaymentSetup: null,
+});
+
+const createInvoiceSetupDraft = (items = [], existingSetup = null) => ({
+  invNo: existingSetup?.invNo || "",
+  invDate: existingSetup?.invDate || new Date().toISOString().split("T")[0],
+  paymentType: existingSetup?.paymentType || "เครดิต",
+  bankAccountNo: existingSetup?.bankAccountNo || "",
+  isDeposit: Boolean(existingSetup?.isDeposit),
+  depositAmount: Number(existingSetup?.depositAmount || 0),
+  items: syncInvoiceSetupItems(items, existingSetup?.items || []),
+});
+
+const createReceiveSetupDraft = (items = [], vendorName = "", existingSetup = null) => ({
+  vendorName: existingSetup?.vendorName || vendorName || "",
+  documentNo: existingSetup?.documentNo || "",
+  receivedDate: existingSetup?.receivedDate || new Date().toISOString().split("T")[0],
+  note: existingSetup?.note || "",
+  items: syncReceiveSetupItems(items, existingSetup?.items || []),
+});
+
 const POView = React.memo(() => {
   const L = {
     docName: "PO",
@@ -64,7 +117,7 @@ const POView = React.memo(() => {
     savePrAgain: (prNo, status) => `PR ${prNo} มีสถานะ ${status} — กรุณา Active PR รายการนี้ก่อน แล้วค่อยบันทึก PO อีกครั้ง`,
     amountDrop: "ยอด PO ลดลง",
   };
-  const { prs, pos, projects, budgets, vendors, materials, addData, updateData, deleteData, loadVendors, loadMaterials,
+  const { prs, pos, projects, budgets, vendors, materials, receives, invoices, addData, updateData, deleteData, loadVendors, loadMaterials,
     showAlert, openConfirm, logAction, userRole, userRoles, columnWidths, handleColumnResize,
     visibleProjects, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,
     userData, user, canUseFunction, canAccessModule, isColumnVisible } = useAppData();
@@ -170,21 +223,11 @@ const POView = React.memo(() => {
   };
 
   // Form Data State
-  const [formData, setFormData] = useState({
-    poNo: "",
-    poType: "",
-    receiveType: "",
-    vendorId: "",
-    requiredDate: "",
-    poOpenDate: new Date().toISOString().split("T")[0], // วันที่เปิด PO (default วันนี้)
-    vatType: "ex-vat", // "inc-vat" | "ex-vat"
-    selectedPrIds: [], // Array of PR IDs
-    items: [], // Array of selected items with order details
-    reason: "",
-    note: "",
-    discount: 0,
-    location: "", // สถานที่ส่งสินค้า
-  });
+  const [formData, setFormData] = useState(getDefaultPoFormData());
+  const [isInvoiceSetupModalOpen, setIsInvoiceSetupModalOpen] = useState(false);
+  const [invoiceSetupDraft, setInvoiceSetupDraft] = useState(() => createInvoiceSetupDraft());
+  const [isReceiveSetupModalOpen, setIsReceiveSetupModalOpen] = useState(false);
+  const [receiveSetupDraft, setReceiveSetupDraft] = useState(() => createReceiveSetupDraft());
   const [locationOptions, setLocationOptions] = useState<string[]>([...DELIVERY_LOCATIONS]);
   const [locationAddMode, setLocationAddMode] = useState(false);
   const [locationAddText, setLocationAddText] = useState("");
@@ -1048,6 +1091,127 @@ const POView = React.memo(() => {
     const full = `${creatorFirstName} ${creatorLastName}`.trim();
     return full || user?.email || "";
   }, [creatorFirstName, creatorLastName, user?.email]);
+  const selectedVendorName = useMemo(() => {
+    const vendor = vendors.find((entry: any) => entry.id === formData.vendorId);
+    return vendor?.name || "";
+  }, [vendors, formData.vendorId]);
+
+  const openInvoiceSetupModal = useCallback(() => {
+    if (!formData.items.length) {
+      showAlert("ยังไม่มีรายการ", "กรุณาเลือกรายการสินค้าใน PO ก่อนตั้งค่าใบแจ้งหนี้", "warning");
+      return;
+    }
+    setInvoiceSetupDraft(createInvoiceSetupDraft(formData.items, formData.payBeforeReceiveInvoiceSetup));
+    setIsInvoiceSetupModalOpen(true);
+  }, [formData.items, formData.payBeforeReceiveInvoiceSetup, showAlert]);
+
+  const clearPayBeforeReceiveFlow = useCallback(() => {
+    setFormData((prev) => ({
+      ...prev,
+      payBeforeReceiveChecked: false,
+      payBeforeReceiveInvoiceSetup: null,
+      receivedAfterPaymentChecked: false,
+      receivedAfterPaymentSetup: null,
+    }));
+  }, []);
+
+  const clearReceivedAfterPaymentFlow = useCallback(() => {
+    setFormData((prev) => ({
+      ...prev,
+      receivedAfterPaymentChecked: false,
+      receivedAfterPaymentSetup: null,
+    }));
+  }, []);
+
+  const saveInvoiceSetup = useCallback(() => {
+    if (!invoiceSetupDraft.invNo.trim()) {
+      showAlert("ข้อมูลไม่ครบ", "กรุณากรอกเลขที่ใบแจ้งหนี้", "warning");
+      return;
+    }
+    if (!invoiceSetupDraft.invDate) {
+      showAlert("ข้อมูลไม่ครบ", "กรุณาระบุวันที่ใบแจ้งหนี้", "warning");
+      return;
+    }
+    if (invoiceSetupDraft.paymentType === "โอน" && !String(invoiceSetupDraft.bankAccountNo || "").trim()) {
+      showAlert("ข้อมูลไม่ครบ", "กรุณากรอกเลขบัญชีสำหรับการโอน", "warning");
+      return;
+    }
+    if (invoiceSetupDraft.isDeposit && Number(invoiceSetupDraft.depositAmount || 0) <= 0) {
+      showAlert("ข้อมูลไม่ครบ", "กรุณากรอกจำนวนเงินมัดจำ", "warning");
+      return;
+    }
+    if (!Array.isArray(invoiceSetupDraft.items) || invoiceSetupDraft.items.length === 0) {
+      showAlert("ข้อมูลไม่ครบ", "ไม่พบรายการสำหรับตั้งค่า Invoice", "warning");
+      return;
+    }
+
+    setFormData((prev) => ({
+      ...prev,
+      receiveType: "Pay before receive",
+      payBeforeReceiveChecked: true,
+      payBeforeReceiveInvoiceSetup: {
+        ...invoiceSetupDraft,
+        items: syncInvoiceSetupItems(prev.items, invoiceSetupDraft.items),
+      },
+    }));
+    setIsInvoiceSetupModalOpen(false);
+  }, [invoiceSetupDraft, showAlert]);
+
+  const openReceiveSetupModal = useCallback(() => {
+    if (!formData.payBeforeReceiveChecked) {
+      showAlert("ยังไม่พร้อม", "ต้องบันทึกตัวเลือก จ่ายก่อนรับของ ก่อน จึงจะตั้งค่า รับของแล้ว ได้", "warning");
+      return;
+    }
+    if (!formData.items.length) {
+      showAlert("ยังไม่มีรายการ", "กรุณาเลือกรายการสินค้าใน PO ก่อนตั้งค่ารับของ", "warning");
+      return;
+    }
+    setReceiveSetupDraft(createReceiveSetupDraft(formData.items, selectedVendorName, formData.receivedAfterPaymentSetup));
+    setIsReceiveSetupModalOpen(true);
+  }, [formData.items, formData.payBeforeReceiveChecked, formData.receivedAfterPaymentSetup, selectedVendorName, showAlert]);
+
+  const saveReceiveSetup = useCallback(() => {
+    if (!String(receiveSetupDraft.vendorName || "").trim()) {
+      showAlert("ข้อมูลไม่ครบ", "กรุณากรอกชื่อผู้จำหน่าย", "warning");
+      return;
+    }
+    if (!String(receiveSetupDraft.documentNo || "").trim()) {
+      showAlert("ข้อมูลไม่ครบ", "กรุณากรอกเลขที่เอกสารรับของ", "warning");
+      return;
+    }
+    if (!receiveSetupDraft.receivedDate) {
+      showAlert("ข้อมูลไม่ครบ", "กรุณาระบุวันที่รับของ", "warning");
+      return;
+    }
+    if (!String(receiveSetupDraft.note || "").trim()) {
+      showAlert("ข้อมูลไม่ครบ", "กรุณากรอกหมายเหตุรับของ", "warning");
+      return;
+    }
+    if (!Array.isArray(receiveSetupDraft.items) || receiveSetupDraft.items.length === 0) {
+      showAlert("ข้อมูลไม่ครบ", "ไม่พบรายการสำหรับตั้งค่ารับของ", "warning");
+      return;
+    }
+    const invalidItem = receiveSetupDraft.items.find((item: any) => {
+      const orderedQty = Number(item.orderedQty || 0);
+      const receivedQty = Number(item.receivedQty || 0);
+      return receivedQty <= 0 || receivedQty !== orderedQty;
+    });
+    if (invalidItem) {
+      showAlert("ข้อมูลไม่ครบ", `รายการ ${invalidItem.description || invalidItem.materialNo || "-"} ต้องระบุจำนวนรับให้ครบเท่าจำนวนสั่ง เพื่อใช้ flow รับของแล้ว อัตโนมัติ`, "warning");
+      return;
+    }
+
+    setFormData((prev) => ({
+      ...prev,
+      receiveType: "Pay before receive",
+      receivedAfterPaymentChecked: true,
+      receivedAfterPaymentSetup: {
+        ...receiveSetupDraft,
+        items: syncReceiveSetupItems(prev.items, receiveSetupDraft.items),
+      },
+    }));
+    setIsReceiveSetupModalOpen(false);
+  }, [receiveSetupDraft, showAlert]);
 
   const uploadPoPendingFiles = async (poNoForPath: string) => {
     if (!poPendingFiles.length) return [] as { url: string; name: string }[];
@@ -1080,6 +1244,35 @@ const POView = React.memo(() => {
     }
     return { subtotal, discount, vat, total };
   };
+
+  const buildConfiguredFlowPayload = useCallback((itemsForPayload: any[]) => {
+    const payBeforeReceiveChecked = Boolean(formData.payBeforeReceiveChecked && formData.payBeforeReceiveInvoiceSetup);
+    const payBeforeReceiveInvoiceSetup = payBeforeReceiveChecked
+      ? {
+        ...formData.payBeforeReceiveInvoiceSetup,
+        items: syncInvoiceSetupItems(itemsForPayload, formData.payBeforeReceiveInvoiceSetup?.items || []),
+      }
+      : null;
+    const receivedAfterPaymentChecked = Boolean(
+      payBeforeReceiveChecked &&
+      formData.receivedAfterPaymentChecked &&
+      formData.receivedAfterPaymentSetup
+    );
+    const receivedAfterPaymentSetup = receivedAfterPaymentChecked
+      ? {
+        ...formData.receivedAfterPaymentSetup,
+        items: syncReceiveSetupItems(itemsForPayload, formData.receivedAfterPaymentSetup?.items || []),
+      }
+      : null;
+
+    return {
+      receiveType: payBeforeReceiveChecked ? "Pay before receive" : formData.receiveType,
+      payBeforeReceiveChecked,
+      payBeforeReceiveInvoiceSetup,
+      receivedAfterPaymentChecked,
+      receivedAfterPaymentSetup,
+    };
+  }, [formData]);
 
   const handleSavePODraft = async () => {
     if (poDraftInFlightRef.current || poSendInFlightRef.current) return;
@@ -1125,6 +1318,7 @@ const POView = React.memo(() => {
         ...it,
         disPrAllocations: Array.isArray(it.disPrAllocations) && it.disPrAllocations.length ? it.disPrAllocations : [],
       }));
+      const configuredFlowPayload = buildConfiguredFlowPayload(itemsDraft);
 
       let newUrls: { url: string; name: string }[] = [];
       try {
@@ -1140,7 +1334,7 @@ const POView = React.memo(() => {
       const draftPayload: Record<string, any> = {
         poNo: resolvedPoNo,
         poType: formData.poType,
-        ...(formData.receiveType ? { receiveType: formData.receiveType } : {}),
+        ...(configuredFlowPayload.receiveType ? { receiveType: configuredFlowPayload.receiveType } : {}),
         projectId: selectedProjectId,
         vendorId: formData.vendorId || "",
         requiredDate: formData.requiredDate || "",
@@ -1165,6 +1359,10 @@ const POView = React.memo(() => {
         ...(creatorDisplayName
           ? { createdByName: editingPo?.createdByName || creatorDisplayName }
           : {}),
+        payBeforeReceiveChecked: configuredFlowPayload.payBeforeReceiveChecked,
+        payBeforeReceiveInvoiceSetup: configuredFlowPayload.payBeforeReceiveInvoiceSetup,
+        receivedAfterPaymentChecked: configuredFlowPayload.receivedAfterPaymentChecked,
+        receivedAfterPaymentSetup: configuredFlowPayload.receivedAfterPaymentSetup,
       };
 
       if (preserveRevision) {
@@ -1202,21 +1400,9 @@ const POView = React.memo(() => {
         setReservedPoNo("");
         setReservedCounterRef(null);
         setReservedSequence(0);
-        setFormData({
-          poNo: "",
-          poType: "",
-          receiveType: "",
-          vendorId: "",
-          requiredDate: "",
-          poOpenDate: new Date().toISOString().split("T")[0],
-          vatType: "ex-vat",
-          selectedPrIds: [],
-          items: [],
-          reason: "",
-          note: "",
-          discount: 0,
-          location: "",
-        });
+        setFormData(getDefaultPoFormData());
+        setInvoiceSetupDraft(createInvoiceSetupDraft());
+        setReceiveSetupDraft(createReceiveSetupDraft());
         setManualVatOverride(null);
         setVatEditOpen(false);
         setVatEditValue("");
@@ -1351,6 +1537,7 @@ const POView = React.memo(() => {
         // write allocations back to itemsWithAllocations
         itemsWithAllocations[idx].disPrAllocations = allocs;
       }
+      const configuredFlowPayload = buildConfiguredFlowPayload(itemsWithAllocations);
 
       let attachmentList = [...poSavedAttachments];
       try {
@@ -1372,7 +1559,7 @@ const POView = React.memo(() => {
         const project = projects.find((p: any) => p.id === selectedProjectId) || null;
         const draftPayload = {
           poNo: resolvedPoNo, poType: formData.poType,
-          receiveType: formData.receiveType,
+          receiveType: configuredFlowPayload.receiveType,
           projectId: selectedProjectId, vendorId: formData.vendorId,
           requiredDate: formData.requiredDate, vatType: formData.vatType,
           items: itemsWithAllocations, amount: totals.total,
@@ -1435,7 +1622,7 @@ const POView = React.memo(() => {
       const basePayload = {
         poNo: resolvedPoNo,
         poType: formData.poType,
-        ...(formData.receiveType ? { receiveType: formData.receiveType } : {}),
+        ...(configuredFlowPayload.receiveType ? { receiveType: configuredFlowPayload.receiveType } : {}),
         projectId: selectedProjectId,
         vendorId: formData.vendorId,
         ...vendorInfo,
@@ -1458,6 +1645,10 @@ const POView = React.memo(() => {
           }
           : {}),
         creatorSignatureDataUrl: userData?.signatureDataUrl || userData?.signatureUrl || null,
+        payBeforeReceiveChecked: configuredFlowPayload.payBeforeReceiveChecked,
+        payBeforeReceiveInvoiceSetup: configuredFlowPayload.payBeforeReceiveInvoiceSetup,
+        receivedAfterPaymentChecked: configuredFlowPayload.receivedAfterPaymentChecked,
+        receivedAfterPaymentSetup: configuredFlowPayload.receivedAfterPaymentSetup,
         status: "Pending PCM",
         createdDate: existingPoForCreator?.createdDate || new Date().toISOString(),
         poDate: formData.poOpenDate ? new Date(formData.poOpenDate + "T00:00:00").toISOString() : new Date().toISOString(),
@@ -1479,9 +1670,9 @@ const POView = React.memo(() => {
         setReservedPoNo("");
         setReservedCounterRef(null);
         setReservedSequence(0);
-        setFormData({
-          poNo: "", poType: "", receiveType: "", vendorId: "", requiredDate: "", poOpenDate: new Date().toISOString().split("T")[0], vatType: "ex-vat", selectedPrIds: [], items: [], reason: "", note: "", discount: 0, location: "",
-        });
+        setFormData(getDefaultPoFormData());
+        setInvoiceSetupDraft(createInvoiceSetupDraft());
+        setReceiveSetupDraft(createReceiveSetupDraft());
         setManualVatOverride(null);
         setVatEditOpen(false);
         setVatEditValue("");
@@ -1774,17 +1965,13 @@ const POView = React.memo(() => {
     // Approve Flow
     const isPCMApprove = po.status === "Pending PCM" && (userRoles.includes("PCM") || userRoles.includes("Administrator"));
     const isGMApprove = po.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator"));
-    const receiveTypeNormalized = String(po.receiveType || "").trim().toLowerCase();
-    const isReceiveAutoType = receiveTypeNormalized === "receive auto";
-    const isPayBeforeReceiveType = receiveTypeNormalized.includes("pay before");
+    const isAutoReceive = isReceiveAutoType(po.receiveType);
+    const hasConfiguredInvoice = hasConfiguredPayBeforeReceive(po);
+    const hasConfiguredReceive = hasConfiguredReceiveAfterPayment(po);
     if (isPCMApprove) {
       newStatus = "Pending GM";
     } else if (isGMApprove) {
-      // Auto-receive PO: after final approval, skip "Approved" and go directly to "Received"
-      // Pay before receive: after final approval, wait invoice before returning to Approved for Receive flow
-      if (isReceiveAutoType) newStatus = "Received";
-      else if (isPayBeforeReceiveType) newStatus = "Wait Pay";
-      else newStatus = "Approved";
+      newStatus = getPoFinalApprovalStatus(po);
     }
 
     if (newStatus !== po.status) {
@@ -1851,10 +2038,125 @@ const POView = React.memo(() => {
         console.warn(`[PO Approve] PDF regeneration/stamp failed:`, stampErr);
       }
 
+      let autoInvoiceNo = "";
+      if (action === "approve" && isGMApprove && hasConfiguredInvoice) {
+        const existingInvoice = invoices.find((invoice: any) => invoice.poId === po.id);
+        if (existingInvoice) {
+          autoInvoiceNo = existingInvoice.invNo || existingInvoice.id || "";
+        } else {
+          const invoiceData = buildConfiguredInvoiceData({
+            po,
+            setup: po.payBeforeReceiveInvoiceSetup,
+            vendors,
+            userData,
+          });
+          if (!invoiceData) {
+            setPoApproveFlightFromStatus((s) => {
+              const next = { ...s };
+              delete next[poId];
+              return next;
+            });
+            return;
+          }
+          const invoiceOk = await addData("invoices", invoiceData, null, { skipLog: true });
+          if (!invoiceOk) {
+            setPoApproveFlightFromStatus((s) => {
+              const next = { ...s };
+              delete next[poId];
+              return next;
+            });
+            return;
+          }
+          autoInvoiceNo = invoiceData.invNo;
+          await logAction?.(
+            "Create Invoice",
+            `สร้าง Invoice ${invoiceData.invNo} สำหรับ PO ${po.poNo || po.id} (Auto Pay before receive)`,
+            po.projectId
+          );
+        }
+      }
+
+      let autoReceiveNo = "";
+      if (action === "approve" && isGMApprove && hasConfiguredReceive) {
+        const existingConfiguredReceive = receives.find((receive: any) => receive.poId === po.id);
+        if (existingConfiguredReceive) {
+          autoReceiveNo = existingConfiguredReceive.rpNo || existingConfiguredReceive.receiveNo || existingConfiguredReceive.id || "";
+        } else {
+          const project = projects.find((item: any) => item.id === po.projectId) || null;
+          const configuredReceive = buildConfiguredReceiveData({
+            po,
+            setup: po.receivedAfterPaymentSetup,
+            prs,
+            vendors,
+            receives,
+            project,
+            user,
+            userData,
+          });
+          if (!configuredReceive) {
+            setPoApproveFlightFromStatus((s) => {
+              const next = { ...s };
+              delete next[poId];
+              return next;
+            });
+            return;
+          }
+          const receiveOk = await addData("receives", configuredReceive.receiveData, null, { skipLog: true });
+          if (!receiveOk) {
+            setPoApproveFlightFromStatus((s) => {
+              const next = { ...s };
+              delete next[poId];
+              return next;
+            });
+            return;
+          }
+          autoReceiveNo = configuredReceive.receiveNo;
+          await logAction?.(
+            "Create Receive",
+            `สร้าง Receive ${configuredReceive.receiveNo} สำหรับ PO ${po.poNo || po.id} (Auto received after payment)`,
+            po.projectId
+          );
+        }
+      } else if (action === "approve" && newStatus === "Received" && isAutoReceive) {
+        const existingAutoReceive = findAutoReceiveForPO(receives, po.id);
+        if (existingAutoReceive) {
+          autoReceiveNo = existingAutoReceive.rpNo || existingAutoReceive.receiveNo || "";
+        } else {
+          const project = projects.find((item: any) => item.id === po.projectId) || null;
+          const autoReceive = buildAutoReceiveData({
+            po,
+            prs,
+            vendors,
+            receives,
+            project,
+            user,
+            userData,
+          });
+          if (autoReceive) {
+            const receiveOk = await addData("receives", autoReceive.receiveData, null, { skipLog: true });
+            if (!receiveOk) {
+              setPoApproveFlightFromStatus((s) => {
+                const next = { ...s };
+                delete next[poId];
+                return next;
+              });
+              return;
+            }
+            autoReceiveNo = autoReceive.receiveNo;
+            await logAction?.(
+              "Create Receive",
+              `สร้าง Receive ${autoReceive.receiveNo} สำหรับ PO ${po.poNo || po.id} (Auto Receive)`,
+              po.projectId
+            );
+          }
+        }
+      }
+
       const ok = await updateData("pos", poId, {
         status: newStatus,
         ...(newStatus === "Received" ? { statusNow: "Received" } : {}),
-        ...(newStatus === "Wait Pay" ? { statusNow: "Wait Pay" } : {}),
+        ...(newStatus === "Wait Invoice" ? { statusNow: "Wait Invoice" } : {}),
+        ...(newStatus === "Paid" ? { statusNow: "Paid" } : {}),
         rejectReason: "",
         ...(isPCMApprove ? { pcmApprovedAt: nowIso } : {}),
         ...(isGMApprove ? { gmApprovedAt: nowIso } : {}),
@@ -1875,6 +2177,15 @@ const POView = React.memo(() => {
           rejectReason: "",
           ...(updatedPdfUrl ? { pdfUrl: updatedPdfUrl, pdfUpdatedAt: nowIso } : {}),
         }));
+      }
+      if (ok && autoReceiveNo && hasConfiguredReceive) {
+        showAlert("สำเร็จ", `สร้าง Invoice ${autoInvoiceNo || "-"} และ Receive ${autoReceiveNo} อัตโนมัติ พร้อมเปลี่ยนสถานะ PO เป็น Paid`, "success");
+        autoReceiveNo = "";
+      } else if (ok && autoInvoiceNo && hasConfiguredInvoice) {
+        showAlert("สำเร็จ", `สร้าง Invoice ${autoInvoiceNo} อัตโนมัติ และส่ง PO กลับเข้า flow รับของแล้ว`, "success");
+      }
+      if (ok && autoReceiveNo) {
+        showAlert("สำเร็จ", `สร้าง Receive ${autoReceiveNo} อัตโนมัติ และเปลี่ยนสถานะ PO เป็น Received`, "success");
       }
     }
   };
@@ -2328,21 +2639,9 @@ const POView = React.memo(() => {
                     setEditingPoId(null);
                     setPoPendingFiles([]);
                     setPoSavedAttachments([]);
-                    setFormData({
-                      poNo: "",
-                      poType: "",
-                      receiveType: "",
-                      vendorId: "",
-                      requiredDate: "",
-                      poOpenDate: new Date().toISOString().split("T")[0],
-                      vatType: "ex-vat",
-                      selectedPrIds: [],
-                      items: [],
-                      reason: "",
-                      note: "",
-                      discount: 0,
-                      location: "",
-                    });
+                    setFormData(getDefaultPoFormData());
+                    setInvoiceSetupDraft(createInvoiceSetupDraft());
+                    setReceiveSetupDraft(createReceiveSetupDraft());
                     setManualVatOverride(null);
                     setVatEditOpen(false);
                     setDiscountEnabled(false);
@@ -2494,7 +2793,13 @@ const POView = React.memo(() => {
                                         note: po.note || "",
                                         discount: po.discount ?? 0,
                                         location: po.location || "",
+                                        payBeforeReceiveChecked: !!po.payBeforeReceiveChecked,
+                                        payBeforeReceiveInvoiceSetup: po.payBeforeReceiveInvoiceSetup || null,
+                                        receivedAfterPaymentChecked: !!po.receivedAfterPaymentChecked,
+                                        receivedAfterPaymentSetup: po.receivedAfterPaymentSetup || null,
                                       });
+                                      setInvoiceSetupDraft(createInvoiceSetupDraft(po.items || [], po.payBeforeReceiveInvoiceSetup || null));
+                                      setReceiveSetupDraft(createReceiveSetupDraft(po.items || [], po.vendorName || "", po.receivedAfterPaymentSetup || null));
                                       if (po.location && !DELIVERY_LOCATIONS.includes(po.location)) {
                                         setLocationOptions(prev => prev.includes(po.location) ? prev : [...prev, po.location]);
                                       }
@@ -2686,7 +2991,13 @@ const POView = React.memo(() => {
                                       note: po.note || "",
                                       discount: po.discount ?? 0,
                                       location: po.location || "",
+                                      payBeforeReceiveChecked: !!po.payBeforeReceiveChecked,
+                                      payBeforeReceiveInvoiceSetup: po.payBeforeReceiveInvoiceSetup || null,
+                                      receivedAfterPaymentChecked: !!po.receivedAfterPaymentChecked,
+                                      receivedAfterPaymentSetup: po.receivedAfterPaymentSetup || null,
                                     });
+                                    setInvoiceSetupDraft(createInvoiceSetupDraft(po.items || [], po.payBeforeReceiveInvoiceSetup || null));
+                                    setReceiveSetupDraft(createReceiveSetupDraft(po.items || [], po.vendorName || "", po.receivedAfterPaymentSetup || null));
                                     if (po.location && !DELIVERY_LOCATIONS.includes(po.location)) {
                                       setLocationOptions(prev => prev.includes(po.location) ? prev : [...prev, po.location]);
                                     }
@@ -3253,17 +3564,17 @@ const POView = React.memo(() => {
                                   // Reserve actual PO number for new PO
                                   try {
                                     const actualPoNo = await reservePoNoForDisplay(newType);
-                                    setFormData({ ...formData, poType: newType, poNo: actualPoNo, receiveType: defaultReceive });
+                                    setFormData({ ...formData, poType: newType, poNo: actualPoNo, receiveType: formData.payBeforeReceiveChecked ? "Pay before receive" : defaultReceive });
                                   } catch (error) {
                                     console.error("Error reserving PO number:", error);
                                     // Fallback to placeholder if reservation fails
                                     const fallbackPoNo = generatePoNo(newType);
-                                    setFormData({ ...formData, poType: newType, poNo: fallbackPoNo, receiveType: defaultReceive });
+                                    setFormData({ ...formData, poType: newType, poNo: fallbackPoNo, receiveType: formData.payBeforeReceiveChecked ? "Pay before receive" : defaultReceive });
                                   }
                                 } else {
                                   // For editing or empty type, use placeholder
                                   const newPoNo = newType ? generatePoNo(newType) : "";
-                                  setFormData({ ...formData, poType: newType, poNo: newPoNo, receiveType: defaultReceive });
+                                  setFormData({ ...formData, poType: newType, poNo: newPoNo, receiveType: formData.payBeforeReceiveChecked ? "Pay before receive" : defaultReceive });
                                 }
                               }}
                             >
@@ -3417,8 +3728,9 @@ const POView = React.memo(() => {
                               <Package size={11} className="text-red-500 shrink-0" /> Receive Type
                             </label>
                             <select
-                              className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-sm bg-white hover:border-red-300 focus:border-red-500 focus:ring-2 cursor-pointer text-slate-900"
+                              className={`w-full border border-slate-200 rounded-lg px-3 py-1.5 text-sm bg-white focus:ring-2 text-slate-900 ${formData.payBeforeReceiveChecked ? "cursor-not-allowed bg-slate-100 text-slate-500" : "hover:border-red-300 focus:border-red-500 cursor-pointer"}`}
                               value={formData.receiveType}
+                              disabled={formData.payBeforeReceiveChecked}
                               onChange={e => setFormData({ ...formData, receiveType: e.target.value })}
                             >
                               <option value="">-- เลือก --</option>
@@ -3426,6 +3738,87 @@ const POView = React.memo(() => {
                                 <option key={t.value} value={t.value}>{t.label}</option>
                               ))}
                             </select>
+                            {formData.payBeforeReceiveChecked && (
+                              <div className="mt-1 text-[10px] text-amber-700">
+                                flow นี้ล็อก Receive Type เป็น `Pay before receive` อัตโนมัติ
+                              </div>
+                            )}
+                          </div>
+                          <div className="col-span-1 sm:col-span-2">
+                            <div className="rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 to-white p-3 space-y-2">
+                              <div className="flex items-center justify-between gap-3 flex-wrap">
+                                <label className="inline-flex items-center gap-2 text-sm font-semibold text-amber-900 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={!!formData.payBeforeReceiveChecked}
+                                    onChange={(e) => {
+                                      if (e.target.checked) openInvoiceSetupModal();
+                                      else clearPayBeforeReceiveFlow();
+                                    }}
+                                    className="rounded border-amber-300 text-amber-600 focus:ring-amber-200"
+                                  />
+                                  <span>จ่ายก่อนรับของ</span>
+                                </label>
+                                {formData.payBeforeReceiveChecked && (
+                                  <button
+                                    type="button"
+                                    onClick={openInvoiceSetupModal}
+                                    className="text-[11px] font-semibold text-amber-700 hover:text-amber-900"
+                                  >
+                                    แก้ไขข้อมูลใบแจ้งหนี้
+                                  </button>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-amber-800">
+                                เมื่อบันทึกแล้ว ระบบจะสร้าง `Invoice` อัตโนมัติหลัง PO ถูกอนุมัติ และส่ง PO กลับเข้า flow รับของ
+                              </div>
+                              {formData.payBeforeReceiveChecked && formData.payBeforeReceiveInvoiceSetup && (
+                                <div className="rounded-lg border border-amber-100 bg-white px-3 py-2 text-[11px] text-slate-600">
+                                  Invoice: <span className="font-semibold text-slate-800">{formData.payBeforeReceiveInvoiceSetup.invNo || "-"}</span>
+                                  {" | "}วันที่: <span className="font-semibold text-slate-800">{formData.payBeforeReceiveInvoiceSetup.invDate || "-"}</span>
+                                  {" | "}ชำระ: <span className="font-semibold text-slate-800">{formData.payBeforeReceiveInvoiceSetup.paymentType || "-"}</span>
+                                  {formData.payBeforeReceiveInvoiceSetup.isDeposit ? (
+                                    <>
+                                      {" | "}มัดจำ: <span className="font-semibold text-slate-800">{formatCurrency(Number(formData.payBeforeReceiveInvoiceSetup.depositAmount || 0))}</span>
+                                    </>
+                                  ) : null}
+                                </div>
+                              )}
+
+                              <div className="flex items-center justify-between gap-3 flex-wrap pt-1 border-t border-amber-100">
+                                <label className={`inline-flex items-center gap-2 text-sm font-semibold ${formData.payBeforeReceiveChecked ? "text-emerald-900 cursor-pointer" : "text-slate-400 cursor-not-allowed"}`}>
+                                  <input
+                                    type="checkbox"
+                                    checked={!!formData.receivedAfterPaymentChecked}
+                                    disabled={!formData.payBeforeReceiveChecked}
+                                    onChange={(e) => {
+                                      if (e.target.checked) openReceiveSetupModal();
+                                      else clearReceivedAfterPaymentFlow();
+                                    }}
+                                    className="rounded border-emerald-300 text-emerald-600 focus:ring-emerald-200 disabled:opacity-50"
+                                  />
+                                  <span>รับของแล้ว</span>
+                                </label>
+                                {formData.receivedAfterPaymentChecked && (
+                                  <button
+                                    type="button"
+                                    onClick={openReceiveSetupModal}
+                                    className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900"
+                                  >
+                                    แก้ไขข้อมูลรับของ
+                                  </button>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-slate-600">
+                                ต้องตั้งค่า `จ่ายก่อนรับของ` ก่อน และถ้าตั้งค่า `รับของแล้ว` ระบบจะสร้าง `Receive` อัตโนมัติหลัง approve พร้อมปิด PO เป็น `Paid`
+                              </div>
+                              {formData.receivedAfterPaymentChecked && formData.receivedAfterPaymentSetup && (
+                                <div className="rounded-lg border border-emerald-100 bg-white px-3 py-2 text-[11px] text-slate-600">
+                                  Receive Doc: <span className="font-semibold text-slate-800">{formData.receivedAfterPaymentSetup.documentNo || "-"}</span>
+                                  {" | "}วันที่รับ: <span className="font-semibold text-slate-800">{formData.receivedAfterPaymentSetup.receivedDate || "-"}</span>
+                                </div>
+                              )}
+                            </div>
                           </div>
                           {/* Vendor / ผู้รับเหมา */}
                           <div className="col-span-1 sm:col-span-2">
@@ -4051,6 +4444,314 @@ const POView = React.memo(() => {
                       </div>
                     </div>
                   </div>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+
+          {isInvoiceSetupModalOpen && (
+            <motion.div
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10030] p-4"
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              variants={modalOverlayVariants}
+              transition={overlayTransition}
+              onClick={() => setIsInvoiceSetupModalOpen(false)}
+            >
+              <motion.div
+                className="w-full max-w-5xl max-h-[85vh] overflow-hidden rounded-2xl border border-violet-200 bg-white shadow-2xl flex flex-col"
+                variants={modalContentVariants}
+                transition={modalTransition}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="px-5 py-4 border-b border-violet-100 bg-gradient-to-r from-violet-50 to-white flex items-center justify-between">
+                  <div>
+                    <h3 className="text-base font-bold text-violet-800">ตั้งค่าข้อมูลใบแจ้งหนี้</h3>
+                    <p className="text-xs text-violet-500 mt-0.5">บันทึกแล้วระบบจะเช็คช่อง จ่ายก่อนรับของ และสร้าง Invoice ให้อัตโนมัติหลัง PO Approved</p>
+                  </div>
+                  <button type="button" className="p-2 rounded-lg text-violet-400 hover:bg-violet-100 hover:text-violet-700" onClick={() => setIsInvoiceSetupModalOpen(false)}>
+                    <XCircle size={18} />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <div>
+                      <label className="text-xs font-semibold text-violet-700 mb-1.5 flex items-center gap-1">
+                        <FileText size={11} /> เลขที่ใบแจ้งหนี้
+                      </label>
+                      <input
+                        type="text"
+                        value={invoiceSetupDraft.invNo}
+                        onChange={(e) => setInvoiceSetupDraft((prev) => ({ ...prev, invNo: e.target.value }))}
+                        className="w-full border border-violet-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-200"
+                        placeholder="เช่น INV-001"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-violet-700 mb-1.5 flex items-center gap-1">
+                        <Calendar size={11} /> วันที่ใบแจ้งหนี้
+                      </label>
+                      <input
+                        type="date"
+                        value={invoiceSetupDraft.invDate}
+                        onChange={(e) => setInvoiceSetupDraft((prev) => ({ ...prev, invDate: e.target.value }))}
+                        className="w-full border border-violet-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-200"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-violet-700 mb-1.5 flex items-center gap-1">
+                        <DollarSign size={11} /> ประเภทการชำระ
+                      </label>
+                      <select
+                        value={invoiceSetupDraft.paymentType}
+                        onChange={(e) => setInvoiceSetupDraft((prev) => ({
+                          ...prev,
+                          paymentType: e.target.value,
+                          bankAccountNo: e.target.value === "โอน" ? prev.bankAccountNo : "",
+                        }))}
+                        className="w-full border border-violet-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-200 bg-white"
+                      >
+                        {["เครดิต", "โอน", "เช็ค", "เงินสด"].map((type) => (
+                          <option key={type} value={type}>{type}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-violet-700 mb-1.5 flex items-center gap-1">
+                        <Hash size={11} /> เลขบัญชี
+                      </label>
+                      <input
+                        type="text"
+                        value={invoiceSetupDraft.bankAccountNo}
+                        disabled={invoiceSetupDraft.paymentType !== "โอน"}
+                        onChange={(e) => setInvoiceSetupDraft((prev) => ({ ...prev, bankAccountNo: e.target.value }))}
+                        className="w-full border border-violet-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-200 disabled:bg-slate-100 disabled:text-slate-400"
+                        placeholder="ระบุเมื่อชำระแบบโอน"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-violet-100 bg-violet-50/40 p-3">
+                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                      <label className="inline-flex items-center gap-2 text-sm font-semibold text-violet-800 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={!!invoiceSetupDraft.isDeposit}
+                          onChange={(e) => setInvoiceSetupDraft((prev) => ({
+                            ...prev,
+                            isDeposit: e.target.checked,
+                            depositAmount: e.target.checked ? prev.depositAmount : 0,
+                          }))}
+                          className="rounded border-violet-300 text-violet-600 focus:ring-violet-200"
+                        />
+                        <span>มัดจำ</span>
+                      </label>
+                      {invoiceSetupDraft.isDeposit && (
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs font-semibold text-violet-700">จำนวนเงินมัดจำ</label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={invoiceSetupDraft.depositAmount || ""}
+                            onChange={(e) => setInvoiceSetupDraft((prev) => ({
+                              ...prev,
+                              depositAmount: Number(e.target.value),
+                            }))}
+                            className="w-40 border border-violet-200 rounded-xl px-3 py-2 text-sm text-right focus:outline-none focus:ring-2 focus:ring-violet-200"
+                            placeholder="0.00"
+                          />
+                        </div>
+                      )}
+                    </div>
+                    <div className="mt-2 text-[11px] text-violet-700">
+                      ถ้าเลือกมัดจำ ระบบจะเก็บยอด Invoice เป็นจำนวนเงินมัดจำ แต่รายการสินค้าในใบแจ้งหนี้จะอ้างอิงตามรายการที่ตั้งค่าไว้
+                    </div>
+                  </div>
+
+                  <div className="border border-violet-100 rounded-2xl overflow-hidden">
+                    <div className="px-4 py-3 bg-violet-50/70 border-b border-violet-100 text-xs font-semibold text-violet-800">
+                      ตั้งค่าจำนวนสำหรับออก Invoice ล่วงหน้า ระบบจะนำจำนวนนี้ไปใช้ในหน้า Invoice อัตโนมัติ
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[760px] text-xs">
+                        <thead className="bg-white text-slate-500">
+                          <tr>
+                            <th className="py-2 px-3 text-left">#</th>
+                            <th className="py-2 px-3 text-left">Material No.</th>
+                            <th className="py-2 px-3 text-left">รายการ</th>
+                            <th className="py-2 px-3 text-center">หน่วย</th>
+                            <th className="py-2 px-3 text-right">ราคาต่อหน่วย</th>
+                            <th className="py-2 px-3 text-right">จำนวน</th>
+                            <th className="py-2 px-3 text-right">จำนวนเงิน</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-violet-50">
+                          {invoiceSetupDraft.items.map((item: any, idx: number) => (
+                            <tr key={`invoice-setup-${idx}`} className={idx % 2 === 0 ? "bg-white" : "bg-violet-50/20"}>
+                              <td className="py-2 px-3 text-slate-400">{idx + 1}</td>
+                              <td className="py-2 px-3 font-mono text-[10px] text-slate-500">{item.materialNo || "-"}</td>
+                              <td className="py-2 px-3 text-slate-700">{item.description || "-"}</td>
+                              <td className="py-2 px-3 text-center">{item.unit || "-"}</td>
+                              <td className="py-2 px-3 text-right">{formatCurrency(item.price || 0)}</td>
+                              <td className="py-2 px-3 text-right font-medium text-slate-700">
+                                {Number(item.invoiceQty || 0)}
+                              </td>
+                              <td className="py-2 px-3 text-right font-semibold text-violet-700">{formatCurrency(Number(item.invoiceQty || 0) * Number(item.price || 0))}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot className="bg-violet-50/40 border-t border-violet-100">
+                          <tr>
+                            <td colSpan={5} className="py-2 px-3 text-right font-semibold text-violet-800">
+                              {invoiceSetupDraft.isDeposit ? "ยอดมัดจำ" : "ยอดรวมตามรายการ"}
+                            </td>
+                            <td colSpan={2} className="py-2 px-3 text-right font-bold text-violet-900">
+                              {formatCurrency(
+                                invoiceSetupDraft.isDeposit
+                                  ? Number(invoiceSetupDraft.depositAmount || 0)
+                                  : invoiceSetupDraft.items.reduce((sum: number, item: any) => sum + (Number(item.invoiceQty || 0) * Number(item.price || 0)), 0)
+                              )}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="px-5 py-4 border-t border-violet-100 bg-slate-50 flex items-center justify-end gap-2">
+                  <Button variant="secondary" onClick={() => setIsInvoiceSetupModalOpen(false)}>ยกเลิก</Button>
+                  <Button onClick={saveInvoiceSetup}>บันทึกข้อมูลใบแจ้งหนี้</Button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+
+          {isReceiveSetupModalOpen && (
+            <motion.div
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10030] p-4"
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              variants={modalOverlayVariants}
+              transition={overlayTransition}
+              onClick={() => setIsReceiveSetupModalOpen(false)}
+            >
+              <motion.div
+                className="w-full max-w-5xl max-h-[85vh] overflow-hidden rounded-2xl border border-emerald-200 bg-white shadow-2xl flex flex-col"
+                variants={modalContentVariants}
+                transition={modalTransition}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="px-5 py-4 border-b border-emerald-100 bg-gradient-to-r from-emerald-50 to-white flex items-center justify-between">
+                  <div>
+                    <h3 className="text-base font-bold text-emerald-800">ตั้งค่าข้อมูลรับของ</h3>
+                    <p className="text-xs text-emerald-500 mt-0.5">บันทึกแล้วระบบจะเช็คช่อง รับของแล้ว และสร้าง Receive ให้อัตโนมัติหลัง PO Approved</p>
+                  </div>
+                  <button type="button" className="p-2 rounded-lg text-emerald-400 hover:bg-emerald-100 hover:text-emerald-700" onClick={() => setIsReceiveSetupModalOpen(false)}>
+                    <XCircle size={18} />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <div>
+                      <label className="text-xs font-semibold text-emerald-700 mb-1.5 flex items-center gap-1">
+                        <Building2 size={11} /> ผู้จำหน่าย
+                      </label>
+                      <input
+                        type="text"
+                        value={receiveSetupDraft.vendorName}
+                        onChange={(e) => setReceiveSetupDraft((prev) => ({ ...prev, vendorName: e.target.value }))}
+                        className="w-full border border-emerald-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-emerald-700 mb-1.5 flex items-center gap-1">
+                        <Hash size={11} /> เลขที่เอกสาร
+                      </label>
+                      <input
+                        type="text"
+                        value={receiveSetupDraft.documentNo}
+                        onChange={(e) => setReceiveSetupDraft((prev) => ({ ...prev, documentNo: e.target.value }))}
+                        className="w-full border border-emerald-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-emerald-700 mb-1.5 flex items-center gap-1">
+                        <Calendar size={11} /> วันที่รับของ
+                      </label>
+                      <input
+                        type="date"
+                        value={receiveSetupDraft.receivedDate}
+                        onChange={(e) => setReceiveSetupDraft((prev) => ({ ...prev, receivedDate: e.target.value }))}
+                        className="w-full border border-emerald-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-emerald-700 mb-1.5 flex items-center gap-1">
+                        <FileSpreadsheet size={11} /> หมายเหตุ
+                      </label>
+                      <input
+                        type="text"
+                        value={receiveSetupDraft.note}
+                        onChange={(e) => setReceiveSetupDraft((prev) => ({ ...prev, note: e.target.value }))}
+                        className="w-full border border-emerald-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                        placeholder="บังคับกรอก"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="border border-emerald-100 rounded-2xl overflow-hidden">
+                    <div className="px-4 py-3 bg-emerald-50/70 border-b border-emerald-100 text-xs font-semibold text-emerald-800">
+                      flow รับของแล้ว ต้องระบุจำนวนรับครบเท่าจำนวนสั่งทุกบรรทัด
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[760px] text-xs">
+                        <thead className="bg-white text-slate-500">
+                          <tr>
+                            <th className="py-2 px-3 text-left">#</th>
+                            <th className="py-2 px-3 text-left">รายการ</th>
+                            <th className="py-2 px-3 text-center">หน่วย</th>
+                            <th className="py-2 px-3 text-right">สั่ง</th>
+                            <th className="py-2 px-3 text-right">จำนวนรับ</th>
+                            <th className="py-2 px-3 text-right">จำนวนเงิน</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-emerald-50">
+                          {receiveSetupDraft.items.map((item: any, idx: number) => (
+                            <tr key={`receive-setup-${idx}`} className={idx % 2 === 0 ? "bg-white" : "bg-emerald-50/20"}>
+                              <td className="py-2 px-3 text-slate-400">{idx + 1}</td>
+                              <td className="py-2 px-3 text-slate-700">{item.description || "-"}</td>
+                              <td className="py-2 px-3 text-center">{item.unit || "-"}</td>
+                              <td className="py-2 px-3 text-right">{Number(item.orderedQty || 0)}</td>
+                              <td className="py-2 px-3">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={item.orderedQty}
+                                  value={item.receivedQty}
+                                  onChange={(e) => setReceiveSetupDraft((prev) => ({
+                                    ...prev,
+                                    items: prev.items.map((entry: any, entryIdx: number) => entryIdx === idx ? { ...entry, receivedQty: Number(e.target.value) } : entry),
+                                  }))}
+                                  className="w-24 border border-emerald-200 rounded-lg px-2 py-1 text-right text-xs focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                                />
+                              </td>
+                              <td className="py-2 px-3 text-right font-semibold text-emerald-700">{formatCurrency(Number(item.receivedQty || 0) * Number(item.price || 0))}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="px-5 py-4 border-t border-emerald-100 bg-slate-50 flex items-center justify-end gap-2">
+                  <Button variant="secondary" onClick={() => setIsReceiveSetupModalOpen(false)}>ยกเลิก</Button>
+                  <Button onClick={saveReceiveSetup}>บันทึกข้อมูลรับของ</Button>
                 </div>
               </motion.div>
             </motion.div>

@@ -34,6 +34,7 @@ import DashboardView from "./views/DashboardView";
 import VendorView from "./views/VendorView";
 import MaterialView from "./views/MaterialView";
 import InvoiceView from "./views/InvoiceView";
+import BillingPayView from "./views/BillingPayView";
 import ReceiveView from "./views/ReceiveView";
 import ProjectsView from "./views/ProjectsView";
 import PRView from "./views/PRView";
@@ -160,7 +161,7 @@ const AppShell = () => {
   // ── Initial menu redirect — เด้งไปเมนูแรกที่มีสิทธิ์ทันทีที่ permissions พร้อม ──
   const MENU_ORDER = [
     "dashboard", "projects", "budget", "pr",
-    "po", "payment-subcontract", "vendor", "material", "receive", "invoice",
+    "po", "payment-subcontract", "vendor", "material", "receive", "invoice", "billing", "pay",
     "budget-summary", "project-spending", "user-manual", "profile", "admin",
   ];
   const initialRedirectDone = useRef(false);
@@ -192,7 +193,7 @@ const AppShell = () => {
 
   // โหลด vendors เมื่อเข้าหน้า PO / ตาราง PO / Vendor (ลดโควต้า — โหลดเฉพาะเมื่อใช้)
   useEffect(() => {
-    if (activeMenu === "po" || activeMenu === "po-table" || activeMenu === "vendor") loadVendors();
+    if (activeMenu === "po" || activeMenu === "po-table" || activeMenu === "vendor" || activeMenu === "billing" || activeMenu === "pay") loadVendors();
   }, [activeMenu, loadVendors]);
 
   useEffect(() => {
@@ -209,7 +210,7 @@ const AppShell = () => {
 
   const sidebarDense = isCompactViewport;
   const shouldShowSidebar = !isFullScreenModalOpen;
-  const moduleMenus = ["budget", "pr", "po", "payment-subcontract", "invoice", "receive"].includes(activeMenu);
+  const moduleMenus = ["budget", "pr", "po", "payment-subcontract", "invoice", "billing", "pay", "receive"].includes(activeMenu);
 
   return (
     <div className="app-shell-root relative flex overflow-hidden bg-slate-100 font-sans">
@@ -352,6 +353,26 @@ const AppShell = () => {
                 label="Invoice"
                 active={activeMenu === "invoice"}
                 onClick={() => changeMenu("invoice")}
+                collapsed={sidebarCollapsed}
+                dense={sidebarDense}
+              />
+            )}
+            {canAccessModule("billing") && (
+              <SidebarItem
+                icon={<FileOutput size={20} className="text-cyan-300" />}
+                label="Billing"
+                active={activeMenu === "billing"}
+                onClick={() => changeMenu("billing")}
+                collapsed={sidebarCollapsed}
+                dense={sidebarDense}
+              />
+            )}
+            {canAccessModule("pay") && (
+              <SidebarItem
+                icon={<CreditCard size={20} className="text-emerald-300" />}
+                label="Pay"
+                active={activeMenu === "pay"}
+                onClick={() => changeMenu("pay")}
                 collapsed={sidebarCollapsed}
                 dense={sidebarDense}
               />
@@ -502,6 +523,10 @@ const AppShell = () => {
                             ? "Material"
                             : activeMenu === "invoice"
                               ? "Invoice"
+                              : activeMenu === "billing"
+                                ? "Billing"
+                                : activeMenu === "pay"
+                                  ? "Pay"
                               : activeMenu === "receive"
                                 ? "Receive"
                                 : activeMenu === "profile"
@@ -701,7 +726,7 @@ const AppShell = () => {
           </header>
         )}
         <div
-          className={`app-shell-content ${["projects", "budget", "pr", "po", "payment-subcontract", "vendor", "material", "invoice", "receive", "admin", "budget-summary", "project-spending", "user-manual"].includes(
+          className={`app-shell-content ${["projects", "budget", "pr", "po", "payment-subcontract", "vendor", "material", "invoice", "billing", "pay", "receive", "admin", "budget-summary", "project-spending", "user-manual"].includes(
             activeMenu
           )
             ? "p-3 pt-4 md:p-6 w-full max-w-none min-w-0"
@@ -864,6 +889,12 @@ const AppShell = () => {
               </div>
               <div data-menu-page="invoice" style={{ display: activeMenu === "invoice" ? undefined : "none" }}>
                 {activeMenu === "invoice" && <InvoiceView menuType="invoice" />}
+              </div>
+              <div data-menu-page="billing" style={{ display: activeMenu === "billing" ? undefined : "none" }}>
+                {activeMenu === "billing" && <BillingPayView menuType="billing" />}
+              </div>
+              <div data-menu-page="pay" style={{ display: activeMenu === "pay" ? undefined : "none" }}>
+                {activeMenu === "pay" && <BillingPayView menuType="pay" />}
               </div>
               <div data-menu-page="receive" style={{ display: activeMenu === "receive" ? undefined : "none" }}>
                 {activeMenu === "receive" && <ReceiveView />}
@@ -1814,13 +1845,13 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                         >
                           <div className="leading-tight">
                             <span className="block truncate font-semibold text-slate-700">
-                              {getPrBudgetItemName(r) || (r.items && r.items.length > 0
+                              {r.items && r.items.length > 0
                                 ? r.items.map((it: any) => it.description).filter(Boolean).join(", ")
-                                : getBudgetDesc(r.costCode, r.projectId))}
+                                : (getPrBudgetItemName(r) || getBudgetDesc(r.costCode, r.projectId))}
                             </span>
-                            {r.items && r.items.length > 0 && (
+                            {r.items && r.items.length > 0 && getPrBudgetItemName(r) && (
                               <span className="block truncate text-[10px] text-slate-400 mt-0.5">
-                                {r.items.map((it: any) => it.description).filter(Boolean).join(", ")}
+                                {getPrBudgetItemName(r)}
                               </span>
                             )}
                           </div>

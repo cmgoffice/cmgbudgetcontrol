@@ -20,6 +20,18 @@ import {
   PO_REVISION_PENDING_GM,
   PR_PENDING_ACTIVE,
 } from "../lib/constants";
+import {
+  buildAutoReceiveData,
+  findAutoReceiveForPO,
+  isReceiveAutoType,
+} from "../lib/receiveAuto";
+import {
+  buildConfiguredInvoiceData,
+  buildConfiguredReceiveData,
+  getPoFinalApprovalStatus,
+  hasConfiguredPayBeforeReceive,
+  hasConfiguredReceiveAfterPayment,
+} from "../lib/poDocumentFlow";
 
 // Firestore document paths for dynamic permissions
 const ROLE_PERMISSIONS_DOC = ["artifacts", appId, "public", "data", "settings", "rolePermissions"];
@@ -775,15 +787,13 @@ export const AppDataProvider = ({
     if (!po) return;
     if (po.status === PO_REVISION_PENDING_PCM || po.status === PO_REVISION_PENDING_GM) return;
     let newStatus = po.status;
-    const receiveTypeNormalized = String(po.receiveType || "").trim().toLowerCase();
-    const isReceiveAutoType = receiveTypeNormalized === "receive auto";
-    const isPayBeforeReceiveType = receiveTypeNormalized.includes("pay before");
+    const isAutoReceive = isReceiveAutoType(po.receiveType);
+    const hasConfiguredInvoice = hasConfiguredPayBeforeReceive(po);
+    const hasConfiguredReceive = hasConfiguredReceiveAfterPayment(po);
     if (action === "approve") {
       if (po.status === "Pending PCM" && (roles.includes("PCM") || roles.includes("Administrator"))) newStatus = "Pending GM";
       else if (po.status === "Pending GM" && (roles.includes("GM") || roles.includes("Administrator"))) {
-        if (isReceiveAutoType) newStatus = "Received";
-        else if (isPayBeforeReceiveType) newStatus = "Wait Pay";
-        else newStatus = "Approved";
+        newStatus = getPoFinalApprovalStatus(po);
       }
     } else if (action === "reject") {
       newStatus = "Rejected";
@@ -791,16 +801,96 @@ export const AppDataProvider = ({
     if (newStatus !== po.status) {
       const payload: any = { status: newStatus };
       if (newStatus === "Received") payload.statusNow = "Received";
-      if (newStatus === "Wait Pay") payload.statusNow = "Wait Pay";
+      if (newStatus === "Wait Invoice") payload.statusNow = "Wait Invoice";
+      if (newStatus === "Paid") payload.statusNow = "Paid";
       if (action === "approve") payload.rejectReason = "";
+      let autoInvoiceNo = "";
+      if (action === "approve" && po.status === "Pending GM" && hasConfiguredInvoice) {
+        const existingInvoice = invoices.find((invoice) => invoice.poId === po.id);
+        if (existingInvoice) {
+          autoInvoiceNo = existingInvoice.invNo || existingInvoice.id || "";
+        } else {
+          const invoiceData = buildConfiguredInvoiceData({
+            po,
+            setup: po.payBeforeReceiveInvoiceSetup,
+            vendors,
+            userData,
+          });
+          if (!invoiceData) return;
+          const invoiceOk = await addData("invoices", invoiceData, null, { skipLog: true });
+          if (!invoiceOk) return;
+          autoInvoiceNo = invoiceData.invNo;
+          await logAction(
+            "Create Invoice",
+            `สร้าง Invoice ${invoiceData.invNo} สำหรับ PO ${po.poNo || id} (Auto Pay before receive)`,
+            po.projectId
+          );
+        }
+      }
+      let autoReceiveNo = "";
+      if (action === "approve" && po.status === "Pending GM" && hasConfiguredReceive) {
+        const existingConfiguredReceive = receives.find((receive) => receive.poId === po.id);
+        if (existingConfiguredReceive) {
+          autoReceiveNo = existingConfiguredReceive.rpNo || existingConfiguredReceive.receiveNo || existingConfiguredReceive.id || "";
+        } else {
+          const project = projects.find((item) => item.id === po.projectId) || null;
+          const configuredReceive = buildConfiguredReceiveData({
+            po,
+            setup: po.receivedAfterPaymentSetup,
+            prs,
+            vendors,
+            receives,
+            project,
+            user,
+            userData,
+          });
+          if (!configuredReceive) return;
+          const receiveOk = await addData("receives", configuredReceive.receiveData, null, { skipLog: true });
+          if (!receiveOk) return;
+          autoReceiveNo = configuredReceive.receiveNo;
+          await logAction(
+            "Create Receive",
+            `สร้าง Receive ${configuredReceive.receiveNo} สำหรับ PO ${po.poNo || id} (Auto received after payment)`,
+            po.projectId
+          );
+        }
+      } else if (action === "approve" && newStatus === "Received" && isAutoReceive) {
+        const existingAutoReceive = findAutoReceiveForPO(receives, po.id);
+        if (existingAutoReceive) {
+          autoReceiveNo = existingAutoReceive.rpNo || existingAutoReceive.receiveNo || "";
+        } else {
+          const project = projects.find((item) => item.id === po.projectId) || null;
+          const autoReceive = buildAutoReceiveData({
+            po,
+            prs,
+            vendors,
+            receives,
+            project,
+            user,
+            userData,
+          });
+          if (autoReceive) {
+            const receiveOk = await addData("receives", autoReceive.receiveData, null, { skipLog: true });
+            if (!receiveOk) return;
+            autoReceiveNo = autoReceive.receiveNo;
+            await logAction(
+              "Create Receive",
+              `สร้าง Receive ${autoReceive.receiveNo} สำหรับ PO ${po.poNo || id} (Auto Receive)`,
+              po.projectId
+            );
+          }
+        }
+      }
       const ok = await updateData("pos", id, payload, { skipLog: true });
       if (ok) {
         const actionLabel = action === "approve" ? "Approve" : "Reject";
         const detailPrefix = action === "approve" ? "Approve PO" : "Reject PO";
-        await logAction(actionLabel, `${detailPrefix} ${po.poNo || id}: ${po.status} → ${newStatus}`, po.projectId);
+        const autoInvoiceSuffix = autoInvoiceNo ? ` | Auto Invoice ${autoInvoiceNo}` : "";
+        const autoReceiveSuffix = autoReceiveNo ? ` | Auto Receive ${autoReceiveNo}` : "";
+        await logAction(actionLabel, `${detailPrefix} ${po.poNo || id}: ${po.status} → ${newStatus}${autoInvoiceSuffix}${autoReceiveSuffix}`, po.projectId);
       }
     }
-  }, [pos, roles, updateData, logAction]);
+  }, [pos, roles, receives, invoices, projects, prs, vendors, user, userData, addData, updateData, logAction]);
 
   /** อนุญาตแก้ไข PO หลังขอแก้ — ลบ PDF + สถานะเป็น Draft */
   const handlePORevisionAllow = useCallback(async (id) => {

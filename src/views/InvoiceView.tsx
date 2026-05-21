@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useCallback, useContext } from "react";
 import {
   ChevronDown, ChevronRight, FileText, Eye, X, Search, Trash2,
-  DollarSign, Calendar, CreditCard, Package, Check, AlertCircle,
+  DollarSign, Calendar, CreditCard, Package, Check, AlertCircle, Pencil,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAppData } from "../contexts/AppDataContext";
@@ -15,6 +15,7 @@ import {
   modalTransition,
   overlayTransition,
 } from "../lib/animations";
+import { getInvoiceStatusByPaymentType } from "../lib/poDocumentFlow";
 
 const PO_TYPE_LABELS: Record<string, string> = {
   CR: "CR — เครดิต",
@@ -53,6 +54,13 @@ const GROUP_COLORS = [
   },
 ];
 
+const PAYMENT_TYPE_BADGE_STYLES: Record<string, string> = {
+  เครดิต: "bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-200",
+  โอน: "bg-sky-100 text-sky-800 ring-1 ring-inset ring-sky-200",
+  เช็ค: "bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-200",
+  เงินสด: "bg-rose-100 text-rose-800 ring-1 ring-inset ring-rose-200",
+};
+
 const InvoiceView = React.memo(() => {
   const {
     pos,
@@ -79,10 +87,14 @@ const InvoiceView = React.memo(() => {
 
   const [activeTab, setActiveTab] = useState<"po" | "history">("po");
   const [viewingPO, setViewingPO] = useState<any>(null);
+  const [editingInvoice, setEditingInvoice] = useState<any>(null);
   const [invoiceForm, setInvoiceForm] = useState({
     invNo: "",
     invDate: new Date().toISOString().split("T")[0],
     paymentType: "เครดิต",
+    bankAccountNo: "",
+    isDeposit: false,
+    depositAmount: 0,
     items: [] as any[],
   });
   const [saving, setSaving] = useState(false);
@@ -90,6 +102,15 @@ const InvoiceView = React.memo(() => {
   const [poPOSearch, setPoPOSearch] = useState("");
   const [poVendorSearch, setPoVendorSearch] = useState("");
   const [histSearch, setHistSearch] = useState("");
+  const isEditingInvoice = Boolean(editingInvoice);
+  const canEditInvoiceHistory =
+    userRoles.includes("Administrator") && canUseFunction("invoice", "edit");
+  const isFixedPayBeforeReceiveInvoice = Boolean(
+    viewingPO?.payBeforeReceiveChecked ||
+    viewingPO?.invoiceMode === "pay_before_receive" ||
+    editingInvoice?.invoiceMode === "pay_before_receive" ||
+    editingInvoice?.autoCreatedFromPoApproval
+  );
 
   const getVendorName = useCallback(
     (vendorId: string, fallbackName?: string) => {
@@ -251,29 +272,233 @@ const InvoiceView = React.memo(() => {
     return items.length > 1 ? `${first} (+${items.length - 1} รายการ)` : first;
   };
 
+  const getPaymentTypeBadgeClass = useCallback(
+    (paymentType?: string) =>
+      PAYMENT_TYPE_BADGE_STYLES[paymentType || ""] ||
+      "bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-200",
+    []
+  );
+
+  const closeInvoiceModal = useCallback((force = false) => {
+    if (saving && !force) return;
+    setViewingPO(null);
+    setEditingInvoice(null);
+  }, [saving]);
+
+  const normalizePaymentSource = useCallback(
+    (payment: any) => ({
+      ...payment,
+      isPaymentSubcontract: true,
+      poNo: payment.paymentNo || payment.poNo || "-",
+      poType: payment.paymentType || "SP",
+      vendorId: payment.contractorId || payment.vendorId || "",
+      vendorName: payment.contractorName || payment.vendorName || "",
+      poDate: payment.openDate,
+      poOpenDate: payment.openDate,
+      receiveType: "Payment Subcontractor",
+      grandTotal: Number(payment.amount) || 0,
+      amount: Number(payment.amount) || 0,
+      description:
+        payment.description ||
+        `Payment งวด ${payment.periodNo || ""} - ${payment.paymentNo || payment.id || ""}`,
+      items: Array.isArray(payment.items)
+        ? payment.items.map((it: any, idx: number) => ({
+            ...it,
+            poItemIndex: Number.isFinite(Number(it?.poItemIndex))
+              ? Number(it.poItemIndex)
+              : idx,
+            description: it.description || "งานจ้างเหมา/ค่าแรง",
+            unit: it.unit || "งวด",
+            quantity: Number(it.quantity || 1) || 1,
+            price: Number(it.thisPeriodAmount ?? it.price ?? it.amount ?? 0) || 0,
+            amount: Number(it.thisPeriodAmount ?? it.amount ?? 0) || 0,
+          }))
+        : [],
+    }),
+    []
+  );
+
+  const getInvoiceSource = useCallback(
+    (invoice: any) => {
+      const matchedPO = pos.find((po) => po.id === invoice.poId);
+      if (matchedPO) {
+        const configuredItems = Array.isArray(matchedPO?.payBeforeReceiveInvoiceSetup?.items)
+          ? matchedPO.payBeforeReceiveInvoiceSetup.items
+          : [];
+        const shouldUseConfiguredItems = Boolean(
+          invoice?.invoiceMode === "pay_before_receive" ||
+          matchedPO?.invoiceMode === "pay_before_receive" ||
+          matchedPO?.payBeforeReceiveChecked
+        );
+
+        return {
+          ...matchedPO,
+          items:
+            shouldUseConfiguredItems && configuredItems.length > 0
+              ? configuredItems.map((item: any, idx: number) => ({
+                  ...item,
+                  poItemIndex: Number.isFinite(Number(item?.poItemIndex))
+                    ? Number(item.poItemIndex)
+                    : idx,
+                  quantity: Number(item?.invoiceQty ?? item?.quantity ?? 0),
+                  invoiceQty: Number(item?.invoiceQty ?? item?.quantity ?? 0),
+                  price: Number(item?.price || 0),
+                  amount: Number(item?.amount || 0),
+                }))
+              : matchedPO.items,
+        };
+      }
+
+      const matchedPayment = (payments || []).find(
+        (payment: any) =>
+          payment.id === invoice.poId ||
+          payment.paymentNo === invoice.poNo ||
+          payment.paymentNo === invoice.poRef
+      );
+      if (matchedPayment) return normalizePaymentSource(matchedPayment);
+
+      return {
+        id: invoice.poId || invoice.id,
+        poNo: invoice.poNo || invoice.poRef || "-",
+        poType: "OTHER",
+        vendorId: invoice.vendorId || "",
+        vendorName: invoice.vendorName || "",
+        amount: Number(invoice.amount) || 0,
+        items: Array.isArray(invoice.items)
+          ? invoice.items.map((item: any, idx: number) => ({
+              ...item,
+              poItemIndex: Number.isFinite(Number(item?.poItemIndex))
+                ? Number(item.poItemIndex)
+                : idx,
+              quantity: Number(item.quantity || item.invoiceQty || 0),
+              price: Number(item.price || 0),
+              amount: Number(item.amount || 0),
+            }))
+          : [],
+      };
+    },
+    [normalizePaymentSource, payments, pos]
+  );
+
+  const buildInvoiceItemsForForm = useCallback((source: any, invoice?: any) => {
+    const invoiceItems = Array.isArray(invoice?.items) ? invoice.items : [];
+    const sourceItems = Array.isArray(source?.items) ? source.items : [];
+    const usedInvoiceIndexes = new Set<number>();
+
+    const normalizedSourceItems = sourceItems.map((item: any, idx: number) => {
+      const itemIndex = Number.isFinite(Number(item?.poItemIndex))
+        ? Number(item.poItemIndex)
+        : idx;
+      const matchedIndex = invoiceItems.findIndex((invoiceItem: any) => {
+        const invoiceItemIndex = Number.isFinite(Number(invoiceItem?.poItemIndex))
+          ? Number(invoiceItem.poItemIndex)
+          : -1;
+        if (invoiceItemIndex === itemIndex) return true;
+        return (
+          String(invoiceItem?.materialNo || "") === String(item?.materialNo || "") &&
+          String(invoiceItem?.description || "") === String(item?.description || "")
+        );
+      });
+      const matchedItem = matchedIndex >= 0 ? invoiceItems[matchedIndex] : null;
+      if (matchedIndex >= 0) usedInvoiceIndexes.add(matchedIndex);
+
+      const maxQty = Number(item?.quantity ?? matchedItem?.quantity ?? 0);
+      const invoiceQty = Number(
+        matchedItem?.quantity ?? matchedItem?.invoiceQty ?? item?.quantity ?? 0
+      );
+
+      return {
+        ...item,
+        poItemIndex: itemIndex,
+        quantity: maxQty,
+        invoiceQty,
+        checked: Boolean(matchedItem),
+      };
+    });
+
+    const remainingInvoiceItems = invoiceItems
+      .map((item: any, idx: number) => ({ item, idx }))
+      .filter(({ idx }) => !usedInvoiceIndexes.has(idx))
+      .map(({ item, idx }) => ({
+        ...item,
+        poItemIndex: Number.isFinite(Number(item?.poItemIndex))
+          ? Number(item.poItemIndex)
+          : sourceItems.length + idx,
+        quantity: Number(item?.quantity ?? item?.invoiceQty ?? 0),
+        invoiceQty: Number(item?.quantity ?? item?.invoiceQty ?? 0),
+        checked: true,
+      }));
+
+    return [...normalizedSourceItems, ...remainingInvoiceItems];
+  }, []);
+
+  const getSelectedInvoiceDescription = useCallback(
+    (items: any[], fallback = "-") => {
+      const selectedItems = (items || []).filter((item) => item.checked);
+      if (selectedItems.length === 0) return fallback;
+      const firstDescription = selectedItems[0]?.description || fallback;
+      return selectedItems.length > 1
+        ? `${firstDescription} (+${selectedItems.length - 1} รายการ)`
+        : firstDescription;
+    },
+    []
+  );
+
   const openPODetail = (po: any) => {
-    setViewingPO(po);
+    const source = getInvoiceSource({
+      poId: po.id,
+      invoiceMode: po?.payBeforeReceiveChecked ? "pay_before_receive" : "",
+    });
+    setEditingInvoice(null);
+    setViewingPO(source);
     setInvoiceForm({
       invNo: "",
       invDate: new Date().toISOString().split("T")[0],
       paymentType: po.paymentType || "เครดิต",
-      items: (po.items || []).map((item: any, idx: number) => ({
-        ...item,
-        poItemIndex: idx,
-        invoiceQty: Number(item.quantity || 0),
-        checked: true,
-      })),
+      bankAccountNo: "",
+      isDeposit: Boolean(po?.payBeforeReceiveInvoiceSetup?.isDeposit),
+      depositAmount: Number(po?.payBeforeReceiveInvoiceSetup?.depositAmount || 0),
+      items: buildInvoiceItemsForForm(source, { items: source?.items || [] }),
     });
   };
 
+  const openInvoiceEditor = useCallback(
+    (invoice: any) => {
+      const source = getInvoiceSource(invoice);
+      setEditingInvoice(invoice);
+      setViewingPO(source);
+      setInvoiceForm({
+        invNo: invoice.invNo || "",
+        invDate: invoice.invDate || new Date().toISOString().split("T")[0],
+        paymentType: invoice.paymentType || source?.paymentType || "เครดิต",
+        bankAccountNo: invoice.bankAccountNo || "",
+        isDeposit: Boolean(invoice.isDeposit),
+        depositAmount: Number(invoice.depositAmount || 0),
+        items: buildInvoiceItemsForForm(source, invoice),
+      });
+    },
+    [buildInvoiceItemsForForm, getInvoiceSource]
+  );
+
   const handleSaveInvoice = async () => {
-    if (!canUseFunction("invoice", "add")) {
+    if (isEditingInvoice) {
+      if (!canEditInvoiceHistory) {
+        showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์แก้ไขใบแจ้งหนี้", "warning");
+        return;
+      }
+    } else if (!canUseFunction("invoice", "add")) {
       showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์บันทึกใบแจ้งหนี้", "warning");
       return;
     }
     if (!viewingPO) return;
+    const isTransferPayment = invoiceForm.paymentType === "โอน";
     if (!invoiceForm.invNo.trim())
       return showAlert("กรุณากรอกข้อมูล", "กรุณากรอกเลขที่ใบแจ้งหนี้", "warning");
+    if (isTransferPayment && !invoiceForm.bankAccountNo.trim())
+      return showAlert("กรุณากรอกข้อมูล", "กรุณากรอกเลขบัญชี", "warning");
+
+    if (invoiceForm.isDeposit && Number(invoiceForm.depositAmount || 0) <= 0)
+      return showAlert("ข้อมูลไม่ครบ", "กรุณาระบุจำนวนเงินมัดจำ", "warning");
 
     const selectedItems = invoiceForm.items.filter((i) => i.checked);
     if (selectedItems.length === 0)
@@ -281,19 +506,27 @@ const InvoiceView = React.memo(() => {
 
     setSaving(true);
     try {
-      const totalAmount = selectedItems.reduce(
+      const calculatedAmount = selectedItems.reduce(
         (sum, item) => sum + Number(item.invoiceQty) * Number(item.price || 0),
         0
       );
-      const success = await addData("invoices", {
+      const totalAmount =
+        invoiceForm.isDeposit && Number(invoiceForm.depositAmount || 0) > 0
+          ? Number(invoiceForm.depositAmount || 0)
+          : calculatedAmount;
+      const invoicePayload = {
         invNo: invoiceForm.invNo.trim(),
         invDate: invoiceForm.invDate,
         paymentType: invoiceForm.paymentType,
+        bankAccountNo: isTransferPayment ? invoiceForm.bankAccountNo.trim() : "",
         poId: viewingPO.id,
         poNo: viewingPO.poNo,
-        poRef: viewingPO.poNo,
+        poRef: viewingPO.poNo || editingInvoice?.poRef || editingInvoice?.poNo,
         vendorId: viewingPO.vendorId,
-        vendorName: getVendorName(viewingPO.vendorId),
+        vendorName: getVendorName(
+          viewingPO.vendorId,
+          viewingPO.vendorName || editingInvoice?.vendorName
+        ),
         items: selectedItems.map((item) => ({
           poItemIndex: item.poItemIndex,
           materialNo: item.materialNo || "",
@@ -304,14 +537,42 @@ const InvoiceView = React.memo(() => {
           amount: Number(item.invoiceQty) * Number(item.price || 0),
         })),
         amount: totalAmount,
-        description: poDescription(viewingPO),
-        projectId: selectedProjectId,
-        status: "Pending PM",
+        isDeposit: Boolean(invoiceForm.isDeposit),
+        depositAmount: invoiceForm.isDeposit ? Number(invoiceForm.depositAmount || 0) : 0,
+        invoiceMode:
+          viewingPO?.invoiceMode ||
+          editingInvoice?.invoiceMode ||
+          (viewingPO?.payBeforeReceiveChecked ? "pay_before_receive" : ""),
+        description: getSelectedInvoiceDescription(
+          selectedItems,
+          editingInvoice?.description || poDescription(viewingPO)
+        ),
+        projectId: editingInvoice?.projectId || selectedProjectId,
+        status: getInvoiceStatusByPaymentType(invoiceForm.paymentType),
         createdBy:
+          editingInvoice?.createdBy ||
           `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim(),
-      }, null, { skipLog: true });
+      };
 
-      if (success) {
+      if (isEditingInvoice) {
+        const success = await updateData(
+          "invoices",
+          editingInvoice.id,
+          invoicePayload,
+          { skipLog: true }
+        );
+        if (success) {
+          await logAction(
+            "Edit Invoice",
+            `แก้ไข Invoice ${invoiceForm.invNo.trim()} (${editingInvoice.invNo || editingInvoice.id})`,
+            editingInvoice.projectId || selectedProjectId
+          );
+          closeInvoiceModal(true);
+          showAlert("สำเร็จ", "แก้ไขใบแจ้งหนี้เรียบร้อยแล้ว", "success");
+        }
+      } else {
+        const success = await addData("invoices", invoicePayload, null, { skipLog: true });
+        if (!success) return;
         await logAction(
           "Create Invoice",
           `สร้าง Invoice ${invoiceForm.invNo.trim()} สำหรับ PO ${viewingPO.poNo || viewingPO.id}`,
@@ -333,12 +594,12 @@ const InvoiceView = React.memo(() => {
               : {
                   status: "Invoice Issue",
                   statusNow: "Invoice Issue",
-                },
+              },
             { skipLog: true }
           );
         }
-        
-        setViewingPO(null);
+
+        closeInvoiceModal(true);
         showAlert("สำเร็จ", "บันทึกใบแจ้งหนี้เรียบร้อยแล้ว", "success");
       }
     } catch (e: any) {
@@ -348,53 +609,33 @@ const InvoiceView = React.memo(() => {
     }
   };
 
-  const handleApprove = async (id: string) => {
-    const inv = invoices.find((i) => i.id === id);
-    if (!inv) return;
-    let newStatus = inv.status;
-    if (
-      inv.status === "Pending PM" &&
-      (userRoles.includes("PM") || userRoles.includes("Administrator"))
-    )
-      newStatus = "Paid";
-    if (
-      inv.status === "Pending GM" &&
-      (userRoles.includes("PM") ||
-        userRoles.includes("GM") ||
-        userRoles.includes("Administrator"))
-    )
-      newStatus = "Paid";
-    if (newStatus !== inv.status)
-      if (await updateData("invoices", id, { status: newStatus }, { skipLog: true })) {
-        await logAction("Approve", `Approve Invoice ${inv.invNo || id}: ${inv.status} → ${newStatus}`, inv.projectId);
-      }
-  };
-
   const projectInvoices = useMemo(
     () => invoices.filter((inv) => inv.projectId === selectedProjectId),
     [invoices, selectedProjectId]
   );
 
-  const pendingInvoices = useMemo(
-    () => projectInvoices.filter((inv) => inv.status !== "Paid"),
+  const historyInvoices = useMemo(
+    () =>
+      [...projectInvoices].sort((a: any, b: any) => {
+        const aTime = new Date(a.invDate || a.createdAt || 0).getTime();
+        const bTime = new Date(b.invDate || b.createdAt || 0).getTime();
+        return bTime - aTime;
+      }),
     [projectInvoices]
   );
 
-  const paidInvoices = useMemo(
-    () => projectInvoices.filter((inv) => inv.status === "Paid"),
-    [projectInvoices]
-  );
+  const pendingInvoices = useMemo(() => [], []);
 
-  const filteredPaidInvoices = useMemo(() => {
-    if (!histSearch) return paidInvoices;
+  const filteredHistoryInvoices = useMemo(() => {
+    if (!histSearch) return historyInvoices;
     const q = histSearch.toLowerCase();
-    return paidInvoices.filter(
+    return historyInvoices.filter(
       (inv) =>
         (inv.invNo || "").toLowerCase().includes(q) ||
         (inv.poNo || inv.poRef || "").toLowerCase().includes(q) ||
         (inv.vendorName || "").toLowerCase().includes(q)
     );
-  }, [paidInvoices, histSearch]);
+  }, [historyInvoices, histSearch]);
 
   // ─── Computed totals for invoice items ────────────────────────────────────
   const invoiceTotalAmount = useMemo(
@@ -407,6 +648,7 @@ const InvoiceView = React.memo(() => {
         ),
     [invoiceForm.items]
   );
+  const isTransferPayment = invoiceForm.paymentType === "โอน";
 
   const invoiceListTotals = useMemo(
     () => ({
@@ -479,7 +721,7 @@ const InvoiceView = React.memo(() => {
                     : "bg-amber-50 text-amber-400"
                 }`}
               >
-                {paidInvoices.length}
+                {historyInvoices.length}
               </span>
             </button>
           </div>
@@ -712,12 +954,12 @@ const InvoiceView = React.memo(() => {
           </Card>
 
           {/* Pending invoice list stays in PO tab until paid */}
-          <Card className="overflow-x-auto border-violet-100">
+          <Card className="hidden">
             <div className="px-4 py-2 bg-violet-50/60 border-b border-violet-100 flex items-center justify-between">
               <h4 className="text-xs font-bold text-violet-700">Invoice รออนุมัติจ่าย</h4>
               <span className="text-[11px] text-violet-500">{pendingInvoices.length} รายการ</span>
             </div>
-            <table className="w-full min-w-[760px] text-left text-xs text-slate-600 md:min-w-0">
+            <table className="w-full min-w-[860px] text-left text-xs text-slate-600 md:min-w-0">
               <thead className="bg-violet-50/40 text-slate-500 uppercase font-semibold border-b border-violet-100">
                 <tr>
                   <th className="py-1.5 px-3 text-center md:hidden">Actions</th>
@@ -725,6 +967,7 @@ const InvoiceView = React.memo(() => {
                   <th className="py-1.5 px-3">Ref. PO</th>
                   <th className="py-1.5 px-3">Vendor</th>
                   <th className="py-1.5 px-3">วันที่</th>
+                  <th className="py-1.5 px-3">ประเภทการชำระเงิน</th>
                   <th className="py-1.5 px-3 text-right">จำนวนเงิน</th>
                   <th className="py-1.5 px-3 text-center">สถานะ</th>
                   <th className="hidden py-1.5 px-3 text-center md:table-cell">Actions</th>
@@ -733,7 +976,7 @@ const InvoiceView = React.memo(() => {
               <tbody className="divide-y divide-violet-50">
                 {pendingInvoices.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="py-8 text-center text-slate-400">
+                    <td colSpan={8} className="py-8 text-center text-slate-400">
                       ยังไม่มี Invoice ที่รออนุมัติจ่าย
                     </td>
                   </tr>
@@ -754,7 +997,7 @@ const InvoiceView = React.memo(() => {
                                 variant="success"
                                 size="sm"
                                 className="px-2 py-0.5 text-[10px]"
-                                onClick={() => handleApprove(inv.id)}
+                                onClick={() => undefined}
                               >
                                 PM อนุมัติจ่าย
                               </Button>
@@ -773,7 +1016,23 @@ const InvoiceView = React.memo(() => {
                       <td className="py-1.5 px-3 font-medium text-amber-600">{inv.poNo || inv.poRef || "-"}</td>
                       <td className="py-1.5 px-3">{inv.vendorName || "-"}</td>
                       <td className="py-1.5 px-3">{inv.invDate || inv.receiveDate || "-"}</td>
-                      <td className="py-1.5 px-3 text-right font-semibold">{formatCurrency(inv.amount)}</td>
+                      <td className="py-1.5 px-3">
+                        {inv.paymentType ? (
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${getPaymentTypeBadgeClass(inv.paymentType)}`}
+                          >
+                            {inv.paymentType}
+                          </span>
+                        ) : (
+                          "-"
+                        )}
+                      </td>
+                      <td className="py-1.5 px-3 text-right font-semibold">
+                        {formatCurrency(inv.amount)}
+                        {inv.isDeposit && (
+                          <div className="mt-0.5 text-[10px] font-semibold text-violet-500">มัดจำ</div>
+                        )}
+                      </td>
                       <td className="py-1.5 px-3 text-center">
                         <Badge status={inv.status} />
                       </td>
@@ -786,7 +1045,7 @@ const InvoiceView = React.memo(() => {
                                 variant="success"
                                 size="sm"
                                 className="px-2 py-0.5 text-[10px]"
-                                onClick={() => handleApprove(inv.id)}
+                                onClick={() => undefined}
                               >
                                 PM อนุมัติจ่าย
                               </Button>
@@ -840,7 +1099,7 @@ const InvoiceView = React.memo(() => {
                 </button>
               )}
               <span className="ml-auto text-[11px] text-amber-400">
-                {filteredPaidInvoices.length} รายการ
+                {filteredHistoryInvoices.length} รายการ
               </span>
             </div>
           </Card>
@@ -862,7 +1121,7 @@ const InvoiceView = React.memo(() => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-amber-50">
-                {filteredPaidInvoices.length === 0 ? (
+                {filteredHistoryInvoices.length === 0 ? (
                   <tr>
                     <td
                       colSpan={8}
@@ -872,11 +1131,11 @@ const InvoiceView = React.memo(() => {
                         size={28}
                         className="mx-auto mb-2 opacity-25"
                       />
-                      ไม่มีข้อมูล Invoice ที่ชำระแล้ว
+                      ไม่มีข้อมูล Invoice ในประวัติ
                     </td>
                   </tr>
                 ) : (
-                  filteredPaidInvoices.map((inv, idx) => (
+                  filteredHistoryInvoices.map((inv, idx) => (
                     <tr
                       key={inv.id}
                       className={`transition-colors ${
@@ -885,6 +1144,15 @@ const InvoiceView = React.memo(() => {
                     >
                       <td className="py-1.5 px-3 md:hidden">
                         <div className="flex items-center justify-center gap-1">
+                          {canEditInvoiceHistory && (
+                            <button
+                              className="text-amber-500 hover:text-amber-700 transition-colors"
+                              onClick={() => openInvoiceEditor(inv)}
+                              title="แก้ไข Invoice"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                          )}
                           {canUseFunction("invoice", "delete") && (
                             <button
                               className="text-red-400 hover:text-red-600 transition-colors"
@@ -909,7 +1177,9 @@ const InvoiceView = React.memo(() => {
                       </td>
                       <td className="py-1.5 px-3">
                         {inv.paymentType ? (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-violet-100 text-violet-700">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${getPaymentTypeBadgeClass(inv.paymentType)}`}
+                          >
                             {inv.paymentType}
                           </span>
                         ) : (
@@ -918,12 +1188,24 @@ const InvoiceView = React.memo(() => {
                       </td>
                       <td className="py-1.5 px-3 text-right font-semibold">
                         {formatCurrency(inv.amount)}
+                        {inv.isDeposit && (
+                          <div className="mt-0.5 text-[10px] font-semibold text-amber-500">มัดจำ</div>
+                        )}
                       </td>
                       <td className="py-1.5 px-3 text-center">
                         <Badge status={inv.status} />
                       </td>
                       <td className="py-1.5 px-3">
                         <div className="flex items-center justify-center gap-1">
+                          {canEditInvoiceHistory && (
+                            <button
+                              className="text-amber-500 hover:text-amber-700 transition-colors"
+                              onClick={() => openInvoiceEditor(inv)}
+                              title="แก้ไข Invoice"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                          )}
                           {canUseFunction("invoice", "delete") && (
                             <button
                               className="text-red-400 hover:text-red-600 transition-colors"
@@ -955,9 +1237,7 @@ const InvoiceView = React.memo(() => {
             exit="exit"
             variants={modalOverlayVariants}
             transition={overlayTransition}
-            onClick={() => {
-              if (!saving) setViewingPO(null);
-            }}
+            onClick={() => closeInvoiceModal()}
           >
             <motion.div
               className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-8"
@@ -973,19 +1253,17 @@ const InvoiceView = React.memo(() => {
                   </div>
                   <div>
                     <h3 className="text-lg font-bold text-violet-800">
-                      ลงข้อมูลใบแจ้งหนี้
+                      {isEditingInvoice ? "แก้ไขใบแจ้งหนี้" : "ลงข้อมูลใบแจ้งหนี้"}
                     </h3>
                     <p className="text-xs text-violet-400">
                       {viewingPO.poNo} —{" "}
-                      {getVendorName(viewingPO.vendorId)}
+                      {getVendorName(viewingPO.vendorId, viewingPO.vendorName)}
                     </p>
                   </div>
                 </div>
                 <button
                   type="button"
-                  onClick={() => {
-                    if (!saving) setViewingPO(null);
-                  }}
+                  onClick={() => closeInvoiceModal()}
                   className="p-2 rounded-lg hover:bg-violet-100 text-violet-400 hover:text-violet-600 transition-colors"
                 >
                   <X size={20} />
@@ -1012,7 +1290,7 @@ const InvoiceView = React.memo(() => {
                     },
                     {
                       label: "Vendor",
-                      value: getVendorName(viewingPO.vendorId),
+                      value: getVendorName(viewingPO.vendorId, viewingPO.vendorName),
                       tone: "amber",
                     },
                     {
@@ -1098,6 +1376,7 @@ const InvoiceView = React.memo(() => {
                         setInvoiceForm((f) => ({
                           ...f,
                           paymentType: e.target.value,
+                          bankAccountNo: e.target.value === "โอน" ? f.bankAccountNo : "",
                         }))
                       }
                       className="w-full border border-amber-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300 focus:border-amber-400 bg-white"
@@ -1108,6 +1387,70 @@ const InvoiceView = React.memo(() => {
                         </option>
                       ))}
                     </select>
+                  </div>
+                  {isTransferPayment && (
+                    <div className="md:col-span-2">
+                      <label className="flex items-center gap-1 text-xs font-semibold text-sky-700 mb-1.5">
+                        <CreditCard size={11} /> เลขบัญชี
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={invoiceForm.bankAccountNo}
+                        onChange={(e) =>
+                          setInvoiceForm((f) => ({
+                            ...f,
+                            bankAccountNo: e.target.value,
+                          }))
+                        }
+                        placeholder="กรอกเลขบัญชีสำหรับการโอน"
+                        className="w-full border border-sky-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-300 focus:border-sky-400 bg-white"
+                      />
+                    </div>
+                  )}
+                  <div className="md:col-span-3 rounded-xl border border-violet-100 bg-white/80 p-3">
+                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                      <label className={`inline-flex items-center gap-2 text-sm font-semibold ${isFixedPayBeforeReceiveInvoice ? "text-violet-800" : "text-slate-400"}`}>
+                        <input
+                          type="checkbox"
+                          checked={!!invoiceForm.isDeposit}
+                          disabled={isFixedPayBeforeReceiveInvoice}
+                          onChange={(e) =>
+                            setInvoiceForm((f) => ({
+                              ...f,
+                              isDeposit: e.target.checked,
+                              depositAmount: e.target.checked ? f.depositAmount : 0,
+                            }))
+                          }
+                          className="accent-violet-500 w-3.5 h-3.5 disabled:opacity-60"
+                        />
+                        <span>มัดจำ</span>
+                      </label>
+                      {invoiceForm.isDeposit && (
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs font-semibold text-violet-700">จำนวนเงินมัดจำ</label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={invoiceForm.depositAmount || ""}
+                            disabled={isFixedPayBeforeReceiveInvoice}
+                            onChange={(e) =>
+                              setInvoiceForm((f) => ({
+                                ...f,
+                                depositAmount: Number(e.target.value),
+                              }))
+                            }
+                            className="w-40 border border-violet-200 rounded-xl px-3 py-2 text-sm text-right focus:outline-none focus:ring-2 focus:ring-violet-300 disabled:bg-slate-100 disabled:text-slate-400"
+                            placeholder="0.00"
+                          />
+                        </div>
+                      )}
+                    </div>
+                    {isFixedPayBeforeReceiveInvoice && (
+                      <div className="mt-2 text-[11px] text-violet-600">
+                        Invoice จาก flow จ่ายก่อนรับของ จะอ้างอิงจำนวนและยอดมัดจำจากข้อมูลที่ตั้งค่าไว้
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1199,28 +1542,32 @@ const InvoiceView = React.memo(() => {
                             <td className="py-1.5 px-3 text-right">
                               {formatCurrency(item.price || 0)}
                             </td>
-                            <td className="py-1.5 px-3">
-                              <input
-                                type="number"
-                                min={0}
-                                max={item.quantity}
-                                value={item.invoiceQty}
-                                disabled={!item.checked}
-                                onChange={(e) =>
-                                  setInvoiceForm((f) => ({
-                                    ...f,
-                                    items: f.items.map((it, i) =>
-                                      i === idx
-                                        ? {
-                                            ...it,
-                                            invoiceQty: Number(e.target.value),
-                                          }
-                                        : it
-                                    ),
-                                  }))
-                                }
-                                className="w-20 border border-violet-200 rounded-lg px-2 py-1 text-right text-xs focus:outline-none focus:ring-2 focus:ring-violet-300 bg-white disabled:bg-slate-50 disabled:cursor-not-allowed"
-                              />
+                            <td className="py-1.5 px-3 text-right">
+                              {isFixedPayBeforeReceiveInvoice ? (
+                                <span className="font-medium text-slate-700">{Number(item.invoiceQty || 0)}</span>
+                              ) : (
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={item.quantity}
+                                  value={item.invoiceQty}
+                                  disabled={!item.checked}
+                                  onChange={(e) =>
+                                    setInvoiceForm((f) => ({
+                                      ...f,
+                                      items: f.items.map((it, i) =>
+                                        i === idx
+                                          ? {
+                                              ...it,
+                                              invoiceQty: Number(e.target.value),
+                                            }
+                                          : it
+                                      ),
+                                    }))
+                                  }
+                                  className="w-20 border border-violet-200 rounded-lg px-2 py-1 text-right text-xs focus:outline-none focus:ring-2 focus:ring-violet-300 bg-white disabled:bg-slate-50 disabled:cursor-not-allowed"
+                                />
+                              )}
                             </td>
                             <td className="py-1.5 px-3 text-right font-semibold text-violet-700">
                               {formatCurrency(
@@ -1240,7 +1587,11 @@ const InvoiceView = React.memo(() => {
                             รวมยอดวางบิล
                           </td>
                           <td className="py-3 px-3 text-right text-sm font-bold text-amber-700">
-                            {formatCurrency(invoiceTotalAmount)}
+                            {formatCurrency(
+                              invoiceForm.isDeposit && Number(invoiceForm.depositAmount || 0) > 0
+                                ? Number(invoiceForm.depositAmount || 0)
+                                : invoiceTotalAmount
+                            )}
                           </td>
                         </tr>
                       </tfoot>
@@ -1253,18 +1604,20 @@ const InvoiceView = React.memo(() => {
               <div className="flex items-center justify-between px-5 py-3 border-t border-violet-100 bg-gradient-to-r from-violet-50/40 to-amber-50/40 rounded-b-2xl">
                 <p className="text-xs text-slate-400 flex items-center gap-1">
                   <AlertCircle size={11} />
-                  หลังบันทึก สถานะ PO จะเปลี่ยนตาม Receive Type
+                  {isEditingInvoice
+                    ? "Administrator สามารถแก้ไขข้อมูล Invoice ได้จากตารางประวัติ"
+                    : "หลังบันทึก สถานะ PO จะเปลี่ยนตาม Receive Type"}
                 </p>
                 <div className="flex gap-3">
                   <button
                     type="button"
-                    onClick={() => setViewingPO(null)}
+                    onClick={() => closeInvoiceModal()}
                     disabled={saving}
                     className="px-4 py-2 rounded-xl text-sm font-semibold text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-50"
                   >
                     ยกเลิก
                   </button>
-                  {canUseFunction("invoice", "add") && (
+                  {(isEditingInvoice ? canEditInvoiceHistory : canUseFunction("invoice", "add")) && (
                     <button
                       type="button"
                       onClick={handleSaveInvoice}
@@ -1278,7 +1631,7 @@ const InvoiceView = React.memo(() => {
                         </>
                       ) : (
                         <>
-                          <Check size={14} /> บันทึกใบแจ้งหนี้
+                          <Check size={14} /> {isEditingInvoice ? "บันทึกการแก้ไข" : "บันทึกใบแจ้งหนี้"}
                         </>
                       )}
                     </button>
