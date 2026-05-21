@@ -31,14 +31,15 @@ const PO_TYPE_LABELS = {
 
 const ReceiveView = React.memo(() => {
   const {
-    pos, vendors, receives, projects, prs,
-    addData, updateData, deleteData, showAlert, openConfirm, canUseFunction,
+    pos, vendors, receives, invoices, projects, prs,
+    addData, updateData, deleteData, showAlert, openConfirm, canUseFunction, userRoles = [],
     isColumnVisible,
     visibleProjects, loadVendors,
   } = useAppData();
   const { selectedProjectId } = useUI();
   const { user, userData, logAction } = useContext(AuthContext);
   const canViewReceiveHistory = canUseFunction("receive", "viewHistory");
+  const canDeleteReceivePo = canUseFunction("receive", "delete") || userRoles.includes("MasterAdmin");
 
   // ไม่โหลด vendors ตอน mount — โหลดเมื่อ user เปิด PO detail จริงๆ (ลด Firebase reads)
 
@@ -165,6 +166,25 @@ const ReceiveView = React.memo(() => {
       .filter(Boolean);
     return linkedPrNos.join(", ");
   }, [prs]);
+
+  const getPoRefPrIds = useCallback((po) => {
+    if (!po) return [];
+
+    const itemPrIds = Array.isArray(po.items)
+      ? po.items.flatMap((item) => {
+          const directPrIds = item?.prId ? [item.prId] : [];
+          const disPrIds = Array.isArray(item?.disPrAllocations)
+            ? item.disPrAllocations.map((allocation) => allocation?.prId).filter(Boolean)
+            : [];
+          return [...directPrIds, ...disPrIds];
+        })
+      : [];
+
+    const selectedPrIds = Array.isArray(po.selectedPrIds) ? po.selectedPrIds.filter(Boolean) : [];
+    const prRefIds = po.prRefId ? [po.prRefId] : [];
+
+    return [...new Set([...itemPrIds, ...selectedPrIds, ...prRefIds].filter(Boolean))];
+  }, []);
 
   // Generate RP number
   const generateReceiveNo = useCallback(() => {
@@ -620,6 +640,35 @@ const ReceiveView = React.memo(() => {
     return items.length > 1 ? `${first} (+${items.length - 1} รายการ)` : first;
   };
 
+  const getPoStatusAfterReceiveDocs = useCallback((po, receiveDocs) => {
+    if (!po) return null;
+
+    const summary = {};
+    (receiveDocs || []).forEach((rcv) => {
+      (rcv.items || []).forEach((item) => {
+        const idx = Number(item.poItemIndex);
+        if (!Number.isFinite(idx)) return;
+        summary[idx] = (summary[idx] || 0) + Number(item.receivedQty || 0);
+      });
+    });
+
+    const items = po.items || [];
+    const hasAnyReceived = items.some((item, idx) => Number(summary[idx] || 0) > 0);
+    const allFullyReceived =
+      items.length > 0 &&
+      items.every((item, idx) => Number(summary[idx] || 0) >= Number(item.quantity || 0));
+    const isPayBeforeReceive = po.receiveType === "Pay before receive" || !!po.payBeforeReceiveChecked;
+
+    if (!hasAnyReceived) {
+      return { status: "Approved", statusNow: "Approved" };
+    }
+    if (allFullyReceived) {
+      const finalStatus = isPayBeforeReceive ? "Paid" : "Received";
+      return { status: finalStatus, statusNow: finalStatus };
+    }
+    return { status: "Approved", statusNow: "Partial Receive" };
+  }, []);
+
   // Sorted receive history for the tab (newest first)
   const sortedReceiveHistory = useMemo(() =>
     [...projectReceives].sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")),
@@ -641,16 +690,163 @@ const ReceiveView = React.memo(() => {
       "ยืนยันการลบ",
       `คุณต้องการลบ ${rcv.rpNo || rcv.receiveNo || "รายการนี้"} ใช่หรือไม่?`,
       async () => {
+        const linkedInvoice = (invoices || []).find(
+          (invoice) => String(invoice?.poId || "") === String(rcv?.poId || "")
+        );
+        if (linkedInvoice) {
+          showAlert(
+            "ยังลบไม่ได้",
+            `Receive ใบนี้มี Invoice ${linkedInvoice.invNo || linkedInvoice.id} ผูกอยู่ กรุณา rollback จากขั้นตอนสุดท้ายก่อน`,
+            "warning"
+          );
+          return;
+        }
+
         // Delete combined RP PDF (includes photos if any)
         if (rcv.pdfPath) {
           await deleteGeneratedPdf(rcv.pdfPath);
         }
-        await deleteData("receives", rcv.id);
+        const ok = await deleteData("receives", rcv.id, { skipLog: true });
+        if (!ok) return;
+
+        const po = pos.find((entry) => entry.id === rcv.poId);
+        const remainingReceiveDocs = projectReceives.filter((entry) => entry.id !== rcv.id && entry.poId === rcv.poId);
+        const nextPoStatus = getPoStatusAfterReceiveDocs(po, remainingReceiveDocs);
+        if (po && nextPoStatus) {
+          await updateData("pos", po.id, nextPoStatus, { skipLog: true });
+        }
+
+        await logAction?.(
+          "Delete Receive",
+          `ลบ ${rcv.rpNo || rcv.receiveNo || "Receive"}${po?.poNo ? ` / PO ${po.poNo}` : ""}`,
+          rcv.projectId || selectedProjectId
+        );
         showAlert("สำเร็จ", `ลบ ${rcv.rpNo || rcv.receiveNo || "รายการ"} เรียบร้อยแล้ว`, "success");
       },
       "danger"
     );
-  }, [openConfirm, deleteData, showAlert]);
+  }, [deleteData, getPoStatusAfterReceiveDocs, invoices, logAction, openConfirm, pos, projectReceives, selectedProjectId, showAlert, updateData]);
+
+  const handleDeleteReceivePo = useCallback((po) => {
+    openConfirm(
+      "ยืนยันการย้อนสถานะ",
+      `คุณต้องการคืน PO ${po.poNo || po.id} กลับเป็นสถานะ Approved ใช่หรือไม่?`,
+      async () => {
+        const hasReceiveItems = projectReceives.some(
+          (entry) =>
+            entry.poId === po.id &&
+            Array.isArray(entry.items) &&
+            entry.items.some((item) => Number(item.receivedQty || 0) > 0)
+        );
+        if (hasReceiveItems) {
+          showAlert(
+            "ยังลบไม่ได้",
+            "PO ใบนี้มีรายการ Receive อยู่แล้ว กรุณาไปลบที่แท็บรายการ Receive ก่อน",
+            "warning"
+          );
+          return;
+        }
+
+        const updated = await updateData(
+          "pos",
+          po.id,
+          { status: "Approved", statusNow: "Approved" },
+          { skipLog: true }
+        );
+        if (!updated) return;
+
+        await logAction?.(
+          "Reset PO From Receive",
+          `คืน PO ${po.poNo || po.id} จากเมนู Receive กลับเป็นสถานะ Approved`,
+          po.projectId || selectedProjectId
+        );
+        showAlert("สำเร็จ", `คืน PO ${po.poNo || po.id} กลับเป็นสถานะ Approved แล้ว`, "success");
+      },
+      "danger"
+    );
+  }, [logAction, openConfirm, projectReceives, selectedProjectId, showAlert, updateData]);
+
+  const handleDeleteReceiveItem = useCallback((rcv, itemIndex) => {
+    const targetItem = (rcv.items || [])[itemIndex];
+    if (!targetItem) return;
+
+    openConfirm(
+      "ยืนยันการลบรายการ",
+      `ต้องการลบรายการ "${targetItem.description || "-"}" ออกจาก ${rcv.rpNo || rcv.receiveNo || "ใบรับนี้"} ใช่หรือไม่?`,
+      async () => {
+        try {
+          const linkedInvoice = (invoices || []).find(
+            (invoice) => String(invoice?.poId || "") === String(rcv?.poId || "")
+          );
+          if (linkedInvoice) {
+            showAlert(
+              "ยังลบไม่ได้",
+              `Receive ใบนี้มี Invoice ${linkedInvoice.invNo || linkedInvoice.id} ผูกอยู่ กรุณา rollback จากขั้นตอนสุดท้ายก่อน`,
+              "warning"
+            );
+            return;
+          }
+
+          if (rcv.pdfPath) {
+            await deleteGeneratedPdf(rcv.pdfPath);
+          }
+
+          const remainingItems = (rcv.items || []).filter((_, idx) => idx !== itemIndex);
+          const totalPhotos = remainingItems.reduce((sum, item) => sum + Number(item.photos?.length || 0), 0);
+          const ok = await updateData(
+            "receives",
+            rcv.id,
+            {
+              items: remainingItems,
+              totalPhotos,
+              pdfUrl: null,
+              pdfPath: null,
+            },
+            { skipLog: true }
+          );
+          if (!ok) return;
+
+          const po = pos.find((entry) => entry.id === rcv.poId);
+          const remainingReceiveDocs = projectReceives
+            .filter((entry) => entry.poId === rcv.poId)
+            .map((entry) => (
+              entry.id === rcv.id
+                ? { ...entry, items: remainingItems }
+                : entry
+            ));
+          const nextPoStatus = getPoStatusAfterReceiveDocs(po, remainingReceiveDocs);
+          if (po && nextPoStatus) {
+            await updateData("pos", po.id, nextPoStatus, { skipLog: true });
+          }
+
+          setViewingRcv((prev) => (
+            prev && prev.rcv?.id === rcv.id
+              ? {
+                  ...prev,
+                  rcv: {
+                    ...prev.rcv,
+                    items: remainingItems,
+                    totalPhotos,
+                    pdfUrl: null,
+                    pdfPath: null,
+                  },
+                }
+              : prev
+          ));
+
+          await logAction?.(
+            "Delete Receive Item",
+            `ลบรายการ ${targetItem.description || "-"} จาก ${rcv.rpNo || rcv.receiveNo || "Receive"}`,
+            rcv.projectId || selectedProjectId
+          );
+          showAlert("สำเร็จ", "ลบรายการรับของเรียบร้อยแล้ว", "success");
+        } catch (error: any) {
+          showAlert("เกิดข้อผิดพลาด", error?.message || String(error), "error");
+        }
+      },
+      "danger"
+    );
+  }, [getPoStatusAfterReceiveDocs, invoices, logAction, openConfirm, pos, projectReceives, selectedProjectId, showAlert, updateData]);
 
   return (
     <div className="space-y-4">
@@ -983,13 +1179,24 @@ const ReceiveView = React.memo(() => {
                               onClick={() => openPODetail(po)}
                             >
                               <td className="py-1 px-3 text-center md:hidden">
-                                <button
-                                  type="button"
-                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-[10px] font-medium transition-colors"
-                                  onClick={(e) => { e.stopPropagation(); openPODetail(po); }}
-                                >
-                                  <Eye size={11} /> ดู
-                                </button>
+                                <div className="flex items-center justify-center gap-1">
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-[10px] font-medium transition-colors"
+                                    onClick={(e) => { e.stopPropagation(); openPODetail(po); }}
+                                  >
+                                    <Eye size={11} /> ดู
+                                  </button>
+                                  {canDeleteReceivePo && (
+                                    <button
+                                      type="button"
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-red-200 bg-white hover:bg-red-50 text-red-500 text-[10px] font-medium transition-colors"
+                                      onClick={(e) => { e.stopPropagation(); handleDeleteReceivePo(po); }}
+                                    >
+                                      <Trash2 size={11} /> ลบ
+                                    </button>
+                                  )}
+                                </div>
                               </td>
                               {isColumnVisible("receive-po", "poNo") && (
                                 <td className="py-1 px-3 font-medium text-blue-700">{po.poNo}</td>
@@ -1021,13 +1228,24 @@ const ReceiveView = React.memo(() => {
                                 </td>
                               )}
                               <td className="hidden py-1 px-3 text-center md:table-cell">
-                                <button
-                                  type="button"
-                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-[10px] font-medium transition-colors"
-                                  onClick={(e) => { e.stopPropagation(); openPODetail(po); }}
-                                >
-                                  <Eye size={11} /> ดู
-                                </button>
+                                <div className="flex items-center justify-center gap-1">
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-[10px] font-medium transition-colors"
+                                    onClick={(e) => { e.stopPropagation(); openPODetail(po); }}
+                                  >
+                                    <Eye size={11} /> ดู
+                                  </button>
+                                  {canDeleteReceivePo && (
+                                    <button
+                                      type="button"
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-red-200 bg-white hover:bg-red-50 text-red-500 text-[10px] font-medium transition-colors"
+                                      onClick={(e) => { e.stopPropagation(); handleDeleteReceivePo(po); }}
+                                    >
+                                      <Trash2 size={11} /> ลบ
+                                    </button>
+                                  )}
+                                </div>
                               </td>
                             </tr>
                           );
@@ -1630,6 +1848,7 @@ const ReceiveView = React.memo(() => {
                             <th className="py-2 px-3 text-center">หน่วย</th>
                             <th className="py-2 px-3 text-right">จำนวนรับ</th>
                             <th className="py-2 px-3 text-center">รูปถ่าย</th>
+                            {canUseFunction("receive", "delete") && <th className="py-2 px-3 text-center">ลบรายการ</th>}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -1653,6 +1872,17 @@ const ReceiveView = React.memo(() => {
                                   <span className="text-slate-300">-</span>
                                 )}
                               </td>
+                              {canUseFunction("receive", "delete") && (
+                                <td className="py-2 px-3 text-center">
+                                  <button
+                                    type="button"
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-red-200 bg-white hover:bg-red-50 text-red-500 text-[10px] font-medium transition-colors"
+                                    onClick={() => handleDeleteReceiveItem(rcv, idx)}
+                                  >
+                                    <Trash2 size={11} /> ลบ
+                                  </button>
+                                </td>
+                              )}
                             </tr>
                           ))}
                         </tbody>

@@ -1,5 +1,17 @@
+const isCommittedPoForPr = (po: any) => {
+  if (!po) return false;
+  const status = po?.status || "";
+  const statusNow = po?.statusNow || "";
+
+  if (status === "Rejected" || statusNow === "Rejected") return false;
+  if (status === "Draft" || statusNow === "Draft") return false;
+
+  const effectiveStatus = statusNow || status;
+  return effectiveStatus !== "";
+};
+
 export const getPoLinkedAmountForPr = (po: any, prId: string) => {
-  if (!po || po.status === "Rejected" || !prId) return 0;
+  if (!isCommittedPoForPr(po) || !prId) return 0;
 
   // ตรวจว่า PO ยังมี items อ้างอิง PR นี้จริงๆ อยู่หรือไม่
   // (ใช้ตัดสินว่าจะนับ lockedPrAllocations หรือไม่)

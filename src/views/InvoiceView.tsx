@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React, { useState, useMemo, useCallback, useContext } from "react";
+import { doc, writeBatch } from "firebase/firestore";
 import {
   ChevronDown, ChevronRight, FileText, Eye, X, Search, Trash2,
   DollarSign, Calendar, CreditCard, Package, Check, AlertCircle, Pencil,
@@ -66,6 +67,8 @@ const getPoInvoiceStatus = (paymentType?: string) =>
 
 const InvoiceView = React.memo(() => {
   const {
+    db,
+    appId,
     pos,
     vendors,
     invoices,
@@ -75,6 +78,7 @@ const InvoiceView = React.memo(() => {
     updateData,
     deleteData,
     showAlert,
+    openConfirm,
     canUseFunction,
     userRoles,
     logAction,
@@ -108,6 +112,7 @@ const InvoiceView = React.memo(() => {
   const isEditingInvoice = Boolean(editingInvoice);
   const canEditInvoiceHistory =
     userRoles.includes("Administrator") && canUseFunction("invoice", "edit");
+  const canDeleteInvoiceSource = userRoles.includes("Administrator");
   const isFixedPayBeforeReceiveInvoice = Boolean(
     viewingPO?.payBeforeReceiveChecked ||
     viewingPO?.invoiceMode === "pay_before_receive" ||
@@ -292,6 +297,145 @@ const InvoiceView = React.memo(() => {
     if (paymentType === "เครดิต") return "Invcredit";
     return status || "-";
   }, []);
+
+  const getBasePoStatusForInvoice = useCallback((invoice: any) => {
+    const matchedPO = pos.find((po) => po.id === invoice?.poId);
+    const isPayBeforeReceive =
+      matchedPO?.receiveType === "Pay before receive" ||
+      matchedPO?.payBeforeReceiveChecked ||
+      matchedPO?.invoiceMode === "pay_before_receive" ||
+      invoice?.invoiceMode === "pay_before_receive" ||
+      invoice?.autoCreatedFromPoApproval;
+
+    if (matchedPO && !isPayBeforeReceive) {
+      return "Approved";
+    }
+    if (isPayBeforeReceive) {
+      return "Wait Invoice";
+    }
+    return "Received";
+  }, [pos]);
+
+  const normalizeInvoiceFlowStatus = useCallback((value: any) => {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === "paid") return "paid";
+    if (normalized === "inpay") return "Inpay";
+    if (normalized === "invcredit") return "Invcredit";
+    return "";
+  }, []);
+
+  const handleDeleteInvoice = useCallback((invoice: any) => {
+    openConfirm?.(
+      "ยืนยันการลบ",
+      `ต้องการลบ Invoice ${invoice.invNo || invoice.id} ใช่หรือไม่?`,
+      async () => {
+        const hasBillingStage = Boolean(String(invoice?.billingNo || "").trim());
+        const hasPayStage = Boolean(String(invoice?.payNo || "").trim());
+
+        if (hasPayStage || hasBillingStage) {
+          showAlert(
+            "ยังลบไม่ได้",
+            `Invoice ${invoice.invNo || invoice.id} อยู่ใน stage Billing/Pay กรุณาลบรายการปลายทางก่อนเพื่อให้สถานะถอยกลับ`,
+            "warning"
+          );
+          return;
+        }
+
+        try {
+          const batch = writeBatch(db);
+          const nowIso = new Date().toISOString();
+          batch.delete(doc(db, "artifacts", appId, "public", "data", "invoices", invoice.id));
+
+          const poId = String(invoice?.poId || "");
+          const matchedPO = pos.find((po) => String(po.id) === poId);
+          if (poId && matchedPO) {
+            const remainingInvoices = (invoices || []).filter((item: any) =>
+              String(item.poId || "") === poId && String(item.id) !== String(invoice.id)
+            );
+            if (remainingInvoices.length === 0) {
+              const linkedReceives = (receives || []).filter((receive: any) => String(receive?.poId || "") === poId);
+              linkedReceives.forEach((receive: any) => {
+                batch.delete(doc(db, "artifacts", appId, "public", "data", "receives", receive.id));
+              });
+            }
+            const remainingStatuses = remainingInvoices.map((item: any) => normalizeInvoiceFlowStatus(item?.status));
+
+            let nextPoStatus = getBasePoStatusForInvoice(invoice);
+            if (remainingStatuses.includes("paid")) nextPoStatus = "paid";
+            else if (remainingStatuses.includes("Inpay")) nextPoStatus = "Inpay";
+            else if (remainingStatuses.includes("Invcredit")) nextPoStatus = "Invcredit";
+
+            batch.update(doc(db, "artifacts", appId, "public", "data", "pos", poId), {
+              status: nextPoStatus,
+              statusNow: nextPoStatus,
+              updatedAt: nowIso,
+            });
+          }
+
+          await batch.commit();
+          await logAction?.(
+            "Delete Invoice",
+            `ลบ Invoice ${invoice.invNo || invoice.id}${invoice.poNo ? ` / PO ${invoice.poNo}` : ""} และย้อน Receive`,
+            invoice.projectId || selectedProjectId
+          );
+          showAlert("สำเร็จ", "ลบ Invoice และย้อน Receive ให้ทำรับใหม่เรียบร้อยแล้ว", "success");
+        } catch (error: any) {
+          showAlert("เกิดข้อผิดพลาด", error?.message || String(error), "error");
+        }
+      },
+      "danger"
+    );
+  }, [appId, db, getBasePoStatusForInvoice, invoices, logAction, normalizeInvoiceFlowStatus, openConfirm, pos, selectedProjectId, showAlert]);
+
+  const handleDeleteInvoiceSource = useCallback((po: any) => {
+    const isPaymentSubcontract = Boolean(po?.isPaymentSubcontract);
+    const collectionName = isPaymentSubcontract ? "payments" : "pos";
+    const label = isPaymentSubcontract ? "Payment" : "PO";
+    const docNo = po?.paymentNo || po?.poNo || po?.id || "-";
+
+    openConfirm?.(
+      "ยืนยันการลบ",
+      `ต้องการลบ ${label} ${docNo} ใช่หรือไม่?`,
+      async () => {
+        const linkedInvoice = (invoices || []).find(
+          (invoice: any) => String(invoice?.poId || "") === String(po?.id || "")
+        );
+        if (linkedInvoice) {
+          showAlert(
+            "ยังลบไม่ได้",
+            `${label} ${docNo} มี Invoice ${linkedInvoice.invNo || linkedInvoice.id} ผูกอยู่ กรุณา rollback จากขั้นตอนสุดท้ายก่อน`,
+            "warning"
+          );
+          return;
+        }
+
+        if (!isPaymentSubcontract) {
+          const linkedReceive = (receives || []).find(
+            (receive: any) => String(receive?.poId || "") === String(po?.id || "")
+          );
+          if (linkedReceive) {
+            showAlert(
+              "ยังลบไม่ได้",
+              `${label} ${docNo} มี Receive ${linkedReceive.rpNo || linkedReceive.receiveNo || linkedReceive.id} ผูกอยู่ กรุณา rollback จากขั้นตอนสุดท้ายก่อน`,
+              "warning"
+            );
+            return;
+          }
+        }
+
+        const ok = await deleteData(collectionName, po.id, { skipLog: true });
+        if (!ok) return;
+
+        await logAction?.(
+          `Delete ${label}`,
+          `ลบ ${label} ${docNo} จากเมนู Invoice`,
+          po.projectId || selectedProjectId
+        );
+        showAlert("สำเร็จ", `ลบ ${label} ${docNo} เรียบร้อยแล้ว`, "success");
+      },
+      "danger"
+    );
+  }, [deleteData, invoices, logAction, openConfirm, receives, selectedProjectId, showAlert]);
 
   const closeInvoiceModal = useCallback((force = false) => {
     if (saving && !force) return;
@@ -873,16 +1017,31 @@ const InvoiceView = React.memo(() => {
                                 onClick={() => openPODetail(po)}
                               >
                                 <td className="py-1.5 px-3 text-center md:hidden">
-                                  <button
-                                    type="button"
-                                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[10px] font-medium transition-colors ${c.btn}`}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      openPODetail(po);
-                                    }}
-                                  >
-                                    <FileText size={11} /> ลงข้อมูลใบแจ้งหนี้
-                                  </button>
+                                  <div className="flex items-center justify-center gap-1">
+                                    <button
+                                      type="button"
+                                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[10px] font-medium transition-colors ${c.btn}`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        openPODetail(po);
+                                      }}
+                                    >
+                                      <FileText size={11} /> ลงข้อมูลใบแจ้งหนี้
+                                    </button>
+                                    {canDeleteInvoiceSource && (
+                                      <button
+                                        type="button"
+                                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-red-200 bg-red-50 text-[10px] font-medium text-red-600 transition-colors hover:bg-red-100"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleDeleteInvoiceSource(po);
+                                        }}
+                                        title="ลบรายการ"
+                                      >
+                                        <Trash2 size={11} />
+                                      </button>
+                                    )}
+                                  </div>
                                 </td>
                                 <td
                                   className={`py-1.5 px-3 font-semibold ${c.poNo}`}
@@ -924,16 +1083,31 @@ const InvoiceView = React.memo(() => {
                                   {formatCurrency(po.grandTotal || po.amount || po.totalAmount || 0)}
                                 </td>
                                 <td className="py-1.5 px-3 text-center">
-                                  <button
-                                    type="button"
-                                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[10px] font-medium transition-colors ${c.btn}`}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      openPODetail(po);
-                                    }}
-                                  >
-                                    <FileText size={11} /> ลงข้อมูลใบแจ้งหนี้
-                                  </button>
+                                  <div className="flex items-center justify-center gap-1">
+                                    <button
+                                      type="button"
+                                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[10px] font-medium transition-colors ${c.btn}`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        openPODetail(po);
+                                      }}
+                                    >
+                                      <FileText size={11} /> ลงข้อมูลใบแจ้งหนี้
+                                    </button>
+                                    {canDeleteInvoiceSource && (
+                                      <button
+                                        type="button"
+                                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-red-200 bg-red-50 text-[10px] font-medium text-red-600 transition-colors hover:bg-red-100"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleDeleteInvoiceSource(po);
+                                        }}
+                                        title="ลบรายการ"
+                                      >
+                                        <Trash2 size={11} />
+                                      </button>
+                                    )}
+                                  </div>
                                 </td>
                               </tr>
                             );
@@ -1023,7 +1197,7 @@ const InvoiceView = React.memo(() => {
                           {canUseFunction("invoice", "delete") && (
                             <button
                               className="text-red-400 hover:text-red-600 transition-colors"
-                              onClick={() => deleteData("invoices", inv.id)}
+                              onClick={() => handleDeleteInvoice(inv)}
                             >
                               <Trash2 size={14} />
                             </button>
@@ -1071,7 +1245,7 @@ const InvoiceView = React.memo(() => {
                           {canUseFunction("invoice", "delete") && (
                             <button
                               className="text-red-400 hover:text-red-600 transition-colors"
-                              onClick={() => deleteData("invoices", inv.id)}
+                              onClick={() => handleDeleteInvoice(inv)}
                             >
                               <Trash2 size={14} />
                             </button>
@@ -1174,7 +1348,7 @@ const InvoiceView = React.memo(() => {
                           {canUseFunction("invoice", "delete") && (
                             <button
                               className="text-red-400 hover:text-red-600 transition-colors"
-                              onClick={() => deleteData("invoices", inv.id)}
+                              onClick={() => handleDeleteInvoice(inv)}
                             >
                               <Trash2 size={14} />
                             </button>
@@ -1227,7 +1401,7 @@ const InvoiceView = React.memo(() => {
                           {canUseFunction("invoice", "delete") && (
                             <button
                               className="text-red-400 hover:text-red-600 transition-colors"
-                              onClick={() => deleteData("invoices", inv.id)}
+                              onClick={() => handleDeleteInvoice(inv)}
                             >
                               <Trash2 size={14} />
                             </button>

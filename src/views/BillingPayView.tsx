@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { collection, onSnapshot, query } from "firebase/firestore";
+import { collection, doc, onSnapshot, query, writeBatch } from "firebase/firestore";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Calendar,
@@ -141,6 +141,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
   const {
     db,
     appId,
+    pos = [],
     invoices = [],
     vendors,
     loadVendors,
@@ -157,6 +158,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
 
   const [rows, setRows] = useState([]);
   const [billingRows, setBillingRows] = useState([]);
+  const [payRows, setPayRows] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [saving, setSaving] = useState(false);
   const [editingRow, setEditingRow] = useState<any>(null);
@@ -205,6 +207,39 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
     [invoices, updateData]
   );
 
+  const getBasePoStatus = useCallback((po: any) => {
+    if (!po) return "Received";
+    if (po?.payBeforeReceiveChecked || po?.invoiceMode === "pay_before_receive") return "Wait Invoice";
+    return "Received";
+  }, []);
+
+  const normalizeInvoiceFlowStatus = useCallback((value: any) => {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === "paid") return "paid";
+    if (normalized === "inpay") return "Inpay";
+    if (normalized === "invcredit") return "Invcredit";
+    return "";
+  }, []);
+
+  const getNextPoStatusFromInvoices = useCallback((poId: string, invoiceOverrides: Map<string, any> = new Map(), deletedInvoiceIds: Set<string> = new Set()) => {
+    const po = (pos || []).find((item: any) => String(item.id) === String(poId));
+    if (!po) return null;
+
+    const remainingInvoices = (invoices || [])
+      .filter((invoice: any) => String(invoice.poId || "") === String(poId) && !deletedInvoiceIds.has(String(invoice.id)))
+      .map((invoice: any) => (
+        invoiceOverrides.has(String(invoice.id))
+          ? { ...invoice, ...invoiceOverrides.get(String(invoice.id)) }
+          : invoice
+      ));
+
+    const statuses = remainingInvoices.map((invoice: any) => normalizeInvoiceFlowStatus(invoice?.status));
+    if (statuses.includes("paid")) return "paid";
+    if (statuses.includes("Inpay")) return "Inpay";
+    if (statuses.includes("Invcredit")) return "Invcredit";
+    return getBasePoStatus(po);
+  }, [getBasePoStatus, invoices, normalizeInvoiceFlowStatus, pos]);
+
   useEffect(() => {
     loadVendors?.();
   }, [loadVendors]);
@@ -227,6 +262,16 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
       (err) => console.error("Error syncing billings for pay:", err)
     );
   }, [appId, db, isPayMode]);
+
+  useEffect(() => {
+    if (!isBillingMode) return;
+    const ref = collection(db, "artifacts", appId, "public", "data", "pays");
+    return onSnapshot(
+      query(ref),
+      (snap) => setPayRows(snap.docs.map((docItem) => ({ id: docItem.id, ...docItem.data() }))),
+      (err) => console.error("Error syncing pays for billing:", err)
+    );
+  }, [appId, db, isBillingMode]);
 
   const formatDate = useCallback((value?: string) => {
     if (!value) return "-";
@@ -338,8 +383,8 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
   }, [invoices, isPayMode, selectedProjectId]);
 
   const payHistoryRows = useMemo(
-    () => paidInvoiceHistoryRows,
-    [paidInvoiceHistoryRows]
+    () => projectRows.filter((row: any) => isPayMode && isPaidStatus(row.status)),
+    [isPayMode, projectRows]
   );
 
   const visibleRows = useMemo(
@@ -716,15 +761,19 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
         description: formData.description.trim(),
         note: formData.note.trim(),
         status: isBillingMode ? "Inpay" : isPayMode ? "paid" : (formData.status || "Draft"),
-        paidAt: isPayMode ? new Date().toISOString() : editingRow?.paidAt,
-        paidBy: isPayMode
-          ? `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim()
-          : editingRow?.paidBy,
         projectId: editingRow?.projectId || selectedProjectId,
         createdBy:
           editingRow?.createdBy ||
           `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim(),
         updatedAt: new Date().toISOString(),
+        ...(isPayMode
+          ? {
+              paidAt: new Date().toISOString(),
+              paidBy: `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim(),
+            }
+          : {}),
+        ...(!isPayMode && editingRow?.paidAt ? { paidAt: editingRow.paidAt } : {}),
+        ...(!isPayMode && editingRow?.paidBy ? { paidBy: editingRow.paidBy } : {}),
       };
 
       if (editingRow) {
@@ -915,8 +964,119 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
       "ยืนยันการลบ",
       `ต้องการลบ ${config.title} ${row.docNo || row.id} ใช่หรือไม่?`,
       async () => {
-        const ok = await deleteData(config.collectionName, row.id, { skipLog: true });
-        if (!ok) return;
+        const nowIso = new Date().toISOString();
+        const basePath = ["artifacts", appId, "public", "data"] as const;
+
+        try {
+          if (isBillingMode) {
+            const linkedPay = (payRows || []).find((pay: any) =>
+              Array.isArray(pay?.billingIds) &&
+              pay.billingIds.map((id: any) => String(id)).includes(String(row.id))
+            );
+
+            if (linkedPay) {
+              showAlert?.(
+                "ยังลบไม่ได้",
+                `Billing ${row.docNo || row.id} ถูกใช้งานใน Pay ${linkedPay.docNo || linkedPay.id} กรุณาลบ Pay ก่อน`,
+                "warning"
+              );
+              return;
+            }
+
+            const invoiceIds = Array.from(new Set((row.invoiceIds || []).map((id: any) => String(id)).filter(Boolean)));
+            const invoiceOverrides = new Map<string, any>();
+            const touchedPoIds = new Set<string>();
+            const batch = writeBatch(db);
+
+            batch.delete(doc(db, ...basePath, "billings", row.id));
+
+            invoiceIds.forEach((invoiceId) => {
+              invoiceOverrides.set(invoiceId, {
+                status: "Invcredit",
+                billingNo: null,
+                billingDate: null,
+                payNo: null,
+                payDate: null,
+                updatedAt: nowIso,
+              });
+              const invoice = (invoices || []).find((item: any) => String(item.id) === invoiceId);
+              if (invoice?.poId) touchedPoIds.add(String(invoice.poId));
+              batch.update(doc(db, ...basePath, "invoices", invoiceId), {
+                status: "Invcredit",
+                billingNo: null,
+                billingDate: null,
+                payNo: null,
+                payDate: null,
+                updatedAt: nowIso,
+              });
+            });
+
+            touchedPoIds.forEach((poId) => {
+              const nextPoStatus = getNextPoStatusFromInvoices(poId, invoiceOverrides);
+              if (!nextPoStatus) return;
+              batch.update(doc(db, ...basePath, "pos", poId), {
+                status: nextPoStatus,
+                statusNow: nextPoStatus,
+                updatedAt: nowIso,
+              });
+            });
+
+            await batch.commit();
+          } else if (isPayMode) {
+            const billingIds = Array.from(new Set((row.billingIds || []).map((id: any) => String(id)).filter(Boolean)));
+            const invoiceIds = Array.from(new Set((row.invoiceIds || []).map((id: any) => String(id)).filter(Boolean)));
+            const invoiceOverrides = new Map<string, any>();
+            const touchedPoIds = new Set<string>();
+            const batch = writeBatch(db);
+
+            batch.delete(doc(db, ...basePath, "pays", row.id));
+
+            billingIds.forEach((billingId) => {
+              batch.update(doc(db, ...basePath, "billings", billingId), {
+                status: "Inpay",
+                payNo: null,
+                payDate: null,
+                updatedAt: nowIso,
+              });
+            });
+
+            invoiceIds.forEach((invoiceId) => {
+              invoiceOverrides.set(invoiceId, {
+                status: "Inpay",
+                payNo: null,
+                payDate: null,
+                updatedAt: nowIso,
+              });
+              const invoice = (invoices || []).find((item: any) => String(item.id) === invoiceId);
+              if (invoice?.poId) touchedPoIds.add(String(invoice.poId));
+              batch.update(doc(db, ...basePath, "invoices", invoiceId), {
+                status: "Inpay",
+                payNo: null,
+                payDate: null,
+                updatedAt: nowIso,
+              });
+            });
+
+            touchedPoIds.forEach((poId) => {
+              const nextPoStatus = getNextPoStatusFromInvoices(poId, invoiceOverrides);
+              if (!nextPoStatus) return;
+              batch.update(doc(db, ...basePath, "pos", poId), {
+                status: nextPoStatus,
+                statusNow: nextPoStatus,
+                updatedAt: nowIso,
+              });
+            });
+
+            await batch.commit();
+          } else {
+            const ok = await deleteData(config.collectionName, row.id, { skipLog: true });
+            if (!ok) return;
+          }
+        } catch (error: any) {
+          showAlert?.("เกิดข้อผิดพลาด", error?.message || String(error), "error");
+          return;
+        }
+
         await logAction?.(
           `Delete ${config.saveLogLabel}`,
           `ลบ ${config.saveLogLabel} ${row.docNo || row.id}`,
@@ -926,10 +1086,10 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
       },
       "danger"
     );
-  }, [config.collectionName, config.saveLogLabel, config.title, deleteData, logAction, openConfirm, showAlert]);
+  }, [appId, config.collectionName, config.saveLogLabel, config.title, db, deleteData, getNextPoStatusFromInvoices, invoices, isBillingMode, isPayMode, logAction, openConfirm, payRows, showAlert]);
 
-  const numberHeader = isPayMode && activePayTab === "history" ? "Invoice No." : config.numberLabel;
-  const refHeader = isPayMode && activePayTab === "history" ? "Ref. PO" : config.refLabel;
+  const numberHeader = config.numberLabel;
+  const refHeader = config.refLabel;
 
   return (
     <div className="space-y-4">

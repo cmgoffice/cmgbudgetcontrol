@@ -241,6 +241,7 @@ const POView = React.memo(() => {
   const [isAddItemModalOpen, setIsAddItemModalOpen] = useState(false);
   const [freeItemPrNoDropdownId, setFreeItemPrNoDropdownId] = useState<string | null>(null);
   const [disPrPickerOpenKey, setDisPrPickerOpenKey] = useState<string | null>(null); // key: `item:${prId}:${idx}` | `free:${id}`
+  const [expandedSelectedPrRows, setExpandedSelectedPrRows] = useState<Record<string, boolean>>({});
 
   const getPoRefPrIds = useCallback((po: any): string[] => {
     if (!po) return [];
@@ -839,6 +840,29 @@ const POView = React.memo(() => {
   const selectedPrsTotalAmount = useMemo(() => {
     return formData.selectedPrIds.reduce((sum, prId) => sum + getPrRemainingAmount(prId), 0);
   }, [formData.selectedPrIds, approvedPRs, prs, pos, editingPoId]);
+
+  const selectedPrSummaries = useMemo(() => {
+    return (formData.selectedPrIds || [])
+      .map((prId: string) => {
+        const pr = approvedPRs.find((p) => p.id === prId) || prs.find((p) => p.id === prId);
+        if (!pr) return null;
+        const budgetDesc = budgets.find((b: any) => b.code === pr.costCode && b.projectId === pr.projectId)?.description || "-";
+        const itemCount = Array.isArray(pr.items) ? pr.items.length : 0;
+        const firstItemDesc = itemCount > 0 ? (pr.items[0]?.description || "-") : "-";
+        return {
+          id: pr.id,
+          prNo: pr.prNo || pr.id,
+          costCode: pr.costCode || "-",
+          budgetDesc,
+          remainingAmount: getPrRemainingAmount(pr.id),
+          itemCount,
+          firstItemDesc,
+          createdDate: pr.createdDate || pr.createdAt || "",
+          status: pr.status || "-",
+        };
+      })
+      .filter(Boolean);
+  }, [approvedPRs, budgets, formData.selectedPrIds, getPrRemainingAmount, prs]);
 
   // PR No. options สำหรับ dropdown รายการเพิ่ม (manual) — จาก PR ที่เลือกในตารางนี้
   const prNoOptionsForFreeItems = useMemo(() => {
@@ -1831,6 +1855,26 @@ const POView = React.memo(() => {
 
   const handleDeletePo = useCallback((po: any) => {
     openConfirm("ยืนยันการลบ", `คุณต้องการลบ ${L.docName} นี้ใช่หรือไม่?`, async () => {
+      const linkedReceive = (receives || []).find((receive: any) => String(receive?.poId || "") === String(po?.id || ""));
+      if (linkedReceive) {
+        showAlert(
+          "ยังลบไม่ได้",
+          `PO ${po.poNo || po.id} มี Receive ${linkedReceive.rpNo || linkedReceive.receiveNo || linkedReceive.id} ผูกอยู่ กรุณา rollback จากขั้นตอนสุดท้ายก่อน`,
+          "warning"
+        );
+        return;
+      }
+
+      const linkedInvoice = (invoices || []).find((invoice: any) => String(invoice?.poId || "") === String(po?.id || ""));
+      if (linkedInvoice) {
+        showAlert(
+          "ยังลบไม่ได้",
+          `PO ${po.poNo || po.id} มี Invoice ${linkedInvoice.invNo || linkedInvoice.id} ผูกอยู่ กรุณา rollback จากขั้นตอนสุดท้ายก่อน`,
+          "warning"
+        );
+        return;
+      }
+
       const prIds = getPoRefPrIds(po);
       const reopenedPrs: Array<{ prNo?: string; from?: string; to: string }> = [];
       if (po.pdfUrl) {
@@ -1860,7 +1904,7 @@ const POView = React.memo(() => {
         po.projectId || selectedProjectId
       );
     }, "danger");
-  }, [deleteData, formatPrStatusChangesForLog, getPoRefPrIds, logAction, openConfirm, pos, prs, selectedProjectId, updateData]);
+  }, [deleteData, formatPrStatusChangesForLog, getPoRefPrIds, invoices, logAction, openConfirm, pos, prs, receives, selectedProjectId, showAlert, updateData]);
 
   const handleConfirmClosePo = useCallback((po: any) => {
     openConfirm(
@@ -3497,14 +3541,14 @@ const POView = React.memo(() => {
           {/* Create PO Modal — ทับ Header, เต็มความสูง, Footer เลื่อนตามเนื้อหา */}
           {isModalOpen && (
             <motion.div
-              className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[10010] p-4"
+              className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[10010] p-3 sm:p-5"
               initial="hidden"
               animate="visible"
               variants={modalOverlayVariants}
               transition={overlayTransition}
             >
               <motion.div
-                className="w-[95vw] sm:w-[90vw] max-w-[95vw] sm:max-w-[90vw] max-h-[92vh] flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+                className="w-full max-w-6xl xl:max-w-[1120px] max-h-[88vh] flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
                 initial="hidden"
                 animate="visible"
                 variants={modalContentVariants}
@@ -3556,10 +3600,8 @@ const POView = React.memo(() => {
                       </div>
                       <span className="text-[10px] sm:text-xs font-bold text-red-900 tracking-wide uppercase">{L.headerSection}</span>
                     </div>
-                    <div className="p-2 flex flex-col gap-2">
-                      {/* ซ้าย: ฟอร์ม + Select PRs */}
-                      <div className="flex-1 min-w-0 flex flex-col gap-2">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-2 gap-y-2">
+                    <div className="p-2 space-y-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-2 gap-y-2">
                           {/* PO Type / Payment Type */}
                           <div className="min-w-0 col-span-1">
                             <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1 uppercase tracking-wider">
@@ -3757,82 +3799,6 @@ const POView = React.memo(() => {
                               </div>
                             )}
                           </div>
-                          <div className="col-span-1 sm:col-span-2">
-                            <div className="rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 to-white p-3 space-y-2">
-                              <div className="flex items-center justify-between gap-3 flex-wrap">
-                                <label className="inline-flex items-center gap-2 text-sm font-semibold text-amber-900 cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    checked={!!formData.payBeforeReceiveChecked}
-                                    onChange={(e) => {
-                                      if (e.target.checked) openInvoiceSetupModal();
-                                      else clearPayBeforeReceiveFlow();
-                                    }}
-                                    className="rounded border-amber-300 text-amber-600 focus:ring-amber-200"
-                                  />
-                                  <span>จ่ายก่อนรับของ</span>
-                                </label>
-                                {formData.payBeforeReceiveChecked && (
-                                  <button
-                                    type="button"
-                                    onClick={openInvoiceSetupModal}
-                                    className="text-[11px] font-semibold text-amber-700 hover:text-amber-900"
-                                  >
-                                    แก้ไขข้อมูลใบแจ้งหนี้
-                                  </button>
-                                )}
-                              </div>
-                              <div className="text-[11px] text-amber-800">
-                                เมื่อบันทึกแล้ว ระบบจะสร้าง `Invoice` อัตโนมัติหลัง PO ถูกอนุมัติ และส่ง PO กลับเข้า flow รับของ
-                              </div>
-                              {formData.payBeforeReceiveChecked && formData.payBeforeReceiveInvoiceSetup && (
-                                <div className="rounded-lg border border-amber-100 bg-white px-3 py-2 text-[11px] text-slate-600">
-                                  Invoice: <span className="font-semibold text-slate-800">{formData.payBeforeReceiveInvoiceSetup.invNo || "-"}</span>
-                                  {" | "}วันที่: <span className="font-semibold text-slate-800">{formData.payBeforeReceiveInvoiceSetup.invDate || "-"}</span>
-                                  {" | "}ชำระ: <span className="font-semibold text-slate-800">{formData.payBeforeReceiveInvoiceSetup.paymentType || "-"}</span>
-                                  {formData.payBeforeReceiveInvoiceSetup.isDeposit ? (
-                                    <>
-                                      {" | "}มัดจำ: <span className="font-semibold text-slate-800">{formatCurrency(Number(formData.payBeforeReceiveInvoiceSetup.depositAmount || 0))}</span>
-                                    </>
-                                  ) : null}
-                                </div>
-                              )}
-
-                              <div className="flex items-center justify-between gap-3 flex-wrap pt-1 border-t border-amber-100">
-                                <label className={`inline-flex items-center gap-2 text-sm font-semibold ${formData.payBeforeReceiveChecked ? "text-emerald-900 cursor-pointer" : "text-slate-400 cursor-not-allowed"}`}>
-                                  <input
-                                    type="checkbox"
-                                    checked={!!formData.receivedAfterPaymentChecked}
-                                    disabled={!formData.payBeforeReceiveChecked}
-                                    onChange={(e) => {
-                                      if (e.target.checked) openReceiveSetupModal();
-                                      else clearReceivedAfterPaymentFlow();
-                                    }}
-                                    className="rounded border-emerald-300 text-emerald-600 focus:ring-emerald-200 disabled:opacity-50"
-                                  />
-                                  <span>รับของแล้ว</span>
-                                </label>
-                                {formData.receivedAfterPaymentChecked && (
-                                  <button
-                                    type="button"
-                                    onClick={openReceiveSetupModal}
-                                    className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900"
-                                  >
-                                    แก้ไขข้อมูลรับของ
-                                  </button>
-                                )}
-                              </div>
-                              <div className="text-[11px] text-slate-600">
-                                ต้องตั้งค่า `จ่ายก่อนรับของ` ก่อน และถ้าตั้งค่า `รับของแล้ว` ระบบจะสร้าง `Receive` อัตโนมัติหลัง approve พร้อมปิด PO เป็น `Paid`
-                              </div>
-                              {formData.receivedAfterPaymentChecked && formData.receivedAfterPaymentSetup && (
-                                <div className="rounded-lg border border-emerald-100 bg-white px-3 py-2 text-[11px] text-slate-600">
-                                  Receive Doc: <span className="font-semibold text-slate-800">{formData.receivedAfterPaymentSetup.documentNo || "-"}</span>
-                                  {" | "}วันที่รับ: <span className="font-semibold text-slate-800">{formData.receivedAfterPaymentSetup.receivedDate || "-"}</span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
                           {/* Vendor / ผู้รับเหมา */}
                           <div className="col-span-1 sm:col-span-2">
                             <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 mb-1 uppercase tracking-wider">
@@ -3876,10 +3842,11 @@ const POView = React.memo(() => {
                               </Button>
                             </div>
                           </div>
-                        </div>
+                      </div>
 
-                        {/* Select PRs — ในคอลัมน์ซ้าย ใต้ฟอร์ม */}
-                        <div className="flex-1 border border-slate-200 rounded-xl overflow-hidden bg-white">
+                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
+                        {/* Select PRs — ครึ่งซ้าย */}
+                        <div className="border border-slate-200 rounded-xl overflow-hidden bg-white min-w-0">
                           <div className="flex items-center justify-between px-3 py-2 bg-gradient-to-r from-slate-100 to-slate-200/80 border-b border-slate-300">
                             <div className="flex items-center gap-1.5">
                               <div className="w-5 h-5 bg-slate-800 rounded-md flex items-center justify-center">
@@ -3914,20 +3881,86 @@ const POView = React.memo(() => {
                                 <p className="text-[10px] mt-0.5 text-slate-400">กดปุ่ม "เลือก PR" เพื่อเลือกใบขอซื้อที่อนุมัติแล้ว</p>
                               </div>
                             ) : (
-                              <div className="flex flex-wrap gap-1.5">
-                                {formData.selectedPrIds.map(prId => {
-                                  const pr = approvedPRs.find(p => p.id === prId);
-                                  if (!pr) return null;
-                                  return (
-                                    <div key={prId} className="flex items-center gap-1.5 px-2.5 py-1 bg-red-50 border border-red-200 rounded-lg text-xs">
-                                      <Hash size={9} className="text-red-500 shrink-0" />
-                                      <span className="font-semibold text-slate-800">{pr.prNo}</span>
-                                      <button type="button" className="ml-0.5 text-red-400 hover:text-red-600" onClick={() => handlePrToggle(prId)}>
-                                        <XCircle size={11} />
-                                      </button>
-                                    </div>
-                                  );
-                                })}
+                              <div className="space-y-2">
+                                {selectedPrSummaries.length <= 2 ? (
+                                  <div className="space-y-2">
+                                    {selectedPrSummaries.map((pr: any) => (
+                                      <div key={pr.id} className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2">
+                                        <div className="flex items-start justify-between gap-2">
+                                          <div className="min-w-0 space-y-1 text-xs text-slate-700">
+                                            <div className="flex gap-2">
+                                              <span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">PR No.:</span>
+                                              <span className="font-semibold text-slate-900 break-words">{pr.prNo}</span>
+                                            </div>
+                                            <div className="flex gap-2">
+                                              <span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">Cost Code:</span>
+                                              <span className="break-words">{pr.costCode}</span>
+                                            </div>
+                                            <div className="flex gap-2">
+                                              <span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">รายการ:</span>
+                                              <span className="break-words">{pr.budgetDesc}</span>
+                                            </div>
+                                            <div className="flex gap-2">
+                                              <span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">คงเหลือ:</span>
+                                              <span className="font-semibold text-blue-700">{formatCurrency(pr.remainingAmount)}</span>
+                                            </div>
+                                          </div>
+                                          <button type="button" className="text-red-400 hover:text-red-600 shrink-0" onClick={() => handlePrToggle(pr.id)}>
+                                            <XCircle size={12} />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="space-y-2">
+                                    {selectedPrSummaries.map((pr: any) => {
+                                      const isOpen = !!expandedSelectedPrRows[pr.id];
+                                      return (
+                                        <div key={pr.id} className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+                                          <div
+                                            className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-slate-50 transition-colors cursor-pointer"
+                                            onClick={() => setExpandedSelectedPrRows((prev) => ({ ...prev, [pr.id]: !prev[pr.id] }))}
+                                          >
+                                            <div className="min-w-0 flex items-center gap-2">
+                                              {isOpen ? <ChevronDown size={14} className="text-slate-400 shrink-0" /> : <ChevronRight size={14} className="text-slate-400 shrink-0" />}
+                                              <span className="font-semibold text-slate-800">{pr.prNo}</span>
+                                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600">{pr.costCode}</span>
+                                              <span className="text-[11px] text-blue-700 font-semibold hidden sm:inline">{formatCurrency(pr.remainingAmount)}</span>
+                                            </div>
+                                            <button
+                                              type="button"
+                                              className="text-red-400 hover:text-red-600 shrink-0"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handlePrToggle(pr.id);
+                                              }}
+                                            >
+                                              <XCircle size={12} />
+                                            </button>
+                                          </div>
+                                          {isOpen && (
+                                            <div className="border-t border-slate-100 px-3 py-2 text-xs text-slate-700 space-y-1.5 bg-slate-50/70">
+                                              <div className="flex gap-2">
+                                                <span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">รายการ:</span>
+                                                <span className="break-words">{pr.budgetDesc}</span>
+                                              </div>
+                                              <div className="flex gap-2">
+                                                <span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">Item:</span>
+                                                <span className="break-words">{pr.itemCount > 1 ? `${pr.firstItemDesc} (+${pr.itemCount - 1} รายการ)` : pr.firstItemDesc}</span>
+                                              </div>
+                                              <div className="flex gap-2">
+                                                <span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">คงเหลือ:</span>
+                                                <span className="font-semibold text-blue-700">{formatCurrency(pr.remainingAmount)}</span>
+                                              </div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+
                                 <button
                                   type="button"
                                   className="flex items-center gap-1 px-2.5 py-1 border border-dashed border-slate-300 rounded-lg text-xs text-slate-500 hover:border-slate-400 hover:text-slate-700 transition-all"
@@ -3947,128 +3980,125 @@ const POView = React.memo(() => {
                             )}
                           </div>
                         </div>
-                      </div>{/* end left column */}
+                        
+                        {/* Vendor Details — ครึ่งขวา */}
+                        <div className="border border-slate-200 rounded-xl bg-slate-50/80 overflow-hidden self-stretch flex flex-col min-w-0">
+                          <div className="px-4 py-2.5 bg-slate-200/80 border-b border-slate-200 flex items-center gap-2">
+                            <Building2 size={16} className="text-slate-600" />
+                            <span className="text-sm font-bold text-slate-700 uppercase tracking-wide">Vendor Details</span>
+                          </div>
+                          <div className="p-3 text-sm">
+                            {formData.vendorId && (() => {
+                              const v = vendors.find((x: any) => x.id === formData.vendorId);
+                              if (!v) return <p className="text-slate-400">กำลังโหลด...</p>;
+                              return (
+                                <div className="space-y-1.5 text-slate-700">
+                                  <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">ชื่อ:</span><span className="font-medium min-w-0 break-words">{v.name || "-"}</span></div>
+                                  {v.code && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">รหัส:</span><span className="min-w-0 break-words">{v.code}</span></div>}
+                                  {v.address && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">ที่อยู่:</span><span className="min-w-0 whitespace-pre-wrap break-words">{v.address}</span></div>}
+                                  {v.tel && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">โทร:</span><span className="min-w-0 break-words">{v.tel}</span></div>}
+                                  {(v.creditTerm != null && v.creditTerm !== "") && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">เครดิตเทอม:</span><span className="min-w-0">{v.creditTerm}</span></div>}
+                                  {v.type && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">ประเภท:</span><span className="min-w-0">{v.type}</span></div>}
+                                </div>
+                              );
+                            })()}
+                            {!formData.vendorId && (
+                              <p className="text-slate-400 italic">เลือก Vendor ทางซ้ายเพื่อดูข้อมูล</p>
+                            )}
+                          </div>
 
-                      {/* ขวา: Vendor Details — ขยายความกว้าง + ยืดเต็มความสูง */}
-                      <div className="w-full shrink-0 border border-slate-200 rounded-xl bg-slate-50/80 overflow-hidden self-stretch flex flex-col">
-                        <div className="px-4 py-2.5 bg-slate-200/80 border-b border-slate-200 flex items-center gap-2">
-                          <Building2 size={16} className="text-slate-600" />
-                          <span className="text-sm font-bold text-slate-700 uppercase tracking-wide">Vendor Details</span>
-                        </div>
-                        <div className="p-3 text-sm">
-                          {formData.vendorId && (() => {
-                            const v = vendors.find((x: any) => x.id === formData.vendorId);
-                            if (!v) return <p className="text-slate-400">กำลังโหลด...</p>;
-                            return (
-                              <div className="space-y-1.5 text-slate-700">
-                                <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">ชื่อ:</span><span className="font-medium min-w-0 break-words">{v.name || "-"}</span></div>
-                                {v.code && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">รหัส:</span><span className="min-w-0 break-words">{v.code}</span></div>}
-                                {v.address && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">ที่อยู่:</span><span className="min-w-0 whitespace-pre-wrap break-words">{v.address}</span></div>}
-                                {v.tel && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">โทร:</span><span className="min-w-0 break-words">{v.tel}</span></div>}
-                                {(v.creditTerm != null && v.creditTerm !== "") && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">เครดิตเทอม:</span><span className="min-w-0">{v.creditTerm}</span></div>}
-                                {v.type && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">ประเภท:</span><span className="min-w-0">{v.type}</span></div>}
+                          {/* PR Attachments Section */}
+                          {formData.selectedPrIds.length > 0 && (
+                            <div className="border-t border-slate-200 bg-white">
+                              <div className="px-4 py-2.5 bg-slate-100/80 border-b border-slate-200 flex items-center gap-2">
+                                <Paperclip size={16} className="text-slate-600" />
+                                <span className="text-sm font-bold text-slate-700 uppercase tracking-wide">เอกสารแนบจาก PR</span>
                               </div>
-                            );
-                          })()}
-                          {!formData.vendorId && (
-                            <p className="text-slate-400 italic">เลือก Vendor ทางซ้ายเพื่อดูข้อมูล</p>
-                          )}
-                        </div>
+                              <div className="p-3 text-sm max-h-40 overflow-y-auto">
+                                {(() => {
+                                  const prAttachments = formData.selectedPrIds.map((prId: string) => {
+                                    const pr = prs.find((p: any) => p.id === prId);
+                                    if (!pr) return null;
 
-                        {/* PR Attachments Section */}
-                        {formData.selectedPrIds.length > 0 && (
-                          <div className="border-t border-slate-200 bg-white">
-                            <div className="px-4 py-2.5 bg-slate-100/80 border-b border-slate-200 flex items-center gap-2">
-                              <Paperclip size={16} className="text-slate-600" />
-                              <span className="text-sm font-bold text-slate-700 uppercase tracking-wide">เอกสารแนบจาก PR</span>
-                            </div>
-                            <div className="p-3 text-sm max-h-40 overflow-y-auto">
-                              {(() => {
-                                // Get all attachments from selected PRs
-                                const prAttachments = formData.selectedPrIds.map((prId: string) => {
-                                  const pr = prs.find((p: any) => p.id === prId);
-                                  if (!pr) return null;
+                                    const attachments = [];
 
-                                  const attachments = [];
+                                    if (pr.attachmentUrl && pr.attachmentName) {
+                                      attachments.push({
+                                        prNo: pr.prNo,
+                                        prId: pr.id,
+                                        name: pr.attachmentName,
+                                        url: pr.attachmentUrl,
+                                        type: 'main'
+                                      });
+                                    }
 
-                                  // Add main attachment if exists
-                                  if (pr.attachmentUrl && pr.attachmentName) {
-                                    attachments.push({
-                                      prNo: pr.prNo,
-                                      prId: pr.id,
-                                      name: pr.attachmentName,
-                                      url: pr.attachmentUrl,
-                                      type: 'main'
-                                    });
+                                    if (pr.attachments && Array.isArray(pr.attachments)) {
+                                      pr.attachments.forEach((att: any, idx: number) => {
+                                        if (att.url && att.name) {
+                                          attachments.push({
+                                            prNo: pr.prNo,
+                                            prId: pr.id,
+                                            name: att.name,
+                                            url: att.url,
+                                            type: 'additional',
+                                            index: idx
+                                          });
+                                        }
+                                      });
+                                    }
+
+                                    return attachments;
+                                  }).filter(Boolean).flat();
+
+                                  if (prAttachments.length === 0) {
+                                    return (
+                                      <div className="text-center py-4">
+                                        <Paperclip size={24} className="mx-auto mb-2 text-slate-300" />
+                                        <p className="text-slate-400 text-xs">ไม่มีเอกสารแนบใน PR ที่เลือก</p>
+                                      </div>
+                                    );
                                   }
 
-                                  // Add additional attachments if they exist
-                                  if (pr.attachments && Array.isArray(pr.attachments)) {
-                                    pr.attachments.forEach((att: any, idx: number) => {
-                                      if (att.url && att.name) {
-                                        attachments.push({
-                                          prNo: pr.prNo,
-                                          prId: pr.id,
-                                          name: att.name,
-                                          url: att.url,
-                                          type: 'additional',
-                                          index: idx
-                                        });
-                                      }
-                                    });
-                                  }
-
-                                  return attachments;
-                                }).filter(Boolean).flat();
-
-                                if (prAttachments.length === 0) {
                                   return (
-                                    <div className="text-center py-4">
-                                      <Paperclip size={24} className="mx-auto mb-2 text-slate-300" />
-                                      <p className="text-slate-400 text-xs">ไม่มีเอกสารแนบใน PR ที่เลือก</p>
+                                    <div className="space-y-2">
+                                      {prAttachments.map((attachment: any, idx: number) => (
+                                        <div key={`${attachment.prId}-${attachment.type}-${attachment.index || 0}`}
+                                          className="flex items-center gap-2 p-2 bg-slate-50 rounded-lg border border-slate-200 hover:bg-blue-50 hover:border-blue-300 transition-colors">
+                                          <div className="flex-shrink-0">
+                                            <Paperclip size={14} className="text-slate-500" />
+                                          </div>
+                                          <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 mb-1">
+                                              <span className="text-xs font-semibold text-slate-700">{attachment.prNo}</span>
+                                              <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 text-slate-600 rounded-full">
+                                                {attachment.type === 'main' ? 'หลัก' : 'เพิ่มเติม'}
+                                              </span>
+                                            </div>
+                                            <p className="text-xs text-slate-600 truncate" title={attachment.name}>
+                                              {attachment.name}
+                                            </p>
+                                          </div>
+                                          <div className="flex-shrink-0">
+                                            <a
+                                              href={attachment.url}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-blue-600 hover:text-blue-800 hover:bg-blue-100 transition-colors"
+                                              title="เปิดไฟล์"
+                                              onClick={(e) => e.stopPropagation()}
+                                            >
+                                              <FileOutput size={14} />
+                                            </a>
+                                          </div>
+                                        </div>
+                                      ))}
                                     </div>
                                   );
-                                }
-
-                                return (
-                                  <div className="space-y-2">
-                                    {prAttachments.map((attachment: any, idx: number) => (
-                                      <div key={`${attachment.prId}-${attachment.type}-${attachment.index || 0}`}
-                                        className="flex items-center gap-2 p-2 bg-slate-50 rounded-lg border border-slate-200 hover:bg-blue-50 hover:border-blue-300 transition-colors">
-                                        <div className="flex-shrink-0">
-                                          <Paperclip size={14} className="text-slate-500" />
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                          <div className="flex items-center gap-2 mb-1">
-                                            <span className="text-xs font-semibold text-slate-700">{attachment.prNo}</span>
-                                            <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 text-slate-600 rounded-full">
-                                              {attachment.type === 'main' ? 'หลัก' : 'เพิ่มเติม'}
-                                            </span>
-                                          </div>
-                                          <p className="text-xs text-slate-600 truncate" title={attachment.name}>
-                                            {attachment.name}
-                                          </p>
-                                        </div>
-                                        <div className="flex-shrink-0">
-                                          <a
-                                            href={attachment.url}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-blue-600 hover:text-blue-800 hover:bg-blue-100 transition-colors"
-                                            title="เปิดไฟล์"
-                                            onClick={(e) => e.stopPropagation()}
-                                          >
-                                            <FileOutput size={14} />
-                                          </a>
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                );
-                              })()}
+                                })()}
+                              </div>
                             </div>
-                          </div>
-                        )}
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -4330,38 +4360,116 @@ const POView = React.memo(() => {
                     </div>
                   )}
 
-                  <div className="mt-4 mb-4 border border-slate-200 rounded-xl bg-white shadow-sm overflow-hidden">
-                    <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 flex items-center gap-2">
-                      <Upload size={14} className="text-slate-500 shrink-0" />
-                      <span className="text-[11px] font-bold text-slate-700">แนบเอกสาร (หลายไฟล์) — อัปโหลด Firebase Storage</span>
+                  <div className="mt-4 mb-4 grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+                    <div className="border border-slate-200 rounded-xl bg-white shadow-sm overflow-hidden h-full">
+                      <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 flex items-center gap-2">
+                        <Upload size={14} className="text-slate-500 shrink-0" />
+                        <span className="text-[11px] font-bold text-slate-700">แนบเอกสาร (หลายไฟล์) — อัปโหลด Firebase Storage</span>
+                      </div>
+                      <div className="p-4 space-y-2">
+                        <input
+                          type="file"
+                          multiple
+                          className="block w-full text-xs text-slate-600 file:mr-2 file:py-1 file:px-2 file:rounded-lg file:border-0 file:text-[11px] file:font-medium file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"
+                          onChange={(e) => {
+                            const files = Array.from(e.target.files || []);
+                            if (files.length) setPoPendingFiles((prev) => [...prev, ...files]);
+                            e.target.value = "";
+                          }}
+                        />
+                        {(poSavedAttachments.length > 0 || poPendingFiles.length > 0) && (
+                          <ul className="text-xs space-y-1 max-h-32 overflow-y-auto">
+                            {poSavedAttachments.map((a, i) => (
+                              <li key={`saved-${i}-${a.url}`} className="flex items-center justify-between gap-2 text-slate-600 border border-slate-100 rounded-lg px-2 py-1">
+                                <a href={a.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline truncate min-w-0">{a.name}</a>
+                                <button type="button" className="text-red-500 shrink-0 text-[10px] font-medium" onClick={() => setPoSavedAttachments((prev) => prev.filter((_, j) => j !== i))}>ลบ</button>
+                              </li>
+                            ))}
+                            {poPendingFiles.map((f, i) => (
+                              <li key={`pend-${i}-${f.name}`} className="flex items-center justify-between gap-2 text-amber-800 bg-amber-50/80 border border-amber-100 rounded-lg px-2 py-1">
+                                <span className="truncate min-w-0">{f.name} <span className="text-amber-600">(รออัปโหลด)</span></span>
+                                <button type="button" className="text-red-500 shrink-0 text-[10px] font-medium" onClick={() => setPoPendingFiles((prev) => prev.filter((_, j) => j !== i))}>ลบ</button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
                     </div>
-                    <div className="p-4 space-y-2">
-                      <input
-                        type="file"
-                        multiple
-                        className="block w-full text-xs text-slate-600 file:mr-2 file:py-1 file:px-2 file:rounded-lg file:border-0 file:text-[11px] file:font-medium file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"
-                        onChange={(e) => {
-                          const files = Array.from(e.target.files || []);
-                          if (files.length) setPoPendingFiles((prev) => [...prev, ...files]);
-                          e.target.value = "";
-                        }}
-                      />
-                      {(poSavedAttachments.length > 0 || poPendingFiles.length > 0) && (
-                        <ul className="text-xs space-y-1 max-h-32 overflow-y-auto">
-                          {poSavedAttachments.map((a, i) => (
-                            <li key={`saved-${i}-${a.url}`} className="flex items-center justify-between gap-2 text-slate-600 border border-slate-100 rounded-lg px-2 py-1">
-                              <a href={a.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline truncate min-w-0">{a.name}</a>
-                              <button type="button" className="text-red-500 shrink-0 text-[10px] font-medium" onClick={() => setPoSavedAttachments((prev) => prev.filter((_, j) => j !== i))}>ลบ</button>
-                            </li>
-                          ))}
-                          {poPendingFiles.map((f, i) => (
-                            <li key={`pend-${i}-${f.name}`} className="flex items-center justify-between gap-2 text-amber-800 bg-amber-50/80 border border-amber-100 rounded-lg px-2 py-1">
-                              <span className="truncate min-w-0">{f.name} <span className="text-amber-600">(รออัปโหลด)</span></span>
-                              <button type="button" className="text-red-500 shrink-0 text-[10px] font-medium" onClick={() => setPoPendingFiles((prev) => prev.filter((_, j) => j !== i))}>ลบ</button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
+
+                    <div className="border border-slate-200 rounded-xl bg-white shadow-sm overflow-hidden h-full">
+                      <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 flex items-center gap-2">
+                        <Package size={14} className="text-slate-500 shrink-0" />
+                        <span className="text-[11px] font-bold text-slate-700">Flow อัตโนมัติ</span>
+                      </div>
+                      <div className="p-3 space-y-2">
+                        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <label className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-900 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={!!formData.payBeforeReceiveChecked}
+                                onChange={(e) => {
+                                  if (e.target.checked) openInvoiceSetupModal();
+                                  else clearPayBeforeReceiveFlow();
+                                }}
+                                className="rounded border-amber-300 text-amber-600 focus:ring-amber-200"
+                              />
+                              <span>จ่ายก่อนรับของ</span>
+                            </label>
+                            {formData.payBeforeReceiveChecked && (
+                              <button
+                                type="button"
+                                onClick={openInvoiceSetupModal}
+                                className="text-[11px] font-semibold text-amber-700 hover:text-amber-900"
+                              >
+                                แก้ไข Invoice
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2">
+                            <label className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold ${formData.payBeforeReceiveChecked ? "border-emerald-200 bg-emerald-50 text-emerald-900 cursor-pointer" : "border-slate-200 bg-slate-50 text-slate-400 cursor-not-allowed"}`}>
+                              <input
+                                type="checkbox"
+                                checked={!!formData.receivedAfterPaymentChecked}
+                                disabled={!formData.payBeforeReceiveChecked}
+                                onChange={(e) => {
+                                  if (e.target.checked) openReceiveSetupModal();
+                                  else clearReceivedAfterPaymentFlow();
+                                }}
+                                className="rounded border-emerald-300 text-emerald-600 focus:ring-emerald-200 disabled:opacity-50"
+                              />
+                              <span>รับของแล้ว</span>
+                            </label>
+                            {formData.receivedAfterPaymentChecked && (
+                              <button
+                                type="button"
+                                onClick={openReceiveSetupModal}
+                                className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900"
+                              >
+                                แก้ไข Receive
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {(formData.payBeforeReceiveChecked || formData.receivedAfterPaymentChecked) && (
+                          <div className="flex flex-wrap gap-2 text-[11px]">
+                            {formData.payBeforeReceiveChecked && formData.payBeforeReceiveInvoiceSetup && (
+                              <div className="rounded-lg border border-amber-100 bg-amber-50/70 px-3 py-1.5 text-slate-700">
+                                Invoice: <span className="font-semibold text-slate-900">{formData.payBeforeReceiveInvoiceSetup.invNo || "-"}</span>
+                                {" • "}ชำระ: <span className="font-semibold text-slate-900">{formData.payBeforeReceiveInvoiceSetup.paymentType || "-"}</span>
+                              </div>
+                            )}
+                            {formData.receivedAfterPaymentChecked && formData.receivedAfterPaymentSetup && (
+                              <div className="rounded-lg border border-emerald-100 bg-emerald-50/70 px-3 py-1.5 text-slate-700">
+                                Receive: <span className="font-semibold text-slate-900">{formData.receivedAfterPaymentSetup.documentNo || "-"}</span>
+                                {" • "}วันที่: <span className="font-semibold text-slate-900">{formData.receivedAfterPaymentSetup.receivedDate || "-"}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
 

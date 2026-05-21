@@ -924,6 +924,7 @@ export const AppDataProvider = ({
       const poOriginalSubtotal = Math.max(0, poItemsSubtotal - (Number(po.discount) || 0));
       await updateDoc(doc(db, "artifacts", appId, "public", "data", "pos", id), {
         status: "Draft",
+        statusNow: "Draft",
         originalPoAmount: poOriginalSubtotal,
         pdfUrl: deleteField(),
         pdfPath: deleteField(),

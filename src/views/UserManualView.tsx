@@ -28,6 +28,20 @@ interface WorkflowSection {
   notes?: string[];
 }
 
+interface MindMapNode {
+  label: string;
+  type: "pending" | "approved" | "rejected" | "info" | "done";
+}
+
+interface MindMapBranch {
+  title: string;
+  subtitle: string;
+  color: string;
+  borderColor: string;
+  nodes: MindMapNode[];
+  notes?: string[];
+}
+
 // ─── Role Badge ───────────────────────────────────────────────────────────────
 const RoleBadge = ({ role, color }: { role: string; color: string }) => (
   <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${color}`}>
@@ -51,6 +65,87 @@ const StatusBadge = ({ label, type }: { label: string; type: "pending" | "approv
     </span>
   );
 };
+
+const MindMapNodeBadge = ({ node }: { node: MindMapNode }) => (
+  <div className="flex items-center gap-2 min-w-0">
+    <StatusBadge label={node.label} type={node.type} />
+  </div>
+);
+
+const MindMapBranchCard = ({ branch }: { branch: MindMapBranch }) => (
+  <div className={`rounded-2xl border ${branch.borderColor} bg-gradient-to-br ${branch.color} p-4 shadow-lg`}>
+    <div className="mb-3">
+      <h3 className="text-sm font-bold text-white">{branch.title}</h3>
+      <p className="text-[11px] text-slate-300 mt-1">{branch.subtitle}</p>
+    </div>
+
+    <div className="flex flex-col gap-2">
+      {branch.nodes.map((node, idx) => (
+        <div key={`${branch.title}-${node.label}-${idx}`} className="flex items-center gap-2">
+          <MindMapNodeBadge node={node} />
+          {idx < branch.nodes.length - 1 && <ArrowRight size={14} className="text-slate-400 flex-shrink-0" />}
+        </div>
+      ))}
+    </div>
+
+    {branch.notes && branch.notes.length > 0 && (
+      <div className="mt-3 space-y-1">
+        {branch.notes.map((note, idx) => (
+          <p key={`${branch.title}-note-${idx}`} className="text-[11px] text-slate-300 leading-relaxed">
+            • {note}
+          </p>
+        ))}
+      </div>
+    )}
+  </div>
+);
+
+const POApprovalMindMap = () => (
+  <div id="po-status-map" className="rounded-2xl border-2 border-cyan-600 overflow-hidden shadow-lg mb-8">
+    <div className="bg-gradient-to-r from-cyan-700 to-sky-600 px-5 py-4 flex items-center gap-3">
+      <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
+        <ShoppingCart size={20} className="text-white" />
+      </div>
+      <div>
+        <div className="text-white font-bold text-base">PO Approval Status Map</div>
+        <div className="text-white/70 text-xs">ผัง Step สถานะ PO หลัง Approve ไปจนถึงสายจ่ายเงิน</div>
+      </div>
+    </div>
+
+    <div className="bg-slate-800 p-5">
+      <div className="rounded-2xl border border-slate-600 bg-slate-900/70 p-4 mb-5">
+        <div className="flex flex-wrap items-center gap-2">
+          {PO_APPROVAL_ROOT.map((node, idx) => (
+            <React.Fragment key={`root-${node.label}-${idx}`}>
+              <MindMapNodeBadge node={node} />
+              {idx < PO_APPROVAL_ROOT.length - 1 && <ArrowRight size={16} className="text-cyan-300" />}
+            </React.Fragment>
+          ))}
+        </div>
+        <p className="text-xs text-slate-400 mt-3">
+          หลังขั้น <span className="text-white font-semibold">Pending GM</span> ระบบจะแตก branch ตามประเภทการรับของและการตั้งค่า Invoice/Payment
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        {PO_APPROVAL_BRANCHES.map((branch) => (
+          <MindMapBranchCard key={branch.title} branch={branch} />
+        ))}
+      </div>
+
+      <div className="mt-5 rounded-2xl border border-slate-600 bg-slate-900/70 p-4">
+        <div className="flex flex-wrap items-center gap-2 mb-2">
+          <StatusBadge label="paid" type="done" />
+          <span className="text-slate-400 text-xs">= จ่ายเงินเสร็จในสาย Invoice/Billing/Pay</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusBadge label="Paid" type="done" />
+          <span className="text-slate-400 text-xs">= จ่ายก่อนรับของและรับของครบแล้ว หรือระบบ Auto receive หลังจ่ายเงิน</span>
+        </div>
+      </div>
+    </div>
+  </div>
+);
 
 // ─── Workflow Step Row ────────────────────────────────────────────────────────
 const StepRow = ({ step, index, total }: { step: Step; index: number; total: number }) => (
@@ -249,15 +344,15 @@ const WORKFLOWS: WorkflowSection[] = [
         actor: "GM / Administrator",
         actorColor: "bg-green-900 text-green-200 border-green-600",
         action: "ตรวจสอบและอนุมัติ PO ขั้นสุดท้าย",
-        result: "Pending GM → Approved ✅ / Received / Wait Pay",
-        note: "ขึ้นอยู่กับ Receive Type ที่ตั้งไว้",
+        result: "Pending GM → Approved / Received / Wait Invoice / Paid",
+        note: "ขึ้นอยู่กับ Receive Type และการตั้งค่า Pay before receive",
       },
       {
         actor: "PM / PCM / Staff",
         actorColor: "bg-teal-900 text-teal-200 border-teal-600",
         action: "รับของเข้าระบบ (Receive)",
-        result: "Approved → Received ✅",
-        note: "เฉพาะ PO ปกติ (ไม่ใช่ Receive Auto)",
+        result: "Approved / paid → Received / Paid ✅",
+        note: "PO ปกติจะไป Received, ส่วน Pay before receive รับครบแล้วจะเป็น Paid",
       },
       {
         actor: "ระบบ Auto / Procurement",
@@ -275,7 +370,9 @@ const WORKFLOWS: WorkflowSection[] = [
     ],
     notes: [
       "Receive Auto: ระบบจะสร้างรายการ Receive ให้อัตโนมัติ รับครบ 100% ทุกบรรทัด และเปลี่ยน PO เป็น Received ทันทีหลัง GM Approve",
-      "Pay Before Receive: PO จะเป็น Wait Pay ก่อน รอจ่ายเงินแล้วค่อย Receive",
+      "Pay Before Receive: PO จะเป็น Wait Invoice ก่อน สร้าง Invoice และสายจ่ายเงินให้เสร็จ แล้วค่อย Receive",
+      "ถ้า Invoice เป็นเครดิต: สถานะจะไล่เป็น Invcredit → Inpay → paid",
+      "ถ้า Invoice เป็นเงินสด/โอน/เช็ค: หลังออก Invoice สถานะจะเป็น paid ได้ทันที",
       "การขอแก้ไข PO ที่ Approved/Received/Closed PO แล้ว ต้องผ่านการอนุญาตจาก PCM หรือ GM",
     ],
   },
@@ -461,6 +558,81 @@ const ROLE_MATRIX = [
   { role: "Administrator", pr: "ทั้งหมด",          po: "ทั้งหมด",         payment: "ทั้งหมด",        receive: "ทั้งหมด",   invoice: "ทั้งหมด" },
 ];
 
+const PO_APPROVAL_ROOT: MindMapNode[] = [
+  { label: "Draft PO", type: "info" },
+  { label: "Pending PCM", type: "pending" },
+  { label: "Pending GM", type: "pending" },
+  { label: "GM Approve", type: "approved" },
+];
+
+const PO_APPROVAL_BRANCHES: MindMapBranch[] = [
+  {
+    title: "1. PO ปกติ",
+    subtitle: "อนุมัติแล้วรอรับของ จากนั้นค่อยวางบิลและจ่ายเงิน",
+    color: "from-rose-900/70 to-slate-900",
+    borderColor: "border-rose-500/40",
+    nodes: [
+      { label: "Approved", type: "approved" },
+      { label: "Receive", type: "info" },
+      { label: "Received", type: "done" },
+      { label: "Invoice", type: "info" },
+      { label: "Invcredit / paid", type: "pending" },
+      { label: "Inpay", type: "pending" },
+      { label: "paid", type: "done" },
+    ],
+    notes: [
+      "ถ้า Invoice เป็นเครดิต ระบบจะผ่าน Invcredit แล้วไป Billing/Pay จนเป็น paid",
+      "ถ้า Invoice เป็นเงินสด/โอน/เช็ค ระบบสามารถข้าม Inpay แล้วไป paid ได้",
+    ],
+  },
+  {
+    title: "2. Receive Auto",
+    subtitle: "GM Approve แล้วระบบสร้าง Receive อัตโนมัติ",
+    color: "from-emerald-900/70 to-slate-900",
+    borderColor: "border-emerald-500/40",
+    nodes: [
+      { label: "Received", type: "done" },
+      { label: "Invoice", type: "info" },
+      { label: "Invcredit / paid", type: "pending" },
+      { label: "Inpay", type: "pending" },
+      { label: "paid", type: "done" },
+    ],
+    notes: [
+      "ใช้เมื่อประเภทรับของเป็น Receive Auto",
+    ],
+  },
+  {
+    title: "3. Pay Before Receive",
+    subtitle: "ต้องจ่ายเงินก่อน แล้วจึงค่อยบันทึกรับของ",
+    color: "from-amber-900/70 to-slate-900",
+    borderColor: "border-amber-500/40",
+    nodes: [
+      { label: "Wait Invoice", type: "pending" },
+      { label: "Invoice", type: "info" },
+      { label: "Invcredit / paid", type: "pending" },
+      { label: "Inpay", type: "pending" },
+      { label: "paid", type: "done" },
+      { label: "Receive", type: "info" },
+      { label: "Paid", type: "done" },
+    ],
+    notes: [
+      "เมื่อ Receive ครบหลังจากจ่ายเงินแล้ว สถานะ PO จะเปลี่ยนจาก paid เป็น Paid",
+    ],
+  },
+  {
+    title: "4. Auto Pay + Auto Receive",
+    subtitle: "ตั้งค่า Invoice และ Receive ไว้ครบตั้งแต่ตอน Approve",
+    color: "from-cyan-900/70 to-slate-900",
+    borderColor: "border-cyan-500/40",
+    nodes: [
+      { label: "Paid", type: "done" },
+    ],
+    notes: [
+      "ระบบสามารถสร้าง Invoice และ Receive ให้อัตโนมัติ พร้อมเปลี่ยน PO เป็น Paid ทันที",
+    ],
+  },
+];
+
 const cellClass = (val: string) =>
   val === "-" ? "text-slate-500 text-center" :
   val === "ทั้งหมด" ? "text-purple-300 font-bold text-center" :
@@ -486,6 +658,15 @@ const UserManualView = React.memo(() => {
 
         {/* Quick nav */}
         <div className="flex flex-wrap gap-2 mt-5">
+          <button
+            onClick={() => {
+              const el = document.getElementById("po-status-map");
+              el?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border bg-cyan-700 border-cyan-500 text-white/90 hover:scale-105 transition-all"
+          >
+            <ShoppingCart size={12} /> PO Status Map
+          </button>
           {WORKFLOWS.map((w) => (
             <button
               key={w.id}
@@ -510,6 +691,8 @@ const UserManualView = React.memo(() => {
           </button>
         </div>
       </div>
+
+      <POApprovalMindMap />
 
       {/* Workflow Sections */}
       <div className="space-y-5 mb-10">

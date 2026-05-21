@@ -2497,14 +2497,14 @@ const PRView = React.memo(() => {
       {/* Modal สร้าง/แก้ไข PR — ทับ Header, เต็มความสูง, Footer เลื่อนตามเนื้อหา */}
       {isModalOpen && (
         <motion.div
-          className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[10010] p-4"
+          className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[10010] p-3 sm:p-5"
           initial="hidden"
           animate="visible"
           variants={modalOverlayVariants}
           transition={overlayTransition}
         >
           <motion.div
-            className="w-[90vw] max-w-[90vw] max-h-[92vh] flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+            className="w-full max-w-5xl xl:max-w-[1040px] max-h-[88vh] flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
             initial="hidden"
             animate="visible"
             variants={modalContentVariants}
