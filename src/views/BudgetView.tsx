@@ -3483,7 +3483,7 @@ const BudgetView = React.memo(() => {
                     {isColumnVisible("budget", "balance") && <ResizableTh tableId="budget" colKey="balance" className="py-3 px-4 text-right text-green-800 font-bold border-r" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.balance}>Balance</ResizableTh>}
                     {isColumnVisible("budget", "prTotal") && <ResizableTh tableId="budget" colKey="prTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.prTotal}>PR Total</ResizableTh>}
                     {isColumnVisible("budget", "poTotal") && <ResizableTh tableId="budget" colKey="poTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.poTotal}>PO Total</ResizableTh>}
-                    {isColumnVisible("budget", "nowStatus") && <ResizableTh tableId="budget" colKey="nowStatus" className="py-3 px-4 text-center" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.nowStatus}>Now Status</ResizableTh>}
+                    {false && isColumnVisible("budget", "nowStatus") && <ResizableTh tableId="budget" colKey="nowStatus" className="py-3 px-4 text-center" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.nowStatus}>Now Status</ResizableTh>}
                     {isColumnVisible("budget", "actions") && <th className="py-3 px-4 text-right" style={{ width: budgetMainLayout.scaled.actions }}>Actions</th>}
                   </tr>
                 </thead>
@@ -3672,7 +3672,7 @@ const BudgetView = React.memo(() => {
                               {formatCurrency(stats.poTotal)}
                             </td>
                           )}
-                          {isColumnVisible("budget", "nowStatus") && (
+                          {false && isColumnVisible("budget", "nowStatus") && (
                             <td className="py-1 px-3 min-w-0 overflow-hidden">
                               {/* ตาม requirement: Main row ไม่ต้องแสดง NOW STATUS */}
                             </td>
@@ -3862,7 +3862,7 @@ const BudgetView = React.memo(() => {
                                   </div>
                                 </td>}
                                 {(() => { const cnt = [isColumnVisible("budget", "balance"), isColumnVisible("budget", "prTotal"), isColumnVisible("budget", "poTotal")].filter(Boolean).length; return cnt > 0 ? <td colSpan={cnt} className="border-b border-slate-100"></td> : null; })()}
-                                {isColumnVisible("budget", "nowStatus") && <td className="py-0.5 px-3 text-center min-w-0 border-b border-slate-100">{renderNowStatusBadges((() => {
+                                {false && isColumnVisible("budget", "nowStatus") && <td className="py-0.5 px-3 text-center min-w-0 border-b border-slate-100">{renderNowStatusBadges((() => {
                                   const latest = pickLatestNowStatus(getNowStatus(b, stats, "SUB_ITEM", sub.id));
                                   return latest ? [latest] : [];
                                 })())}</td>}
@@ -3949,7 +3949,7 @@ const BudgetView = React.memo(() => {
                             ))}
                             {/* เว้นพื้นที่ว่างใต้รายการ Sub เมื่อกาง (แยกตารางย่อยจากตารางหลัก) */}
                             <tr className="bg-transparent" aria-hidden="true">
-                              <td colSpan={["checkbox", "code", "description", "budget", "status", "attachment", "balance", "prTotal", "poTotal", "nowStatus", "actions"].filter(k => k === "checkbox" ? (budgetCategory !== "OVERVIEW" && isColumnVisible("budget", "checkbox")) : isColumnVisible("budget", k)).length || 1} className="py-4 border-0 bg-slate-100/50"></td>
+                              <td colSpan={["checkbox", "code", "description", "budget", "status", "attachment", "balance", "prTotal", "poTotal", "actions"].filter(k => k === "checkbox" ? (budgetCategory !== "OVERVIEW" && isColumnVisible("budget", "checkbox")) : isColumnVisible("budget", k)).length || 1} className="py-4 border-0 bg-slate-100/50"></td>
                             </tr>
                           </>
                         }

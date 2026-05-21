@@ -73,7 +73,7 @@ export function syncReceiveSetupItems(items = [], setupItems = []) {
 }
 
 export function getInvoiceStatusByPaymentType(paymentType = "เครดิต") {
-  return String(paymentType || "").trim() === "เครดิต" ? "INVCR" : "paid";
+  return String(paymentType || "").trim() === "เครดิต" ? "Invcredit" : "paid";
 }
 
 export function buildConfiguredInvoiceData({

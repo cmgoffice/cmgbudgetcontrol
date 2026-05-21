@@ -313,7 +313,11 @@ export const AppDataProvider = ({
   // projects ใช้ onSnapshot (realtime) — sync ทันทีทุก tab/user โดยไม่ต้องรีเฟรช
   // (ย้ายจาก getDocs one-shot เพื่อแก้ปัญหาหน้าโครงการไม่ realtime บน production)
 
-  const canSyncInvoice = rolePermissionsReady && hasModuleAccessForCurrentRoles("invoice");
+  const canSyncInvoice =
+    rolePermissionsReady &&
+    (hasModuleAccessForCurrentRoles("invoice") ||
+      hasModuleAccessForCurrentRoles("billing") ||
+      hasModuleAccessForCurrentRoles("pay"));
   const canSyncReceive = rolePermissionsReady && hasModuleAccessForCurrentRoles("receive");
 
   // ── Firebase sync (realtime ผ่าน onSnapshot — แก้ไขที่ใดก็ตามจะอัปเดตทุกที่โดยไม่ต้องรีเฟรช) ─

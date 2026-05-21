@@ -61,6 +61,9 @@ const PAYMENT_TYPE_BADGE_STYLES: Record<string, string> = {
   เงินสด: "bg-rose-100 text-rose-800 ring-1 ring-inset ring-rose-200",
 };
 
+const getPoInvoiceStatus = (paymentType?: string) =>
+  getInvoiceStatusByPaymentType(paymentType);
+
 const InvoiceView = React.memo(() => {
   const {
     pos,
@@ -197,11 +200,13 @@ const InvoiceView = React.memo(() => {
     if (!selectedProjectId) return [];
     
     // โฟลวปกติ และ Pay before receive
-    const validPOs = pos.filter(
-      (po) =>
+    const validPOs = pos.filter((po) => {
+      const currentStatus = po.statusNow || po.status;
+      return (
         po.projectId === selectedProjectId &&
-        (po.status === "Received" || po.status === "Wait Invoice")
-    );
+        (currentStatus === "Received" || currentStatus === "Wait Invoice")
+      );
+    });
 
     // ดึงข้อมูลจากรายการ Payment เฉพาะสถานะ Wait Pay (กรองอันที่มีใบแจ้งหนี้แล้วออก)
     const validPayments = (payments || [])
@@ -278,6 +283,15 @@ const InvoiceView = React.memo(() => {
       "bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-200",
     []
   );
+
+  const getInvoiceDisplayStatus = useCallback((invoice: any) => {
+    const status = String(invoice?.status || "").trim();
+    if (status.toLowerCase() === "inpay") return "Inpay";
+    const paymentType = String(invoice?.paymentType || "").trim();
+    if (["เงินสด", "โอน", "เช็ค"].includes(paymentType)) return "paid";
+    if (paymentType === "เครดิต") return "Invcredit";
+    return status || "-";
+  }, []);
 
   const closeInvoiceModal = useCallback((force = false) => {
     if (saving && !force) return;
@@ -514,6 +528,7 @@ const InvoiceView = React.memo(() => {
         invoiceForm.isDeposit && Number(invoiceForm.depositAmount || 0) > 0
           ? Number(invoiceForm.depositAmount || 0)
           : calculatedAmount;
+      const invoiceStatus = getPoInvoiceStatus(invoiceForm.paymentType);
       const invoicePayload = {
         invNo: invoiceForm.invNo.trim(),
         invDate: invoiceForm.invDate,
@@ -548,7 +563,7 @@ const InvoiceView = React.memo(() => {
           editingInvoice?.description || poDescription(viewingPO)
         ),
         projectId: editingInvoice?.projectId || selectedProjectId,
-        status: getInvoiceStatusByPaymentType(invoiceForm.paymentType),
+        status: invoiceStatus,
         createdBy:
           editingInvoice?.createdBy ||
           `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim(),
@@ -562,6 +577,17 @@ const InvoiceView = React.memo(() => {
           { skipLog: true }
         );
         if (success) {
+          if (!viewingPO.isPaymentSubcontract) {
+            await updateData(
+              "pos",
+              viewingPO.id,
+              {
+                status: invoiceStatus,
+                statusNow: invoiceStatus,
+              },
+              { skipLog: true }
+            );
+          }
           await logAction(
             "Edit Invoice",
             `แก้ไข Invoice ${invoiceForm.invNo.trim()} (${editingInvoice.invNo || editingInvoice.id})`,
@@ -579,22 +605,14 @@ const InvoiceView = React.memo(() => {
           selectedProjectId
         );
 
-        const isPayBeforeReceive =
-          viewingPO.receiveType === "Pay before receive" || viewingPO.status === "Wait Invoice";
-
         if (!viewingPO.isPaymentSubcontract) {
           await updateData(
             "pos",
             viewingPO.id,
-            isPayBeforeReceive
-              ? {
-                  status: "Approved",
-                  statusNow: "Approved",
-                }
-              : {
-                  status: "Invoice Issue",
-                  statusNow: "Invoice Issue",
-              },
+            {
+              status: invoiceStatus,
+              statusNow: invoiceStatus,
+            },
             { skipLog: true }
           );
         }
@@ -1034,7 +1052,7 @@ const InvoiceView = React.memo(() => {
                         )}
                       </td>
                       <td className="py-1.5 px-3 text-center">
-                        <Badge status={inv.status} />
+                        <Badge status={getInvoiceDisplayStatus(inv)} />
                       </td>
                       <td className="hidden py-1.5 px-3 md:table-cell">
                         <div className="flex items-center justify-center gap-1">
@@ -1193,7 +1211,7 @@ const InvoiceView = React.memo(() => {
                         )}
                       </td>
                       <td className="py-1.5 px-3 text-center">
-                        <Badge status={inv.status} />
+                        <Badge status={getInvoiceDisplayStatus(inv)} />
                       </td>
                       <td className="py-1.5 px-3">
                         <div className="flex items-center justify-center gap-1">

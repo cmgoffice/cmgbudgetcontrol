@@ -1263,6 +1263,9 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     "Rejected": "bg-red-50 text-red-700 border-red-200",
     "Draft": "bg-slate-50 text-slate-500 border-slate-200",
     "Paid": "bg-teal-50 text-teal-700 border-teal-200",
+    "paid": "bg-teal-50 text-teal-700 border-teal-200",
+    "Invcredit": "bg-amber-50 text-amber-800 border-amber-300",
+    "Inpay": "bg-sky-50 text-sky-800 border-sky-300",
     "Partial": "bg-yellow-50 text-yellow-700 border-yellow-200",
   };
 
@@ -1473,7 +1476,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
   const allStatuses = isPR
     ? ["Approved", "PO Issued", "Edit Budget", "Pending Close", "Closed PR", "Closed PR Auto", "Pending Active PR", "Pending MD", "Pending GM", "Pending PM", "Pending CM", "Rejected"]
-    : ["Approved", "Pending PCM", "Pending GM", "PO Edit Pending PCM", "PO Edit Pending GM", "Rejected", "Paid", "Partial", "Draft", "Pending Close PO", "Wait Invoice", "Invoice Issue", "Received", "Closed PO"];
+    : ["Approved", "Pending PCM", "Pending GM", "PO Edit Pending PCM", "PO Edit Pending GM", "Rejected", "paid", "Invcredit", "Inpay", "Paid", "Partial", "Partial Receive", "Draft", "Pending Close PO", "Wait Invoice", "Received", "Closed PO"];
 
   const handlePRDownloadPDF = (pr: any) => {
     const docId = pr.id || pr.prNo || "pr";
@@ -1544,9 +1547,14 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   };
 
   const rows = isPR ? prs : pos;
+  const getRowStatus = React.useCallback((row: any) => {
+    if (isPR) return row?.status || "Draft";
+    return row?.statusNow || row?.status || "Draft";
+  }, [isPR]);
 
   const filtered = React.useMemo(() => rows.filter((r: any) => {
     const noField = isPR ? r.prNo : r.poNo;
+    const rowStatus = getRowStatus(r);
     const lowerSearch = (searchTerm || "").toLowerCase();
     const poRefText = isPR
       ? pos
@@ -1578,7 +1586,9 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
         poDateText,
         poItemCountText,
         poAmountText,
+        rowStatus,
         r.status,
+        r.statusNow,
       ]
         .filter(Boolean)
         .join(" ")
@@ -1591,10 +1601,13 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       (r.requestor || r.vendor || "").toLowerCase().includes(lowerSearch) ||
       (poRefText || "").toLowerCase().includes(lowerSearch) ||
       (!isPR && poSearchBlob.includes(lowerSearch));
-    const matchStatus = filterStatus === "all" || r.status === filterStatus;
+    const matchStatus =
+      filterStatus === "all" ||
+      rowStatus === filterStatus ||
+      (!isPR && (r.status === filterStatus || r.statusNow === filterStatus));
     const matchProject = filterProject === "all" || r.projectId === filterProject;
     return matchSearch && matchStatus && matchProject;
-  }), [filterProject, filterStatus, getPoLinkedPrMeta, isPR, pos, projects, rows, searchTerm, vendors]);
+  }), [filterProject, filterStatus, getPoLinkedPrMeta, getRowStatus, isPR, pos, projects, rows, searchTerm, vendors]);
 
   const getShortTypeLabel = React.useCallback((typeValue: any) => {
     const raw = String(typeValue || "").trim();
@@ -1626,10 +1639,10 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       return;
     }
     if (!typeTabs.some((tab) => tab.key === activeTypeTab)) {
-      setActiveTypeTab(typeTabs[0].key);
+      setActiveTypeTab(ALL_TYPE_TAB_KEY);
       setCurrentPage(1);
     }
-  }, [activeTypeTab, currentPage, typeTabs]);
+  }, [ALL_TYPE_TAB_KEY, activeTypeTab, currentPage, typeTabs]);
 
   React.useEffect(() => {
     setCurrentPage(1);
@@ -1773,7 +1786,8 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                   const itemCount = isPR
                     ? (r.items?.length || 0)
                     : (r.items?.length || (r.selectedPrIds?.length || 0));
-                  const statusClass = statusColors[r.status] || "bg-slate-50 text-slate-500 border-slate-200";
+                  const displayStatus = getRowStatus(r);
+                  const statusClass = statusColors[displayStatus] || "bg-slate-50 text-slate-500 border-slate-200";
                   const isEven = idx % 2 === 0;
                   const vendorName = !isPR
                     ? (r.vendor || (vendors || []).find((v: any) => v.id === r.vendorId)?.name || "-")
@@ -1901,7 +1915,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                       {isColumnVisible(tblId, "status") && (
                         <td className="px-2 py-0.5 text-center">
                           <span className={`inline-flex items-center px-2 py-0 rounded-full border text-[10px] font-semibold whitespace-nowrap ${statusClass}`}>
-                            {r.status || "Draft"}
+                            {displayStatus}
                           </span>
                         </td>
                       )}

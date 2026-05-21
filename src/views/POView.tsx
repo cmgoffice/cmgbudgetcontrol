@@ -2231,9 +2231,17 @@ const POView = React.memo(() => {
   const displayedPOsPending = useMemo(() => {
     const q = (poTableSearchText || "").trim().toLowerCase();
     const pendingActionStatuses = ["Pending PCM", "Pending GM", PO_REVISION_PENDING_PCM, PO_REVISION_PENDING_GM, "Rejected", "Draft", "Pending Close PO"];
+    const hiddenSystemStatuses = ["Received", "Closed PO", "Invoice Issue", "Paid", "paid", "Invcredit", "Inpay"];
 
     const base = pos
-      .filter((po) => po.projectId === selectedProjectId && pendingActionStatuses.includes(po.status))
+      .filter((po) => {
+        const currentStatus = po.statusNow || po.status;
+        return (
+          po.projectId === selectedProjectId &&
+          pendingActionStatuses.includes(po.status) &&
+          !hiddenSystemStatuses.includes(currentStatus)
+        );
+      })
       .map((po) => {
         // ใช้ข้อมูล Vendor จาก PO object โดยตรง (fallback ไปที่ vendors array ถ้าไม่มี)
         const vendor = po.vendorName 
@@ -2255,6 +2263,7 @@ const POView = React.memo(() => {
           po.poNo,
           po.poType,
           po.status,
+          po.statusNow,
           po.projectId,
           po.requiredDate,
           po.poDate,
@@ -2292,15 +2301,18 @@ const POView = React.memo(() => {
   const displayedPOsNormal = useMemo(() => {
     const q = (poTableSearchText || "").trim().toLowerCase();
     const pendingActionStatuses = ["Pending PCM", "Pending GM", PO_REVISION_PENDING_PCM, PO_REVISION_PENDING_GM, "Rejected", "Draft", "Pending Close PO"];
+    const hiddenSystemStatuses = ["Received", "Closed PO", "Invoice Issue", "Paid", "paid", "Invcredit", "Inpay"];
 
     const base = pos
-      .filter((po) =>
-        po.projectId === selectedProjectId &&
-        po.status !== "Received" &&
-        po.status !== "Closed PO" &&
-        po.status !== "Invoice Issue" &&
-        !pendingActionStatuses.includes(po.status)
-      )
+      .filter((po) => {
+        const currentStatus = po.statusNow || po.status;
+        return (
+          po.projectId === selectedProjectId &&
+          !hiddenSystemStatuses.includes(currentStatus) &&
+          !hiddenSystemStatuses.includes(po.status) &&
+          !pendingActionStatuses.includes(po.status)
+        );
+      })
       .map((po) => {
         // ใช้ข้อมูล Vendor จาก PO object โดยตรง (fallback ไปที่ vendors array ถ้าไม่มี)
         const vendor = po.vendorName 
@@ -2322,6 +2334,7 @@ const POView = React.memo(() => {
           po.poNo,
           po.poType,
           po.status,
+          po.statusNow,
           po.projectId,
           po.requiredDate,
           po.poDate,
