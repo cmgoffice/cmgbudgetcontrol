@@ -191,9 +191,9 @@ const AppShell = () => {
     });
   }, [visibleProjects, activeMenu]);
 
-  // โหลด vendors เมื่อเข้าหน้า PO / ตาราง PO / Vendor (ลดโควต้า — โหลดเฉพาะเมื่อใช้)
+  // โหลด vendors เมื่อเข้าหน้า PO / ตาราง PO / Vendor (Billing/Pay ใช้ vendor จากรายการเอกสารเอง)
   useEffect(() => {
-    if (activeMenu === "po" || activeMenu === "po-table" || activeMenu === "vendor" || activeMenu === "billing" || activeMenu === "pay") loadVendors();
+    if (activeMenu === "po" || activeMenu === "po-table" || activeMenu === "vendor") loadVendors();
   }, [activeMenu, loadVendors]);
 
   useEffect(() => {
@@ -1264,6 +1264,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     "Draft": "bg-slate-50 text-slate-500 border-slate-200",
     "Paid": "bg-teal-50 text-teal-700 border-teal-200",
     "paid": "bg-teal-50 text-teal-700 border-teal-200",
+    "Deposit": "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200",
     "Invcredit": "bg-amber-50 text-amber-800 border-amber-300",
     "Inpay": "bg-sky-50 text-sky-800 border-sky-300",
     "Partial": "bg-yellow-50 text-yellow-700 border-yellow-200",
@@ -1476,7 +1477,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
   const allStatuses = isPR
     ? ["Approved", "PO Issued", "Edit Budget", "Pending Close", "Closed PR", "Closed PR Auto", "Pending Active PR", "Pending MD", "Pending GM", "Pending PM", "Pending CM", "Rejected"]
-    : ["Approved", "Pending PCM", "Pending GM", "PO Edit Pending PCM", "PO Edit Pending GM", "Rejected", "paid", "Invcredit", "Inpay", "Paid", "Partial", "Partial Receive", "Draft", "Pending Close PO", "Wait Invoice", "Received", "Closed PO"];
+    : ["Approved", "Pending PCM", "Pending GM", "PO Edit Pending PCM", "PO Edit Pending GM", "Rejected", "paid", "Deposit", "Invcredit", "Inpay", "Paid", "Partial", "Partial Receive", "Draft", "Pending Close PO", "Wait Invoice", "Received", "Closed PO"];
 
   const handlePRDownloadPDF = (pr: any) => {
     const docId = pr.id || pr.prNo || "pr";
@@ -2604,19 +2605,75 @@ const UserProfile = () => {
 
 // Sidebar modules available for role-based visibility control
 const SIDEBAR_MODULES = [
-  { key: "dashboard", label: "ภาพรวม" },
-  { key: "projects", label: "จัดการโครงการ" },
-  { key: "budget", label: "Project Budget" },
-  { key: "pr", label: "PR (ระบบ)" },
-  { key: "pr-table", label: "PR (ตาราง)" },
-  { key: "po", label: "PO (ระบบ)" },
-  { key: "po-table", label: "PO (ตาราง)" },
-  { key: "payment-subcontract", label: "Payment Subcontract" },
-  { key: "vendor", label: "Vendor" },
-  { key: "material", label: "Material" },
-  { key: "receive", label: "Receive" },
-  { key: "invoice", label: "Invoice" },
-  { key: "profile", label: "โปรไฟล์" },
+  { key: "dashboard", label: "ภาพรวม", shortLabel: "ภาพรวม" },
+  { key: "projects", label: "จัดการโครงการ", shortLabel: "โครงการ" },
+  { key: "budget", label: "Project Budget", shortLabel: "Budget" },
+  { key: "pr", label: "PR (ระบบ)", shortLabel: "PR ระบบ" },
+  { key: "pr-table", label: "PR (ตาราง)", shortLabel: "PR ตาราง" },
+  { key: "po", label: "PO (ระบบ)", shortLabel: "PO ระบบ" },
+  { key: "po-table", label: "PO (ตาราง)", shortLabel: "PO ตาราง" },
+  { key: "payment-subcontract", label: "Payment Subcontract", shortLabel: "Payment" },
+  { key: "receive", label: "Receive", shortLabel: "Receive" },
+  { key: "invoice", label: "Invoice", shortLabel: "Invoice" },
+  { key: "billing", label: "Billing", shortLabel: "Billing" },
+  { key: "pay", label: "Pay", shortLabel: "Pay" },
+  { key: "budget-summary", label: "Budget Summary Report", shortLabel: "Budget Sum." },
+  { key: "project-spending", label: "Project Spending", shortLabel: "Proj. Spend" },
+  { key: "vendor", label: "Vendor", shortLabel: "Vendor" },
+  { key: "material", label: "Material", shortLabel: "Material" },
+  { key: "user-manual", label: "คู่มือการใช้งาน", shortLabel: "คู่มือ" },
+  { key: "profile", label: "โปรไฟล์", shortLabel: "โปรไฟล์" },
+  { key: "admin", label: "Admin Dashboard", shortLabel: "Admin" },
+];
+
+const SET_ROLE_ALL_EXCLUDED_MODULE_KEYS = new Set([
+  "user-manual",
+  "budget-summary",
+  "project-spending",
+  "vendor",
+  "material",
+  "admin",
+]);
+
+const SET_ROLE_MODULE_GROUPS = [
+  {
+    key: "all",
+    label: "ทั้งหมด",
+    description: "ดูทุกเมนูในตารางเดียว",
+    modules: SIDEBAR_MODULES
+      .filter((m) => !SET_ROLE_ALL_EXCLUDED_MODULE_KEYS.has(m.key))
+      .map((m) => m.key),
+  },
+  {
+    key: "core",
+    label: "งานโครงการ",
+    description: "ภาพรวม โครงการ และงบประมาณ",
+    modules: ["dashboard", "projects", "budget"],
+  },
+  {
+    key: "workflow",
+    label: "จัดซื้อ/จ่าย",
+    description: "PR, PO, Payment, Receive, Invoice, Billing, Pay",
+    modules: ["pr", "pr-table", "po", "po-table", "payment-subcontract", "receive", "invoice", "billing", "pay"],
+  },
+  {
+    key: "master",
+    label: "ฐานข้อมูล",
+    description: "Vendor และ Material",
+    modules: ["vendor", "material"],
+  },
+  {
+    key: "report",
+    label: "รายงาน",
+    description: "Budget Summary, Project Spending, คู่มือ",
+    modules: ["budget-summary", "project-spending", "user-manual"],
+  },
+  {
+    key: "system",
+    label: "ระบบ",
+    description: "Profile และ Admin",
+    modules: ["profile", "admin"],
+  },
 ];
 
 /** เติมฟังก์ชันที่ขาดเป็น [] ต่อ module ที่มีใน partial — บันทึกลง Firestore ให้ครบ key ป้องกัน canUseFunction เดา allow */
@@ -2644,7 +2701,7 @@ const AdminDashboard = () => {
     columnWidths, handleColumnResize,
     rolePermissions, saveRolePermissions,
     functionPermissions, saveFunctionPermissions,
-    isColumnVisible, availableRoles, saveAvailableRoles,
+    isColumnVisible, availableRoles, saveAvailableRoles, canUseFunction,
   } = useAppData();
   const userRole = userData?.role || "Staff";
   const adminUsersTableRef = useRef(null);
@@ -2686,10 +2743,37 @@ const AdminDashboard = () => {
   const [openFuncDropdown, setOpenFuncDropdown] = useState<string | null>(null); // "moduleKey:role"
   const [newRoleName, setNewRoleName] = useState("");
   const [savingNewRole, setSavingNewRole] = useState(false);
+  const [activeRoleModuleGroup, setActiveRoleModuleGroup] = useState("workflow");
   const managedRoles = useMemo(
     () => [...new Set([...availableRoles, ...users.map((u) => String(u.role || "").trim()).filter(Boolean)])],
     [availableRoles, users]
   );
+  const canOpenUserManagement = canUseFunction("admin", "userManagement");
+  const canApproveUsers = canUseFunction("admin", "approveUser");
+  const canManageUsers = canUseFunction("admin", "manageUser");
+  const canDeleteUsers = canUseFunction("admin", "deleteUser");
+  const canOpenLogs = canUseFunction("admin", "viewLogs");
+  const canExportLogs = canUseFunction("admin", "exportLogs");
+  const canOpenRoleSettings = canUseFunction("admin", "setRole");
+  const canAddAdminRole = canUseFunction("admin", "addRole");
+  const canSaveAdminRolePermissions = canUseFunction("admin", "saveRolePermissions");
+  const availableAdminTabs = useMemo(() => {
+    const tabs = [];
+    if (canOpenUserManagement) tabs.push("users");
+    if (canOpenLogs) tabs.push("logs");
+    if (canOpenRoleSettings) tabs.push("roles");
+    return tabs;
+  }, [canOpenLogs, canOpenRoleSettings, canOpenUserManagement]);
+  const visibleRoleModules = useMemo(() => {
+    const selectedGroup = SET_ROLE_MODULE_GROUPS.find((group) => group.key === activeRoleModuleGroup) || SET_ROLE_MODULE_GROUPS[0];
+    const allowedKeys = new Set(selectedGroup.modules);
+    return SIDEBAR_MODULES.filter((module) => allowedKeys.has(module.key));
+  }, [activeRoleModuleGroup]);
+  const activeRoleModuleGroupMeta = useMemo(
+    () => SET_ROLE_MODULE_GROUPS.find((group) => group.key === activeRoleModuleGroup) || SET_ROLE_MODULE_GROUPS[0],
+    [activeRoleModuleGroup]
+  );
+  const shouldShowPRTypeColumn = activeRoleModuleGroup !== "all";
 
   useEffect(() => {
     const qUsers = query(
@@ -2743,6 +2827,18 @@ const AdminDashboard = () => {
     setLocalFunctionPermissions(functionPermissions);
   }, [functionPermissions]);
 
+  useEffect(() => {
+    if (availableAdminTabs.length === 0) return;
+    if (!availableAdminTabs.includes(activeTab)) {
+      setActiveTab(availableAdminTabs[0]);
+    }
+  }, [activeTab, availableAdminTabs]);
+
+  useEffect(() => {
+    setOpenFuncDropdown(null);
+    setOpenPRTypeDropdown(null);
+  }, [activeRoleModuleGroup]);
+
   // Sync PR Type permissions from Firestore (stored in functionPermissions.pr.viewPRTypeByRole)
   useEffect(() => {
     if (!functionPermissions || Object.keys(functionPermissions).length === 0) return;
@@ -2756,6 +2852,7 @@ const AdminDashboard = () => {
   }, [functionPermissions, managedRoles]);
 
   const handlePRTypeToggle = (role: string, prType: string) => {
+    if (!canSaveAdminRolePermissions) return;
     setLocalPRTypePermissions((prev) => {
       const current = prev[role] || [];
       const hasType = current.includes(prType);
@@ -2767,6 +2864,7 @@ const AdminDashboard = () => {
   };
 
   const handlePRTypeAllToggle = (role: string) => {
+    if (!canSaveAdminRolePermissions) return;
     setLocalPRTypePermissions((prev) => {
       const current = prev[role] || [];
       const allSelected = current.length === PURCHASE_TYPES.length;
@@ -2778,6 +2876,7 @@ const AdminDashboard = () => {
   };
 
   const handleRolePermissionToggle = (moduleKey: string, role: string) => {
+    if (!canSaveAdminRolePermissions) return;
     setLocalPermissions((prev) => {
       const current = prev[moduleKey] || [];
       const hasRole = current.includes(role);
@@ -2800,6 +2899,7 @@ const AdminDashboard = () => {
   };
 
   const handleFunctionToggle = (moduleKey: string, role: string, funcKey: string) => {
+    if (!canSaveAdminRolePermissions) return;
     setLocalFunctionPermissions((prev) => {
       const modFuncs = { ...(prev[moduleKey] || {}) };
       const currentRoles = modFuncs[funcKey] || [];
@@ -2812,6 +2912,10 @@ const AdminDashboard = () => {
   };
 
   const handleSaveRolePermissions = async () => {
+    if (!canSaveAdminRolePermissions) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์บันทึกการตั้งค่า Role", "warning");
+      return;
+    }
     setSavingRoles(true);
     try {
       const funcPayload = normalizePartialFunctionPermissions(localFunctionPermissions);
@@ -2835,6 +2939,10 @@ const AdminDashboard = () => {
   };
 
   const handleAddRole = async () => {
+    if (!canAddAdminRole) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์เพิ่ม Role ใหม่", "warning");
+      return;
+    }
     const nextRole = newRoleName.trim();
     if (!nextRole) {
       showAlert("ข้อมูลไม่ครบ", "กรุณาระบุชื่อ Role", "warning");
@@ -2890,6 +2998,10 @@ const AdminDashboard = () => {
   };
 
   const handleEditClick = (user) => {
+    if (!canManageUsers) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์จัดการผู้ใช้งาน", "warning");
+      return;
+    }
     setEditUser(user);
     setEditForm({
       role: user.role,
@@ -2914,6 +3026,10 @@ const AdminDashboard = () => {
   };
 
   const handleSaveUserChanges = async () => {
+    if (!canManageUsers) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์บันทึกการแก้ไขผู้ใช้งาน", "warning");
+      return;
+    }
     if (!editUser) return;
     try {
       await updateDoc(
@@ -2936,6 +3052,10 @@ const AdminDashboard = () => {
   };
 
   const handleApprove = async (userId, email) => {
+    if (!canApproveUsers) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุมัติผู้ใช้งาน", "warning");
+      return;
+    }
     await updateDoc(
       doc(db, "artifacts", appId, "public", "data", "users", userId),
       { status: "Approved" }
@@ -2949,6 +3069,10 @@ const AdminDashboard = () => {
   };
 
   const handleDeleteUser = async (userId, email) => {
+    if (!canDeleteUsers) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ลบผู้ใช้งาน", "warning");
+      return;
+    }
     const confirmed = window.confirm(
       `ยืนยันการลบผู้ใช้ "${email}" ออกจากระบบ?\nการกระทำนี้ไม่สามารถย้อนกลับได้`
     );
@@ -2982,6 +3106,10 @@ const AdminDashboard = () => {
   };
 
   const handleExportLogs = () => {
+    if (!canExportLogs) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ Export Logs", "warning");
+      return;
+    }
     const headers = "Timestamp,Action,User,Role,Project,Details\n";
     const rows = logs
       .map(
@@ -3038,46 +3166,58 @@ const AdminDashboard = () => {
         <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
           <Shield size={24} className="text-blue-600" /> Admin Dashboard
         </h2>
-        {activeTab === "users" && <ColumnVisibilityToggle tableId="users" />}
+        {activeTab === "users" && canOpenUserManagement && <ColumnVisibilityToggle tableId="users" />}
       </div>
 
       <div className="flex gap-1 border-b border-slate-200">
-        <button
-          onClick={() => setActiveTab("users")}
-          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${activeTab === "users"
-            ? "border-blue-600 text-blue-600"
-            : "border-transparent text-slate-500 hover:text-slate-700"
-            }`}
-        >
-          <div className="flex items-center gap-2">
-            <Users size={16} /> User Management
-          </div>
-        </button>
-        <button
-          onClick={() => setActiveTab("logs")}
-          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${activeTab === "logs"
-            ? "border-blue-600 text-blue-600"
-            : "border-transparent text-slate-500 hover:text-slate-700"
-            }`}
-        >
-          <div className="flex items-center gap-2">
-            <History size={16} /> System Logs
-          </div>
-        </button>
-        <button
-          onClick={() => setActiveTab("roles")}
-          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${activeTab === "roles"
-            ? "border-orange-500 text-orange-600"
-            : "border-transparent text-slate-500 hover:text-slate-700"
-            }`}
-        >
-          <div className="flex items-center gap-2">
-            <Key size={16} /> Set Role
-          </div>
-        </button>
+        {canOpenUserManagement && (
+          <button
+            onClick={() => setActiveTab("users")}
+            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${activeTab === "users"
+              ? "border-blue-600 text-blue-600"
+              : "border-transparent text-slate-500 hover:text-slate-700"
+              }`}
+          >
+            <div className="flex items-center gap-2">
+              <Users size={16} /> User Management
+            </div>
+          </button>
+        )}
+        {canOpenLogs && (
+          <button
+            onClick={() => setActiveTab("logs")}
+            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${activeTab === "logs"
+              ? "border-blue-600 text-blue-600"
+              : "border-transparent text-slate-500 hover:text-slate-700"
+              }`}
+          >
+            <div className="flex items-center gap-2">
+              <History size={16} /> System Logs
+            </div>
+          </button>
+        )}
+        {canOpenRoleSettings && (
+          <button
+            onClick={() => setActiveTab("roles")}
+            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${activeTab === "roles"
+              ? "border-orange-500 text-orange-600"
+              : "border-transparent text-slate-500 hover:text-slate-700"
+              }`}
+          >
+            <div className="flex items-center gap-2">
+              <Key size={16} /> Set Role
+            </div>
+          </button>
+        )}
       </div>
 
-      {activeTab === "users" && (
+      {availableAdminTabs.length === 0 && (
+        <Card className="p-8 text-center text-slate-500">
+          ไม่พบฟังก์ชันใน Admin Dashboard สำหรับ Role นี้ กรุณาตรวจสอบสิทธิ์ใน Set Role
+        </Card>
+      )}
+
+      {activeTab === "users" && canOpenUserManagement && (
         <>
           <Card className="overflow-hidden animate-in fade-in slide-in-from-bottom-2 w-full min-w-0">
             <div ref={adminUsersTableRef} className="w-full min-w-0">
@@ -3147,7 +3287,7 @@ const AdminDashboard = () => {
                       {isColumnVisible("users", "actions") && (
                         <td className="p-4 text-right">
                           <div className="flex justify-end gap-2 items-center">
-                            {u.status === "Pending" && (
+                            {u.status === "Pending" && canApproveUsers && (
                               <Button
                                 variant="success"
                                 onClick={() => handleApprove(u.id, u.email)}
@@ -3155,19 +3295,23 @@ const AdminDashboard = () => {
                                 Approve
                               </Button>
                             )}
-                            <Button
-                              variant="outline"
-                              onClick={() => handleEditClick(u)}
-                            >
-                              <Settings size={14} /> Manage
-                            </Button>
-                            <button
-                              onClick={() => handleDeleteUser(u.id, u.email)}
-                              className="p-1.5 rounded text-red-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-                              title={`ลบผู้ใช้ ${u.email}`}
-                            >
-                              <Trash2 size={15} />
-                            </button>
+                            {canManageUsers && (
+                              <Button
+                                variant="outline"
+                                onClick={() => handleEditClick(u)}
+                              >
+                                <Settings size={14} /> Manage
+                              </Button>
+                            )}
+                            {canDeleteUsers && (
+                              <button
+                                onClick={() => handleDeleteUser(u.id, u.email)}
+                                className="p-1.5 rounded text-red-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                                title={`ลบผู้ใช้ ${u.email}`}
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            )}
                           </div>
                         </td>
                       )}
@@ -3180,19 +3324,21 @@ const AdminDashboard = () => {
         </>
       )}
 
-      {activeTab === "logs" && (
+      {activeTab === "logs" && canOpenLogs && (
         <Card className="overflow-hidden animate-in fade-in slide-in-from-bottom-2 flex flex-col min-h-[calc(100vh-220px)]">
           <div className="px-3 py-2.5 border-b flex justify-between items-center bg-slate-50">
             <h3 className="font-bold text-slate-700 text-sm">
               System Logs (Last 1000 activities)
             </h3>
-            <Button
-              variant="outline"
-              onClick={handleExportLogs}
-              className="bg-white"
-            >
-              <FileSpreadsheet size={14} /> Export CSV
-            </Button>
+            {canExportLogs && (
+              <Button
+                variant="outline"
+                onClick={handleExportLogs}
+                className="bg-white"
+              >
+                <FileSpreadsheet size={14} /> Export CSV
+              </Button>
+            )}
           </div>
           <div className="flex-1 overflow-y-auto">
             <table className="w-full text-left text-xs">
@@ -3287,84 +3433,149 @@ const AdminDashboard = () => {
         </Card>
       )}
 
-      {activeTab === "roles" && (
-        <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2" onClick={() => setOpenFuncDropdown(null)}>
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                <Key size={16} className="text-orange-500" /> Set Role Permissions
-              </h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                <strong>อ่าน</strong> = แสดงเมนูใน Sidebar &nbsp;|&nbsp; <strong>เขียน</strong> = เลือกฟังก์ชันที่ใช้ได้ในเมนูนั้น
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={newRoleName}
-                onChange={(e) => setNewRoleName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    handleAddRole();
-                  }
-                }}
-                placeholder="เพิ่ม Role ใหม่"
-                className="w-44 border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"
-              />
-              <Button
-                variant="outline"
-                onClick={handleAddRole}
-                disabled={savingNewRole}
-                className="flex items-center gap-2"
-              >
-                <Plus size={14} />
-                {savingNewRole ? "กำลังเพิ่ม..." : "เพิ่ม Role"}
-              </Button>
-              <Button
-                variant="primary"
-                onClick={handleSaveRolePermissions}
-                disabled={savingRoles}
-                className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white"
-              >
-                <Save size={14} />
-                {savingRoles ? "กำลังบันทึก..." : "บันทึก"}
-              </Button>
+      {activeTab === "roles" && canOpenRoleSettings && (
+        <div
+          className="space-y-4 animate-in fade-in slide-in-from-bottom-2"
+          onClick={() => {
+            setOpenFuncDropdown(null);
+            setOpenPRTypeDropdown(null);
+          }}
+        >
+          <div className="rounded-2xl border border-orange-100 bg-gradient-to-br from-orange-50 via-white to-amber-50 p-4 shadow-sm">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div className="space-y-3">
+                <div>
+                  <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                    <Key size={16} className="text-orange-500" /> Set Role Permissions
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    <strong>อ่าน</strong> = แสดงเมนูใน Sidebar &nbsp;|&nbsp; <strong>เขียน</strong> = เลือกฟังก์ชันที่ใช้ได้ในเมนูนั้น
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {SET_ROLE_MODULE_GROUPS.map((group) => {
+                    const isActive = activeRoleModuleGroup === group.key;
+                    return (
+                      <button
+                        key={group.key}
+                        type="button"
+                        onClick={() => setActiveRoleModuleGroup(group.key)}
+                        className={`rounded-xl border px-3 py-2 text-left transition-colors ${
+                          isActive
+                            ? "border-orange-300 bg-orange-500 text-white shadow-sm"
+                            : "border-orange-100 bg-white text-slate-700 hover:border-orange-200 hover:bg-orange-50"
+                        }`}
+                      >
+                        <div className="text-xs font-semibold">{group.label}</div>
+                        <div className={`text-[10px] ${isActive ? "text-orange-50/90" : "text-slate-400"}`}>
+                          {group.modules.length} เมนู
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                  <span className="rounded-full bg-white px-2.5 py-1 font-semibold text-orange-600 border border-orange-200">
+                    กลุ่มที่เลือก: {activeRoleModuleGroupMeta.label}
+                  </span>
+                  <span className="rounded-full bg-white px-2.5 py-1 text-slate-500 border border-slate-200">
+                    แสดง {visibleRoleModules.length}/{SIDEBAR_MODULES.length} เมนู
+                  </span>
+                  <span className="text-slate-500">{activeRoleModuleGroupMeta.description}</span>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap xl:max-w-[460px] xl:justify-end">
+                <input
+                  type="text"
+                  value={newRoleName}
+                  onChange={(e) => setNewRoleName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleAddRole();
+                    }
+                  }}
+                  placeholder="เพิ่ม Role ใหม่"
+                  disabled={!canAddAdminRole}
+                  className="w-full sm:w-44 border border-slate-300 rounded-xl px-3 py-2 text-sm bg-white"
+                />
+                <Button
+                  variant="outline"
+                  onClick={handleAddRole}
+                  disabled={savingNewRole || !canAddAdminRole}
+                  className="flex items-center justify-center gap-2"
+                >
+                  <Plus size={14} />
+                  {savingNewRole ? "กำลังเพิ่ม..." : "เพิ่ม Role"}
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={handleSaveRolePermissions}
+                  disabled={savingRoles || !canSaveAdminRolePermissions}
+                  className="flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 text-white"
+                >
+                  <Save size={14} />
+                  {savingRoles ? "กำลังบันทึก..." : "บันทึก"}
+                </Button>
+              </div>
             </div>
           </div>
 
-          <Card className="overflow-auto">
-            <table className="w-full text-sm border-collapse">
+          <div className="flex flex-wrap gap-2 text-[11px] text-slate-500">
+            <span className="rounded-full bg-orange-50 px-2.5 py-1 border border-orange-200 text-orange-700">อ่าน: สิทธิ์เห็นเมนู</span>
+            <span className="rounded-full bg-blue-50 px-2.5 py-1 border border-blue-200 text-blue-700">เขียน: สิทธิ์ใช้งานฟังก์ชัน</span>
+            <span className="rounded-full bg-purple-50 px-2.5 py-1 border border-purple-200 text-purple-700">PR Type: สิทธิ์เห็นประเภท PR</span>
+          </div>
+
+          <Card className="overflow-hidden border border-slate-200 shadow-sm">
+            <div className="border-b border-slate-200 bg-slate-50/80 px-4 py-2.5 text-xs text-slate-500 flex flex-wrap items-center justify-between gap-2">
+              <div className="font-medium text-slate-700 flex items-center gap-2">
+                <Key size={16} className="text-orange-500" /> Set Role Permissions
+              </div>
+              <div>
+                Role ทั้งหมด {managedRoles.length} รายการ
+              </div>
+            </div>
+            <div className="overflow-auto">
+            <table className="w-full border-collapse text-[12px]">
               <thead>
                 <tr className="bg-slate-50 border-b-2 border-slate-200">
-                  <th className="text-left p-3 font-bold text-slate-700 sticky left-0 bg-slate-50 z-10 min-w-[140px] border-r border-slate-200" rowSpan={2}>
+                  <th className="text-left px-3 py-2 font-bold text-slate-700 sticky left-0 bg-slate-50 z-10 min-w-[130px] border-r border-slate-200" rowSpan={2}>
                     Role
                   </th>
-                  {SIDEBAR_MODULES.map((m) => (
+                  {visibleRoleModules.map((m) => (
                     <th
                       key={m.key}
-                      className="p-2 text-center font-semibold text-slate-600 border-b border-slate-200 border-l border-slate-100"
+                      className="px-2 py-2 text-center font-semibold text-slate-600 border-b border-slate-200 border-l border-slate-100 min-w-[88px]"
                       colSpan={MODULE_FUNCTIONS[m.key]?.length > 0 ? 2 : 1}
+                      title={m.label}
                     >
-                      <span className="text-xs">{m.label}</span>
+                      <span className="text-[11px] leading-tight">{m.shortLabel || m.label}</span>
                     </th>
                   ))}
-                  <th className="p-2 text-center font-semibold text-slate-600 border-b border-slate-200 border-l border-slate-100">
-                    <span className="text-xs">PR Type ที่มองเห็น</span>
-                  </th>
+                  {shouldShowPRTypeColumn && (
+                    <th className="px-2 py-2 text-center font-semibold text-slate-600 border-b border-slate-200 border-l border-slate-100 min-w-[92px]">
+                      <span className="text-[11px] leading-tight">PR Type</span>
+                    </th>
+                  )}
                 </tr>
                 <tr className="bg-slate-50 border-b border-slate-200 text-[10px] text-slate-500">
-                  {SIDEBAR_MODULES.map((m) => (
+                  {visibleRoleModules.map((m) => (
                     MODULE_FUNCTIONS[m.key]?.length > 0 ? (
                       <React.Fragment key={m.key}>
-                        <th className="px-2 py-1 text-center font-medium border-l border-slate-100 text-orange-500">อ่าน</th>
-                        <th className="px-2 py-1 text-center font-medium text-blue-500">เขียน</th>
+                        <th className="px-1.5 py-1 text-center font-medium border-l border-slate-100 text-orange-500">อ่าน</th>
+                        <th className="px-1.5 py-1 text-center font-medium text-blue-500">เขียน</th>
                       </React.Fragment>
                     ) : (
-                      <th key={m.key} className="px-2 py-1 text-center font-medium border-l border-slate-100 text-orange-500">อ่าน</th>
+                      <th key={m.key} className="px-1.5 py-1 text-center font-medium border-l border-slate-100 text-orange-500">อ่าน</th>
                     )
                   ))}
-                  <th className="px-2 py-1 text-center font-medium border-l border-slate-100 text-purple-500">เลือก PR Type</th>
+                  {shouldShowPRTypeColumn && (
+                    <th className="px-1.5 py-1 text-center font-medium border-l border-slate-100 text-purple-500">เลือก</th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -3373,17 +3584,16 @@ const AdminDashboard = () => {
                   const rowBg = idx % 2 === 0 ? "bg-white" : "bg-slate-50/50";
                   return (
                     <tr key={role} className={`${rowBg} hover:bg-orange-50/30 transition-colors`}>
-                      <td className={`p-3 sticky left-0 z-10 border-r border-slate-200 ${rowBg}`}>
+                      <td className={`px-3 py-2 sticky left-0 z-10 border-r border-slate-200 ${rowBg}`}>
                         <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-bold ${isAdminRole ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-700"
                           }`}>
                           {isAdminRole && <Shield size={10} />}
                           {role}
                         </span>
                       </td>
-                      {SIDEBAR_MODULES.map((m) => {
-                        const isAdminModuleLocked = m.key === "admin";
+                      {visibleRoleModules.map((m) => {
                         const readChecked = isAdminRole ? true : (localPermissions[m.key] || []).includes(role);
-                        const readDisabled = isAdminRole || isAdminModuleLocked;
+                        const readDisabled = isAdminRole || !canSaveAdminRolePermissions;
                         const funcs = MODULE_FUNCTIONS[m.key] || [];
                         const dropdownKey = `${m.key}:${role}`;
                         const isDropdownOpen = openFuncDropdown === dropdownKey;
@@ -3399,7 +3609,7 @@ const AdminDashboard = () => {
                         return (
                           <React.Fragment key={m.key}>
                             {/* READ column */}
-                            <td className="p-2 text-center border-l border-slate-100">
+                            <td className="px-1.5 py-2 text-center border-l border-slate-100">
                               <label className={`inline-flex items-center justify-center ${readDisabled ? "cursor-not-allowed" : "cursor-pointer"}`}>
                                 <input
                                   type="checkbox"
@@ -3412,15 +3622,15 @@ const AdminDashboard = () => {
                             </td>
                             {/* WRITE column (only if module has functions) */}
                             {funcs.length > 0 && (
-                              <td className="p-2 text-center relative">
+                              <td className="px-1.5 py-2 text-center relative">
                                 {!readChecked && !isAdminRole ? (
                                   <span className="text-[10px] text-slate-300">—</span>
                                 ) : (
                                   <div className="relative inline-block" onClick={(e) => e.stopPropagation()}>
                                     <button
                                       onClick={() => setOpenFuncDropdown(isDropdownOpen ? null : dropdownKey)}
-                                      disabled={isAdminRole}
-                                      className={`px-2 py-0.5 rounded text-[10px] font-semibold border transition-colors ${isAdminRole
+                                      disabled={isAdminRole || !canSaveAdminRolePermissions}
+                                      className={`min-w-[48px] px-2 py-0.5 rounded text-[10px] font-semibold border transition-colors ${isAdminRole
                                         ? "bg-blue-50 text-blue-400 border-blue-100 cursor-not-allowed"
                                         : enabledFuncCount > 0
                                           ? "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100"
@@ -3462,57 +3672,61 @@ const AdminDashboard = () => {
                         );
                       })}
                       {/* PR Type column */}
-                      <td className="p-2 text-center border-l border-slate-100 relative">
-                        <div className="relative inline-block" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            onClick={() => setOpenPRTypeDropdown(openPRTypeDropdown === role ? null : role)}
-                            className={`px-2 py-0.5 rounded text-[10px] font-semibold border transition-colors ${(localPRTypePermissions[role] || []).length > 0
-                              ? "bg-purple-50 text-purple-600 border-purple-200 hover:bg-purple-100"
-                              : "bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100"
-                              }`}
-                          >
-                            {(localPRTypePermissions[role] || []).length}/{PURCHASE_TYPES.length} ▾
-                          </button>
-                          {openPRTypeDropdown === role && (
-                            <div className="absolute z-50 top-full left-1/2 -translate-x-1/2 mt-1 w-64 bg-white border border-slate-200 rounded-lg shadow-xl py-1 max-h-60 overflow-y-auto">
-                              <div className="px-3 py-1.5 border-b border-slate-100 text-[10px] font-bold text-slate-500 uppercase tracking-wide sticky top-0 bg-white">
-                                PR Type — {role}
+                      {shouldShowPRTypeColumn && (
+                        <td className="px-1.5 py-2 text-center border-l border-slate-100 relative">
+                          <div className="relative inline-block" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={() => setOpenPRTypeDropdown(openPRTypeDropdown === role ? null : role)}
+                              disabled={!canSaveAdminRolePermissions}
+                              className={`min-w-[52px] px-2 py-0.5 rounded text-[10px] font-semibold border transition-colors ${(localPRTypePermissions[role] || []).length > 0
+                                ? "bg-purple-50 text-purple-600 border-purple-200 hover:bg-purple-100"
+                                : "bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100"
+                                }`}
+                            >
+                              {(localPRTypePermissions[role] || []).length}/{PURCHASE_TYPES.length} ▾
+                            </button>
+                            {openPRTypeDropdown === role && (
+                              <div className="absolute z-50 top-full left-1/2 -translate-x-1/2 mt-1 w-64 bg-white border border-slate-200 rounded-lg shadow-xl py-1 max-h-60 overflow-y-auto">
+                                <div className="px-3 py-1.5 border-b border-slate-100 text-[10px] font-bold text-slate-500 uppercase tracking-wide sticky top-0 bg-white">
+                                  PR Type — {role}
+                                </div>
+                                <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer border-b border-slate-100">
+                                  <input
+                                    type="checkbox"
+                                    checked={(localPRTypePermissions[role] || []).length === PURCHASE_TYPES.length}
+                                    onChange={() => handlePRTypeAllToggle(role)}
+                                    className="w-3.5 h-3.5 rounded border-slate-300 accent-purple-500"
+                                  />
+                                  <span className="text-xs text-slate-700 font-semibold">All Types</span>
+                                </label>
+                                {PURCHASE_TYPES.map((pt) => {
+                                  const isChecked = (localPRTypePermissions[role] || []).includes(pt);
+                                  return (
+                                    <label
+                                      key={pt}
+                                      className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={isChecked}
+                                        onChange={() => handlePRTypeToggle(role, pt)}
+                                        className="w-3.5 h-3.5 rounded border-slate-300 accent-purple-500"
+                                      />
+                                      <span className="text-xs text-slate-700">{pt}</span>
+                                    </label>
+                                  );
+                                })}
                               </div>
-                              <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer border-b border-slate-100">
-                                <input
-                                  type="checkbox"
-                                  checked={(localPRTypePermissions[role] || []).length === PURCHASE_TYPES.length}
-                                  onChange={() => handlePRTypeAllToggle(role)}
-                                  className="w-3.5 h-3.5 rounded border-slate-300 accent-purple-500"
-                                />
-                                <span className="text-xs text-slate-700 font-semibold">All Types</span>
-                              </label>
-                              {PURCHASE_TYPES.map((pt) => {
-                                const isChecked = (localPRTypePermissions[role] || []).includes(pt);
-                                return (
-                                  <label
-                                    key={pt}
-                                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer"
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      checked={isChecked}
-                                      onChange={() => handlePRTypeToggle(role, pt)}
-                                      className="w-3.5 h-3.5 rounded border-slate-300 accent-purple-500"
-                                    />
-                                    <span className="text-xs text-slate-700">{pt}</span>
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      </td>
+                            )}
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
               </tbody>
             </table>
+            </div>
           </Card>
 
           <p className="text-xs text-slate-400">

@@ -32,6 +32,11 @@ import {
   hasConfiguredPayBeforeReceive,
   hasConfiguredReceiveAfterPayment,
 } from "../lib/poDocumentFlow";
+import {
+  buildCreateLogDetails as buildCrudCreateLogDetails,
+  buildDeleteLogDetails as buildCrudDeleteLogDetails,
+  buildUpdateLogDetails as buildCrudUpdateLogDetails,
+} from "../lib/systemLogDetails";
 
 // Firestore document paths for dynamic permissions
 const ROLE_PERMISSIONS_DOC = ["artifacts", appId, "public", "data", "settings", "rolePermissions"];
@@ -46,153 +51,66 @@ function normalizeRoleNames(nextRoles) {
   return [...new Set([...USER_ROLES, ...cleaned])];
 }
 
-function truncateLogDetail(s, max = 100) {
-  if (s == null || s === "") return "";
-  const t = String(s).trim();
-  if (t.length <= max) return t;
-  return `${t.slice(0, max - 1)}…`;
+function mergeRolePermissionsWithDefaults(rawPermissions) {
+  const raw = rawPermissions && typeof rawPermissions === "object" ? rawPermissions : {};
+  const merged = {};
+
+  Object.keys(MODULE_ACCESS).forEach((moduleKey) => {
+    if (Object.prototype.hasOwnProperty.call(raw, moduleKey)) {
+      const value = raw[moduleKey];
+      merged[moduleKey] = Array.isArray(value) ? [...value] : [];
+    } else {
+      merged[moduleKey] = [...(MODULE_ACCESS[moduleKey] || [])];
+    }
+  });
+
+  Object.keys(raw).forEach((moduleKey) => {
+    if (Object.prototype.hasOwnProperty.call(merged, moduleKey)) return;
+    const value = raw[moduleKey];
+    merged[moduleKey] = Array.isArray(value) ? [...value] : [];
+  });
+
+  return merged;
 }
 
-/** รายละเอียด log หลังอัปเดต — ใช้เลขที่ PO/PR, ชื่อ vendor, paymentNo แทนแค่ Firestore ID */
 function buildUpdateLogDetails(collectionName, id, data, lists) {
-  const { projects, budgets, prs, pos, payments, invoices, vendors, materials } = lists;
-  const merge = (existing) =>
-    existing && typeof existing === "object" ? { ...existing, ...data } : { ...data };
-
-  if (collectionName === "pos") {
-    return null;
-  }
-  if (collectionName === "prs") {
-    const pr = prs.find((p) => p.id === id);
-    const m = merge(pr);
-    const label = m.prNo || id;
-    let extra = "";
-    if (data.status != null && pr && data.status !== pr.status) extra = ` → ${data.status}`;
-    else if (data.status != null && !pr) extra = ` → ${data.status}`;
-    return `Updated PR ${label}${extra}`;
-  }
-  if (collectionName === "payments") {
-    const pay = payments.find((p) => p.id === id);
-    const m = merge(pay);
-    const no = m.paymentNo || id;
-    let extra = "";
-    if (data.status != null && pay && data.status !== pay.status) extra = ` → ${data.status}`;
-    return `Updated Payment ${no}${extra}`;
-  }
-  if (collectionName === "budgets") {
-    const b = budgets.find((x) => x.id === id);
-    if (b) {
-      const desc = truncateLogDetail(b.description, 80);
-      return desc ? `Updated Budget ${b.code} — ${desc}` : `Updated Budget ${b.code}`;
-    }
-    return `Updated Budget ID: ${id}`;
-  }
-  if (collectionName === "projects") {
-    const p = projects.find((x) => x.id === id);
-    const m = merge(p);
-    const job = m.jobNo || id;
-    const name = m.name ? truncateLogDetail(m.name, 80) : "";
-    return name ? `Updated Project ${job} — ${name}` : `Updated Project ${job}`;
-  }
-  if (collectionName === "invoices") {
-    const inv = invoices.find((x) => x.id === id);
-    const m = merge(inv);
-    const no = m.invNo || id;
-    let extra = "";
-    if (data.status != null && inv && data.status !== inv.status) extra = ` → ${data.status}`;
-    return `Updated Invoice ${no}${extra}`;
-  }
-  if (collectionName === "vendors") {
-    const v = vendors.find((x) => x.id === id);
-    const m = merge(v);
-    const name = m.name || m.vendorName || m.code || id;
-    return `Updated Vendor ${truncateLogDetail(name, 100)}`;
-  }
-  if (collectionName === "materials") {
-    const mat = materials.find((x) => x.id === id);
-    const m = merge(mat);
-    const name = m.name || m.code || m.materialName || id;
-    return `Updated Material ${truncateLogDetail(name, 100)}`;
-  }
-  const singular = collectionName.endsWith("s") ? collectionName.slice(0, -1) : collectionName;
-  return `Updated ${singular} ID: ${id}`;
+  const sourceMap = {
+    projects: lists.projects,
+    budgets: lists.budgets,
+    prs: lists.prs,
+    pos: lists.pos,
+    payments: lists.payments,
+    invoices: lists.invoices,
+    vendors: lists.vendors,
+    materials: lists.materials,
+    receives: lists.receives,
+  };
+  const existing = Array.isArray(sourceMap[collectionName])
+    ? sourceMap[collectionName].find((item) => item.id === id)
+    : null;
+  return buildCrudUpdateLogDetails(collectionName, existing, data, id);
 }
 
 function buildCreateLogDetails(collectionName, data, newId) {
-  if (collectionName === "vendors") {
-    const name = data.name || data.code || newId;
-    return `Added vendor ${truncateLogDetail(name, 100)}`;
-  }
-  if (collectionName === "materials") {
-    const name = data.name || data.code || newId;
-    return `Added material ${truncateLogDetail(name, 100)}`;
-  }
-  if (collectionName === "prs") {
-    return `Added PR ${data.prNo || newId}`;
-  }
-  if (collectionName === "pos") {
-    return `Added PO ${data.poNo || newId}`;
-  }
-  if (collectionName === "budgets") {
-    if (data.code) {
-      const desc = data.description ? truncateLogDetail(data.description, 60) : "";
-      return desc ? `Added Budget ${data.code} — ${desc}` : `Added Budget ${data.code}`;
-    }
-    return `Added budget ID: ${newId}`;
-  }
-  if (collectionName === "payments") {
-    return `Added Payment ${data.paymentNo || newId}`;
-  }
-  if (collectionName === "invoices") {
-    const po = data.poRef ? ` (PO ${data.poRef})` : "";
-    return `Added Invoice ${data.invNo || newId}${po}`;
-  }
-  const singular = collectionName.endsWith("s") ? collectionName.slice(0, -1) : collectionName;
-  return `Added new ${singular}`;
+  return buildCrudCreateLogDetails(collectionName, data, newId);
 }
 
 function buildDeleteLogDetails(collectionName, id, lists) {
-  const { projects, budgets, prs, pos, payments, invoices, vendors, materials } = lists;
-  if (collectionName === "pos") {
-    const po = pos.find((p) => p.id === id);
-    if (po) {
-      const vendor = po.vendorName ? truncateLogDetail(po.vendorName, 80) : "";
-      return vendor
-        ? `Deleted PO ${po.poNo || id} — ${vendor}`
-        : `Deleted PO ${po.poNo || id}`;
-    }
-    return `Deleted PO ID: ${id}`;
-  }
-  if (collectionName === "prs") {
-    const pr = prs.find((p) => p.id === id);
-    return pr ? `Deleted PR ${pr.prNo || id}` : `Deleted PR ID: ${id}`;
-  }
-  if (collectionName === "payments") {
-    const pay = payments.find((p) => p.id === id);
-    return pay ? `Deleted Payment ${pay.paymentNo || id}` : `Deleted Payment ID: ${id}`;
-  }
-  if (collectionName === "budgets") {
-    const b = budgets.find((x) => x.id === id);
-    return b ? `Deleted Budget ${b.code}` : `Deleted Budget ID: ${id}`;
-  }
-  if (collectionName === "projects") {
-    const p = projects.find((x) => x.id === id);
-    return p ? `Deleted Project ${p.jobNo}` : `Deleted Project ID: ${id}`;
-  }
-  if (collectionName === "invoices") {
-    const inv = invoices.find((x) => x.id === id);
-    return inv ? `Deleted Invoice ${inv.invNo || id}` : `Deleted Invoice ID: ${id}`;
-  }
-  if (collectionName === "vendors") {
-    const v = vendors.find((x) => x.id === id);
-    return v ? `Deleted Vendor ${truncateLogDetail(v.name || v.code || id, 100)}` : `Deleted Vendor ID: ${id}`;
-  }
-  if (collectionName === "materials") {
-    const m = materials.find((x) => x.id === id);
-    return m ? `Deleted Material ${truncateLogDetail(m.name || m.code || id, 100)}` : `Deleted Material ID: ${id}`;
-  }
-  const singular = collectionName.endsWith("s") ? collectionName.slice(0, -1) : collectionName;
-  return `Deleted ${singular} ID: ${id}`;
+  const sourceMap = {
+    projects: lists.projects,
+    budgets: lists.budgets,
+    prs: lists.prs,
+    pos: lists.pos,
+    payments: lists.payments,
+    invoices: lists.invoices,
+    vendors: lists.vendors,
+    materials: lists.materials,
+    receives: lists.receives,
+  };
+  const existing = Array.isArray(sourceMap[collectionName])
+    ? sourceMap[collectionName].find((item) => item.id === id)
+    : null;
+  return buildCrudDeleteLogDetails(collectionName, existing, id);
 }
 
 function deriveLogProjectId(collectionName, id, data, lists) {
@@ -240,7 +158,7 @@ export const AppDataProvider = ({
   const [availableRoles, setAvailableRoles] = useState<string[]>(() => normalizeRoleNames(USER_ROLES));
 
   // ── Role permissions (admin-controlled, synced to Firestore) ─────────────
-  const [rolePermissions, setRolePermissions] = useState<Record<string, string[]>>(MODULE_ACCESS);
+  const [rolePermissions, setRolePermissions] = useState<Record<string, string[]>>(() => mergeRolePermissionsWithDefaults(MODULE_ACCESS));
   // functionPermissions: { moduleKey: { functionKey: [allowedRoles] } }
   const [functionPermissions, setFunctionPermissions] = useState<Record<string, Record<string, string[]>>>(() =>
     mergeFunctionPermissionsWithDefaults({})
@@ -349,9 +267,9 @@ export const AppDataProvider = ({
     const rolePermRef = doc(db, ...ROLE_PERMISSIONS_DOC);
     const unsubRolePerms = onSnapshot(rolePermRef, (snap) => {
       if (snap.exists()) {
-        setRolePermissions(snap.data());
+        setRolePermissions(mergeRolePermissionsWithDefaults(snap.data()));
       } else {
-        setRolePermissions({});
+        setRolePermissions(mergeRolePermissionsWithDefaults(MODULE_ACCESS));
       }
       setRolePermissionsReady(true);
     });
@@ -574,7 +492,7 @@ export const AppDataProvider = ({
 
   const saveRolePermissions = useCallback(async (newPermissions: Record<string, string[]>) => {
     try {
-      await setDoc(doc(db, ...ROLE_PERMISSIONS_DOC), newPermissions);
+      await setDoc(doc(db, ...ROLE_PERMISSIONS_DOC), mergeRolePermissionsWithDefaults(newPermissions));
       return true;
     } catch (e) {
       console.error("Error saving role permissions:", e);
@@ -826,7 +744,7 @@ export const AppDataProvider = ({
           autoInvoiceNo = invoiceData.invNo;
           await logAction(
             "Create Invoice",
-            `สร้าง Invoice ${invoiceData.invNo} สำหรับ PO ${po.poNo || id} (Auto Pay before receive)`,
+            `${buildCrudCreateLogDetails("invoices", invoiceData, invoiceData.invNo || po.id)} | ที่มา: Auto Pay before receive`,
             po.projectId
           );
         }
@@ -854,7 +772,7 @@ export const AppDataProvider = ({
           autoReceiveNo = configuredReceive.receiveNo;
           await logAction(
             "Create Receive",
-            `สร้าง Receive ${configuredReceive.receiveNo} สำหรับ PO ${po.poNo || id} (Auto received after payment)`,
+            `${buildCrudCreateLogDetails("receives", configuredReceive.receiveData, configuredReceive.receiveNo || po.id)} | ที่มา: Auto received after payment`,
             po.projectId
           );
         }
@@ -879,7 +797,7 @@ export const AppDataProvider = ({
             autoReceiveNo = autoReceive.receiveNo;
             await logAction(
               "Create Receive",
-              `สร้าง Receive ${autoReceive.receiveNo} สำหรับ PO ${po.poNo || id} (Auto Receive)`,
+              `${buildCrudCreateLogDetails("receives", autoReceive.receiveData, autoReceive.receiveNo || po.id)} | ที่มา: Auto Receive`,
               po.projectId
             );
           }

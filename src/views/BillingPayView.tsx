@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { collection, doc, onSnapshot, query, writeBatch } from "firebase/firestore";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -23,6 +24,13 @@ import {
   modalTransition,
   overlayTransition,
 } from "../lib/animations";
+import {
+  buildDeleteLogDetails,
+  buildRecordSummary,
+  formatLogCurrency,
+  truncateLogText,
+} from "../lib/systemLogDetails";
+import { buildConfiguredReceiveData } from "../lib/poDocumentFlow";
 
 const VIEW_CONFIG = {
   billing: {
@@ -114,6 +122,21 @@ const VAT_RATE = 0.07;
 
 const getInvoiceAmountBeforeVat = (invoice: any) => Number(invoice?.amount || 0);
 
+const getInvoiceConfiguredAmount = (invoice: any) =>
+  Array.isArray(invoice?.items)
+    ? invoice.items.reduce((sum: number, item: any) => sum + Number(item?.amount || (Number(item?.quantity || 0) * Number(item?.price || 0))), 0)
+    : 0;
+
+const getInvoiceOutstandingDepositAmount = (invoice: any) => {
+  if (!invoice?.isDeposit) return 0;
+  const explicitRemaining = Number(invoice?.remainingAmount);
+  if (Number.isFinite(explicitRemaining) && explicitRemaining > 0) return explicitRemaining;
+  const configuredAmount = getInvoiceConfiguredAmount(invoice);
+  return Math.max(0, configuredAmount - Number(invoice?.depositAmount || 0));
+};
+
+const hasOutstandingDeposit = (invoice: any) => getInvoiceOutstandingDepositAmount(invoice) > 0;
+
 const getInvoiceAmountAfterVat = (invoice: any) => {
   const beforeVat = getInvoiceAmountBeforeVat(invoice);
   return beforeVat + beforeVat * VAT_RATE;
@@ -125,15 +148,29 @@ const getInvoiceVendorKey = (invoice: any) =>
 const getBillingVendorKey = (billing: any) =>
   String(billing?.vendorId || billing?.vendorName || "").trim();
 
+const getDocumentVendorKey = (record: any) =>
+  String(record?.vendorId || record?.vendorName || "").trim();
+
+const getVendorDisplayName = (record: any, fallbackKey = "") =>
+  String(record?.vendorName || fallbackKey || "").trim();
+
+const normalizeIdList = (values: any[] = []) =>
+  Array.from(new Set((values || []).map((value) => String(value)).filter(Boolean)));
+
 const isCreditInvoice = (invoice: any) => {
   const status = String(invoice?.status || "").trim().toLowerCase();
   const paymentType = String(invoice?.paymentType || "").trim().toLowerCase();
+  if (status === "deposit" || hasOutstandingDeposit(invoice)) return false;
   if (status === "inpay") return false;
   return status === "invcredit" || paymentType === "เครดิต";
 };
 
 const isInpayStatus = (value: any) => String(value || "").trim().toLowerCase() === "inpay";
 const isPaidStatus = (value: any) => String(value || "").trim().toLowerCase() === "paid";
+const isPaidInvoiceRecord = (invoice: any) =>
+  isPaidStatus(invoice?.status) || isPaidStatus(invoice?.statusNow);
+
+const getLedgerCollectionName = (menuType: string) => (menuType === "pay" ? "pays" : "billings");
 
 const BillingPayView = React.memo(({ menuType = "billing" }) => {
   const config = VIEW_CONFIG[menuType] || VIEW_CONFIG.billing;
@@ -142,9 +179,11 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
     db,
     appId,
     pos = [],
-    invoices = [],
-    vendors,
-    loadVendors,
+    invoices: contextInvoices = [],
+    receives = [],
+    vendors = [],
+    projects = [],
+    prs = [],
     addData,
     updateData,
     deleteData,
@@ -152,11 +191,13 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
     openConfirm,
     logAction,
     userData,
+    user,
     canUseFunction,
   } = useAppData();
   const { selectedProjectId } = useUI();
 
   const [rows, setRows] = useState([]);
+  const [localInvoices, setLocalInvoices] = useState([]);
   const [billingRows, setBillingRows] = useState([]);
   const [payRows, setPayRows] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
@@ -172,6 +213,19 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
   const canDelete = canUseFunction(config.moduleKey, "delete");
   const isBillingMode = config.moduleKey === "billing";
   const isPayMode = config.moduleKey === "pay";
+  const invoices = useMemo(() => {
+    const invoiceMap = new Map();
+    [...(contextInvoices || []), ...(localInvoices || [])].forEach((invoice: any) => {
+      if (!invoice?.id) return;
+      invoiceMap.set(String(invoice.id), invoice);
+    });
+    return Array.from(invoiceMap.values());
+  }, [contextInvoices, localInvoices]);
+  const logCollectionName = getLedgerCollectionName(config.moduleKey);
+  const getRowLogSummary = useCallback(
+    (row: any, patch: any = null) => buildRecordSummary(logCollectionName, patch ? { ...row, ...patch } : row, row?.id),
+    [logCollectionName]
+  );
 
   const syncPoStatusForInvoiceIds = useCallback(
     async (invoiceIds: string[], status: string) => {
@@ -218,6 +272,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
     if (normalized === "paid") return "paid";
     if (normalized === "inpay") return "Inpay";
     if (normalized === "invcredit") return "Invcredit";
+    if (normalized === "deposit") return "Deposit";
     return "";
   }, []);
 
@@ -233,16 +288,216 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
           : invoice
       ));
 
-    const statuses = remainingInvoices.map((invoice: any) => normalizeInvoiceFlowStatus(invoice?.status));
+    const statuses = remainingInvoices.map((invoice: any) => (
+      hasOutstandingDeposit(invoice) ? "Deposit" : normalizeInvoiceFlowStatus(invoice?.status)
+    ));
     if (statuses.includes("paid")) return "paid";
     if (statuses.includes("Inpay")) return "Inpay";
     if (statuses.includes("Invcredit")) return "Invcredit";
+    if (statuses.includes("Deposit")) return "Deposit";
     return getBasePoStatus(po);
   }, [getBasePoStatus, invoices, normalizeInvoiceFlowStatus, pos]);
 
-  useEffect(() => {
-    loadVendors?.();
-  }, [loadVendors]);
+  const getEffectiveInvoicesForPo = useCallback((poId: string, invoiceOverrides: Map<string, any> = new Map()) => {
+    return (invoices || [])
+      .filter((invoice: any) => String(invoice?.poId || "") === String(poId))
+      .map((invoice: any) => (
+        invoiceOverrides.has(String(invoice.id))
+          ? { ...invoice, ...invoiceOverrides.get(String(invoice.id)) }
+          : invoice
+      ));
+  }, [invoices]);
+
+  const getPayLinkedAutoReceives = useCallback((docNo: string) => {
+    const normalizedDocNo = String(docNo || "").trim();
+    if (!normalizedDocNo) return [];
+    return (receives || []).filter((receive: any) => (
+      receive?.autoCreatedFromPayDocument &&
+      String(receive?.sourcePayNo || "").trim() === normalizedDocNo
+    ));
+  }, [receives]);
+
+  const syncAutoReceivesForPay = useCallback(async ({
+    previousDocNo = "",
+    nextDocNo = "",
+    nextDocDate = "",
+    billingIds = [],
+    invoiceIds = [],
+    invoiceOverrides = new Map(),
+    projectId = "",
+  }) => {
+    const targetInvoiceIds = normalizeIdList(invoiceIds);
+    const targetPoIds = Array.from(new Set(
+      targetInvoiceIds
+        .map((invoiceId) => invoices.find((invoice: any) => String(invoice.id) === invoiceId)?.poId)
+        .filter(Boolean)
+        .map((poId) => String(poId))
+    ));
+    const targetPos = targetPoIds
+      .map((poId) => pos.find((po: any) => String(po.id) === poId))
+      .filter((po: any) => (
+        po &&
+        po.receivedAfterPaymentChecked &&
+        Array.isArray(po?.receivedAfterPaymentSetup?.items) &&
+        po.receivedAfterPaymentSetup.items.length > 0
+      ))
+      .filter((po: any) => {
+        const effectiveInvoices = getEffectiveInvoicesForPo(po.id, invoiceOverrides);
+        return effectiveInvoices.length > 0 && effectiveInvoices.every((invoice: any) => normalizeInvoiceFlowStatus(invoice?.status) === "paid");
+      });
+
+    const desiredPoIds = new Set(targetPos.map((po: any) => String(po.id)));
+    const previousReceives = previousDocNo ? getPayLinkedAutoReceives(previousDocNo) : [];
+    const previousReceiveByPoId = new Map(
+      previousReceives.map((receive: any) => [String(receive.poId), receive])
+    );
+    const nextIso = new Date().toISOString();
+    const createdReceiveNos: string[] = [];
+    const deletedReceiveNos: string[] = [];
+    const workingReceives = [...(receives || [])];
+
+    for (const receive of previousReceives) {
+      const poId = String(receive?.poId || "");
+      if (desiredPoIds.has(poId)) continue;
+      const deleted = await deleteData("receives", receive.id, { skipLog: true });
+      if (!deleted) {
+        throw new Error(`ลบ Receive ${receive.rpNo || receive.receiveNo || receive.id} ที่ผูกกับ Pay เดิมไม่สำเร็จ`);
+      }
+      deletedReceiveNos.push(receive.rpNo || receive.receiveNo || receive.id);
+      await logAction?.(
+        "Delete Receive",
+        `${buildDeleteLogDetails("receives", receive, receive.id)} | ที่มา: Rollback Pay ${previousDocNo}`,
+        receive.projectId || projectId
+      );
+    }
+
+    for (const po of targetPos) {
+      const poId = String(po.id);
+      const linkedPrevReceive = previousReceiveByPoId.get(poId);
+      if (linkedPrevReceive) {
+        const patch: any = {};
+        if (String(linkedPrevReceive.sourcePayNo || "").trim() !== String(nextDocNo || "").trim()) {
+          patch.sourcePayNo = nextDocNo;
+        }
+        if (String(linkedPrevReceive.sourcePayDate || "").trim() !== String(nextDocDate || "").trim()) {
+          patch.sourcePayDate = nextDocDate;
+        }
+        const poInvoiceIds = targetInvoiceIds.filter((invoiceId) => {
+          const invoice = invoices.find((item: any) => String(item.id) === invoiceId);
+          return String(invoice?.poId || "") === poId;
+        });
+        patch.sourceInvoiceIds = poInvoiceIds;
+        patch.sourceBillingIds = normalizeIdList(billingIds);
+        if (Object.keys(patch).length > 0) {
+          patch.updatedAt = nextIso;
+          const updated = await updateData("receives", linkedPrevReceive.id, patch, { skipLog: true });
+          if (!updated) {
+            throw new Error(`อัปเดต Receive ${linkedPrevReceive.rpNo || linkedPrevReceive.receiveNo || linkedPrevReceive.id} ไม่สำเร็จ`);
+          }
+        }
+        continue;
+      }
+
+      const hasExistingReceive = workingReceives.some((receive: any) => String(receive?.poId || "") === poId);
+      if (hasExistingReceive) continue;
+
+      const project = projects.find((item: any) => item.id === po.projectId) || null;
+      const configuredReceive = buildConfiguredReceiveData({
+        po,
+        setup: po.receivedAfterPaymentSetup,
+        prs,
+        vendors,
+        receives: workingReceives,
+        project,
+        user,
+        userData,
+      });
+      if (!configuredReceive) continue;
+
+      const poInvoiceIds = targetInvoiceIds.filter((invoiceId) => {
+        const invoice = invoices.find((item: any) => String(item.id) === invoiceId);
+        return String(invoice?.poId || "") === poId;
+      });
+      const receivePayload = {
+        ...configuredReceive.receiveData,
+        autoCreatedFromPoApproval: false,
+        autoCreatedFromPayDocument: true,
+        sourcePayNo: nextDocNo,
+        sourcePayDate: nextDocDate,
+        sourceInvoiceIds: poInvoiceIds,
+        sourceBillingIds: normalizeIdList(billingIds),
+      };
+      const created = await addData("receives", receivePayload, null, { skipLog: true });
+      if (!created) {
+        throw new Error(`สร้าง Receive อัตโนมัติสำหรับ PO ${po.poNo || po.id} ไม่สำเร็จ`);
+      }
+      workingReceives.push({
+        id: receivePayload.receiveNo,
+        ...receivePayload,
+      });
+      createdReceiveNos.push(receivePayload.rpNo || receivePayload.receiveNo || po.poNo || po.id);
+      await logAction?.(
+        "Create Receive",
+        `สร้าง Receive | ${buildRecordSummary("receives", receivePayload, receivePayload.receiveNo || po.id)} | ที่มา: Auto receive after Pay ${nextDocNo}`,
+        po.projectId || projectId
+      );
+    }
+
+    return { createdReceiveNos, deletedReceiveNos };
+  }, [
+    addData,
+    deleteData,
+    getEffectiveInvoicesForPo,
+    getPayLinkedAutoReceives,
+    invoices,
+    logAction,
+    normalizeInvoiceFlowStatus,
+    pos,
+    projects,
+    prs,
+    receives,
+    updateData,
+    user,
+    userData,
+    vendors,
+  ]);
+
+  const syncPoStatusFromInvoiceOverrides = useCallback(
+    async (invoiceIds: string[], invoiceOverrides: Map<string, any> = new Map()) => {
+      const ids = normalizeIdList(invoiceIds);
+      if (ids.length === 0) return;
+
+      const poIds = Array.from(new Set(
+        ids
+          .map((invoiceId) => invoices.find((invoice: any) => String(invoice.id) === invoiceId)?.poId)
+          .filter(Boolean)
+          .map((poId) => String(poId))
+      ));
+      if (poIds.length === 0) return;
+
+      const updates = await Promise.all(
+        poIds.map(async (poId) => {
+          const nextStatus = getNextPoStatusFromInvoices(poId, invoiceOverrides);
+          if (!nextStatus) return true;
+          return updateData(
+            "pos",
+            poId,
+            {
+              status: nextStatus,
+              statusNow: nextStatus,
+              updatedAt: new Date().toISOString(),
+            },
+            { skipLog: true }
+          );
+        })
+      );
+
+      if (updates.some((result) => !result)) {
+        throw new Error("เปลี่ยนสถานะ PO ตาม Invoice บางรายการไม่สำเร็จ");
+      }
+    },
+    [getNextPoStatusFromInvoices, invoices, updateData]
+  );
 
   useEffect(() => {
     const ref = collection(db, "artifacts", appId, "public", "data", config.collectionName);
@@ -252,6 +507,16 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
       (err) => console.error(`Error syncing ${config.collectionName}:`, err)
     );
   }, [appId, config.collectionName, db]);
+
+  useEffect(() => {
+    if (!isPayMode) return;
+    const ref = collection(db, "artifacts", appId, "public", "data", "invoices");
+    return onSnapshot(
+      query(ref),
+      (snap) => setLocalInvoices(snap.docs.map((docItem) => ({ id: docItem.id, ...docItem.data() }))),
+      (err) => console.error("Error syncing invoices for pay history:", err)
+    );
+  }, [appId, db, isPayMode]);
 
   useEffect(() => {
     if (!isPayMode) return;
@@ -301,11 +566,26 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
   }, [isBillingMode, isPayMode]);
 
   const openEditModal = useCallback((row: any) => {
+    const normalizedVendorKey = isBillingMode
+      ? (
+          (row.invoiceIds || [])
+            .map((invoiceId: any) => invoices.find((invoice: any) => String(invoice.id) === String(invoiceId)))
+            .map((invoice: any) => getInvoiceVendorKey(invoice))
+            .find(Boolean) || getDocumentVendorKey(row)
+        )
+      : isPayMode
+        ? (
+            (row.billingIds || [])
+              .map((billingId: any) => billingRows.find((billing: any) => String(billing.id) === String(billingId)))
+              .map((billing: any) => getBillingVendorKey(billing))
+              .find(Boolean) || getDocumentVendorKey(row)
+          )
+        : getDocumentVendorKey(row);
     setEditingRow(row);
     setFormData({
       docNo: row.docNo || "",
       docDate: row.docDate || new Date().toISOString().split("T")[0],
-      vendorId: row.vendorId || "",
+      vendorId: normalizedVendorKey,
       vendorName: row.vendorName || "",
       poRef: row.poRef || "",
       paymentType: row.paymentType || (isBillingMode
@@ -321,7 +601,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
       status: row.status || "Draft",
     });
     setIsModalOpen(true);
-  }, [isBillingMode, isPayMode]);
+  }, [billingRows, invoices, isBillingMode, isPayMode]);
 
   const projectRows = useMemo(() => {
     if (!selectedProjectId) return [];
@@ -352,40 +632,77 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
   const paidInvoiceHistoryRows = useMemo(() => {
     if (!selectedProjectId || !isPayMode) return [];
     return invoices
-      .filter((invoice: any) => (
-        invoice?.projectId === selectedProjectId &&
-        isPaidStatus(invoice.status)
-      ))
+      .filter((invoice: any) => {
+        const invoiceProjectId =
+          invoice?.projectId ||
+          pos.find((po: any) => String(po.id) === String(invoice?.poId || ""))?.projectId ||
+          "";
+        return invoiceProjectId === selectedProjectId && isPaidInvoiceRecord(invoice);
+      })
       .sort((a: any, b: any) => {
         const aTime = new Date(a.payDate || a.invDate || a.updatedAt || a.createdAt || 0).getTime();
         const bTime = new Date(b.payDate || b.invDate || b.updatedAt || b.createdAt || 0).getTime();
         return bTime - aTime;
       })
-      .map((invoice: any) => ({
-        id: `paid-invoice-${invoice.id}`,
-        sourceType: "invoice",
-        invoiceId: invoice.id,
-        docNo: invoice.invNo || invoice.id || "-",
-        poRef: invoice.poNo || invoice.poRef || invoice.billingNo || invoice.payNo || "-",
-        vendorId: invoice.vendorId || "",
-        vendorName: invoice.vendorName || "",
-        docDate: invoice.payDate || invoice.invDate || invoice.updatedAt || invoice.createdAt || "",
-        description: invoice.payNo
-          ? `Invoice ${invoice.invNo || invoice.id} / Pay ${invoice.payNo}`
-          : `Invoice ${invoice.invNo || invoice.id}`,
-        note: invoice.note || "",
-        paymentType: invoice.paymentType || "-",
-        amount: getInvoiceAmountBeforeVat(invoice),
-        amountBeforeVat: getInvoiceAmountBeforeVat(invoice),
-        amountAfterVat: getInvoiceAmountAfterVat(invoice),
-        status: invoice.status || "paid",
-      }));
-  }, [invoices, isPayMode, selectedProjectId]);
+      .map((invoice: any) => {
+        const linkedPay = projectRows.find((row: any) => (
+          String(row?.docNo || "") === String(invoice?.payNo || "") ||
+          normalizeIdList(row?.invoiceIds || []).includes(String(invoice.id))
+        ));
+        const paymentType =
+          linkedPay?.paymentType ||
+          invoice.payPaymentType ||
+          invoice.paymentMethod ||
+          invoice.paymentType ||
+          "-";
 
-  const payHistoryRows = useMemo(
-    () => projectRows.filter((row: any) => isPayMode && isPaidStatus(row.status)),
-    [isPayMode, projectRows]
-  );
+        return {
+          id: `paid-invoice-${invoice.id}`,
+          sourceType: "invoice",
+          invoiceId: invoice.id,
+          docNo: invoice.invNo || invoice.id || "-",
+          poRef: invoice.poNo || invoice.poRef || invoice.billingNo || invoice.payNo || "-",
+          vendorId: invoice.vendorId || "",
+          vendorName: invoice.vendorName || "",
+          docDate: invoice.payDate || invoice.invDate || invoice.updatedAt || invoice.createdAt || "",
+          description: invoice.payNo
+            ? `Invoice ${invoice.invNo || invoice.id} / Pay ${invoice.payNo}`
+            : `Invoice ${invoice.invNo || invoice.id}`,
+          note: invoice.note || "",
+          paymentType,
+          amount: getInvoiceAmountBeforeVat(invoice),
+          amountBeforeVat: getInvoiceAmountBeforeVat(invoice),
+          amountAfterVat: getInvoiceAmountAfterVat(invoice),
+          status: invoice.status || invoice.statusNow || "paid",
+        };
+      });
+  }, [invoices, isPayMode, pos, projectRows, selectedProjectId]);
+
+  const payHistoryRows = useMemo(() => {
+    if (!isPayMode) return [];
+
+    const payDocs = projectRows.filter((row: any) => isPaidStatus(row.status));
+    const paidInvoiceIds = new Set(
+      paidInvoiceHistoryRows
+        .map((row: any) => String(row?.invoiceId || ""))
+        .filter(Boolean)
+    );
+    const orphanPayDocs = payDocs.filter((row: any) => {
+      const linkedInvoiceIds = normalizeIdList(row.invoiceIds || []);
+      const hasLinkedPaidInvoice = linkedInvoiceIds.some((invoiceId) => paidInvoiceIds.has(invoiceId));
+      const hasInvoiceByPayNo = (invoices || []).some((invoice: any) => (
+        isPaidInvoiceRecord(invoice) &&
+        String(invoice?.payNo || "") === String(row?.docNo || "")
+      ));
+      return !hasLinkedPaidInvoice && !hasInvoiceByPayNo;
+    });
+
+    return [...paidInvoiceHistoryRows, ...orphanPayDocs].sort((a: any, b: any) => {
+      const aTime = new Date(a.docDate || a.createdAt || 0).getTime();
+      const bTime = new Date(b.docDate || b.createdAt || 0).getTime();
+      return bTime - aTime;
+    });
+  }, [invoices, isPayMode, paidInvoiceHistoryRows, projectRows]);
 
   const visibleRows = useMemo(
     () => {
@@ -431,14 +748,22 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
     return ids;
   }, [editingRow?.id, rows]);
 
-  const availableCreditInvoices = useMemo(() => {
+  const selectedBillingInvoiceIds = useMemo(
+    () => new Set(normalizeIdList(formData.selectedInvoiceIds || [])),
+    [formData.selectedInvoiceIds]
+  );
+
+  const billingInvoiceCandidates = useMemo(() => {
     if (!selectedProjectId || !isBillingMode) return [];
     return invoices
       .filter((invoice: any) => {
+        const invoiceId = String(invoice.id || "");
         return (
           invoice?.projectId === selectedProjectId &&
-          isCreditInvoice(invoice) &&
-          !billedInvoiceIds.has(String(invoice.id))
+          (
+            selectedBillingInvoiceIds.has(invoiceId) ||
+            (isCreditInvoice(invoice) && !billedInvoiceIds.has(invoiceId))
+          )
         );
       })
       .sort((a: any, b: any) => {
@@ -446,15 +771,14 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
         const bTime = new Date(b.invDate || b.createdAt || 0).getTime();
         return bTime - aTime;
       });
-  }, [billedInvoiceIds, invoices, isBillingMode, selectedProjectId]);
+  }, [billedInvoiceIds, invoices, isBillingMode, selectedBillingInvoiceIds, selectedProjectId]);
 
   const billingVendorOptions = useMemo(() => {
     const map = new Map<string, { id: string; name: string; count: number }>();
-    availableCreditInvoices.forEach((invoice: any) => {
+    billingInvoiceCandidates.forEach((invoice: any) => {
       const key = getInvoiceVendorKey(invoice);
       if (!key) return;
-      const vendor = vendors.find((item: any) => item.id === invoice.vendorId);
-      const name = invoice.vendorName || vendor?.name || key;
+      const name = getVendorDisplayName(invoice, key);
       const current = map.get(key);
       map.set(key, {
         id: key,
@@ -462,15 +786,20 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
         count: (current?.count || 0) + 1,
       });
     });
+    const editingVendorKey = getDocumentVendorKey(editingRow);
+    const editingVendorName = getVendorDisplayName(editingRow, editingVendorKey);
+    if (editingVendorKey && editingVendorName && !map.has(editingVendorKey)) {
+      map.set(editingVendorKey, { id: editingVendorKey, name: editingVendorName, count: 0 });
+    }
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, "th"));
-  }, [availableCreditInvoices, vendors]);
+  }, [billingInvoiceCandidates, editingRow]);
 
   const selectedVendorInvoices = useMemo(() => {
     if (!formData.vendorId) return [];
-    return availableCreditInvoices.filter(
+    return billingInvoiceCandidates.filter(
       (invoice: any) => getInvoiceVendorKey(invoice) === formData.vendorId
     );
-  }, [availableCreditInvoices, formData.vendorId]);
+  }, [billingInvoiceCandidates, formData.vendorId]);
 
   const selectedBillingInvoices = useMemo(() => {
     const ids = new Set((formData.selectedInvoiceIds || []).map((id: any) => String(id)));
@@ -503,16 +832,20 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
     return ids;
   }, [editingRow?.id, isPayMode, rows]);
 
-  const availableInpayBillings = useMemo(() => {
+  const selectedPayBillingIds = useMemo(
+    () => new Set(normalizeIdList(formData.selectedBillingIds || [])),
+    [formData.selectedBillingIds]
+  );
+
+  const payBillingCandidates = useMemo(() => {
     if (!selectedProjectId || !isPayMode) return [];
-    const editingBillingIds = new Set((formData.selectedBillingIds || []).map((id: any) => String(id)));
     return billingRows
       .filter((billing: any) => {
         const billingId = String(billing.id);
         return (
           billing?.projectId === selectedProjectId &&
-          (isInpayStatus(billing.status) || editingBillingIds.has(billingId)) &&
-          (!paidBillingIds.has(billingId) || editingBillingIds.has(billingId))
+          (isInpayStatus(billing.status) || selectedPayBillingIds.has(billingId)) &&
+          (!paidBillingIds.has(billingId) || selectedPayBillingIds.has(billingId))
         );
       })
       .sort((a: any, b: any) => {
@@ -520,15 +853,14 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
         const bTime = new Date(b.docDate || b.createdAt || 0).getTime();
         return bTime - aTime;
       });
-  }, [billingRows, formData.selectedBillingIds, isPayMode, paidBillingIds, selectedProjectId]);
+  }, [billingRows, isPayMode, paidBillingIds, selectedPayBillingIds, selectedProjectId]);
 
   const payVendorOptions = useMemo(() => {
     const map = new Map<string, { id: string; name: string; count: number }>();
-    availableInpayBillings.forEach((billing: any) => {
+    payBillingCandidates.forEach((billing: any) => {
       const key = getBillingVendorKey(billing);
       if (!key) return;
-      const vendor = vendors.find((item: any) => item.id === billing.vendorId);
-      const name = billing.vendorName || vendor?.name || key;
+      const name = getVendorDisplayName(billing, key);
       const current = map.get(key);
       map.set(key, {
         id: key,
@@ -536,15 +868,20 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
         count: (current?.count || 0) + 1,
       });
     });
+    const editingVendorKey = getDocumentVendorKey(editingRow);
+    const editingVendorName = getVendorDisplayName(editingRow, editingVendorKey);
+    if (editingVendorKey && editingVendorName && !map.has(editingVendorKey)) {
+      map.set(editingVendorKey, { id: editingVendorKey, name: editingVendorName, count: 0 });
+    }
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, "th"));
-  }, [availableInpayBillings, vendors]);
+  }, [editingRow, payBillingCandidates]);
 
   const selectedVendorPayBillings = useMemo(() => {
     if (!formData.vendorId) return [];
-    return availableInpayBillings.filter(
+    return payBillingCandidates.filter(
       (billing: any) => getBillingVendorKey(billing) === formData.vendorId
     );
-  }, [availableInpayBillings, formData.vendorId]);
+  }, [formData.vendorId, payBillingCandidates]);
 
   const selectedPayBillings = useMemo(() => {
     const ids = new Set((formData.selectedBillingIds || []).map((id: any) => String(id)));
@@ -570,7 +907,6 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
   const handleVendorChange = useCallback((vendorId: string) => {
     const billingVendor = billingVendorOptions.find((item) => item.id === vendorId);
     const payVendor = payVendorOptions.find((item) => item.id === vendorId);
-    const vendor = vendors.find((item: any) => item.id === vendorId);
     setFormData((prev) => ({
       ...prev,
       vendorId,
@@ -578,13 +914,13 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
         ? (billingVendor?.name || "")
         : isPayMode
           ? (payVendor?.name || "")
-          : (vendor?.name || ""),
+          : prev.vendorName,
       selectedInvoiceIds: isBillingMode ? [] : prev.selectedInvoiceIds,
       selectedBillingIds: isPayMode ? [] : prev.selectedBillingIds,
       poRef: isBillingMode || isPayMode ? "" : prev.poRef,
       amount: isBillingMode || isPayMode ? "" : prev.amount,
     }));
-  }, [billingVendorOptions, isBillingMode, isPayMode, payVendorOptions, vendors]);
+  }, [billingVendorOptions, isBillingMode, isPayMode, payVendorOptions]);
 
   const updateBillingInvoiceSelection = useCallback((invoiceIds: string[]) => {
     const idSet = new Set(invoiceIds.map(String));
@@ -683,11 +1019,17 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
 
     setSaving(true);
     try {
+      const now = new Date().toISOString();
       const billingInvoiceIds = isBillingMode
-        ? (formData.selectedInvoiceIds || []).map((id: any) => String(id))
+        ? normalizeIdList(formData.selectedInvoiceIds || [])
         : [];
+      const billingInvoiceMap = new Map(
+        billingInvoiceCandidates.map((invoice: any) => [String(invoice.id), invoice])
+      );
       const billingInvoices = isBillingMode
-        ? availableCreditInvoices.filter((invoice: any) => billingInvoiceIds.includes(String(invoice.id)))
+        ? billingInvoiceIds
+            .map((invoiceId) => billingInvoiceMap.get(invoiceId))
+            .filter(Boolean)
         : [];
       const billingAmountBeforeVat = isBillingMode
         ? billingInvoices.reduce((sum: number, invoice: any) => sum + getInvoiceAmountBeforeVat(invoice), 0)
@@ -697,10 +1039,15 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
         ? billingAmountBeforeVat + billingVatAmount
         : Number(formData.amount || 0);
       const payBillingIds = isPayMode
-        ? (formData.selectedBillingIds || []).map((id: any) => String(id))
+        ? normalizeIdList(formData.selectedBillingIds || [])
         : [];
+      const payBillingMap = new Map(
+        payBillingCandidates.map((billing: any) => [String(billing.id), billing])
+      );
       const payBillings = isPayMode
-        ? availableInpayBillings.filter((billing: any) => payBillingIds.includes(String(billing.id)))
+        ? payBillingIds
+            .map((billingId) => payBillingMap.get(billingId))
+            .filter(Boolean)
         : [];
       const payAmountBeforeVat = isPayMode
         ? payBillings.reduce((sum: number, billing: any) => sum + Number(billing.amountBeforeVat ?? billing.amount ?? 0), 0)
@@ -765,10 +1112,10 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
         createdBy:
           editingRow?.createdBy ||
           `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim(),
-        updatedAt: new Date().toISOString(),
+        updatedAt: now,
         ...(isPayMode
           ? {
-              paidAt: new Date().toISOString(),
+              paidAt: now,
               paidBy: `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim(),
             }
           : {}),
@@ -779,74 +1126,149 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
       if (editingRow) {
         const ok = await updateData(config.collectionName, editingRow.id, payload, { skipLog: true });
         if (!ok) return;
-        if (isBillingMode && billingInvoiceIds.length > 0) {
+        let payAutoReceiveResult = { createdReceiveNos: [], deletedReceiveNos: [] as string[] };
+        if (isBillingMode) {
+          const previousInvoiceIds = normalizeIdList(editingRow.invoiceIds || []);
+          const touchedInvoiceIds = normalizeIdList([...previousInvoiceIds, ...billingInvoiceIds]);
+          const billingInvoiceOverrides = new Map<string, any>();
+
           const invoiceUpdates = await Promise.all(
-            billingInvoiceIds.map((invoiceId: string) =>
-              updateData(
-                "invoices",
-                invoiceId,
-                {
-                  status: "Inpay",
-                  billingNo: payload.docNo,
-                  billingDate: payload.docDate,
-                  updatedAt: new Date().toISOString(),
-                },
-                { skipLog: true }
-              )
-            )
+            touchedInvoiceIds.map((invoiceId: string) => {
+              const invoice = invoices.find((item: any) => String(item.id) === invoiceId);
+              const isSelected = billingInvoiceIds.includes(invoiceId);
+              const patch = isSelected
+                ? {
+                    status: "Inpay",
+                    billingNo: payload.docNo,
+                    billingDate: payload.docDate,
+                    updatedAt: now,
+                  }
+                : invoice?.payNo
+                  ? {
+                      status: "paid",
+                      billingNo: null,
+                      billingDate: null,
+                      updatedAt: now,
+                    }
+                  : {
+                      status: "Invcredit",
+                      billingNo: null,
+                      billingDate: null,
+                      payNo: null,
+                      payDate: null,
+                      updatedAt: now,
+                    };
+              billingInvoiceOverrides.set(invoiceId, patch);
+              return updateData("invoices", invoiceId, patch, { skipLog: true });
+            })
           );
           if (invoiceUpdates.some((result) => !result)) {
             throw new Error("บันทึก Billing แล้ว แต่เปลี่ยนสถานะ Invoice บางรายการไม่สำเร็จ");
           }
+          if (touchedInvoiceIds.length > 0) {
+            await syncPoStatusFromInvoiceOverrides(touchedInvoiceIds, billingInvoiceOverrides);
+          }
         }
-        if (isBillingMode && billingInvoiceIds.length > 0) {
-          await syncPoStatusForInvoiceIds(billingInvoiceIds, "Inpay");
-        }
-        if (isPayMode && payBillingIds.length > 0) {
-          const now = new Date().toISOString();
+        if (isPayMode) {
+          const previousBillingIds = normalizeIdList(editingRow.billingIds || []);
+          const touchedBillingIds = normalizeIdList([...previousBillingIds, ...payBillingIds]);
           const billingUpdates = await Promise.all(
-            payBillingIds.map((billingId: string) =>
-              updateData(
+            touchedBillingIds.map((billingId: string) => {
+              const isSelected = payBillingIds.includes(billingId);
+              return updateData(
                 "billings",
                 billingId,
-                {
-                  status: "paid",
-                  payNo: payload.docNo,
-                  payDate: payload.docDate,
-                  updatedAt: now,
-                },
+                isSelected
+                  ? {
+                      status: "paid",
+                      payNo: payload.docNo,
+                      payDate: payload.docDate,
+                      updatedAt: now,
+                    }
+                  : {
+                      status: "Inpay",
+                      payNo: null,
+                      payDate: null,
+                      updatedAt: now,
+                    },
                 { skipLog: true }
-              )
-            )
+              );
+            })
           );
           if (billingUpdates.some((result) => !result)) {
             throw new Error("บันทึก Pay แล้ว แต่เปลี่ยนสถานะ Billing บางรายการไม่สำเร็จ");
           }
+
+          const previousPayInvoiceIds = normalizeIdList(
+            Array.isArray(editingRow.invoiceIds) && editingRow.invoiceIds.length > 0
+              ? editingRow.invoiceIds
+              : (editingRow.billings || []).flatMap((billing: any) => (
+                  Array.isArray(billing?.invoiceIds) ? billing.invoiceIds : []
+                ))
+          );
+          const otherPaidPayInvoiceIds = new Set<string>();
+          rows.forEach((row: any) => {
+            if (String(row.id) === String(editingRow.id) || !isPaidStatus(row.status)) return;
+            normalizeIdList(row.invoiceIds || []).forEach((invoiceId) => {
+              otherPaidPayInvoiceIds.add(invoiceId);
+            });
+          });
+
+          const touchedPayInvoiceIds = normalizeIdList([...previousPayInvoiceIds, ...payInvoiceIds]);
+          const payInvoiceOverrides = new Map<string, any>();
           const invoiceUpdates = await Promise.all(
-            payInvoiceIds.map((invoiceId: string) =>
-              updateData(
-                "invoices",
-                invoiceId,
-                {
-                  status: "paid",
-                  payNo: payload.docNo,
-                  payDate: payload.docDate,
-                  updatedAt: now,
-                },
-                { skipLog: true }
-              )
-            )
+            touchedPayInvoiceIds.map((invoiceId: string) => {
+              const isSelected = payInvoiceIds.includes(invoiceId);
+              if (!isSelected && otherPaidPayInvoiceIds.has(invoiceId)) {
+                return Promise.resolve(true);
+              }
+
+              const patch = isSelected
+                ? {
+                    status: "paid",
+                    payNo: payload.docNo,
+                    payDate: payload.docDate,
+                    payPaymentType: payload.paymentType,
+                    updatedAt: now,
+                  }
+                : {
+                    status: "Inpay",
+                    payNo: null,
+                    payDate: null,
+                    payPaymentType: null,
+                    updatedAt: now,
+                  };
+              payInvoiceOverrides.set(invoiceId, patch);
+              return updateData("invoices", invoiceId, patch, { skipLog: true });
+            })
           );
           if (invoiceUpdates.some((result) => !result)) {
             throw new Error("บันทึก Pay แล้ว แต่เปลี่ยนสถานะ Invoice บางรายการไม่สำเร็จ");
           }
-        }
-        if (isPayMode && payInvoiceIds.length > 0) {
-          await syncPoStatusForInvoiceIds(payInvoiceIds, "paid");
+          payAutoReceiveResult = await syncAutoReceivesForPay({
+            previousDocNo: editingRow.docNo || "",
+            nextDocNo: payload.docNo,
+            nextDocDate: payload.docDate,
+            billingIds: payBillingIds,
+            invoiceIds: payInvoiceIds,
+            invoiceOverrides: payInvoiceOverrides,
+            projectId: payload.projectId,
+          });
+          if (payInvoiceOverrides.size > 0) {
+            await syncPoStatusFromInvoiceOverrides(Array.from(payInvoiceOverrides.keys()), payInvoiceOverrides);
+          }
         }
         await logAction?.(
           `Edit ${config.saveLogLabel}`,
-          `แก้ไข ${config.saveLogLabel} ${payload.docNo}`,
+          `แก้ไข ${config.saveLogLabel} | ${getRowLogSummary(editingRow, payload)} | มูลค่า: ${formatLogCurrency(payload.amountAfterVat ?? payload.amount) || "฿0"}${
+            isPayMode && payAutoReceiveResult.createdReceiveNos.length > 0
+              ? ` | Auto Receive: ${payAutoReceiveResult.createdReceiveNos.join(", ")}`
+              : ""
+          }${
+            isPayMode && payAutoReceiveResult.deletedReceiveNos.length > 0
+              ? ` | ลบ Receive เดิม: ${payAutoReceiveResult.deletedReceiveNos.join(", ")}`
+              : ""
+          }`,
           payload.projectId
         );
         showAlert?.("สำเร็จ", `แก้ไข ${config.title} เรียบร้อยแล้ว`, "success");
@@ -858,6 +1280,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
           { skipLog: true }
         );
         if (!ok) return;
+        let payAutoReceiveResult = { createdReceiveNos: [], deletedReceiveNos: [] as string[] };
         if (isBillingMode && billingInvoiceIds.length > 0) {
           const invoiceUpdates = await Promise.all(
             billingInvoiceIds.map((invoiceId: string) =>
@@ -892,6 +1315,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
                   status: "paid",
                   payNo: payload.docNo,
                   payDate: payload.docDate,
+                  payPaymentType: payload.paymentType,
                   updatedAt: now,
                 },
                 { skipLog: true }
@@ -919,13 +1343,34 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
           if (invoiceUpdates.some((result) => !result)) {
             throw new Error("สร้าง Pay แล้ว แต่เปลี่ยนสถานะ Invoice บางรายการไม่สำเร็จ");
           }
+          const payInvoiceOverrides = new Map<string, any>(
+            payInvoiceIds.map((invoiceId: string) => [invoiceId, {
+              status: "paid",
+              payNo: payload.docNo,
+              payDate: payload.docDate,
+              payPaymentType: payload.paymentType,
+              updatedAt: now,
+            }])
+          );
+          payAutoReceiveResult = await syncAutoReceivesForPay({
+            nextDocNo: payload.docNo,
+            nextDocDate: payload.docDate,
+            billingIds: payBillingIds,
+            invoiceIds: payInvoiceIds,
+            invoiceOverrides: payInvoiceOverrides,
+            projectId: payload.projectId,
+          });
         }
         if (isPayMode && payInvoiceIds.length > 0) {
           await syncPoStatusForInvoiceIds(payInvoiceIds, "paid");
         }
         await logAction?.(
           `Create ${config.saveLogLabel}`,
-          `สร้าง ${config.saveLogLabel} ${payload.docNo}`,
+          `สร้าง ${config.saveLogLabel} | ${getRowLogSummary({ ...payload, id: payload.docNo || payload.poRef || config.saveLogLabel }, payload)} | อ้างอิง: ${truncateLogText(payload.poRef || "-", 80)}${
+            isPayMode && payAutoReceiveResult.createdReceiveNos.length > 0
+              ? ` | Auto Receive: ${payAutoReceiveResult.createdReceiveNos.join(", ")}`
+              : ""
+          }`,
           payload.projectId
         );
         showAlert?.("สำเร็จ", `สร้าง ${config.title} เรียบร้อยแล้ว`, "success");
@@ -940,6 +1385,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
     }
   }, [
     addData,
+    billingInvoiceCandidates,
     closeModal,
     config.collectionName,
     config.numberLabel,
@@ -947,14 +1393,16 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
     config.title,
     editingRow,
     formData,
-    availableCreditInvoices,
-    availableInpayBillings,
     isBillingMode,
     isPayMode,
+    invoices,
     logAction,
+    payBillingCandidates,
+    rows,
     selectedProjectId,
     showAlert,
     syncPoStatusForInvoiceIds,
+    syncPoStatusFromInvoiceOverrides,
     updateData,
     userData,
   ]);
@@ -1025,11 +1473,16 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
           } else if (isPayMode) {
             const billingIds = Array.from(new Set((row.billingIds || []).map((id: any) => String(id)).filter(Boolean)));
             const invoiceIds = Array.from(new Set((row.invoiceIds || []).map((id: any) => String(id)).filter(Boolean)));
+            const linkedReceives = getPayLinkedAutoReceives(row.docNo || "");
             const invoiceOverrides = new Map<string, any>();
             const touchedPoIds = new Set<string>();
             const batch = writeBatch(db);
 
             batch.delete(doc(db, ...basePath, "pays", row.id));
+
+            linkedReceives.forEach((receive: any) => {
+              batch.delete(doc(db, ...basePath, "receives", receive.id));
+            });
 
             billingIds.forEach((billingId) => {
               batch.update(doc(db, ...basePath, "billings", billingId), {
@@ -1045,6 +1498,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
                 status: "Inpay",
                 payNo: null,
                 payDate: null,
+                payPaymentType: null,
                 updatedAt: nowIso,
               });
               const invoice = (invoices || []).find((item: any) => String(item.id) === invoiceId);
@@ -1053,6 +1507,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
                 status: "Inpay",
                 payNo: null,
                 payDate: null,
+                payPaymentType: null,
                 updatedAt: nowIso,
               });
             });
@@ -1079,17 +1534,396 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
 
         await logAction?.(
           `Delete ${config.saveLogLabel}`,
-          `ลบ ${config.saveLogLabel} ${row.docNo || row.id}`,
+          `${buildDeleteLogDetails(logCollectionName, row, row.id)}${
+            isPayMode && getPayLinkedAutoReceives(row.docNo || "").length > 0
+              ? ` | ลบ Receive อัตโนมัติ ${getPayLinkedAutoReceives(row.docNo || "").length} รายการ`
+              : ""
+          }`,
           row.projectId
         );
         showAlert?.("สำเร็จ", `ลบ ${config.title} เรียบร้อยแล้ว`, "success");
       },
       "danger"
     );
-  }, [appId, config.collectionName, config.saveLogLabel, config.title, db, deleteData, getNextPoStatusFromInvoices, invoices, isBillingMode, isPayMode, logAction, openConfirm, payRows, showAlert]);
+  }, [appId, config.collectionName, config.saveLogLabel, config.title, db, deleteData, getNextPoStatusFromInvoices, getPayLinkedAutoReceives, invoices, isBillingMode, isPayMode, logAction, openConfirm, payRows, showAlert]);
 
   const numberHeader = config.numberLabel;
   const refHeader = config.refLabel;
+  const modalNode = (
+    <AnimatePresence>
+      {isModalOpen && (
+        <motion.div
+          className="fixed inset-0 z-[10010] flex items-start justify-center overflow-y-auto bg-black/60 p-4 backdrop-blur-md"
+          initial="hidden"
+          animate="visible"
+          exit="exit"
+          variants={modalOverlayVariants}
+          transition={overlayTransition}
+          onClick={closeModal}
+        >
+          <motion.div
+            className="my-8 w-full max-w-3xl rounded-2xl bg-white shadow-2xl"
+            variants={modalContentVariants}
+            transition={modalTransition}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={`flex items-center justify-between rounded-t-2xl border-b px-5 py-3 ${config.theme.soft} ${config.theme.border}`}>
+              <div className="flex items-center gap-3">
+                <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${config.theme.iconBox}`}>
+                  <Icon size={18} className={config.theme.iconText} />
+                </div>
+                <div>
+                  <h3 className={`text-lg font-bold ${config.theme.title}`}>
+                    {editingRow ? config.editLabel : config.actionLabel}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {isBillingMode
+                      ? "เลือก Vendor จาก Invoice เครดิต แล้วเลือกรายการ Invoice ที่ต้องการสร้าง Billing"
+                      : isPayMode
+                        ? "เลือก Vendor จากประวัติ Billing สถานะ Inpay แล้วเลือกรายการ Billing ที่ต้องการจ่าย"
+                        : "โครงสร้างสร้างรายการแบบฟอร์มเดี่ยวในแนวเดียวกับหน้า PO"}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeModal}
+                className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-4 p-5">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                  <label className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-700">
+                    <FileText size={12} /> {config.numberLabel}
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.docNo}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, docNo: e.target.value }))}
+                    placeholder={config.numberPlaceholder}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-700">
+                    <Calendar size={12} /> {isPayMode ? "วันที่จ่าย" : "วันที่เอกสาร"}
+                  </label>
+                  <input
+                    type="date"
+                    value={formData.docDate}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, docDate: e.target.value }))}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-700">
+                    <FileText size={12} /> {config.refLabel}
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.poRef}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, poRef: e.target.value }))}
+                    placeholder="กรอกเลขอ้างอิง"
+                    readOnly={isBillingMode || isPayMode}
+                    className={`w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 ${
+                      isBillingMode || isPayMode ? "bg-slate-50 text-slate-600" : "bg-white"
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-700">
+                    <CreditCard size={12} /> ประเภทการชำระ
+                  </label>
+                  <select
+                    value={formData.paymentType}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, paymentType: e.target.value }))}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  >
+                    {(isBillingMode ? BILLING_PAYMENT_TYPES : isPayMode ? PAY_PAYMENT_TYPES : PAYMENT_TYPES).map((item) => (
+                      <option key={item} value={item}>
+                        {item}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-700">
+                    <FileText size={12} /> Vendor
+                  </label>
+                  <select
+                    value={formData.vendorId}
+                    onChange={(e) => handleVendorChange(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  >
+                    <option value="">เลือก Vendor</option>
+                    {(isBillingMode ? billingVendorOptions : payVendorOptions).map((vendor: any) => (
+                      <option key={vendor.id} value={vendor.id}>
+                        {vendor.name}
+                        {isBillingMode ? ` (${vendor.count} Invoice)` : isPayMode ? ` (${vendor.count} Billing)` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  {isBillingMode && billingVendorOptions.length === 0 && (
+                    <p className="mt-1 text-[11px] text-amber-600">
+                      ไม่มี Invoice สถานะ Invcredit ที่พร้อมสร้าง Billing
+                    </p>
+                  )}
+                  {isPayMode && payVendorOptions.length === 0 && (
+                    <p className="mt-1 text-[11px] text-amber-600">
+                      ไม่มี Billing สถานะ Inpay ที่พร้อมสร้าง Pay
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-700">
+                    <Wallet size={12} /> {isBillingMode ? "ยอดก่อน VAT" : isPayMode ? "ยอดจ่ายหลัง VAT" : "จำนวนเงิน"}
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={formData.amount}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, amount: e.target.value }))}
+                    readOnly={isBillingMode || isPayMode}
+                    placeholder="0.00"
+                    className={`w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 ${
+                      isBillingMode || isPayMode ? "bg-slate-50 text-slate-600" : "bg-white"
+                    }`}
+                  />
+                </div>
+              </div>
+
+              {isBillingMode && (
+                <div className="rounded-2xl border border-cyan-100 bg-cyan-50/40 p-3">
+                  <div className="mb-2 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <h4 className="text-sm font-bold text-cyan-800">เลือก Invoice เครดิต</h4>
+                      <p className="text-[11px] text-slate-500">
+                        แสดงเฉพาะ Invoice สถานะ Invcredit ของ Vendor ที่เลือก
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={!formData.vendorId || selectedVendorInvoices.length === 0}
+                        onClick={() => updateBillingInvoiceSelection(selectedVendorInvoices.map((invoice: any) => String(invoice.id)))}
+                      >
+                        เลือกทั้งหมด
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        disabled={!formData.selectedInvoiceIds?.length}
+                        onClick={() => updateBillingInvoiceSelection([])}
+                      >
+                        ล้าง
+                      </Button>
+                    </div>
+                  </div>
+
+                  {!formData.vendorId ? (
+                    <div className="rounded-xl border border-dashed border-cyan-200 bg-white/70 px-3 py-6 text-center text-sm text-slate-400">
+                      กรุณาเลือก Vendor ก่อน
+                    </div>
+                  ) : selectedVendorInvoices.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-cyan-200 bg-white/70 px-3 py-6 text-center text-sm text-slate-400">
+                      ไม่มี Invoice เครดิตของ Vendor นี้
+                    </div>
+                  ) : (
+                    <div className="max-h-64 overflow-auto rounded-xl border border-cyan-100 bg-white">
+                      <table className="w-full min-w-[720px] text-left text-xs">
+                        <thead className="sticky top-0 bg-cyan-50 text-slate-600">
+                          <tr>
+                            <th className="px-3 py-2 text-center">เลือก</th>
+                            <th className="px-3 py-2">Invoice No.</th>
+                            <th className="px-3 py-2">Ref. PO</th>
+                            <th className="px-3 py-2">วันที่</th>
+                            <th className="px-3 py-2 text-right">ก่อน VAT</th>
+                            <th className="px-3 py-2 text-right">หลัง VAT</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-cyan-50">
+                          {selectedVendorInvoices.map((invoice: any) => {
+                            const checked = (formData.selectedInvoiceIds || []).map(String).includes(String(invoice.id));
+                            return (
+                              <tr key={invoice.id} className={checked ? "bg-cyan-50/50" : "bg-white"}>
+                                <td className="px-3 py-2 text-center">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => toggleBillingInvoice(String(invoice.id))}
+                                    className="h-4 w-4 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500"
+                                  />
+                                </td>
+                                <td className="px-3 py-2 font-semibold text-cyan-700">{invoice.invNo || "-"}</td>
+                                <td className="px-3 py-2 text-amber-600">{invoice.poNo || invoice.poRef || "-"}</td>
+                                <td className="px-3 py-2 whitespace-nowrap">{formatDate(invoice.invDate)}</td>
+                                <td className="px-3 py-2 text-right font-semibold">{formatCurrency(getInvoiceAmountBeforeVat(invoice))}</td>
+                                <td className="px-3 py-2 text-right font-semibold text-slate-800">{formatCurrency(getInvoiceAmountAfterVat(invoice))}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
+                    <div className="rounded-xl bg-white px-3 py-2 text-right shadow-sm">
+                      <p className="text-[11px] font-semibold text-slate-500">รวมก่อน VAT</p>
+                      <p className="text-sm font-bold text-slate-800">{formatCurrency(selectedBillingTotals.beforeVat)}</p>
+                    </div>
+                    <div className="rounded-xl bg-white px-3 py-2 text-right shadow-sm">
+                      <p className="text-[11px] font-semibold text-slate-500">VAT 7%</p>
+                      <p className="text-sm font-bold text-cyan-700">{formatCurrency(selectedBillingTotals.vat)}</p>
+                    </div>
+                    <div className="rounded-xl bg-white px-3 py-2 text-right shadow-sm">
+                      <p className="text-[11px] font-semibold text-slate-500">รวมหลัง VAT</p>
+                      <p className="text-base font-extrabold text-slate-900">{formatCurrency(selectedBillingTotals.afterVat)}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {isPayMode && (
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50/40 p-3">
+                  <div className="mb-2 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <h4 className="text-sm font-bold text-emerald-800">เลือก Billing สถานะ Inpay</h4>
+                      <p className="text-[11px] text-slate-500">
+                        แสดงเฉพาะ Billing จากประวัติ Billing ของ Vendor ที่เลือก
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={!formData.vendorId || selectedVendorPayBillings.length === 0}
+                        onClick={() => updatePayBillingSelection(selectedVendorPayBillings.map((billing: any) => String(billing.id)))}
+                      >
+                        เลือกทั้งหมด
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        disabled={!formData.selectedBillingIds?.length}
+                        onClick={() => updatePayBillingSelection([])}
+                      >
+                        ล้าง
+                      </Button>
+                    </div>
+                  </div>
+
+                  {!formData.vendorId ? (
+                    <div className="rounded-xl border border-dashed border-emerald-200 bg-white/70 px-3 py-6 text-center text-sm text-slate-400">
+                      กรุณาเลือก Vendor ก่อน
+                    </div>
+                  ) : selectedVendorPayBillings.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-emerald-200 bg-white/70 px-3 py-6 text-center text-sm text-slate-400">
+                      ไม่มี Billing สถานะ Inpay ของ Vendor นี้
+                    </div>
+                  ) : (
+                    <div className="max-h-64 overflow-auto rounded-xl border border-emerald-100 bg-white">
+                      <table className="w-full min-w-[760px] text-left text-xs">
+                        <thead className="sticky top-0 bg-emerald-50 text-slate-600">
+                          <tr>
+                            <th className="px-3 py-2 text-center">เลือก</th>
+                            <th className="px-3 py-2">Billing No.</th>
+                            <th className="px-3 py-2">Ref. PO</th>
+                            <th className="px-3 py-2">วันที่ Billing</th>
+                            <th className="px-3 py-2 text-right">ก่อน VAT</th>
+                            <th className="px-3 py-2 text-right">VAT</th>
+                            <th className="px-3 py-2 text-right">หลัง VAT</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-emerald-50">
+                          {selectedVendorPayBillings.map((billing: any) => {
+                            const checked = (formData.selectedBillingIds || []).map(String).includes(String(billing.id));
+                            const beforeVat = Number(billing.amountBeforeVat ?? billing.amount ?? 0);
+                            const vat = Number(billing.vatAmount ?? 0);
+                            const afterVat = Number(billing.amountAfterVat ?? beforeVat + vat);
+                            return (
+                              <tr key={billing.id} className={checked ? "bg-emerald-50/50" : "bg-white"}>
+                                <td className="px-3 py-2 text-center">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => togglePayBilling(String(billing.id))}
+                                    className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                                  />
+                                </td>
+                                <td className="px-3 py-2 font-semibold text-emerald-700">{billing.docNo || "-"}</td>
+                                <td className="px-3 py-2 text-amber-600">{billing.poRef || "-"}</td>
+                                <td className="px-3 py-2 whitespace-nowrap">{formatDate(billing.docDate)}</td>
+                                <td className="px-3 py-2 text-right font-semibold">{formatCurrency(beforeVat)}</td>
+                                <td className="px-3 py-2 text-right font-semibold text-emerald-700">{formatCurrency(vat)}</td>
+                                <td className="px-3 py-2 text-right font-semibold text-slate-800">{formatCurrency(afterVat)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
+                    <div className="rounded-xl bg-white px-3 py-2 text-right shadow-sm">
+                      <p className="text-[11px] font-semibold text-slate-500">รวมก่อน VAT</p>
+                      <p className="text-sm font-bold text-slate-800">{formatCurrency(selectedPayTotals.beforeVat)}</p>
+                    </div>
+                    <div className="rounded-xl bg-white px-3 py-2 text-right shadow-sm">
+                      <p className="text-[11px] font-semibold text-slate-500">VAT</p>
+                      <p className="text-sm font-bold text-emerald-700">{formatCurrency(selectedPayTotals.vat)}</p>
+                    </div>
+                    <div className="rounded-xl bg-white px-3 py-2 text-right shadow-sm">
+                      <p className="text-[11px] font-semibold text-slate-500">รวมจ่าย</p>
+                      <p className="text-base font-extrabold text-slate-900">{formatCurrency(selectedPayTotals.afterVat)}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-700">รายละเอียด</label>
+                <textarea
+                  rows={3}
+                  value={formData.description}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, description: e.target.value }))}
+                  placeholder={`ระบุรายละเอียด ${config.title}`}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-700">หมายเหตุ</label>
+                <textarea
+                  rows={2}
+                  value={formData.note}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, note: e.target.value }))}
+                  placeholder="หมายเหตุเพิ่มเติม"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-5 py-4">
+              <Button type="button" variant="secondary" onClick={closeModal} disabled={saving}>
+                ยกเลิก
+              </Button>
+              <Button type="button" onClick={handleSave} disabled={saving} className={`${config.theme.accent} text-white`}>
+                {saving ? "กำลังบันทึก..." : editingRow ? "บันทึกการแก้ไข" : "บันทึกรายการ"}
+              </Button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
 
   return (
     <div className="space-y-4">
@@ -1269,379 +2103,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
         </table>
       </Card>
 
-      <AnimatePresence>
-        {isModalOpen && (
-          <motion.div
-            className="fixed inset-0 z-[10010] flex items-start justify-center overflow-y-auto bg-black/60 p-4 backdrop-blur-md"
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-            variants={modalOverlayVariants}
-            transition={overlayTransition}
-            onClick={closeModal}
-          >
-            <motion.div
-              className="my-8 w-full max-w-3xl rounded-2xl bg-white shadow-2xl"
-              variants={modalContentVariants}
-              transition={modalTransition}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className={`flex items-center justify-between rounded-t-2xl border-b px-5 py-3 ${config.theme.soft} ${config.theme.border}`}>
-                <div className="flex items-center gap-3">
-                  <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${config.theme.iconBox}`}>
-                    <Icon size={18} className={config.theme.iconText} />
-                  </div>
-                  <div>
-                    <h3 className={`text-lg font-bold ${config.theme.title}`}>
-                      {editingRow ? config.editLabel : config.actionLabel}
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      {isBillingMode
-                        ? "เลือก Vendor จาก Invoice เครดิต แล้วเลือกรายการ Invoice ที่ต้องการสร้าง Billing"
-                        : isPayMode
-                          ? "เลือก Vendor จากประวัติ Billing สถานะ Inpay แล้วเลือกรายการ Billing ที่ต้องการจ่าย"
-                          : "โครงสร้างสร้างรายการแบบฟอร์มเดี่ยวในแนวเดียวกับหน้า PO"}
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={closeModal}
-                  className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-
-              <div className="space-y-4 p-5">
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <div>
-                    <label className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-700">
-                      <FileText size={12} /> {config.numberLabel}
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.docNo}
-                      onChange={(e) => setFormData((prev) => ({ ...prev, docNo: e.target.value }))}
-                      placeholder={config.numberPlaceholder}
-                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-700">
-                      <Calendar size={12} /> {isPayMode ? "วันที่จ่าย" : "วันที่เอกสาร"}
-                    </label>
-                    <input
-                      type="date"
-                      value={formData.docDate}
-                      onChange={(e) => setFormData((prev) => ({ ...prev, docDate: e.target.value }))}
-                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-700">
-                      <FileText size={12} /> {config.refLabel}
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.poRef}
-                      onChange={(e) => setFormData((prev) => ({ ...prev, poRef: e.target.value }))}
-                      placeholder="กรอกเลขอ้างอิง"
-                      readOnly={isBillingMode || isPayMode}
-                      className={`w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 ${
-                        isBillingMode || isPayMode ? "bg-slate-50 text-slate-600" : "bg-white"
-                      }`}
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-700">
-                      <CreditCard size={12} /> ประเภทการชำระ
-                    </label>
-                    <select
-                      value={formData.paymentType}
-                      onChange={(e) => setFormData((prev) => ({ ...prev, paymentType: e.target.value }))}
-                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                    >
-                      {(isBillingMode ? BILLING_PAYMENT_TYPES : isPayMode ? PAY_PAYMENT_TYPES : PAYMENT_TYPES).map((item) => (
-                        <option key={item} value={item}>
-                          {item}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-700">
-                      <FileText size={12} /> Vendor
-                    </label>
-                    <select
-                      value={formData.vendorId}
-                      onChange={(e) => handleVendorChange(e.target.value)}
-                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                    >
-                      <option value="">เลือก Vendor</option>
-                      {(isBillingMode ? billingVendorOptions : isPayMode ? payVendorOptions : vendors).map((vendor: any) => (
-                        <option key={vendor.id} value={vendor.id}>
-                          {vendor.name}
-                          {isBillingMode ? ` (${vendor.count} Invoice)` : isPayMode ? ` (${vendor.count} Billing)` : ""}
-                        </option>
-                      ))}
-                    </select>
-                    {isBillingMode && billingVendorOptions.length === 0 && (
-                      <p className="mt-1 text-[11px] text-amber-600">
-                        ไม่มี Invoice สถานะ Invcredit ที่พร้อมสร้าง Billing
-                      </p>
-                    )}
-                    {isPayMode && payVendorOptions.length === 0 && (
-                      <p className="mt-1 text-[11px] text-amber-600">
-                        ไม่มี Billing สถานะ Inpay ที่พร้อมสร้าง Pay
-                      </p>
-                    )}
-                  </div>
-                  <div>
-                    <label className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-700">
-                      <Wallet size={12} /> {isBillingMode ? "ยอดก่อน VAT" : isPayMode ? "ยอดจ่ายหลัง VAT" : "จำนวนเงิน"}
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={formData.amount}
-                      onChange={(e) => setFormData((prev) => ({ ...prev, amount: e.target.value }))}
-                      readOnly={isBillingMode || isPayMode}
-                      placeholder="0.00"
-                      className={`w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200 ${
-                        isBillingMode || isPayMode ? "bg-slate-50 text-slate-600" : "bg-white"
-                      }`}
-                    />
-                  </div>
-                </div>
-
-                {isBillingMode && (
-                  <div className="rounded-2xl border border-cyan-100 bg-cyan-50/40 p-3">
-                    <div className="mb-2 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                      <div>
-                        <h4 className="text-sm font-bold text-cyan-800">เลือก Invoice เครดิต</h4>
-                        <p className="text-[11px] text-slate-500">
-                          แสดงเฉพาะ Invoice สถานะ Invcredit ของ Vendor ที่เลือก
-                        </p>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          disabled={!formData.vendorId || selectedVendorInvoices.length === 0}
-                          onClick={() => updateBillingInvoiceSelection(selectedVendorInvoices.map((invoice: any) => String(invoice.id)))}
-                        >
-                          เลือกทั้งหมด
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          disabled={!formData.selectedInvoiceIds?.length}
-                          onClick={() => updateBillingInvoiceSelection([])}
-                        >
-                          ล้าง
-                        </Button>
-                      </div>
-                    </div>
-
-                    {!formData.vendorId ? (
-                      <div className="rounded-xl border border-dashed border-cyan-200 bg-white/70 px-3 py-6 text-center text-sm text-slate-400">
-                        กรุณาเลือก Vendor ก่อน
-                      </div>
-                    ) : selectedVendorInvoices.length === 0 ? (
-                      <div className="rounded-xl border border-dashed border-cyan-200 bg-white/70 px-3 py-6 text-center text-sm text-slate-400">
-                        ไม่มี Invoice เครดิตของ Vendor นี้
-                      </div>
-                    ) : (
-                      <div className="max-h-64 overflow-auto rounded-xl border border-cyan-100 bg-white">
-                        <table className="w-full min-w-[720px] text-left text-xs">
-                          <thead className="sticky top-0 bg-cyan-50 text-slate-600">
-                            <tr>
-                              <th className="px-3 py-2 text-center">เลือก</th>
-                              <th className="px-3 py-2">Invoice No.</th>
-                              <th className="px-3 py-2">Ref. PO</th>
-                              <th className="px-3 py-2">วันที่</th>
-                              <th className="px-3 py-2 text-right">ก่อน VAT</th>
-                              <th className="px-3 py-2 text-right">หลัง VAT</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-cyan-50">
-                            {selectedVendorInvoices.map((invoice: any) => {
-                              const checked = (formData.selectedInvoiceIds || []).map(String).includes(String(invoice.id));
-                              return (
-                                <tr key={invoice.id} className={checked ? "bg-cyan-50/50" : "bg-white"}>
-                                  <td className="px-3 py-2 text-center">
-                                    <input
-                                      type="checkbox"
-                                      checked={checked}
-                                      onChange={() => toggleBillingInvoice(String(invoice.id))}
-                                      className="h-4 w-4 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500"
-                                    />
-                                  </td>
-                                  <td className="px-3 py-2 font-semibold text-cyan-700">{invoice.invNo || "-"}</td>
-                                  <td className="px-3 py-2 text-amber-600">{invoice.poNo || invoice.poRef || "-"}</td>
-                                  <td className="px-3 py-2 whitespace-nowrap">{formatDate(invoice.invDate)}</td>
-                                  <td className="px-3 py-2 text-right font-semibold">{formatCurrency(getInvoiceAmountBeforeVat(invoice))}</td>
-                                  <td className="px-3 py-2 text-right font-semibold text-slate-800">{formatCurrency(getInvoiceAmountAfterVat(invoice))}</td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-
-                    <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
-                      <div className="rounded-xl bg-white px-3 py-2 text-right shadow-sm">
-                        <p className="text-[11px] font-semibold text-slate-500">รวมก่อน VAT</p>
-                        <p className="text-sm font-bold text-slate-800">{formatCurrency(selectedBillingTotals.beforeVat)}</p>
-                      </div>
-                      <div className="rounded-xl bg-white px-3 py-2 text-right shadow-sm">
-                        <p className="text-[11px] font-semibold text-slate-500">VAT 7%</p>
-                        <p className="text-sm font-bold text-cyan-700">{formatCurrency(selectedBillingTotals.vat)}</p>
-                      </div>
-                      <div className="rounded-xl bg-white px-3 py-2 text-right shadow-sm">
-                        <p className="text-[11px] font-semibold text-slate-500">รวมหลัง VAT</p>
-                        <p className="text-base font-extrabold text-slate-900">{formatCurrency(selectedBillingTotals.afterVat)}</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {isPayMode && (
-                  <div className="rounded-2xl border border-emerald-100 bg-emerald-50/40 p-3">
-                    <div className="mb-2 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                      <div>
-                        <h4 className="text-sm font-bold text-emerald-800">เลือก Billing สถานะ Inpay</h4>
-                        <p className="text-[11px] text-slate-500">
-                          แสดงเฉพาะ Billing จากประวัติ Billing ของ Vendor ที่เลือก
-                        </p>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          disabled={!formData.vendorId || selectedVendorPayBillings.length === 0}
-                          onClick={() => updatePayBillingSelection(selectedVendorPayBillings.map((billing: any) => String(billing.id)))}
-                        >
-                          เลือกทั้งหมด
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          disabled={!formData.selectedBillingIds?.length}
-                          onClick={() => updatePayBillingSelection([])}
-                        >
-                          ล้าง
-                        </Button>
-                      </div>
-                    </div>
-
-                    {!formData.vendorId ? (
-                      <div className="rounded-xl border border-dashed border-emerald-200 bg-white/70 px-3 py-6 text-center text-sm text-slate-400">
-                        กรุณาเลือก Vendor ก่อน
-                      </div>
-                    ) : selectedVendorPayBillings.length === 0 ? (
-                      <div className="rounded-xl border border-dashed border-emerald-200 bg-white/70 px-3 py-6 text-center text-sm text-slate-400">
-                        ไม่มี Billing สถานะ Inpay ของ Vendor นี้
-                      </div>
-                    ) : (
-                      <div className="max-h-64 overflow-auto rounded-xl border border-emerald-100 bg-white">
-                        <table className="w-full min-w-[760px] text-left text-xs">
-                          <thead className="sticky top-0 bg-emerald-50 text-slate-600">
-                            <tr>
-                              <th className="px-3 py-2 text-center">เลือก</th>
-                              <th className="px-3 py-2">Billing No.</th>
-                              <th className="px-3 py-2">Ref. PO</th>
-                              <th className="px-3 py-2">วันที่ Billing</th>
-                              <th className="px-3 py-2 text-right">ก่อน VAT</th>
-                              <th className="px-3 py-2 text-right">VAT</th>
-                              <th className="px-3 py-2 text-right">หลัง VAT</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-emerald-50">
-                            {selectedVendorPayBillings.map((billing: any) => {
-                              const checked = (formData.selectedBillingIds || []).map(String).includes(String(billing.id));
-                              const beforeVat = Number(billing.amountBeforeVat ?? billing.amount ?? 0);
-                              const vat = Number(billing.vatAmount ?? 0);
-                              const afterVat = Number(billing.amountAfterVat ?? beforeVat + vat);
-                              return (
-                                <tr key={billing.id} className={checked ? "bg-emerald-50/50" : "bg-white"}>
-                                  <td className="px-3 py-2 text-center">
-                                    <input
-                                      type="checkbox"
-                                      checked={checked}
-                                      onChange={() => togglePayBilling(String(billing.id))}
-                                      className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                                    />
-                                  </td>
-                                  <td className="px-3 py-2 font-semibold text-emerald-700">{billing.docNo || "-"}</td>
-                                  <td className="px-3 py-2 text-amber-600">{billing.poRef || "-"}</td>
-                                  <td className="px-3 py-2 whitespace-nowrap">{formatDate(billing.docDate)}</td>
-                                  <td className="px-3 py-2 text-right font-semibold">{formatCurrency(beforeVat)}</td>
-                                  <td className="px-3 py-2 text-right font-semibold text-emerald-700">{formatCurrency(vat)}</td>
-                                  <td className="px-3 py-2 text-right font-semibold text-slate-800">{formatCurrency(afterVat)}</td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-
-                    <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
-                      <div className="rounded-xl bg-white px-3 py-2 text-right shadow-sm">
-                        <p className="text-[11px] font-semibold text-slate-500">รวมก่อน VAT</p>
-                        <p className="text-sm font-bold text-slate-800">{formatCurrency(selectedPayTotals.beforeVat)}</p>
-                      </div>
-                      <div className="rounded-xl bg-white px-3 py-2 text-right shadow-sm">
-                        <p className="text-[11px] font-semibold text-slate-500">VAT</p>
-                        <p className="text-sm font-bold text-emerald-700">{formatCurrency(selectedPayTotals.vat)}</p>
-                      </div>
-                      <div className="rounded-xl bg-white px-3 py-2 text-right shadow-sm">
-                        <p className="text-[11px] font-semibold text-slate-500">รวมจ่าย</p>
-                        <p className="text-base font-extrabold text-slate-900">{formatCurrency(selectedPayTotals.afterVat)}</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div>
-                  <label className="mb-1.5 block text-xs font-semibold text-slate-700">รายละเอียด</label>
-                  <textarea
-                    rows={3}
-                    value={formData.description}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, description: e.target.value }))}
-                    placeholder={`ระบุรายละเอียด ${config.title}`}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1.5 block text-xs font-semibold text-slate-700">หมายเหตุ</label>
-                  <textarea
-                    rows={2}
-                    value={formData.note}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, note: e.target.value }))}
-                    placeholder="หมายเหตุเพิ่มเติม"
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-5 py-4">
-                <Button type="button" variant="secondary" onClick={closeModal} disabled={saving}>
-                  ยกเลิก
-                </Button>
-                <Button type="button" onClick={handleSave} disabled={saving} className={`${config.theme.accent} text-white`}>
-                  {saving ? "กำลังบันทึก..." : editingRow ? "บันทึกการแก้ไข" : "บันทึกรายการ"}
-                </Button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {typeof document !== "undefined" ? createPortal(modalNode, document.body) : null}
     </div>
   );
 });

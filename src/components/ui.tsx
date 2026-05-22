@@ -71,6 +71,7 @@ export const Badge = ({ status }: any) => {
     Rejected: "bg-red-50 text-red-700 border border-red-200",
     Paid: "bg-green-100 text-green-800",
     paid: "bg-green-100 text-green-800",
+    Deposit: "bg-fuchsia-100 text-fuchsia-800 border border-fuchsia-200",
     INVCR: "bg-amber-100 text-amber-800 border border-amber-200",
     Invcredit: "bg-amber-100 text-amber-800 border border-amber-200",
     Inpay: "bg-sky-100 text-sky-800 border border-sky-200",

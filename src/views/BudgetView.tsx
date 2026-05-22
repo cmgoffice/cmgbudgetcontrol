@@ -23,6 +23,10 @@ import { uploadAttachment } from "../lib/uploadAttachment";
 import { useProportionalTableLayout, chainTableResizeHandlers } from "../hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
+import {
+  buildDeleteLogDetails,
+  buildRecordSummary,
+} from "../lib/systemLogDetails";
 
 const BudgetView = React.memo(() => {
   const { budgets, projects, prs, pos, invoices, receives, payments = [], addData, updateData, deleteData,
@@ -1744,7 +1748,11 @@ const BudgetView = React.memo(() => {
           ),
           updatePayload
         );
-        await logAction("Update", `[Budget] ${formData.code} - ${formData.description} | โครงการ: ${projects.find(p => p.id === selectedProjectId)?.name || selectedProjectId}${newStatus ? ` | Status: ${newStatus}` : ''}`, selectedProjectId);
+        await logAction(
+          "Update",
+          `อัปเดต Budget | ${buildRecordSummary("budgets", { ...(editingBudget || {}), ...updatePayload }, editingBudgetId)}${newStatus ? ` | สถานะใหม่: ${newStatus}` : ""}`,
+          selectedProjectId
+        );
       } else {
         const budgetData = {
           ...formData,
@@ -1763,7 +1771,11 @@ const BudgetView = React.memo(() => {
           doc(db, "artifacts", appId, "public", "data", "budgets", budgetDocId),
           budgetData
         );
-        await logAction("Create", `[Budget] ${formData.code} - ${formData.description} | โครงการ: ${projects.find(p => p.id === selectedProjectId)?.name || selectedProjectId}`, selectedProjectId);
+        await logAction(
+          "Create",
+          `สร้าง Budget | ${buildRecordSummary("budgets", budgetData, budgetDocId)}`,
+          selectedProjectId
+        );
         if (pendingMainAttachments.length > 0) {
           try {
             await appendMainBudgetAttachments(budgetDocId, pendingMainAttachments);
@@ -1807,8 +1819,8 @@ const BudgetView = React.memo(() => {
           await logAction(
             "Delete",
             b
-              ? `Deleted Budget ${b.code}${desc ? ` — ${desc}` : ""}`
-              : `Deleted Budget ID: ${id}`,
+              ? buildDeleteLogDetails("budgets", b, id)
+              : `ลบ Budget ID: ${id}`,
             selectedProjectId
           );
         } catch (e) {

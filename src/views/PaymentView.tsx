@@ -15,6 +15,12 @@ import ResizableTh from "../components/ResizableTh";
 import { Card, Button, formatCurrency } from "../components/ui";
 import { uploadAttachment, deleteStorageFile } from "../lib/uploadAttachment";
 import { generatePaymentPdfBytes } from "../lib/pdfForms";
+import {
+  buildDeleteLogDetails,
+  buildRecordSummary,
+  formatLogCurrency,
+  truncateLogText,
+} from "../lib/systemLogDetails";
 
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -112,6 +118,11 @@ const PaymentView = React.memo(() => {
   const myRoles: string[] = userRoles || [];
 
   const { selectedProjectId, isFullScreenModalOpen, setIsFullScreenModalOpen } = useUI();
+
+  const getPaymentLogSummary = React.useCallback(
+    (payment: any, patch: any = null) => buildRecordSummary("payments", patch ? { ...payment, ...patch } : payment, payment?.id),
+    []
+  );
 
   // ─── UI State ───────────────────────────────────────────────────────────────
 
@@ -238,7 +249,7 @@ const PaymentView = React.memo(() => {
     && canUseFunction?.("payment-subcontract", "hold") !== false
   );
   const canStartNextPeriod = !myRoles.some(r => r === "Procurement") && (myRoles.includes("Administrator") || canUseFunction?.("payment-subcontract", "startNextPeriod") !== false);
-  const canCompleteJob = myRoles.includes("Administrator") || myRoles.some((r) => ["PM", "CM"].includes(r));
+  const canCompleteJob = myRoles.includes("Administrator") || canUseFunction?.("payment-subcontract", "completeJob") !== false;
   // ── aliases ที่ชัดเจนเพื่อส่งให้ ResizableTh (ใช้ handleColumnResize จาก AppDataContext)
   const handlePaymentMainColResize = handleColumnResize;
   const handlePayItemColResize = handleColumnResize;
@@ -261,7 +272,11 @@ const PaymentView = React.memo(() => {
         if (att?.url) await deleteStorageFile(att.url);
       }
       await deleteData("payments", p.id, { skipLog: true });
-      await logAction("Delete Payment", `ลบ Payment ${p.paymentNo}`, selectedProjectId);
+      await logAction(
+        "Delete Payment",
+        buildDeleteLogDetails("payments", p, p.id),
+        selectedProjectId
+      );
     }, "danger");
   };
 
@@ -278,7 +293,11 @@ const PaymentView = React.memo(() => {
         submittedAt: new Date().toISOString(),
         revisionRequested: false,
       }, { skipLog: true });
-      await logAction("Submit Payment", `ส่ง Payment ${p.paymentNo} เพื่ออนุมัติ → ${firstStatus}`, selectedProjectId);
+      await logAction(
+        "Submit Payment",
+        `ส่งอนุมัติ | ${getPaymentLogSummary(p, { status: firstStatus })} | สถานะ: ${p.status || "Draft"} → ${firstStatus}`,
+        selectedProjectId
+      );
       setViewingPayment(null);
     } catch (e) { showAlert("เกิดข้อผิดพลาด", String(e), "error"); }
     finally { setActioning(false); }
@@ -299,7 +318,11 @@ const PaymentView = React.memo(() => {
 
 
 
-      await logAction("Approve Payment", `อนุมัติ Payment ${p.paymentNo} → ${label}`, selectedProjectId);
+      await logAction(
+        "Approve Payment",
+        `อนุมัติ | ${getPaymentLogSummary(p, { status: next })} | สถานะ: ${p.status} → ${label}`,
+        selectedProjectId
+      );
       setViewingPayment(null);
     } catch (e) { showAlert("เกิดข้อผิดพลาด", String(e), "error"); }
     finally { setActioning(false); }
@@ -317,7 +340,11 @@ const PaymentView = React.memo(() => {
         rejectedAt: new Date().toISOString(),
         revisionRequested: false,
       }, { skipLog: true });
-      await logAction("Reject Payment", `ปฏิเสธ Payment ${rejectModalPayment.paymentNo}`, selectedProjectId);
+      await logAction(
+        "Reject Payment",
+        `ปฏิเสธ | ${getPaymentLogSummary(rejectModalPayment, { status: "Reject" })} | เหตุผล: ${truncateLogText(rejectReason.trim() || "-", 120)}`,
+        selectedProjectId
+      );
       setRejectModalPayment(null);
       setRejectReason("");
       setViewingPayment(null);
@@ -340,7 +367,11 @@ const PaymentView = React.memo(() => {
         revisionTargetRole: targetRole,
         revisionFromStatus: p.status,
       }, { skipLog: true });
-      await logAction("Request Revision", `ขอแก้ไข Payment ${p.paymentNo} → ${targetRole}`, selectedProjectId);
+      await logAction(
+        "Request Revision",
+        `ขอแก้ไข | ${getPaymentLogSummary(p)} | ส่งกลับให้: ${targetRole} | เหตุผล: ${truncateLogText(revisionNote.trim() || "-", 120)}`,
+        selectedProjectId
+      );
       setRevisionModalPayment(null);
       setRevisionNote("");
       setViewingPayment(null);
@@ -358,7 +389,11 @@ const PaymentView = React.memo(() => {
         revisionApprovedBy: userData?.name || user?.email || "",
         revisionApprovedAt: new Date().toISOString(),
       }, { skipLog: true });
-      await logAction("Approve Revision", `อนุมัติขอแก้ไข Payment ${p.paymentNo} → Draft`, selectedProjectId);
+      await logAction(
+        "Approve Revision",
+        `อนุมัติขอแก้ไข | ${getPaymentLogSummary(p, { status: "Draft" })} | สถานะ: ${p.status} → Draft`,
+        selectedProjectId
+      );
       setViewingPayment(null);
     } catch (e) { showAlert("เกิดข้อผิดพลาด", String(e), "error"); }
     finally { setActioning(false); }
@@ -371,7 +406,11 @@ const PaymentView = React.memo(() => {
       await updateData("payments", p.id, {
         revisionRequested: false,
       }, { skipLog: true });
-      await logAction("Reject Revision", `ปฏิเสธขอแก้ไข Payment ${p.paymentNo}`, selectedProjectId);
+      await logAction(
+        "Reject Revision",
+        `ปฏิเสธขอแก้ไข | ${getPaymentLogSummary(p)} | คงสถานะ: ${p.status}`,
+        selectedProjectId
+      );
       setViewingPayment(null);
     } catch (e) { showAlert("เกิดข้อผิดพลาด", String(e), "error"); }
     finally { setActioning(false); }
@@ -469,7 +508,7 @@ const PaymentView = React.memo(() => {
       await updateData("payments", p.id, { items: updatedItems, amount: totalAmt, ...extraFields }, { skipLog: true });
       await logAction(
         finalize ? "Submit งวดงาน" : "Save Draft งวดงาน",
-        `${finalize ? "บันทึกงวดงาน" : "Save Draft"} Payment ${p.paymentNo}`,
+        `${finalize ? "บันทึกงวดงาน" : "บันทึก Draft งวดงาน"} | ${getPaymentLogSummary(p, { items: updatedItems, amount: totalAmt, ...extraFields })} | ยอดงวดนี้: ${formatLogCurrency(totalAmt) || "฿0"}`,
         selectedProjectId
       );
       setActiveQtyEdits({});
@@ -505,7 +544,11 @@ const PaymentView = React.memo(() => {
         periodApprovedBy: null,
         periodApprovedAt: null,
       }, { skipLog: true });
-      await logAction("Reject งวดงาน", `Reject งวดงาน ${periodRejectModal.paymentNo} → Reject`, selectedProjectId);
+      await logAction(
+        "Reject งวดงาน",
+        `ปฏิเสธงวดงาน | ${getPaymentLogSummary(periodRejectModal, { status: "Reject" })} | เหตุผล: ${truncateLogText(periodRejectReason.trim() || "-", 120)}`,
+        selectedProjectId
+      );
       setPeriodRejectModal(null);
       setPeriodRejectReason("");
       setViewingPayment(null);
@@ -531,7 +574,11 @@ const PaymentView = React.memo(() => {
       const newAttachment = { url, name, uploadedBy: userData?.name || user?.email || "", uploadedAt: new Date().toISOString() };
       const updatedAttachments = [...prevAttachments, newAttachment];
       await updateData("payments", cleanP.id, { paymentAttachments: updatedAttachments }, { skipLog: true });
-      await logAction("Upload Payment Attachment", `อัปโหลดไฟล์แนบ (${name}) ให้ Payment ${cleanP.paymentNo}`, selectedProjectId);
+      await logAction(
+        "Upload Payment Attachment",
+        `อัปโหลดไฟล์แนบ | ${getPaymentLogSummary(cleanP, { paymentAttachments: updatedAttachments })} | ไฟล์: ${truncateLogText(name, 80)}`,
+        selectedProjectId
+      );
       setPeriodAttachFile(null);
       if (periodAttachFileRef.current) periodAttachFileRef.current.value = "";
       setViewingPayment((prev: any) => prev ? { ...prev, paymentAttachments: updatedAttachments } : prev);
@@ -547,7 +594,11 @@ const PaymentView = React.memo(() => {
       const updatedAttachments = [...p.paymentAttachments];
       updatedAttachments.splice(index, 1);
       await updateData("payments", p.id, { paymentAttachments: updatedAttachments }, { skipLog: true });
-      await logAction("Delete Payment Attachment", `ลบไฟล์แนบ (${attachmentToDelete.name}) ของ Payment ${p.paymentNo}`, selectedProjectId);
+      await logAction(
+        "Delete Payment Attachment",
+        `ลบไฟล์แนบ | ${getPaymentLogSummary(p, { paymentAttachments: updatedAttachments })} | ไฟล์: ${truncateLogText(attachmentToDelete.name, 80)}`,
+        selectedProjectId
+      );
       setViewingPayment((prev: any) => prev ? { ...prev, paymentAttachments: updatedAttachments } : prev);
     } catch (e: any) {
       showAlert("เกิดข้อผิดพลาด", String(e), "error");
@@ -571,7 +622,11 @@ const PaymentView = React.memo(() => {
 
 
 
-      await logAction("Approve งวดงาน", `${isCheckStep ? "CM Check" : "PM Approve"} Payment ${p.paymentNo} → ${nextStatus}`, selectedProjectId);
+      await logAction(
+        "Approve งวดงาน",
+        `${isCheckStep ? "CM Check" : "PM Approve"} | ${getPaymentLogSummary(p, { status: nextStatus })} | สถานะ: ${p.status} → ${nextStatus}`,
+        selectedProjectId
+      );
       setViewingPayment(null);
     } catch (e) { showAlert("เกิดข้อผิดพลาด", String(e), "error"); }
     finally { setActioning(false); }
@@ -620,7 +675,11 @@ const PaymentView = React.memo(() => {
         }
       }
 
-      await logAction("Pay Payment", `จ่าย Payment ${waitPayModalPayment.paymentNo} → ${nextStatus}`, selectedProjectId);
+      await logAction(
+        "Pay Payment",
+        `จ่ายเงิน | ${getPaymentLogSummary(waitPayModalPayment, { status: nextStatus })} | สถานะ: ${waitPayModalPayment.status} → ${nextStatus}`,
+        selectedProjectId
+      );
       setWaitPayModalPayment(null);
       setPaySlipFile(null);
       if (viewingPayment?.id === waitPayModalPayment.id) {
@@ -659,7 +718,7 @@ const PaymentView = React.memo(() => {
       }, { skipLog: true });
       await logAction(
         "Hold Payment",
-        `Hold Payment ${holdModalPayment.paymentNo} (${holdDecision === "backToEdit" ? "Reject ส่งกลับแก้ไข" : "คง Hold"})`,
+        `Hold Payment | ${getPaymentLogSummary(holdModalPayment, { status: holdDecision === "backToEdit" ? "Reject" : "Hold" })} | การตัดสินใจ: ${holdDecision === "backToEdit" ? "Reject ส่งกลับแก้ไข" : "คง Hold"} | เหตุผล: ${truncateLogText(holdReasonInput.trim() || "-", 120)}`,
         selectedProjectId
       );
       setHoldModalPayment(null);
@@ -759,7 +818,11 @@ const PaymentView = React.memo(() => {
           await updateData("pos", poId, { status: "Closed PO", statusNow: "Closed PO" }, { skipLog: true });
         }
       }
-      await logAction("Complete Job & Evaluate", `จบงานและประเมินผู้รับเหมา ${evalModalPayment.paymentNo} → Paid`, selectedProjectId);
+      await logAction(
+        "Complete Job & Evaluate",
+        `จบงานและประเมินผู้รับเหมา | ${getPaymentLogSummary(evalModalPayment, { status: "Paid" })} | คะแนนรวม: ${Number(totalScore || 0).toLocaleString("th-TH")}/100`,
+        selectedProjectId
+      );
       setEvalModalPayment(null);
       setViewingPayment(null);
       setEvalForm({
@@ -865,7 +928,11 @@ const PaymentView = React.memo(() => {
         status: "Paid",
       }, { skipLog: true });
 
-      await logAction("Start Next Period", `เริ่มงวดงาน ${nextPeriodNoInt} (${nextPaymentNo})`, selectedProjectId);
+      await logAction(
+        "Start Next Period",
+        `เริ่มงวดถัดไปจาก ${p.paymentNo} | งวดใหม่: ${nextPaymentNo} | งวด: ${nextPeriodNoInt} | ผู้รับเหมา: ${truncateLogText(p.contractorName || p.contractorCode || p.contractorId || "-", 80)}`,
+        selectedProjectId
+      );
 
       setViewingPayment(null);
     } catch (e) {
@@ -992,7 +1059,11 @@ const PaymentView = React.memo(() => {
         statusNow: "PMT In Process"
       }, { skipLog: true });
 
-      await logAction('Activate Payment', `PM เปิด Active Payment จาก PO ${po.poNo} (${po.poType})`, selectedProjectId);
+      await logAction(
+        "Activate Payment",
+        `เปิด Active Payment จาก PO | ${buildRecordSummary("pos", po, po.id)} | Payment ใหม่: ${payload.paymentNo} | ผู้รับเหมา: ${truncateLogText(payload.contractorName || payload.contractorCode || payload.contractorId || "-", 80)}`,
+        selectedProjectId
+      );
 
     } catch (e) {
       showAlert('เกิดข้อผิดพลาด', String(e), 'error');

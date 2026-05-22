@@ -41,6 +41,11 @@ import {
   syncInvoiceSetupItems,
   syncReceiveSetupItems,
 } from "../lib/poDocumentFlow";
+import {
+  buildCreateLogDetails,
+  buildDeleteLogDetails,
+  buildRecordSummary,
+} from "../lib/systemLogDetails";
 
 const getDefaultPoFormData = () => ({
   poNo: "",
@@ -1412,7 +1417,7 @@ const POView = React.memo(() => {
       if (ok) {
         await logAction(
           editingPoId ? "Update" : "Create",
-          `${editingPoId ? "บันทึกดราฟ" : "สร้างดราฟ"} PO ${resolvedPoNo}`,
+          `${editingPoId ? "บันทึกดราฟ" : "สร้างดราฟ"} | ${buildRecordSummary("pos", { ...draftPayload, poNo: resolvedPoNo }, editingPoId || resolvedPoNo)}`,
           selectedProjectId
         );
         setPoPendingFiles([]);
@@ -1780,7 +1785,7 @@ const POView = React.memo(() => {
                 : ` | คงยอด PR เดิม ${formatCurrency(diff)}`;
               await logAction(
                 "Update",
-                `อัปเดต PO ${resolvedPoNo} → Pending PCM${revisionSuffix}`,
+                `อัปเดต PO | ${buildRecordSummary("pos", finalPayload, editingPoId || resolvedPoNo)} | สถานะ: ${editingPo?.status || "Draft"} → Pending PCM${revisionSuffix}`,
                 selectedProjectId
               );
               setP(100, "เสร็จสิ้น!");
@@ -1838,7 +1843,7 @@ const POView = React.memo(() => {
       if (success) {
         await logAction(
           editingPoId ? "Update" : "Create",
-          `${editingPoId ? "อัปเดต" : "สร้าง"} PO ${resolvedPoNo} → Pending PCM${formatPrStatusChangesForLog(prStatusChanges)}`,
+          `${editingPoId ? "อัปเดต" : "สร้าง"} PO | ${buildRecordSummary("pos", basePayload, editingPoId || resolvedPoNo)} | สถานะ: ${editingPoId ? `${(pos.find((p) => p.id === editingPoId)?.status || "Draft")} → Pending PCM` : "Pending PCM"}${formatPrStatusChangesForLog(prStatusChanges)}`,
           selectedProjectId
         );
         setProgress(100, "เสร็จสิ้น!");
@@ -1900,7 +1905,7 @@ const POView = React.memo(() => {
 
       await logAction(
         "Delete",
-        `ลบ PO ${po.poNo || po.id}${formatPrStatusChangesForLog(reopenedPrs)}`,
+        `${buildDeleteLogDetails("pos", po, po.id)}${formatPrStatusChangesForLog(reopenedPrs)}`,
         po.projectId || selectedProjectId
       );
     }, "danger");
@@ -2114,7 +2119,7 @@ const POView = React.memo(() => {
           autoInvoiceNo = invoiceData.invNo;
           await logAction?.(
             "Create Invoice",
-            `สร้าง Invoice ${invoiceData.invNo} สำหรับ PO ${po.poNo || po.id} (Auto Pay before receive)`,
+            `${buildCreateLogDetails("invoices", invoiceData, invoiceData.invNo || po.id)} | ที่มา: Auto Pay before receive`,
             po.projectId
           );
         }
@@ -2157,7 +2162,7 @@ const POView = React.memo(() => {
           autoReceiveNo = configuredReceive.receiveNo;
           await logAction?.(
             "Create Receive",
-            `สร้าง Receive ${configuredReceive.receiveNo} สำหรับ PO ${po.poNo || po.id} (Auto received after payment)`,
+            `${buildCreateLogDetails("receives", configuredReceive.receiveData, configuredReceive.receiveNo || po.id)} | ที่มา: Auto received after payment`,
             po.projectId
           );
         }
@@ -2189,7 +2194,7 @@ const POView = React.memo(() => {
             autoReceiveNo = autoReceive.receiveNo;
             await logAction?.(
               "Create Receive",
-              `สร้าง Receive ${autoReceive.receiveNo} สำหรับ PO ${po.poNo || po.id} (Auto Receive)`,
+              `${buildCreateLogDetails("receives", autoReceive.receiveData, autoReceive.receiveNo || po.id)} | ที่มา: Auto Receive`,
               po.projectId
             );
           }
@@ -2275,7 +2280,7 @@ const POView = React.memo(() => {
   const displayedPOsPending = useMemo(() => {
     const q = (poTableSearchText || "").trim().toLowerCase();
     const pendingActionStatuses = ["Pending PCM", "Pending GM", PO_REVISION_PENDING_PCM, PO_REVISION_PENDING_GM, "Rejected", "Draft", "Pending Close PO"];
-    const hiddenSystemStatuses = ["Received", "Closed PO", "Invoice Issue", "Paid", "paid", "Invcredit", "Inpay"];
+    const hiddenSystemStatuses = ["Received", "Closed PO", "Invoice Issue", "Paid", "paid", "Deposit", "Invcredit", "Inpay"];
 
     const base = pos
       .filter((po) => {
@@ -2345,7 +2350,7 @@ const POView = React.memo(() => {
   const displayedPOsNormal = useMemo(() => {
     const q = (poTableSearchText || "").trim().toLowerCase();
     const pendingActionStatuses = ["Pending PCM", "Pending GM", PO_REVISION_PENDING_PCM, PO_REVISION_PENDING_GM, "Rejected", "Draft", "Pending Close PO"];
-    const hiddenSystemStatuses = ["Received", "Closed PO", "Invoice Issue", "Paid", "paid", "Invcredit", "Inpay"];
+    const hiddenSystemStatuses = ["Received", "Closed PO", "Invoice Issue", "Paid", "paid", "Deposit", "Invcredit", "Inpay"];
 
     const base = pos
       .filter((po) => {

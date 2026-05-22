@@ -7,7 +7,8 @@ const fmt = (v: number) =>
   v === 0 ? "" : v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const BudgetSummaryReportView = React.memo(() => {
-  const { projects, budgets, prs, pos, invoices } = useAppData();
+  const { projects, budgets, prs, pos, invoices, canUseFunction } = useAppData();
+  const canExport = canUseFunction("budget-summary", "export");
 
   const rows = useMemo(() => {
     return projects
@@ -122,13 +123,15 @@ const BudgetSummaryReportView = React.memo(() => {
     <div className="p-4 md:p-6 bg-white min-h-screen">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-base font-bold text-slate-800">Budget Summary Report</h2>
-        <button
-          type="button"
-          onClick={handleExport}
-          className="flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-semibold rounded-lg shadow transition-colors"
-        >
-          <Download size={14} /> Export to Excel
-        </button>
+        {canExport && (
+          <button
+            type="button"
+            onClick={handleExport}
+            className="flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-semibold rounded-lg shadow transition-colors"
+          >
+            <Download size={14} /> Export to Excel
+          </button>
+        )}
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-gray-300 shadow-sm">

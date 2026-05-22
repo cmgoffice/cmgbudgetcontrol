@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useState, useMemo, useCallback, useContext } from "react";
-import { doc, writeBatch } from "firebase/firestore";
+import { collection, doc, getDocs, query, where, writeBatch } from "firebase/firestore";
 import {
   ChevronDown, ChevronRight, FileText, Eye, X, Search, Trash2,
   DollarSign, Calendar, CreditCard, Package, Check, AlertCircle, Pencil,
@@ -16,7 +16,18 @@ import {
   modalTransition,
   overlayTransition,
 } from "../lib/animations";
-import { getInvoiceStatusByPaymentType } from "../lib/poDocumentFlow";
+import {
+  buildConfiguredReceiveData,
+  getInvoiceStatusByPaymentType,
+  hasConfiguredReceiveAfterPayment,
+} from "../lib/poDocumentFlow";
+import {
+  buildCreateLogDetails,
+  buildDeleteLogDetails,
+  buildRecordSummary,
+  formatLogCurrency,
+  truncateLogText,
+} from "../lib/systemLogDetails";
 
 const PO_TYPE_LABELS: Record<string, string> = {
   CR: "CR — เครดิต",
@@ -62,14 +73,31 @@ const PAYMENT_TYPE_BADGE_STYLES: Record<string, string> = {
   เงินสด: "bg-rose-100 text-rose-800 ring-1 ring-inset ring-rose-200",
 };
 
-const getPoInvoiceStatus = (paymentType?: string) =>
-  getInvoiceStatusByPaymentType(paymentType);
+const getPoInvoiceStatus = (paymentType?: string, isDeposit = false) =>
+  getInvoiceStatusByPaymentType(paymentType, isDeposit);
+
+const getInvoiceLogSummary = (invoice: any, patch: any = null) =>
+  buildRecordSummary("invoices", patch ? { ...invoice, ...patch } : invoice, invoice?.id);
+
+const getInvoiceConfiguredAmount = (invoice: any) =>
+  Array.isArray(invoice?.items)
+    ? invoice.items.reduce((sum: number, item: any) => sum + Number(item?.amount || (Number(item?.quantity || 0) * Number(item?.price || 0))), 0)
+    : 0;
+
+const getInvoiceOutstandingDepositAmount = (invoice: any) => {
+  if (!invoice?.isDeposit) return 0;
+  const explicitRemaining = Number(invoice?.remainingAmount);
+  if (Number.isFinite(explicitRemaining) && explicitRemaining > 0) return explicitRemaining;
+  return Math.max(0, getInvoiceConfiguredAmount(invoice) - Number(invoice?.depositAmount || 0));
+};
 
 const InvoiceView = React.memo(() => {
   const {
     db,
     appId,
     pos,
+    projects,
+    prs,
     vendors,
     invoices,
     receives,
@@ -83,6 +111,7 @@ const InvoiceView = React.memo(() => {
     userRoles,
     logAction,
     loadVendors,
+    user,
   } = useAppData();
   const { selectedProjectId } = useUI();
   const { userData } = useContext(AuthContext);
@@ -102,6 +131,8 @@ const InvoiceView = React.memo(() => {
     bankAccountNo: "",
     isDeposit: false,
     depositAmount: 0,
+    originalDepositAmount: 0,
+    settleRemaining: false,
     items: [] as any[],
   });
   const [saving, setSaving] = useState(false);
@@ -291,7 +322,11 @@ const InvoiceView = React.memo(() => {
 
   const getInvoiceDisplayStatus = useCallback((invoice: any) => {
     const status = String(invoice?.status || "").trim();
+    if (getInvoiceOutstandingDepositAmount(invoice) > 0) return "Deposit";
+    if (status.toLowerCase() === "deposit") return "Deposit";
     if (status.toLowerCase() === "inpay") return "Inpay";
+    if (status.toLowerCase() === "invcredit") return "Invcredit";
+    if (status.toLowerCase() === "paid") return "paid";
     const paymentType = String(invoice?.paymentType || "").trim();
     if (["เงินสด", "โอน", "เช็ค"].includes(paymentType)) return "paid";
     if (paymentType === "เครดิต") return "Invcredit";
@@ -321,8 +356,53 @@ const InvoiceView = React.memo(() => {
     if (normalized === "paid") return "paid";
     if (normalized === "inpay") return "Inpay";
     if (normalized === "invcredit") return "Invcredit";
+    if (normalized === "deposit") return "Deposit";
     return "";
   }, []);
+
+  const ensureConfiguredReceiveAfterPayment = useCallback(async (po: any) => {
+    if (!po || !hasConfiguredReceiveAfterPayment(po)) return "";
+
+    const existingReceive = (receives || []).find(
+      (receive: any) => String(receive?.poId || "") === String(po.id || "")
+    );
+    if (existingReceive) {
+      return existingReceive.rpNo || existingReceive.receiveNo || existingReceive.id || "";
+    }
+
+    const receiveSnap = await getDocs(query(
+      collection(db, "artifacts", appId, "public", "data", "receives"),
+      where("poId", "==", po.id)
+    ));
+    if (!receiveSnap.empty) {
+      const receiveDoc = receiveSnap.docs[0];
+      const receiveData = receiveDoc.data();
+      return receiveData.rpNo || receiveData.receiveNo || receiveDoc.id || "";
+    }
+
+    const project = (projects || []).find((item: any) => item.id === po.projectId) || null;
+    const configuredReceive = buildConfiguredReceiveData({
+      po,
+      setup: po.receivedAfterPaymentSetup,
+      prs,
+      vendors,
+      receives,
+      project,
+      user,
+      userData,
+    });
+    if (!configuredReceive) return "";
+
+    const receiveOk = await addData("receives", configuredReceive.receiveData, null, { skipLog: true });
+    if (!receiveOk) return "";
+
+    await logAction?.(
+      "Create Receive",
+      `${buildCreateLogDetails("receives", configuredReceive.receiveData, configuredReceive.receiveNo || po.id)} | ที่มา: Restore received after payment from Invoice save`,
+      po.projectId || selectedProjectId
+    );
+    return configuredReceive.receiveNo || "";
+  }, [addData, appId, db, logAction, projects, prs, receives, selectedProjectId, user, userData, vendors]);
 
   const handleDeleteInvoice = useCallback((invoice: any) => {
     openConfirm?.(
@@ -352,18 +432,15 @@ const InvoiceView = React.memo(() => {
             const remainingInvoices = (invoices || []).filter((item: any) =>
               String(item.poId || "") === poId && String(item.id) !== String(invoice.id)
             );
-            if (remainingInvoices.length === 0) {
-              const linkedReceives = (receives || []).filter((receive: any) => String(receive?.poId || "") === poId);
-              linkedReceives.forEach((receive: any) => {
-                batch.delete(doc(db, "artifacts", appId, "public", "data", "receives", receive.id));
-              });
-            }
-            const remainingStatuses = remainingInvoices.map((item: any) => normalizeInvoiceFlowStatus(item?.status));
+            const remainingStatuses = remainingInvoices.map((item: any) => (
+              getInvoiceOutstandingDepositAmount(item) > 0 ? "Deposit" : normalizeInvoiceFlowStatus(item?.status)
+            ));
 
             let nextPoStatus = getBasePoStatusForInvoice(invoice);
             if (remainingStatuses.includes("paid")) nextPoStatus = "paid";
             else if (remainingStatuses.includes("Inpay")) nextPoStatus = "Inpay";
             else if (remainingStatuses.includes("Invcredit")) nextPoStatus = "Invcredit";
+            else if (remainingStatuses.includes("Deposit")) nextPoStatus = "Deposit";
 
             batch.update(doc(db, "artifacts", appId, "public", "data", "pos", poId), {
               status: nextPoStatus,
@@ -375,10 +452,10 @@ const InvoiceView = React.memo(() => {
           await batch.commit();
           await logAction?.(
             "Delete Invoice",
-            `ลบ Invoice ${invoice.invNo || invoice.id}${invoice.poNo ? ` / PO ${invoice.poNo}` : ""} และย้อน Receive`,
+            `${buildDeleteLogDetails("invoices", invoice, invoice.id)} | ย้อนสถานะ PO ที่เกี่ยวข้อง`,
             invoice.projectId || selectedProjectId
           );
-          showAlert("สำเร็จ", "ลบ Invoice และย้อน Receive ให้ทำรับใหม่เรียบร้อยแล้ว", "success");
+          showAlert("สำเร็จ", "ลบ Invoice และย้อนสถานะ PO เรียบร้อยแล้ว โดยคง Receive เดิมไว้", "success");
         } catch (error: any) {
           showAlert("เกิดข้อผิดพลาด", error?.message || String(error), "error");
         }
@@ -428,7 +505,9 @@ const InvoiceView = React.memo(() => {
 
         await logAction?.(
           `Delete ${label}`,
-          `ลบ ${label} ${docNo} จากเมนู Invoice`,
+          isPaymentSubcontract
+            ? buildDeleteLogDetails("payments", po, po.id)
+            : buildDeleteLogDetails("pos", po, po.id),
           po.projectId || selectedProjectId
         );
         showAlert("สำเร็จ", `ลบ ${label} ${docNo} เรียบร้อยแล้ว`, "success");
@@ -609,15 +688,17 @@ const InvoiceView = React.memo(() => {
     });
     setEditingInvoice(null);
     setViewingPO(source);
-    setInvoiceForm({
-      invNo: "",
-      invDate: new Date().toISOString().split("T")[0],
-      paymentType: po.paymentType || "เครดิต",
-      bankAccountNo: "",
-      isDeposit: Boolean(po?.payBeforeReceiveInvoiceSetup?.isDeposit),
-      depositAmount: Number(po?.payBeforeReceiveInvoiceSetup?.depositAmount || 0),
-      items: buildInvoiceItemsForForm(source, { items: source?.items || [] }),
-    });
+      setInvoiceForm({
+        invNo: "",
+        invDate: new Date().toISOString().split("T")[0],
+        paymentType: po.paymentType || "เครดิต",
+        bankAccountNo: "",
+        isDeposit: Boolean(po?.payBeforeReceiveInvoiceSetup?.isDeposit),
+        depositAmount: Number(po?.payBeforeReceiveInvoiceSetup?.depositAmount || 0),
+        originalDepositAmount: Number(po?.payBeforeReceiveInvoiceSetup?.depositAmount || 0),
+        settleRemaining: false,
+        items: buildInvoiceItemsForForm(source, { items: source?.items || [] }),
+      });
   };
 
   const openInvoiceEditor = useCallback(
@@ -632,6 +713,29 @@ const InvoiceView = React.memo(() => {
         bankAccountNo: invoice.bankAccountNo || "",
         isDeposit: Boolean(invoice.isDeposit),
         depositAmount: Number(invoice.depositAmount || 0),
+        originalDepositAmount: Number(invoice.depositAmount || 0),
+        settleRemaining: false,
+        items: buildInvoiceItemsForForm(source, invoice),
+      });
+    },
+    [buildInvoiceItemsForForm, getInvoiceSource]
+  );
+
+  const openDepositSettlement = useCallback(
+    (invoice: any) => {
+      const source = getInvoiceSource(invoice);
+      const originalDepositAmount = Number(invoice.depositAmount || 0);
+      setEditingInvoice(invoice);
+      setViewingPO(source);
+      setInvoiceForm({
+        invNo: invoice.invNo || "",
+        invDate: invoice.invDate || new Date().toISOString().split("T")[0],
+        paymentType: invoice.paymentType || source?.paymentType || "เครดิต",
+        bankAccountNo: invoice.bankAccountNo || "",
+        isDeposit: false,
+        depositAmount: originalDepositAmount,
+        originalDepositAmount,
+        settleRemaining: true,
         items: buildInvoiceItemsForForm(source, invoice),
       });
     },
@@ -668,11 +772,22 @@ const InvoiceView = React.memo(() => {
         (sum, item) => sum + Number(item.invoiceQty) * Number(item.price || 0),
         0
       );
+      const originalDepositAmount = Number(
+        invoiceForm.settleRemaining
+          ? (invoiceForm.originalDepositAmount || editingInvoice?.depositAmount || 0)
+          : (invoiceForm.depositAmount || 0)
+      );
+      const remainingAmount = Math.max(0, calculatedAmount - originalDepositAmount);
       const totalAmount =
-        invoiceForm.isDeposit && Number(invoiceForm.depositAmount || 0) > 0
-          ? Number(invoiceForm.depositAmount || 0)
-          : calculatedAmount;
-      const invoiceStatus = getPoInvoiceStatus(invoiceForm.paymentType);
+        invoiceForm.settleRemaining
+          ? remainingAmount
+          : invoiceForm.isDeposit && Number(invoiceForm.depositAmount || 0) > 0
+            ? Number(invoiceForm.depositAmount || 0)
+            : calculatedAmount;
+      if (invoiceForm.settleRemaining && totalAmount <= 0) {
+        return showAlert("ข้อมูลไม่ถูกต้อง", "ไม่พบยอดคงเหลือสำหรับจ่ายส่วนที่เหลือ", "warning");
+      }
+      const invoiceStatus = getPoInvoiceStatus(invoiceForm.paymentType, !invoiceForm.settleRemaining && invoiceForm.isDeposit);
       const invoicePayload = {
         invNo: invoiceForm.invNo.trim(),
         invDate: invoiceForm.invDate,
@@ -696,8 +811,15 @@ const InvoiceView = React.memo(() => {
           amount: Number(item.invoiceQty) * Number(item.price || 0),
         })),
         amount: totalAmount,
-        isDeposit: Boolean(invoiceForm.isDeposit),
-        depositAmount: invoiceForm.isDeposit ? Number(invoiceForm.depositAmount || 0) : 0,
+        isDeposit: Boolean(!invoiceForm.settleRemaining && invoiceForm.isDeposit),
+        depositAmount: originalDepositAmount,
+        originalAmount: calculatedAmount,
+        remainingAmount: invoiceForm.settleRemaining
+          ? 0
+          : invoiceForm.isDeposit
+            ? remainingAmount
+            : 0,
+        depositSettled: Boolean(invoiceForm.settleRemaining),
         invoiceMode:
           viewingPO?.invoiceMode ||
           editingInvoice?.invoiceMode ||
@@ -731,21 +853,22 @@ const InvoiceView = React.memo(() => {
               },
               { skipLog: true }
             );
+            await ensureConfiguredReceiveAfterPayment(viewingPO);
           }
           await logAction(
             "Edit Invoice",
-            `แก้ไข Invoice ${invoiceForm.invNo.trim()} (${editingInvoice.invNo || editingInvoice.id})`,
+            `แก้ไข Invoice | ${getInvoiceLogSummary(editingInvoice, invoicePayload)} | มูลค่า: ${formatLogCurrency(invoicePayload.amount) || "฿0"}${invoiceForm.settleRemaining ? " | ดำเนินการจ่ายส่วนที่เหลือ" : ""}`,
             editingInvoice.projectId || selectedProjectId
           );
           closeInvoiceModal(true);
-          showAlert("สำเร็จ", "แก้ไขใบแจ้งหนี้เรียบร้อยแล้ว", "success");
+          showAlert("สำเร็จ", invoiceForm.settleRemaining ? "บันทึกยอดส่วนที่เหลือและส่งกลับเข้า flow หลักแล้ว" : "แก้ไขใบแจ้งหนี้เรียบร้อยแล้ว", "success");
         }
       } else {
         const success = await addData("invoices", invoicePayload, null, { skipLog: true });
         if (!success) return;
         await logAction(
           "Create Invoice",
-          `สร้าง Invoice ${invoiceForm.invNo.trim()} สำหรับ PO ${viewingPO.poNo || viewingPO.id}`,
+          `สร้าง Invoice | ${getInvoiceLogSummary({ ...invoicePayload, id: invoicePayload.invNo || viewingPO.id })} | แหล่งที่มา: ${truncateLogText(viewingPO.poNo || viewingPO.id, 60)}`,
           selectedProjectId
         );
 
@@ -759,6 +882,7 @@ const InvoiceView = React.memo(() => {
             },
             { skipLog: true }
           );
+          await ensureConfiguredReceiveAfterPayment(viewingPO);
         }
 
         closeInvoiceModal(true);
@@ -775,6 +899,10 @@ const InvoiceView = React.memo(() => {
     () => invoices.filter((inv) => inv.projectId === selectedProjectId),
     [invoices, selectedProjectId]
   );
+
+  const canSettleDeposit = useCallback((invoice: any) => {
+    return getInvoiceOutstandingDepositAmount(invoice) > 0;
+  }, []);
 
   const historyInvoices = useMemo(
     () =>
@@ -1222,7 +1350,12 @@ const InvoiceView = React.memo(() => {
                       <td className="py-1.5 px-3 text-right font-semibold">
                         {formatCurrency(inv.amount)}
                         {inv.isDeposit && (
-                          <div className="mt-0.5 text-[10px] font-semibold text-violet-500">มัดจำ</div>
+                          <div className="mt-0.5 text-[10px] font-semibold text-violet-500">
+                            มัดจำ
+                            {getInvoiceOutstandingDepositAmount(inv) > 0
+                              ? ` • คงเหลือ ${formatCurrency(getInvoiceOutstandingDepositAmount(inv))}`
+                              : ""}
+                          </div>
                         )}
                       </td>
                       <td className="py-1.5 px-3 text-center">
@@ -1345,6 +1478,15 @@ const InvoiceView = React.memo(() => {
                               <Pencil size={14} />
                             </button>
                           )}
+                          {canEditInvoiceHistory && canSettleDeposit(inv) && (
+                            <button
+                              className="rounded-lg bg-fuchsia-50 px-2 py-1 text-[10px] font-semibold text-fuchsia-700 transition-colors hover:bg-fuchsia-100"
+                              onClick={() => openDepositSettlement(inv)}
+                              title="จ่ายส่วนที่เหลือ"
+                            >
+                              จ่ายส่วนที่เหลือ
+                            </button>
+                          )}
                           {canUseFunction("invoice", "delete") && (
                             <button
                               className="text-red-400 hover:text-red-600 transition-colors"
@@ -1381,7 +1523,12 @@ const InvoiceView = React.memo(() => {
                       <td className="py-1.5 px-3 text-right font-semibold">
                         {formatCurrency(inv.amount)}
                         {inv.isDeposit && (
-                          <div className="mt-0.5 text-[10px] font-semibold text-amber-500">มัดจำ</div>
+                          <div className="mt-0.5 text-[10px] font-semibold text-amber-500">
+                            มัดจำ
+                            {getInvoiceOutstandingDepositAmount(inv) > 0
+                              ? ` • คงเหลือ ${formatCurrency(getInvoiceOutstandingDepositAmount(inv))}`
+                              : ""}
+                          </div>
                         )}
                       </td>
                       <td className="py-1.5 px-3 text-center">
@@ -1396,6 +1543,15 @@ const InvoiceView = React.memo(() => {
                               title="แก้ไข Invoice"
                             >
                               <Pencil size={14} />
+                            </button>
+                          )}
+                          {canEditInvoiceHistory && canSettleDeposit(inv) && (
+                            <button
+                              className="rounded-lg bg-fuchsia-50 px-2 py-1 text-[10px] font-semibold text-fuchsia-700 transition-colors hover:bg-fuchsia-100"
+                              onClick={() => openDepositSettlement(inv)}
+                              title="จ่ายส่วนที่เหลือ"
+                            >
+                              จ่ายส่วนที่เหลือ
                             </button>
                           )}
                           {canUseFunction("invoice", "delete") && (
@@ -1640,7 +1796,9 @@ const InvoiceView = React.memo(() => {
                     </div>
                     {isFixedPayBeforeReceiveInvoice && (
                       <div className="mt-2 text-[11px] text-violet-600">
-                        Invoice จาก flow จ่ายก่อนรับของ จะอ้างอิงจำนวนและยอดมัดจำจากข้อมูลที่ตั้งค่าไว้
+                        {invoiceForm.settleRemaining
+                          ? `กำลังบันทึกยอดส่วนที่เหลือ ${formatCurrency(Math.max(0, invoiceTotalAmount - Number(invoiceForm.originalDepositAmount || 0)))} หลังหักมัดจำ ${formatCurrency(invoiceForm.originalDepositAmount || 0)}`
+                          : "Invoice จาก flow จ่ายก่อนรับของ จะอ้างอิงจำนวนและยอดมัดจำจากข้อมูลที่ตั้งค่าไว้"}
                       </div>
                     )}
                   </div>
@@ -1780,9 +1938,11 @@ const InvoiceView = React.memo(() => {
                           </td>
                           <td className="py-3 px-3 text-right text-sm font-bold text-amber-700">
                             {formatCurrency(
-                              invoiceForm.isDeposit && Number(invoiceForm.depositAmount || 0) > 0
-                                ? Number(invoiceForm.depositAmount || 0)
-                                : invoiceTotalAmount
+                              invoiceForm.settleRemaining
+                                ? Math.max(0, invoiceTotalAmount - Number(invoiceForm.originalDepositAmount || 0))
+                                : invoiceForm.isDeposit && Number(invoiceForm.depositAmount || 0) > 0
+                                  ? Number(invoiceForm.depositAmount || 0)
+                                  : invoiceTotalAmount
                             )}
                           </td>
                         </tr>

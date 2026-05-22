@@ -72,7 +72,8 @@ export function syncReceiveSetupItems(items = [], setupItems = []) {
   });
 }
 
-export function getInvoiceStatusByPaymentType(paymentType = "เครดิต") {
+export function getInvoiceStatusByPaymentType(paymentType = "เครดิต", isDeposit = false) {
+  if (isDeposit) return "Deposit";
   return String(paymentType || "").trim() === "เครดิต" ? "Invcredit" : "paid";
 }
 
@@ -120,9 +121,11 @@ export function buildConfiguredInvoiceData({
     amount,
     description,
     projectId: po.projectId,
-    status: getInvoiceStatusByPaymentType(setup.paymentType),
+    status: getInvoiceStatusByPaymentType(setup.paymentType, isDeposit),
     isDeposit,
     depositAmount: isDeposit ? depositAmount : 0,
+    originalAmount: calculatedAmount,
+    remainingAmount: isDeposit ? Math.max(0, calculatedAmount - depositAmount) : 0,
     createdBy: `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim() || userData?.name || "System",
     createdAt: now.toISOString(),
     autoCreatedFromPoApproval: true,

@@ -15,6 +15,12 @@ import { generateRPPdfBytes, uploadGeneratedPdf, deleteGeneratedPdf, generatePOP
 import { PDFDocument } from "pdf-lib";
 import { combineImagesToPdf, createPdfThumbnail, generateCombinedPdfFilename } from "../lib/imageToPdf";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
+import {
+  buildDeleteLogDetails,
+  buildRecordSummary,
+  formatLogCurrency,
+  truncateLogText,
+} from "../lib/systemLogDetails";
 
 const PO_TYPE_LABELS = {
   CR: "CR — เครดิต",
@@ -28,6 +34,9 @@ const PO_TYPE_LABELS = {
   RE: "RE — เช่า",
   WF: "WF — รายจ่ายประจำ",
 };
+
+const getReceiveLogSummary = (receive: any, patch: any = null) =>
+  buildRecordSummary("receives", patch ? { ...receive, ...patch } : receive, receive?.id);
 
 const ReceiveView = React.memo(() => {
   const {
@@ -563,7 +572,7 @@ const ReceiveView = React.memo(() => {
 
       await logAction?.(
         "Create Receive",
-        `สร้าง Receive ${receiveNo} สำหรับ PO ${po.poNo || po.id}${resolvedPrNo ? ` / PR ${resolvedPrNo}` : ""}`,
+        `สร้าง Receive | ${getReceiveLogSummary(receiveData, { id: receiveNo })} | มูลค่ารับรวม: ${formatLogCurrency(savedItems.reduce((sum, item) => sum + Number(item.amount || 0), 0)) || "฿0"}${resolvedPrNo ? ` | PR: ${resolvedPrNo}` : ""}`,
         selectedProjectId
       );
 
@@ -718,7 +727,7 @@ const ReceiveView = React.memo(() => {
 
         await logAction?.(
           "Delete Receive",
-          `ลบ ${rcv.rpNo || rcv.receiveNo || "Receive"}${po?.poNo ? ` / PO ${po.poNo}` : ""}`,
+          buildDeleteLogDetails("receives", rcv, rcv.id),
           rcv.projectId || selectedProjectId
         );
         showAlert("สำเร็จ", `ลบ ${rcv.rpNo || rcv.receiveNo || "รายการ"} เรียบร้อยแล้ว`, "success");
@@ -757,7 +766,7 @@ const ReceiveView = React.memo(() => {
 
         await logAction?.(
           "Reset PO From Receive",
-          `คืน PO ${po.poNo || po.id} จากเมนู Receive กลับเป็นสถานะ Approved`,
+          `คืนสถานะ PO | ${buildRecordSummary("pos", po, po.id)} | สถานะใหม่: Approved`,
           po.projectId || selectedProjectId
         );
         showAlert("สำเร็จ", `คืน PO ${po.poNo || po.id} กลับเป็นสถานะ Approved แล้ว`, "success");
@@ -836,7 +845,7 @@ const ReceiveView = React.memo(() => {
 
           await logAction?.(
             "Delete Receive Item",
-            `ลบรายการ ${targetItem.description || "-"} จาก ${rcv.rpNo || rcv.receiveNo || "Receive"}`,
+            `ลบรายการย่อยจาก Receive | ${getReceiveLogSummary(rcv, { items: remainingItems })} | รายการที่ลบ: ${truncateLogText(targetItem.description || "-", 90)} | จำนวน: ${targetItem.receivedQty || 0} ${targetItem.unit || ""}`.trim(),
             rcv.projectId || selectedProjectId
           );
           showAlert("สำเร็จ", "ลบรายการรับของเรียบร้อยแล้ว", "success");

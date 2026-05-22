@@ -146,13 +146,30 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
     { key: "approvePeriod",   label: "อนุมัติงวดงาน" },
     { key: "pay",             label: "จ่ายเงิน (Pay)" },
     { key: "hold",            label: "Hold Payment" },
+    { key: "completeJob",     label: "จบงาน" },
     { key: "startNextPeriod", label: "เปิดงวดถัดไป" },
   ],
+  "budget-summary": [
+    { key: "export", label: "Export Budget Summary" },
+  ],
+  "project-spending": [],
+  "user-manual": [],
   profile: [
     { key: "editProfile",     label: "แก้ไขข้อมูลโปรไฟล์" },
     { key: "resetPassword",   label: "รีเซ็ตรหัสผ่าน" },
     { key: "uploadSignature", label: "อัปโหลดลายเซ็น" },
     { key: "removeSignature", label: "ลบลายเซ็น" },
+  ],
+  admin: [
+    { key: "userManagement",      label: "เปิดแท็บ User Management" },
+    { key: "approveUser",         label: "อนุมัติผู้ใช้งาน" },
+    { key: "manageUser",          label: "จัดการผู้ใช้งาน" },
+    { key: "deleteUser",          label: "ลบผู้ใช้งาน" },
+    { key: "viewLogs",            label: "เปิดแท็บ System Logs" },
+    { key: "exportLogs",          label: "Export Logs" },
+    { key: "setRole",             label: "เปิดแท็บ Set Role" },
+    { key: "addRole",             label: "เพิ่ม Role" },
+    { key: "saveRolePermissions", label: "บันทึกสิทธิ์ Role" },
   ],
 };
 
@@ -236,6 +253,9 @@ export function mergeFunctionPermissionsWithDefaults(
     "po-table": {
       requestClosePO: ["Procurement"],
     },
+    "payment-subcontract": {
+      completeJob: ["PM", "CM"],
+    },
     invoice: {
       edit: ["Administrator"],
     },
@@ -279,6 +299,7 @@ export function mergeFunctionPermissionsWithDefaults(
       submitPeriod: ["submit"],
       approvePeriod: ["approveFlow"],
       hold: ["pay"],
+      completeJob: ["approvePeriod"],
       startNextPeriod: ["submit"],
     },
   };
