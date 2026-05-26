@@ -38,6 +38,16 @@ const PO_TYPE_LABELS = {
 const getReceiveLogSummary = (receive: any, patch: any = null) =>
   buildRecordSummary("receives", patch ? { ...receive, ...patch } : receive, receive?.id);
 
+const getReceiveReceiverName = (rcv: any, po: any) => {
+  if (!rcv) return "-";
+  const isAuto = rcv.autoCreatedFromPoApproval || String(rcv.note || "").toLowerCase().includes("auto receive");
+  if (isAuto && po) {
+    const nameFromFirstLast = [po.createdByFirstName, po.createdByLastName].filter(Boolean).join(" ");
+    return po.createdByName || nameFromFirstLast || rcv.receivedByName || "System";
+  }
+  return rcv.receivedByName || "-";
+};
+
 const ReceiveView = React.memo(() => {
   const {
     pos, vendors, receives, invoices, projects, prs,
@@ -1052,7 +1062,7 @@ const ReceiveView = React.memo(() => {
                         </td>
                       )}
                       {isColumnVisible("receive-history", "receivedBy") && (
-                        <td className="py-1 px-3 whitespace-nowrap">{rcv.receivedByName || "-"}</td>
+                        <td className="py-1 px-3 whitespace-nowrap">{getReceiveReceiverName(rcv, po)}</td>
                       )}
                       {isColumnVisible("receive-history", "note") && (
                         <td className="py-1 px-3 text-slate-400 max-w-[160px] truncate" title={rcv.note || ""}>
@@ -1428,7 +1438,7 @@ const ReceiveView = React.memo(() => {
                               <div className="flex items-center justify-between mb-1.5">
                                 <span className="text-xs font-bold text-blue-700">{rcv.receiveNo}</span>
                                 <span className="text-[10px] text-slate-400">
-                                  {rcv.receivedDate} | {rcv.receivedByName || "-"}
+                                  {rcv.receivedDate} | {getReceiveReceiverName(rcv, viewingPO)}
                                 </span>
                               </div>
                               <div className="flex flex-wrap gap-2">
@@ -1797,7 +1807,7 @@ const ReceiveView = React.memo(() => {
                           { label: "ผู้จำหน่าย", value: rcv.vendorName || vendor?.name || "-" },
                           { label: "เลขที่เอกสาร", value: rcv.documentNo || "-" },
                           { label: "สินค้าของโครงการ", value: rcv.projectItemCode || "-" },
-                          { label: "ผู้รับของ", value: rcv.receivedByName || "-" },
+                          { label: "ผู้รับของ", value: getReceiveReceiverName(rcv, po) },
                         ].map((f) => (
                           <div key={f.label} className="bg-slate-50 rounded-xl px-3 py-2">
                             <p className="text-[10px] text-slate-400 uppercase font-semibold">{f.label}</p>
@@ -1826,7 +1836,7 @@ const ReceiveView = React.memo(() => {
                         { label: "ผู้จำหน่าย", value: rcv.vendorName || vendor?.name || "-" },
                         { label: "เลขที่เอกสาร", value: rcv.documentNo || "-" },
                         { label: "Type", value: poType ? `${poType} — ${PO_TYPE_LABELS[poType]?.replace(/^\w+\s—\s/, "") || poType}` : "-" },
-                        { label: "ผู้รับของ", value: rcv.receivedByName || "-" },
+                        { label: "ผู้รับของ", value: getReceiveReceiverName(rcv, po) },
                       ].map((f) => (
                         <div key={f.label} className="bg-slate-50 rounded-xl p-3">
                           <p className="text-[10px] text-slate-400 uppercase font-semibold mb-0.5">{f.label}</p>

@@ -79,7 +79,8 @@ export function buildAutoReceiveData({
     po.projectItemCode || (resolvedPrNo ? resolvedPrNo.split(",")[0].trim().substring(0, 3) : "");
   const vendor = vendors.find((item) => item.id === po.vendorId);
   const vendorName = vendor?.name || po.vendorName || "";
-  const receivedByName = `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim() || userData?.name || "System";
+  const poCreatorName = po?.createdByName || [po?.createdByFirstName, po?.createdByLastName].filter(Boolean).join(" ").trim() || po?.createdByUid || "System";
+  const receivedByName = poCreatorName;
   const receivedDate = now.toISOString().split("T")[0];
   const items = (po.items || []).map((item, idx) => {
     const orderedQty = Number(item?.quantity || 0);
@@ -111,7 +112,7 @@ export function buildAutoReceiveData({
       projectId: po.projectId,
       items,
       receivedDate,
-      receivedByUid: user?.uid || null,
+      receivedByUid: po?.createdByUid || user?.uid || null,
       receivedByName,
       note: `Auto receive from PO approval (${po.poNo || po.id})`,
       createdAt: now.toISOString(),

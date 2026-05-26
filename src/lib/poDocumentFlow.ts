@@ -161,7 +161,8 @@ export function buildConfiguredReceiveData({
     vendor?.name ||
     po.vendorName ||
     "";
-  const receivedByName = `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim() || userData?.name || "System";
+  const poCreatorName = po?.createdByName || [po?.createdByFirstName, po?.createdByLastName].filter(Boolean).join(" ").trim() || po?.createdByUid || "System";
+  const receivedByName = poCreatorName;
 
   return {
     receiveNo,
@@ -187,7 +188,7 @@ export function buildConfiguredReceiveData({
         photos: [],
       })),
       receivedDate: setup.receivedDate || now.toISOString().split("T")[0],
-      receivedByUid: user?.uid || null,
+      receivedByUid: po?.createdByUid || user?.uid || null,
       receivedByName,
       note: String(setup.note || "").trim(),
       createdAt: now.toISOString(),

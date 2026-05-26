@@ -140,6 +140,8 @@ const InvoiceView = React.memo(() => {
   const [poPOSearch, setPoPOSearch] = useState("");
   const [poVendorSearch, setPoVendorSearch] = useState("");
   const [histSearch, setHistSearch] = useState("");
+  const [histPaymentType, setHistPaymentType] = useState("");
+  const [histStatus, setHistStatus] = useState("");
   const isEditingInvoice = Boolean(editingInvoice);
   const canEditInvoiceHistory =
     userRoles.includes("Administrator") && canUseFunction("invoice", "edit");
@@ -917,15 +919,31 @@ const InvoiceView = React.memo(() => {
   const pendingInvoices = useMemo(() => [], []);
 
   const filteredHistoryInvoices = useMemo(() => {
-    if (!histSearch) return historyInvoices;
-    const q = histSearch.toLowerCase();
-    return historyInvoices.filter(
-      (inv) =>
-        (inv.invNo || "").toLowerCase().includes(q) ||
-        (inv.poNo || inv.poRef || "").toLowerCase().includes(q) ||
-        (inv.vendorName || "").toLowerCase().includes(q)
-    );
-  }, [historyInvoices, histSearch]);
+    return historyInvoices.filter((inv) => {
+      // 1. Text search filter
+      if (histSearch) {
+        const q = histSearch.toLowerCase();
+        const matchesSearch =
+          (inv.invNo || "").toLowerCase().includes(q) ||
+          (inv.poNo || inv.poRef || "").toLowerCase().includes(q) ||
+          (inv.vendorName || "").toLowerCase().includes(q);
+        if (!matchesSearch) return false;
+      }
+
+      // 2. Payment Type filter
+      if (histPaymentType) {
+        if (inv.paymentType !== histPaymentType) return false;
+      }
+
+      // 3. Status filter
+      if (histStatus) {
+        const displayStatus = getInvoiceDisplayStatus(inv);
+        if (displayStatus.toLowerCase() !== histStatus.toLowerCase()) return false;
+      }
+
+      return true;
+    });
+  }, [historyInvoices, histSearch, histPaymentType, histStatus, getInvoiceDisplayStatus]);
 
   // ─── Computed totals for invoice items ────────────────────────────────────
   const invoiceTotalAmount = useMemo(
@@ -1401,7 +1419,7 @@ const InvoiceView = React.memo(() => {
         <div className="space-y-2">
           {/* Search */}
           <Card className="px-4 py-3 bg-gradient-to-r from-amber-50 to-orange-50 border-amber-100">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <div className="relative">
                 <Search
                   size={13}
@@ -1418,11 +1436,53 @@ const InvoiceView = React.memo(() => {
               {histSearch && (
                 <button
                   onClick={() => setHistSearch("")}
-                  className="text-slate-400 hover:text-red-500"
+                  className="text-slate-400 hover:text-red-500 transition-colors"
                 >
                   <X size={13} />
                 </button>
               )}
+
+              <select
+                value={histPaymentType}
+                onChange={(e) => setHistPaymentType(e.target.value)}
+                className="px-2 py-1.5 text-xs border border-amber-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-400 w-36 cursor-pointer text-slate-600 font-medium"
+              >
+                <option value="">ประเภทชำระทั้งหมด</option>
+                {PAYMENT_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={histStatus}
+                onChange={(e) => setHistStatus(e.target.value)}
+                className="px-2 py-1.5 text-xs border border-amber-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-400 w-32 cursor-pointer text-slate-600 font-medium"
+              >
+                <option value="">สถานะทั้งหมด</option>
+                <option value="Deposit">มัดจำ (Deposit)</option>
+                <option value="Inpay">รอจ่าย (Inpay)</option>
+                <option value="Invcredit">เครดิต (Invcredit)</option>
+                <option value="paid">จ่ายแล้ว (Paid)</option>
+              </select>
+
+              {(histSearch || histPaymentType || histStatus) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHistSearch("");
+                    setHistPaymentType("");
+                    setHistStatus("");
+                  }}
+                  className="text-slate-400 hover:text-red-500 transition-colors text-xs font-semibold flex items-center gap-0.5 ml-1"
+                  title="ล้างตัวกรองทั้งหมด"
+                >
+                  <X size={13} />
+                  <span>ล้างตัวกรอง</span>
+                </button>
+              )}
+
               <span className="ml-auto text-[11px] text-amber-400">
                 {filteredHistoryInvoices.length} รายการ
               </span>

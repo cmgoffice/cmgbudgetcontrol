@@ -106,6 +106,7 @@ const PAY_PAYMENT_TYPES = ["เงินสด", "โอน", "เช็ค"];
 const getDefaultForm = () => ({
   docNo: "",
   docDate: new Date().toISOString().split("T")[0],
+  dueDate: "",
   vendorId: "",
   vendorName: "",
   poRef: "",
@@ -585,6 +586,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
     setFormData({
       docNo: row.docNo || "",
       docDate: row.docDate || new Date().toISOString().split("T")[0],
+      dueDate: row.dueDate || "",
       vendorId: normalizedVendorKey,
       vendorName: row.vendorName || "",
       poRef: row.poRef || "",
@@ -1074,6 +1076,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
       const payload = {
         docNo: formData.docNo.trim(),
         docDate: formData.docDate,
+        dueDate: formData.dueDate || "",
         vendorId: formData.vendorId || "",
         vendorName: formData.vendorName || "",
         poRef: formData.poRef.trim(),
@@ -1619,6 +1622,19 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                   />
                 </div>
+                {isBillingMode && (
+                  <div>
+                    <label className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-700">
+                      <Calendar size={12} /> วันครบกำหนดชำระ
+                    </label>
+                    <input
+                      type="date"
+                      value={formData.dueDate}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, dueDate: e.target.value }))}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    />
+                  </div>
+                )}
                 <div>
                   <label className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-700">
                     <FileText size={12} /> {config.refLabel}
@@ -2032,6 +2048,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
               <th className="px-3 py-2">{refHeader}</th>
               <th className="px-3 py-2">Vendor</th>
               <th className="px-3 py-2">วันที่</th>
+              {isBillingMode && <th className="px-3 py-2">วันครบกำหนดชำระ</th>}
               <th className="px-3 py-2">รายละเอียด</th>
               <th className="px-3 py-2">ชำระ</th>
               <th className="px-3 py-2 text-right">จำนวนเงิน</th>
@@ -2042,7 +2059,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
           <tbody className="divide-y divide-slate-100">
             {filteredRows.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-3 py-12 text-center text-sm text-slate-400">
+                <td colSpan={isBillingMode ? 10 : 9} className="px-3 py-12 text-center text-sm text-slate-400">
                   {isBillingMode && activeBillingTab === "history"
                     ? "ยังไม่มีประวัติ Billing สำหรับโครงการนี้"
                     : isPayMode && activePayTab === "history"
@@ -2060,6 +2077,11 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
                   <td className="px-3 py-2 font-medium text-amber-600">{row.poRef || "-"}</td>
                   <td className="px-3 py-2">{row.vendorName || "-"}</td>
                   <td className="px-3 py-2 whitespace-nowrap">{formatDate(row.docDate)}</td>
+                  {isBillingMode && (
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {row.dueDate ? formatDate(row.dueDate) : "-"}
+                    </td>
+                  )}
                   <td className="px-3 py-2 max-w-[260px] truncate" title={row.description || row.note || "-"}>
                     {row.description || row.note || "-"}
                   </td>
