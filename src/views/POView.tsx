@@ -46,6 +46,7 @@ import {
   buildDeleteLogDetails,
   buildRecordSummary,
 } from "../lib/systemLogDetails";
+import { VendorEvaluationModal } from "../components/VendorEvaluationModal";
 
 const getDefaultPoFormData = () => ({
   poNo: "",
@@ -135,6 +136,8 @@ const POView = React.memo(() => {
     expandedPrRows } = useUI();
   // UI States
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [vendorEvalModalOpen, setVendorEvalModalOpen] = useState(false);
+  const vendorEvalScoresRef = useRef<{ q1: number; q2: number; q3: number } | null>(null);
   const [isVendorModalOpen, setIsVendorModalOpen] = useState(false);
   const [savePoProgress, setSavePoProgress] = useState<{ show: boolean; pct: number; step: string }>({ show: false, pct: 0, step: "" });
   const [isPrSelectModalOpen, setIsPrSelectModalOpen] = useState(false);
@@ -1431,6 +1434,7 @@ const POView = React.memo(() => {
         setReservedSequence(0);
         setFormData(getDefaultPoFormData());
         setInvoiceSetupDraft(createInvoiceSetupDraft());
+        vendorEvalScoresRef.current = null;
         setReceiveSetupDraft(createReceiveSetupDraft());
         setManualVatOverride(null);
         setVatEditOpen(false);
@@ -1443,7 +1447,21 @@ const POView = React.memo(() => {
     }
   };
 
-  const handleSavePO = async () => {
+  const handleSavePO = () => {
+    if (poDraftInFlightRef.current || poSendInFlightRef.current) return;
+    if (!formData.poType) {
+      return showAlert("ข้อมูลไม่ครบ", L.noType, "warning");
+    }
+
+    if (["CR", "SE", "RE"].includes(formData.poType) && !vendorEvalScoresRef.current) {
+      setVendorEvalModalOpen(true);
+      return;
+    }
+
+    executeSavePO();
+  };
+
+  const executeSavePO = async () => {
     if (poDraftInFlightRef.current || poSendInFlightRef.current) return;
     if (!formData.poType) {
       return showAlert("ข้อมูลไม่ครบ", L.noType, "warning");
@@ -1701,6 +1719,7 @@ const POView = React.memo(() => {
         setReservedSequence(0);
         setFormData(getDefaultPoFormData());
         setInvoiceSetupDraft(createInvoiceSetupDraft());
+        vendorEvalScoresRef.current = null;
         setReceiveSetupDraft(createReceiveSetupDraft());
         setManualVatOverride(null);
         setVatEditOpen(false);
@@ -1841,6 +1860,19 @@ const POView = React.memo(() => {
       }
 
       if (success) {
+        if (vendorEvalScoresRef.current) {
+          const evalData = {
+            evaluationNo: resolvedPoNo,
+            poType: formData.poType,
+            projectId: selectedProjectId,
+            vendorId: formData.vendorId,
+            evaluatorName: creatorDisplayName || (creatorFirstName ? `${creatorFirstName} ${creatorLastName}` : (user?.email || "Unknown")),
+            evaluationDate: new Date().toISOString(),
+            scores: vendorEvalScoresRef.current,
+            totalScore: vendorEvalScoresRef.current.q1 + vendorEvalScoresRef.current.q2 + vendorEvalScoresRef.current.q3
+          };
+          await addData("vendorEvaluations", evalData, null, { skipLog: true }).catch(console.error);
+        }
         await logAction(
           editingPoId ? "Update" : "Create",
           `${editingPoId ? "อัปเดต" : "สร้าง"} PO | ${buildRecordSummary("pos", basePayload, editingPoId || resolvedPoNo)} | สถานะ: ${editingPoId ? `${(pos.find((p) => p.id === editingPoId)?.status || "Draft")} → Pending PCM` : "Pending PCM"}${formatPrStatusChangesForLog(prStatusChanges)}`,
@@ -5171,6 +5203,19 @@ const POView = React.memo(() => {
               </Card>
             </div>
           )}
+
+          <VendorEvaluationModal
+            isOpen={vendorEvalModalOpen}
+            onClose={() => setVendorEvalModalOpen(false)}
+            vendorName={vendors.find((v: any) => v.id === formData.vendorId)?.name || ""}
+            onSubmit={(scores: any) => {
+              vendorEvalScoresRef.current = scores;
+              setVendorEvalModalOpen(false);
+              setTimeout(() => {
+                executeSavePO();
+              }, 100);
+            }}
+          />
         </>
       )}
     </div>
