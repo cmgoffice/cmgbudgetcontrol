@@ -143,8 +143,7 @@ const InvoiceView = React.memo(() => {
   const [histPaymentType, setHistPaymentType] = useState("");
   const [histStatus, setHistStatus] = useState("");
   const isEditingInvoice = Boolean(editingInvoice);
-  const canEditInvoiceHistory =
-    userRoles.includes("Administrator") && canUseFunction("invoice", "edit");
+  const canEditInvoiceHistory = canUseFunction("invoice", "edit");
   const canDeleteInvoiceSource = userRoles.includes("Administrator");
   const isFixedPayBeforeReceiveInvoice = Boolean(
     viewingPO?.payBeforeReceiveChecked ||
@@ -969,6 +968,16 @@ const InvoiceView = React.memo(() => {
     [filteredPOs, getPoAmountExVat]
   );
 
+  const historyInvoicesTotals = useMemo(
+    () => ({
+      grand: filteredHistoryInvoices.reduce(
+        (sum, inv) => sum + Number(inv.amount || 0),
+        0
+      ),
+    }),
+    [filteredHistoryInvoices]
+  );
+
   return (
     <div className="space-y-4">
       {/* ── Page Header + Tabs ── */}
@@ -1628,6 +1637,20 @@ const InvoiceView = React.memo(() => {
                   ))
                 )}
               </tbody>
+              <tfoot className="border-t-2 border-amber-200">
+                <tr className="bg-amber-50">
+                  <td className="py-2 px-3 md:hidden"></td>
+                  <td className="py-2 px-3"></td>
+                  <td className="py-2 px-3"></td>
+                  <td className="hidden py-2 px-3 md:table-cell"></td>
+                  <td colSpan={2} className="py-2 px-3 text-right text-xs font-semibold text-amber-700">ยอดรวมทั้งหมด:</td>
+                  <td className="py-2 px-3 text-right text-sm font-bold text-amber-900">
+                    {formatCurrency(historyInvoicesTotals.grand)}
+                  </td>
+                  <td className="py-2 px-3"></td>
+                  <td className="hidden py-2 px-3 md:table-cell"></td>
+                </tr>
+              </tfoot>
             </table>
           </Card>
         </div>
