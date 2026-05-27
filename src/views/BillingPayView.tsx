@@ -168,8 +168,12 @@ const isCreditInvoice = (invoice: any) => {
 
 const isInpayStatus = (value: any) => String(value || "").trim().toLowerCase() === "inpay";
 const isPaidStatus = (value: any) => String(value || "").trim().toLowerCase() === "paid";
-const isPaidInvoiceRecord = (invoice: any) =>
-  isPaidStatus(invoice?.status) || isPaidStatus(invoice?.statusNow);
+const isPaidInvoiceRecord = (invoice: any) => {
+  if (isPaidStatus(invoice?.status) || isPaidStatus(invoice?.statusNow)) return true;
+  const paymentType = String(invoice?.paymentType || "").trim();
+  if (["เงินสด", "โอน", "เช็ค"].includes(paymentType)) return true;
+  return false;
+};
 
 const getLedgerCollectionName = (menuType: string) => (menuType === "pay" ? "pays" : "billings");
 
@@ -633,13 +637,24 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
 
   const paidInvoiceHistoryRows = useMemo(() => {
     if (!selectedProjectId || !isPayMode) return [];
+    
+    const projectPoNos = new Set(
+      pos.filter((po: any) => po.projectId === selectedProjectId).map((po: any) => po.poNo).filter(Boolean)
+    );
+
     return invoices
       .filter((invoice: any) => {
         const invoiceProjectId =
           invoice?.projectId ||
           pos.find((po: any) => String(po.id) === String(invoice?.poId || ""))?.projectId ||
           "";
-        return invoiceProjectId === selectedProjectId && isPaidInvoiceRecord(invoice);
+        
+        const belongsToProject = 
+          invoiceProjectId === selectedProjectId || 
+          projectPoNos.has(invoice?.poRef) || 
+          projectPoNos.has(invoice?.poNo);
+
+        return belongsToProject && isPaidInvoiceRecord(invoice);
       })
       .sort((a: any, b: any) => {
         const aTime = new Date(a.payDate || a.invDate || a.updatedAt || a.createdAt || 0).getTime();
@@ -757,11 +772,25 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
 
   const billingInvoiceCandidates = useMemo(() => {
     if (!selectedProjectId || !isBillingMode) return [];
+
+    const projectPoNos = new Set(
+      pos.filter((po: any) => po.projectId === selectedProjectId).map((po: any) => po.poNo).filter(Boolean)
+    );
+
     return invoices
       .filter((invoice: any) => {
         const invoiceId = String(invoice.id || "");
+        const invoiceProjectId =
+          invoice?.projectId ||
+          pos.find((po: any) => String(po.id) === String(invoice?.poId || ""))?.projectId ||
+          "";
+        const belongsToProject = 
+          invoiceProjectId === selectedProjectId || 
+          projectPoNos.has(invoice?.poRef) || 
+          projectPoNos.has(invoice?.poNo);
+
         return (
-          invoice?.projectId === selectedProjectId &&
+          belongsToProject &&
           (
             selectedBillingInvoiceIds.has(invoiceId) ||
             (isCreditInvoice(invoice) && !billedInvoiceIds.has(invoiceId))
@@ -773,7 +802,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
         const bTime = new Date(b.invDate || b.createdAt || 0).getTime();
         return bTime - aTime;
       });
-  }, [billedInvoiceIds, invoices, isBillingMode, selectedBillingInvoiceIds, selectedProjectId]);
+  }, [billedInvoiceIds, invoices, isBillingMode, selectedBillingInvoiceIds, selectedProjectId, pos]);
 
   const billingVendorOptions = useMemo(() => {
     const map = new Map<string, { id: string; name: string; count: number }>();

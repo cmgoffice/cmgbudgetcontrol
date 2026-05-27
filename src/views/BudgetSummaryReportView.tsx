@@ -2,12 +2,13 @@
 import React, { useMemo } from "react";
 import { Download } from "lucide-react";
 import { useAppData } from "../contexts/AppDataContext";
+import { getProjectPayHistoryTotal } from "../lib/billingPayUtils";
 
 const fmt = (v: number) =>
   v === 0 ? "" : v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const BudgetSummaryReportView = React.memo(() => {
-  const { projects, budgets, prs, pos, invoices, canUseFunction } = useAppData();
+  const { projects, budgets, prs, pos, invoices, payments, canUseFunction } = useAppData();
   const canExport = canUseFunction("budget-summary", "export");
 
   const rows = useMemo(() => {
@@ -34,12 +35,8 @@ const BudgetSummaryReportView = React.memo(() => {
         const budgetBalance = budgetTotal - poTotal;
         const balancePct = budgetTotal > 0 ? (budgetBalance / budgetTotal) * 100 : 0;
 
-        // Spent (Inv)Total = sum of invoice amounts linked to POs of this project
-        const projPoNos = new Set(projPos.map((o) => o.poNo).filter(Boolean));
-        const projInvoices = invoices.filter(
-          (inv) => inv.projectId === proj.id || projPoNos.has(inv.poRef) || projPoNos.has(inv.poNo)
-        );
-        const spentInvTotal = projInvoices.reduce((s, inv) => s + (Number(inv.amount) || 0), 0);
+        // Spent (Inv)Total = sum of exact values from Pay History
+        const spentInvTotal = getProjectPayHistoryTotal(proj.id, invoices, payments, pos);
 
         return {
           id: proj.id,

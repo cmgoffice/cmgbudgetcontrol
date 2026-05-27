@@ -20,6 +20,8 @@ import {
 } from "../lib/constants";
 import { getResumeStatusForPR } from "../lib/prAllocation";
 import { uploadAttachment } from "../lib/uploadAttachment";
+import { sumSubItemAmounts } from "../lib/prBudgetReturn";
+import { isPaidInvoiceRecord, isPaidStatus, normalizeIdList } from "../lib/billingPayUtils";
 import { useProportionalTableLayout, chainTableResizeHandlers } from "../hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
@@ -268,12 +270,57 @@ const BudgetView = React.memo(() => {
   }, [selectedProjectBudgets]);
   const invoiceAmountByPoRef = useMemo(() => {
     const map = new Map<string, number>();
+    const uniqueInvoices = new Map();
+    
+    const projectPoNos = new Set(
+      projectPos.map((po: any) => po.poNo).filter(Boolean)
+    );
+
+    const paidInvoiceIds = new Set();
+
     invoices.forEach((invoice: any) => {
-      if (!invoice?.poRef) return;
-      map.set(invoice.poRef, (map.get(invoice.poRef) || 0) + (Number(invoice.amount) || 0));
+      const belongsToProject = 
+        invoice.projectId === selectedProjectId || 
+        projectPoNos.has(invoice?.poRef) || 
+        projectPoNos.has(invoice?.poNo);
+
+      if (belongsToProject && isPaidInvoiceRecord(invoice)) {
+        uniqueInvoices.set(invoice.id, invoice);
+        paidInvoiceIds.add(String(invoice.id));
+      }
     });
+
+    uniqueInvoices.forEach((invoice: any) => {
+      const amount = Number(invoice.amount) || (Number(invoice.invoiceQty || 0) * Number(invoice.price || 0)) || 0;
+      if (invoice.poRef) {
+        map.set(invoice.poRef, (map.get(invoice.poRef) || 0) + amount);
+      } else if (invoice.poNo) {
+        map.set(invoice.poNo, (map.get(invoice.poNo) || 0) + amount);
+      }
+    });
+
+    const projectPayments = payments.filter((p: any) => p.projectId === selectedProjectId);
+    const payDocs = projectPayments.filter((row: any) => isPaidStatus(row.status));
+
+    payDocs.forEach((row: any) => {
+      const linkedInvoiceIds = normalizeIdList(row.invoiceIds || []);
+      const hasLinkedPaidInvoice = linkedInvoiceIds.some((invoiceId) => paidInvoiceIds.has(invoiceId));
+      const hasInvoiceByPayNo = Array.from(uniqueInvoices.values()).some((invoice: any) => (
+        String(invoice?.payNo || "") === String(row?.docNo || "")
+      ));
+      
+      if (!hasLinkedPaidInvoice && !hasInvoiceByPayNo) {
+        const amount = Number(row.amount) || 0;
+        if (row.poRef) {
+           map.set(row.poRef, (map.get(row.poRef) || 0) + amount);
+        } else if (row.poNo) {
+           map.set(row.poNo, (map.get(row.poNo) || 0) + amount);
+        }
+      }
+    });
+
     return map;
-  }, [invoices]);
+  }, [invoices, payments, projectPos, selectedProjectId]);
   const receiveQtyByPoItemKey = useMemo(() => {
     const map = new Map<string, number>();
     projectReceives.forEach((receive: any) => {

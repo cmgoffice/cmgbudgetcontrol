@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React, { useContext } from "react";
+import "./migratePendingPM";
 
 // Auth
 import { AuthContext, AuthProvider } from "./auth/AuthContext";
