@@ -142,9 +142,21 @@ const InvoiceView = React.memo(() => {
   const [histSearch, setHistSearch] = useState("");
   const [histPaymentType, setHistPaymentType] = useState("");
   const [histStatus, setHistStatus] = useState("");
+
+  // Create Invoice Modal State
+  const [isCreateInvoiceModalOpen, setIsCreateInvoiceModalOpen] = useState(false);
+  const [createInvoiceVendorId, setCreateInvoiceVendorId] = useState<string>("");
+  const [createInvoiceSelectedReceiveIds, setCreateInvoiceSelectedReceiveIds] = useState<string[]>([]);
+  const [createInvoiceForm, setCreateInvoiceForm] = useState({
+    invNo: "",
+    invDate: new Date().toISOString().split("T")[0],
+    paymentType: "เครดิต",
+    bankAccountNo: "",
+    isDeposit: false,
+    depositAmount: 0,
+  });
   const isEditingInvoice = Boolean(editingInvoice);
-  const canEditInvoiceHistory =
-    userRoles.includes("Administrator") && canUseFunction("invoice", "edit");
+  const canEditInvoiceHistory = canUseFunction("invoice", "edit");
   const canDeleteInvoiceSource = userRoles.includes("Administrator");
   const isFixedPayBeforeReceiveInvoice = Boolean(
     viewingPO?.payBeforeReceiveChecked ||
@@ -280,6 +292,68 @@ const InvoiceView = React.memo(() => {
 
     return [...validPOs, ...validPayments];
   }, [pos, payments, invoices, selectedProjectId]);
+
+  const invoicedReceiveIds = useMemo(() => {
+    const ids = new Set<string>();
+    invoices.forEach((inv: any) => {
+      if (Array.isArray(inv.receiveIds)) {
+        inv.receiveIds.forEach((id: string) => ids.add(id));
+      } else if (inv.poId) {
+        // Fallback for legacy invoices: assume receives before the invoice are covered.
+      }
+    });
+    pos.forEach((po: any) => {
+      const status = String(po.status || "");
+      if (["Invcredit", "Inpay", "paid", "Deposit"].includes(status)) {
+        const hasNewStyleInvoice = invoices.some((i: any) => i.poId === po.id && Array.isArray(i.receiveIds));
+        if (!hasNewStyleInvoice) {
+          receives.filter((r: any) => r.poId === po.id).forEach((r: any) => ids.add(r.id));
+        }
+      }
+    });
+    return ids;
+  }, [invoices, pos, receives]);
+
+  const invoiceEligibleReceives = useMemo(() => {
+    return projectReceives.filter((r: any) => !invoicedReceiveIds.has(r.id));
+  }, [projectReceives, invoicedReceiveIds]);
+
+  const createInvoiceVendors = useMemo(() => {
+    const vendorIds = new Set<string>();
+    invoiceEligibleReceives.forEach((r: any) => {
+      const po = pos.find((p: any) => p.id === r.poId);
+      if (po?.vendorId) vendorIds.add(po.vendorId);
+      else if (r.vendorId) vendorIds.add(r.vendorId);
+    });
+    return Array.from(vendorIds)
+      .map((id) => vendors.find((v: any) => v.id === id))
+      .filter(Boolean)
+      .sort((a: any, b: any) => a.name.localeCompare(b.name, "th"));
+  }, [invoiceEligibleReceives, pos, vendors]);
+
+  const draftInvoices = useMemo(() => {
+     return invoices.filter((inv: any) => inv.projectId === selectedProjectId && inv.status === "Draft")
+         .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+  }, [invoices, selectedProjectId]);
+
+  const filteredDraftInvoices = useMemo(() => {
+    return draftInvoices.filter((inv: any) => {
+      const matchesPo = !poPOSearch || (inv.poNo || inv.poRef || "").toLowerCase().includes(poPOSearch.toLowerCase());
+      const matchesVendor = !poVendorSearch || (inv.vendorName || "").toLowerCase().includes(poVendorSearch.toLowerCase());
+      return matchesPo && matchesVendor;
+    });
+  }, [draftInvoices, poPOSearch, poVendorSearch]);
+
+  const groupedDraftInvoices = useMemo(() => {
+    const groups: Record<string, any[]> = {};
+    filteredDraftInvoices.forEach((inv: any) => {
+       const po = pos.find((p: any) => p.id === inv.poId);
+       const type = po?.poType || "OTHER";
+       if (!groups[type]) groups[type] = [];
+       groups[type].push(inv);
+    });
+    return groups;
+  }, [filteredDraftInvoices, pos]);
 
   const filteredPOs = useMemo(() => {
     return invoiceEligiblePOs.filter((po) => {
@@ -897,6 +971,118 @@ const InvoiceView = React.memo(() => {
     }
   };
 
+  const handleSaveCreateInvoice = async () => {
+    if (!createInvoiceVendorId) return showAlert("กรุณาเลือก Vendor", "", "warning");
+    if (createInvoiceSelectedReceiveIds.length === 0) return showAlert("กรุณาเลือกใบรับของอย่างน้อย 1 รายการ", "", "warning");
+
+    setSaving(true);
+    try {
+      const selectedReceives = invoiceEligibleReceives.filter((r: any) => createInvoiceSelectedReceiveIds.includes(r.id));
+      
+      const groupedByPo: Record<string, any[]> = {};
+      selectedReceives.forEach((r: any) => {
+        if (!r.poId) return;
+        if (!groupedByPo[r.poId]) groupedByPo[r.poId] = [];
+        groupedByPo[r.poId].push(r);
+      });
+
+      const vendorObj = vendors.find((v: any) => v.id === createInvoiceVendorId);
+      const isDraft = !createInvoiceForm.invNo.trim();
+      const invoiceStatus = isDraft ? "Draft" : getPoInvoiceStatus(createInvoiceForm.paymentType, createInvoiceForm.isDeposit);
+
+      const now = new Date().toISOString();
+
+      for (const [poId, receivesGroup] of Object.entries(groupedByPo)) {
+        const po = pos.find((p: any) => p.id === poId);
+        if (!po) continue;
+
+        const mergedItemsMap: Record<number, any> = {};
+        let totalAmount = 0;
+        
+        receivesGroup.forEach((r: any) => {
+          (r.items || []).forEach((item: any) => {
+            const idx = item.poItemIndex;
+            const poItem = (po.items || [])[idx];
+            if (!mergedItemsMap[idx]) {
+               mergedItemsMap[idx] = {
+                 poItemIndex: idx,
+                 materialNo: item.materialNo || poItem?.materialNo || "",
+                 description: item.description || poItem?.description || "",
+                 unit: item.unit || poItem?.unit || "",
+                 quantity: 0,
+                 price: item.price || poItem?.price || 0,
+                 amount: 0,
+               };
+            }
+            mergedItemsMap[idx].quantity += Number(item.receivedQty || 0);
+          });
+        });
+
+        Object.values(mergedItemsMap).forEach((item: any) => {
+           item.amount = item.quantity * item.price;
+           totalAmount += item.amount;
+        });
+
+        const mergedItems = Object.values(mergedItemsMap);
+        const receiveIds = receivesGroup.map((r: any) => r.id);
+
+        const invoicePayload = {
+          invNo: createInvoiceForm.invNo.trim(),
+          invDate: createInvoiceForm.invDate,
+          paymentType: createInvoiceForm.paymentType,
+          bankAccountNo: createInvoiceForm.bankAccountNo,
+          poId: po.id,
+          poNo: po.poNo,
+          poRef: po.poNo,
+          vendorId: vendorObj?.id || "",
+          vendorName: vendorObj?.name || po.vendorName || "",
+          items: mergedItems,
+          amount: totalAmount,
+          isDeposit: createInvoiceForm.isDeposit,
+          depositAmount: createInvoiceForm.depositAmount,
+          originalAmount: totalAmount,
+          remainingAmount: createInvoiceForm.isDeposit ? totalAmount - createInvoiceForm.depositAmount : 0,
+          invoiceMode: po.payBeforeReceiveChecked ? "pay_before_receive" : "",
+          description: poDescription(po),
+          projectId: selectedProjectId,
+          status: invoiceStatus,
+          receiveIds,
+          createdAt: now,
+          createdBy: `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim(),
+        };
+
+        const success = await addData("invoices", invoicePayload, null, { skipLog: true });
+        if (success) {
+           await logAction(
+             "Create Invoice",
+             `สร้าง Invoice ${isDraft ? "(Draft)" : ""} จากใบรับของ | ${getInvoiceLogSummary({ ...invoicePayload, id: invoicePayload.invNo || "Draft" })}`,
+             selectedProjectId
+           );
+
+           if (!isDraft && String(po.statusNow) !== "Partial Receive" && !po.isPaymentSubcontract) {
+               await updateData("pos", po.id, { status: invoiceStatus, statusNow: invoiceStatus }, { skipLog: true });
+           }
+        }
+      }
+
+      setIsCreateInvoiceModalOpen(false);
+      setCreateInvoiceSelectedReceiveIds([]);
+      setCreateInvoiceForm({
+        invNo: "",
+        invDate: new Date().toISOString().split("T")[0],
+        paymentType: "เครดิต",
+        bankAccountNo: "",
+        isDeposit: false,
+        depositAmount: 0,
+      });
+      showAlert("สำเร็จ", "สร้างรายการ Invoice สำเร็จ", "success");
+    } catch (e: any) {
+      showAlert("เกิดข้อผิดพลาด", e.message, "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const projectInvoices = useMemo(
     () => invoices.filter((inv) => inv.projectId === selectedProjectId),
     [invoices, selectedProjectId]
@@ -908,7 +1094,7 @@ const InvoiceView = React.memo(() => {
 
   const historyInvoices = useMemo(
     () =>
-      [...projectInvoices].sort((a: any, b: any) => {
+      [...projectInvoices].filter(inv => inv.status !== "Draft").sort((a: any, b: any) => {
         const aTime = new Date(a.invDate || a.createdAt || 0).getTime();
         const bTime = new Date(b.invDate || b.createdAt || 0).getTime();
         return bTime - aTime;
@@ -967,6 +1153,16 @@ const InvoiceView = React.memo(() => {
       ),
     }),
     [filteredPOs, getPoAmountExVat]
+  );
+
+  const historyInvoicesTotals = useMemo(
+    () => ({
+      grand: filteredHistoryInvoices.reduce(
+        (sum, inv) => sum + Number(inv.amount || 0),
+        0
+      ),
+    }),
+    [filteredHistoryInvoices]
   );
 
   return (
@@ -1082,27 +1278,36 @@ const InvoiceView = React.memo(() => {
                   <X size={13} />
                 </button>
               )}
-              <span className="ml-auto text-[11px] text-violet-400">
-                {filteredPOs.length} รายการ
+              <span className="ml-auto text-[11px] text-violet-400 mr-4">
+                {filteredDraftInvoices.length} รายการ Draft
               </span>
+              <div className="ml-auto">
+                <Button
+                  variant="primary"
+                  className="px-3 py-1.5 text-xs shadow-sm bg-violet-600 hover:bg-violet-700 text-white font-medium"
+                  onClick={() => setIsCreateInvoiceModalOpen(true)}
+                >
+                  สร้าง Invoice
+                </Button>
+              </div>
             </div>
           </Card>
 
           {/* Empty state */}
-          {Object.keys(groupedPOs).length === 0 ? (
+          {Object.keys(groupedDraftInvoices).length === 0 ? (
             <Card className="py-12 text-center border-violet-100">
               <div className="w-14 h-14 rounded-full bg-violet-50 flex items-center justify-center mx-auto mb-3">
                 <Package size={26} className="text-violet-300" />
               </div>
               <p className="text-sm font-medium text-slate-500">
-                ไม่พบ PO ที่พร้อมวางบิล
+                ไม่มีรายการ Invoice แบบ Draft
               </p>
               <p className="text-xs text-slate-400 mt-1">
-                แสดง PO สถานะ Received (โฟลวปกติ), Wait Invoice (Pay before receive), Wait Pay (Payment Subcontractor)
+                คลิกปุ่ม "สร้าง Invoice" เพื่อเลือกใบรับของมาออกใบแจ้งหนี้
               </p>
             </Card>
           ) : (
-            Object.entries(groupedPOs).map(([type, poList], groupIdx) => {
+            Object.entries(groupedDraftInvoices).map(([type, draftList], groupIdx) => {
               const c = GROUP_COLORS[groupIdx % 2];
               const isExpanded = expandedTypes[type] !== false;
               return (
@@ -1128,7 +1333,7 @@ const InvoiceView = React.memo(() => {
                         {PO_TYPE_LABELS[type] || type}
                       </span>
                       <span className="text-xs text-slate-400">
-                        ({poList.length} PO)
+                        ({draftList.length} รายการ)
                       </span>
                     </div>
                   </button>
@@ -1152,15 +1357,32 @@ const InvoiceView = React.memo(() => {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {poList.map((po) => (
+                        {draftList.map((draftInv) => (
                           (() => {
-                            const receiveDocs = receiveDocsByPoId[po.id] || [];
-                            const latestReceiveWithPdf = receiveDocs.find((rcv) => rcv?.pdfUrl);
+                            const po = pos.find((p: any) => p.id === draftInv.poId) || {};
                             return (
                               <tr
-                                key={po.id}
+                                key={draftInv.id}
                                 className={`${c.rowHover} cursor-pointer transition-colors`}
-                                onClick={() => openPODetail(po)}
+                                onClick={() => {
+                                  setEditingInvoice(draftInv);
+                                  setViewingPO(po);
+                                  setInvoiceForm({
+                                    invNo: draftInv.invNo || "",
+                                    invDate: draftInv.invDate || new Date().toISOString().split("T")[0],
+                                    paymentType: draftInv.paymentType || "เครดิต",
+                                    bankAccountNo: draftInv.bankAccountNo || "",
+                                    isDeposit: draftInv.isDeposit || false,
+                                    depositAmount: draftInv.depositAmount || 0,
+                                    originalDepositAmount: draftInv.depositAmount || 0,
+                                    settleRemaining: false,
+                                    items: (draftInv.items || []).map((item: any) => ({
+                                      ...item,
+                                      checked: true,
+                                      invoiceQty: item.quantity,
+                                    })),
+                                  });
+                                }}
                               >
                                 <td className="py-1.5 px-3 text-center md:hidden">
                                   <div className="flex items-center justify-center gap-1">
@@ -1169,7 +1391,23 @@ const InvoiceView = React.memo(() => {
                                       className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[10px] font-medium transition-colors ${c.btn}`}
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        openPODetail(po);
+                                        setEditingInvoice(draftInv);
+                                        setViewingPO(po);
+                                        setInvoiceForm({
+                                          invNo: draftInv.invNo || "",
+                                          invDate: draftInv.invDate || new Date().toISOString().split("T")[0],
+                                          paymentType: draftInv.paymentType || "เครดิต",
+                                          bankAccountNo: draftInv.bankAccountNo || "",
+                                          isDeposit: draftInv.isDeposit || false,
+                                          depositAmount: draftInv.depositAmount || 0,
+                                          originalDepositAmount: draftInv.depositAmount || 0,
+                                          settleRemaining: false,
+                                          items: (draftInv.items || []).map((item: any) => ({
+                                            ...item,
+                                            checked: true,
+                                            invoiceQty: item.quantity,
+                                          })),
+                                        });
                                       }}
                                     >
                                       <FileText size={11} /> ลงข้อมูลใบแจ้งหนี้
@@ -1180,53 +1418,32 @@ const InvoiceView = React.memo(() => {
                                         className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-red-200 bg-red-50 text-[10px] font-medium text-red-600 transition-colors hover:bg-red-100"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          handleDeleteInvoiceSource(po);
+                                          handleDeleteInvoice(draftInv);
                                         }}
-                                        title="ลบรายการ"
                                       >
                                         <Trash2 size={11} />
                                       </button>
                                     )}
                                   </div>
                                 </td>
-                                <td
-                                  className={`py-1.5 px-3 font-semibold ${c.poNo}`}
-                                >
-                                  {po.poNo}
+                                <td className={`py-1.5 px-3 font-semibold ${c.poNo}`}>
+                                  {draftInv.poNo || draftInv.poRef || po.poNo || "-"}
+                                  <span className="ml-2 px-1.5 py-0.5 bg-slate-200 text-slate-600 text-[9px] rounded-md uppercase">Draft</span>
                                 </td>
-                                <td className="py-1.5 px-3" title={getPoVendorName(po)}>
-                                  {getPoVendorName(po)}
+                                <td className="py-1.5 px-3" title={draftInv.vendorName || getPoVendorName(po)}>
+                                  {draftInv.vendorName || getPoVendorName(po)}
                                 </td>
                                 <td className="py-1.5 px-3 whitespace-nowrap">
-                                  {formatDate(po.poDate || po.poOpenDate)}
+                                  {formatDate(draftInv.createdAt || draftInv.invDate)}
                                 </td>
-                                <td
-                                  className="py-1.5 px-3 max-w-[260px] truncate"
-                                  title={poDescription(po)}
-                                >
-                                  {poDescription(po)}
+                                <td className="py-1.5 px-3 max-w-[260px] truncate" title={draftInv.description || poDescription(po)}>
+                                  {draftInv.description || poDescription(po)}
                                 </td>
                                 <td className="hidden py-1.5 px-3 text-center md:table-cell">
-                                  {latestReceiveWithPdf ? (
-                                    <button
-                                      type="button"
-                                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[10px] font-medium transition-colors ${c.btn}`}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        window.open(latestReceiveWithPdf.pdfUrl, "_blank", "noopener,noreferrer");
-                                      }}
-                                      title={latestReceiveWithPdf.rpNo || latestReceiveWithPdf.receiveNo || "เปิดใบตรวจรับสินค้า"}
-                                    >
-                                      <Eye size={11} />
-                                      {latestReceiveWithPdf.rpNo || latestReceiveWithPdf.receiveNo || "ดูใบตรวจรับ"}
-                                      {receiveDocs.length > 1 ? ` +${receiveDocs.length - 1}` : ""}
-                                    </button>
-                                  ) : (
-                                    <span className="text-slate-300">-</span>
-                                  )}
+                                  <span className="text-slate-400 text-[10px]">มาจาก {(draftInv.receiveIds || []).length} ใบรับของ</span>
                                 </td>
-                                <td className="py-1.5 px-3 text-right font-semibold">
-                                  {formatCurrency(po.grandTotal || po.amount || po.totalAmount || 0)}
+                                <td className="py-1.5 px-3 text-right font-semibold text-violet-700">
+                                  {formatCurrency(draftInv.amount || 0)}
                                 </td>
                                 <td className="py-1.5 px-3 text-center">
                                   <div className="flex items-center justify-center gap-1">
@@ -1235,7 +1452,23 @@ const InvoiceView = React.memo(() => {
                                       className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[10px] font-medium transition-colors ${c.btn}`}
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        openPODetail(po);
+                                        setEditingInvoice(draftInv);
+                                        setViewingPO(po);
+                                        setInvoiceForm({
+                                          invNo: draftInv.invNo || "",
+                                          invDate: draftInv.invDate || new Date().toISOString().split("T")[0],
+                                          paymentType: draftInv.paymentType || "เครดิต",
+                                          bankAccountNo: draftInv.bankAccountNo || "",
+                                          isDeposit: draftInv.isDeposit || false,
+                                          depositAmount: draftInv.depositAmount || 0,
+                                          originalDepositAmount: draftInv.depositAmount || 0,
+                                          settleRemaining: false,
+                                          items: (draftInv.items || []).map((item: any) => ({
+                                            ...item,
+                                            checked: true,
+                                            invoiceQty: item.quantity,
+                                          })),
+                                        });
                                       }}
                                     >
                                       <FileText size={11} /> ลงข้อมูลใบแจ้งหนี้
@@ -1246,9 +1479,8 @@ const InvoiceView = React.memo(() => {
                                         className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-red-200 bg-red-50 text-[10px] font-medium text-red-600 transition-colors hover:bg-red-100"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          handleDeleteInvoiceSource(po);
+                                          handleDeleteInvoice(draftInv);
                                         }}
-                                        title="ลบรายการ"
                                       >
                                         <Trash2 size={11} />
                                       </button>
@@ -1628,6 +1860,20 @@ const InvoiceView = React.memo(() => {
                   ))
                 )}
               </tbody>
+              <tfoot className="border-t-2 border-amber-200">
+                <tr className="bg-amber-50">
+                  <td className="py-2 px-3 md:hidden"></td>
+                  <td className="py-2 px-3"></td>
+                  <td className="py-2 px-3"></td>
+                  <td className="hidden py-2 px-3 md:table-cell"></td>
+                  <td colSpan={2} className="py-2 px-3 text-right text-xs font-semibold text-amber-700">ยอดรวมทั้งหมด:</td>
+                  <td className="py-2 px-3 text-right text-sm font-bold text-amber-900">
+                    {formatCurrency(historyInvoicesTotals.grand)}
+                  </td>
+                  <td className="py-2 px-3"></td>
+                  <td className="hidden py-2 px-3 md:table-cell"></td>
+                </tr>
+              </tfoot>
             </table>
           </Card>
         </div>
@@ -2049,6 +2295,190 @@ const InvoiceView = React.memo(() => {
                     </button>
                   )}
                 </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {/* ══════════════════════════════════════
+          Create Invoice from Receives Modal
+      ══════════════════════════════════════ */}
+      <AnimatePresence>
+        {isCreateInvoiceModalOpen && (
+          <motion.div
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start justify-center z-[10020] p-4 overflow-y-auto"
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+            variants={modalOverlayVariants}
+            transition={overlayTransition}
+            onClick={() => { if (!saving) setIsCreateInvoiceModalOpen(false); }}
+          >
+            <motion.div
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-8 overflow-hidden"
+              variants={modalContentVariants}
+              transition={modalTransition}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="bg-gradient-to-r from-violet-600 to-purple-700 px-6 py-4 flex items-center justify-between shadow-sm relative overflow-hidden">
+                <div className="absolute inset-0 opacity-10 pointer-events-none">
+                  <div className="absolute -right-4 -top-12 w-32 h-32 rounded-full bg-white blur-2xl"></div>
+                </div>
+                <div className="relative z-10">
+                  <h3 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
+                    <FileText size={22} className="text-violet-200" />
+                    สร้าง Invoice ใหม่
+                  </h3>
+                  <p className="text-violet-200 text-xs mt-1 font-medium">
+                    เลือกรายการรับของ (Receive) ที่ต้องการออกใบแจ้งหนี้
+                  </p>
+                </div>
+                <button
+                  onClick={() => setIsCreateInvoiceModalOpen(false)}
+                  disabled={saving}
+                  className="relative z-10 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors disabled:opacity-50"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-6">
+                {/* Section 1: Vendor & Receives */}
+                <div className="space-y-4 border-b border-slate-100 pb-6">
+                   <div>
+                     <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                       1. เลือกผู้ขาย (Vendor)
+                     </label>
+                     <select
+                       value={createInvoiceVendorId}
+                       onChange={(e) => {
+                         setCreateInvoiceVendorId(e.target.value);
+                         setCreateInvoiceSelectedReceiveIds([]);
+                       }}
+                       className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-violet-400 focus:border-violet-400"
+                       disabled={saving}
+                     >
+                       <option value="">-- เลือกผู้ขายที่มีใบรับของค้างจ่าย --</option>
+                       {createInvoiceVendors.map((v: any) => (
+                         <option key={v.id} value={v.id}>{v.name}</option>
+                       ))}
+                     </select>
+                   </div>
+
+                   {createInvoiceVendorId && (
+                     <div>
+                       <label className="block text-sm font-semibold text-slate-700 mb-1.5 flex justify-between">
+                         <span>2. เลือกใบรับของ (Receive Documents)</span>
+                         <span className="text-violet-600">{createInvoiceSelectedReceiveIds.length} รายการ</span>
+                       </label>
+                       <div className="border border-slate-200 rounded-xl overflow-hidden">
+                         <div className="max-h-60 overflow-y-auto bg-slate-50 p-2 space-y-2">
+                           {invoiceEligibleReceives.filter((r: any) => {
+                              const po = pos.find((p: any) => p.id === r.poId);
+                              return (po?.vendorId === createInvoiceVendorId) || (r.vendorId === createInvoiceVendorId);
+                           }).map((rcv: any) => {
+                             const isChecked = createInvoiceSelectedReceiveIds.includes(rcv.id);
+                             const po = pos.find((p: any) => p.id === rcv.poId);
+                             const amount = (rcv.items || []).reduce((sum: number, it: any) => sum + (Number(it.receivedQty || 0) * Number(it.price || 0)), 0);
+                             return (
+                               <label key={rcv.id} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${isChecked ? 'bg-violet-50 border-violet-200' : 'bg-white border-slate-200 hover:border-violet-300'}`}>
+                                 <input
+                                   type="checkbox"
+                                   checked={isChecked}
+                                   onChange={(e) => {
+                                     if (e.target.checked) {
+                                       setCreateInvoiceSelectedReceiveIds(prev => [...prev, rcv.id]);
+                                     } else {
+                                       setCreateInvoiceSelectedReceiveIds(prev => prev.filter(id => id !== rcv.id));
+                                     }
+                                   }}
+                                   className="w-4 h-4 text-violet-600 border-slate-300 rounded focus:ring-violet-500"
+                                   disabled={saving}
+                                 />
+                                 <div className="flex-1 flex justify-between items-center">
+                                   <div>
+                                     <div className="font-semibold text-sm text-slate-800">{rcv.rpNo || rcv.receiveNo}</div>
+                                     <div className="text-xs text-slate-500">PO: {po?.poNo || rcv.poNo || "-"}</div>
+                                   </div>
+                                   <div className="text-right">
+                                     <div className="font-bold text-sm text-violet-700">{formatCurrency(amount)}</div>
+                                     <div className="text-xs text-slate-400">{formatDate(rcv.receivedDate || rcv.createdAt)}</div>
+                                   </div>
+                                 </div>
+                               </label>
+                             );
+                           })}
+                         </div>
+                       </div>
+                     </div>
+                   )}
+                </div>
+
+                {/* Section 2: Invoice Details */}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="flex items-center justify-center w-6 h-6 rounded-full bg-violet-100 text-violet-600 font-bold text-xs">3</span>
+                    <h4 className="text-sm font-semibold text-slate-800">ข้อมูลใบแจ้งหนี้ (เว้นว่าง Invoice No. เพื่อบันทึกเป็น Draft)</h4>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50/50 p-4 rounded-xl border border-slate-100">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">เลขที่ใบแจ้งหนี้ (Invoice No.)</label>
+                      <input
+                        type="text"
+                        value={createInvoiceForm.invNo}
+                        onChange={(e) => setCreateInvoiceForm({ ...createInvoiceForm, invNo: e.target.value })}
+                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-violet-400 focus:border-violet-400"
+                        placeholder="ไม่ต้องใส่ หากต้องการสร้าง Draft"
+                        disabled={saving}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">วันที่ใบแจ้งหนี้</label>
+                      <input
+                        type="date"
+                        value={createInvoiceForm.invDate}
+                        onChange={(e) => setCreateInvoiceForm({ ...createInvoiceForm, invDate: e.target.value })}
+                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-violet-400 focus:border-violet-400"
+                        disabled={saving}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">ประเภทการชำระเงิน</label>
+                      <select
+                        value={createInvoiceForm.paymentType}
+                        onChange={(e) => setCreateInvoiceForm({ ...createInvoiceForm, paymentType: e.target.value })}
+                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-violet-400 focus:border-violet-400"
+                        disabled={saving}
+                      >
+                        {PAYMENT_TYPES.map((pt) => (
+                          <option key={pt} value={pt}>{pt}</option>
+                        ))}
+                      </select>
+                    </div>
+                    {createInvoiceForm.paymentType === "โอน" && (
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">เลขที่บัญชี (ถ้ามี)</label>
+                        <input
+                          type="text"
+                          value={createInvoiceForm.bankAccountNo}
+                          onChange={(e) => setCreateInvoiceForm({ ...createInvoiceForm, bankAccountNo: e.target.value })}
+                          className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-violet-400 focus:border-violet-400"
+                          placeholder="เลขที่บัญชี/ชื่อธนาคาร"
+                          disabled={saving}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
+                <Button variant="secondary" onClick={() => setIsCreateInvoiceModalOpen(false)} disabled={saving}>
+                  ยกเลิก
+                </Button>
+                <Button variant="primary" onClick={handleSaveCreateInvoice} disabled={saving || !createInvoiceVendorId || createInvoiceSelectedReceiveIds.length === 0} loading={saving}>
+                  บันทึกข้อมูล
+                </Button>
               </div>
             </motion.div>
           </motion.div>

@@ -20,6 +20,8 @@ import {
 } from "../lib/constants";
 import { getResumeStatusForPR } from "../lib/prAllocation";
 import { uploadAttachment } from "../lib/uploadAttachment";
+import { sumSubItemAmounts } from "../lib/prBudgetReturn";
+import { isPaidInvoiceRecord, isPaidStatus, normalizeIdList } from "../lib/billingPayUtils";
 import { useProportionalTableLayout, chainTableResizeHandlers } from "../hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
@@ -268,12 +270,57 @@ const BudgetView = React.memo(() => {
   }, [selectedProjectBudgets]);
   const invoiceAmountByPoRef = useMemo(() => {
     const map = new Map<string, number>();
+    const uniqueInvoices = new Map();
+    
+    const projectPoNos = new Set(
+      projectPos.map((po: any) => po.poNo).filter(Boolean)
+    );
+
+    const paidInvoiceIds = new Set();
+
     invoices.forEach((invoice: any) => {
-      if (!invoice?.poRef) return;
-      map.set(invoice.poRef, (map.get(invoice.poRef) || 0) + (Number(invoice.amount) || 0));
+      const belongsToProject = 
+        invoice.projectId === selectedProjectId || 
+        projectPoNos.has(invoice?.poRef) || 
+        projectPoNos.has(invoice?.poNo);
+
+      if (belongsToProject && isPaidInvoiceRecord(invoice)) {
+        uniqueInvoices.set(invoice.id, invoice);
+        paidInvoiceIds.add(String(invoice.id));
+      }
     });
+
+    uniqueInvoices.forEach((invoice: any) => {
+      const amount = Number(invoice.amount) || (Number(invoice.invoiceQty || 0) * Number(invoice.price || 0)) || 0;
+      if (invoice.poRef) {
+        map.set(invoice.poRef, (map.get(invoice.poRef) || 0) + amount);
+      } else if (invoice.poNo) {
+        map.set(invoice.poNo, (map.get(invoice.poNo) || 0) + amount);
+      }
+    });
+
+    const projectPayments = payments.filter((p: any) => p.projectId === selectedProjectId);
+    const payDocs = projectPayments.filter((row: any) => isPaidStatus(row.status));
+
+    payDocs.forEach((row: any) => {
+      const linkedInvoiceIds = normalizeIdList(row.invoiceIds || []);
+      const hasLinkedPaidInvoice = linkedInvoiceIds.some((invoiceId) => paidInvoiceIds.has(invoiceId));
+      const hasInvoiceByPayNo = Array.from(uniqueInvoices.values()).some((invoice: any) => (
+        String(invoice?.payNo || "") === String(row?.docNo || "")
+      ));
+      
+      if (!hasLinkedPaidInvoice && !hasInvoiceByPayNo) {
+        const amount = Number(row.amount) || 0;
+        if (row.poRef) {
+           map.set(row.poRef, (map.get(row.poRef) || 0) + amount);
+        } else if (row.poNo) {
+           map.set(row.poNo, (map.get(row.poNo) || 0) + amount);
+        }
+      }
+    });
+
     return map;
-  }, [invoices]);
+  }, [invoices, payments, projectPos, selectedProjectId]);
   const receiveQtyByPoItemKey = useMemo(() => {
     const map = new Map<string, number>();
     projectReceives.forEach((receive: any) => {
@@ -1188,25 +1235,48 @@ const BudgetView = React.memo(() => {
       return false;
     });
 
+    const seenPrNos = new Set();
     const prTotal = relatedPRs.reduce((sum, pr) => {
-      // Use PR's totalAmount directly for consistency with PO calculation
-      const prAmount = Number(pr.totalAmount || 0);
-      return sum + prAmount;
+      if (pr.prNo && seenPrNos.has(pr.prNo)) return sum;
+      if (pr.prNo) seenPrNos.add(pr.prNo);
+
+      let subtotal = 0;
+      if (pr.items && pr.items.length > 0) {
+        subtotal = pr.items.reduce((iSum, i) => {
+          if (!itemBelongsToBudget(i, pr)) return iSum;
+          return iSum + getItemAmount(i);
+        }, 0);
+      }
+
+      if (subtotal > 0) {
+        const prSubtotal = pr.items.reduce((s, i) => s + getItemAmount(i), 0);
+        const itemRatio = prSubtotal > 0 ? subtotal / prSubtotal : 0;
+        const discount = Number(pr.discount || 0);
+        const proportionalDiscount = discount * itemRatio;
+        const prAmount = Math.max(0, subtotal - proportionalDiscount);
+        return sum + prAmount;
+      }
+
+      // Fallback for legacy PRs without items
+      if (!pr.items || pr.items.length === 0) {
+        return sum + Number(pr.totalAmount || 0);
+      }
+      return sum;
     }, 0);
 
+    const seenPoNosForPO = new Set();
     const poTotal = relatedPOs.reduce((sum, po) => {
-      // Use PO's amount before VAT (subtotal - discount)
-      // Calculate from items that belong to this budget only
+      if (po.poNo && seenPoNosForPO.has(po.poNo)) return sum;
+      if (po.poNo) seenPoNosForPO.add(po.poNo);
+
       let subtotal = 0;
       if (po.items && po.items.length > 0) {
         subtotal = po.items.reduce((iSum, i) => {
-          // Only include items that belong to this specific budget/sub-item
           if (!itemBelongsToBudget(i)) return iSum;
-          const itemAmount = getItemAmount(i);
-          return iSum + itemAmount;
+          return iSum + getItemAmount(i);
         }, 0);
       }
-      // Apply discount proportionally based on item ratio
+
       if (subtotal > 0) {
         const poSubtotal = po.items.reduce((s, i) => s + getItemAmount(i), 0);
         const itemRatio = poSubtotal > 0 ? subtotal / poSubtotal : 0;
@@ -1215,12 +1285,42 @@ const BudgetView = React.memo(() => {
         const poAmount = Math.max(0, subtotal - proportionalDiscount);
         return sum + poAmount;
       }
+      
+      if (!po.items || po.items.length === 0) {
+         return sum + Number(po.totalAmount || 0);
+      }
       return sum;
     }, 0);
 
+    const seenPoNosForInvoice = new Set();
     const invoiceTotal = relatedPOs.reduce((sum, po) => {
       if (po.status === "Rejected") return sum;
-      return sum + (invoiceAmountByPoRef.get(po.poNo) || 0);
+      
+      const poNo = po.poNo || "";
+      if (poNo && seenPoNosForInvoice.has(poNo)) return sum;
+      if (poNo) seenPoNosForInvoice.add(poNo);
+
+      const invAmt = invoiceAmountByPoRef.get(po.poNo) || 0;
+      if (invAmt === 0) return sum;
+
+      let subtotal = 0;
+      if (po.items && po.items.length > 0) {
+        subtotal = po.items.reduce((iSum, i) => {
+          if (!itemBelongsToBudget(i)) return iSum;
+          return iSum + getItemAmount(i);
+        }, 0);
+      }
+      
+      if (subtotal > 0) {
+        const poSubtotal = po.items.reduce((s, i) => s + getItemAmount(i), 0);
+        const itemRatio = poSubtotal > 0 ? subtotal / poSubtotal : 1;
+        return sum + (invAmt * itemRatio);
+      }
+      
+      if (!po.items || po.items.length === 0) {
+         return sum + invAmt;
+      }
+      return sum;
     }, 0);
     return { prTotal, poTotal, invoiceTotal, relatedPRs, relatedPOs };
   }, [duplicateBudgetCodeSet, invoiceAmountByPoRef, projectPos, projectPrById, projectPrs, getItemAmount]);
