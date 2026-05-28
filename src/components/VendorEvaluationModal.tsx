@@ -6,16 +6,18 @@ import { X, CheckCircle, AlertCircle } from "lucide-react";
 interface VendorEvaluationModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (scores: { q1: number; q2: number; q3: number }) => void;
+  onSubmit: (scores: { q1: number; q2: number; q3: number }, suggestion: string) => void;
   vendorName: string;
 }
 
 export const VendorEvaluationModal: React.FC<VendorEvaluationModalProps> = ({ isOpen, onClose, onSubmit, vendorName }) => {
   const [scores, setScores] = useState<{ q1: number | null; q2: number | null; q3: number | null }>({ q1: null, q2: null, q3: null });
+  const [suggestion, setSuggestion] = useState("");
 
   useEffect(() => {
     if (isOpen) {
       setScores({ q1: null, q2: null, q3: null });
+      setSuggestion("");
     }
   }, [isOpen]);
 
@@ -26,7 +28,7 @@ export const VendorEvaluationModal: React.FC<VendorEvaluationModalProps> = ({ is
   const handleSubmit = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.preventDefault();
     if (isComplete) {
-      onSubmit(scores as { q1: number; q2: number; q3: number });
+      onSubmit(scores as { q1: number; q2: number; q3: number }, suggestion);
     }
   };
 
@@ -129,6 +131,17 @@ export const VendorEvaluationModal: React.FC<VendorEvaluationModalProps> = ({ is
                   </div>
                 </div>
               ))}
+
+              <div className="space-y-3 pt-4 border-t border-slate-100">
+                <h4 className="font-semibold text-slate-800 text-base">คำแนะนำเพิ่มเติม</h4>
+                <textarea
+                  className="w-full border-2 border-slate-200 rounded-xl p-3 focus:border-blue-400 focus:ring-4 focus:ring-blue-100 outline-none transition-all resize-none text-sm"
+                  rows={3}
+                  placeholder="ระบุคำแนะนำเพิ่มเติมเพื่อการปรับปรุง..."
+                  value={suggestion}
+                  onChange={(e) => setSuggestion(e.target.value)}
+                />
+              </div>
             </div>
 
             {/* Footer */}

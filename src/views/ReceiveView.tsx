@@ -15,6 +15,7 @@ import { generateRPPdfBytes, uploadGeneratedPdf, deleteGeneratedPdf, generatePOP
 import { PDFDocument } from "pdf-lib";
 import { combineImagesToPdf, createPdfThumbnail, generateCombinedPdfFilename } from "../lib/imageToPdf";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
+import { ReceiveEvaluationModal } from "../components/ReceiveEvaluationModal";
 import {
   buildDeleteLogDetails,
   buildRecordSummary,
@@ -76,6 +77,10 @@ const ReceiveView = React.memo(() => {
   const [photoPreview, setPhotoPreview] = useState(null);
   const [viewingRcv, setViewingRcv] = useState(null);
   const [uploadingPhotos, setUploadingPhotos] = useState({});
+
+  // Receive Evaluation state
+  const [receiveEvalModalOpen, setReceiveEvalModalOpen] = useState(false);
+  const receiveEvalScoresRef = React.useRef<{ q1: number; q2: number; suggestion?: string } | null>(null);
 
   // Search states
   const [poPOSearch, setPoPOSearch] = useState("");
@@ -446,6 +451,28 @@ const ReceiveView = React.memo(() => {
       }
     }
 
+    const summary = { ...(receiveSummary[po.id] || {}) };
+    itemsToSave.forEach((item) => {
+      summary[item.poItemIndex] = (summary[item.poItemIndex] || 0) + item.receivedQty;
+    });
+
+    const allItems = po.items || [];
+    const allFullyReceived = allItems.every(
+      (item, idx) => Number(summary[idx] || 0) >= Number(item.quantity || 0)
+    );
+
+    if (allFullyReceived && ["CR", "SE", "RE"].includes(po.poType) && !receiveEvalScoresRef.current) {
+      setReceiveEvalModalOpen(true);
+      return;
+    }
+
+    executeSaveReceive(itemsToSave, allFullyReceived, summary);
+  };
+
+  const executeSaveReceive = async (itemsToSave: any[], allFullyReceived: boolean, summary: any) => {
+    const po = viewingPO;
+    if (!po) return;
+
     setSaving(true);
     setSavingStep("กำลังอัปโหลดรูปภาพ...");
     try {
@@ -586,16 +613,27 @@ const ReceiveView = React.memo(() => {
         selectedProjectId
       );
 
-      // Check if all items are now fully received
-      const summary = { ...(receiveSummary[po.id] || {}) };
-      savedItems.forEach((item) => {
-        summary[item.poItemIndex] = (summary[item.poItemIndex] || 0) + item.receivedQty;
-      });
-
-      const allItems = po.items || [];
-      const allFullyReceived = allItems.every(
-        (item, idx) => Number(summary[idx] || 0) >= Number(item.quantity || 0)
-      );
+      // Save vendor evaluation if exists
+      if (receiveEvalScoresRef.current) {
+        const creatorFirstName = userData?.firstName || "";
+        const creatorLastName = userData?.lastName || "";
+        const creatorDisplayName = userData?.displayName || "";
+        const evalData = {
+          evaluationNo: receiveNo,
+          poNo: po.poNo,
+          poType: po.poType,
+          projectId: selectedProjectId,
+          vendorId: po.vendorId,
+          evaluatorName: creatorDisplayName || (creatorFirstName ? `${creatorFirstName} ${creatorLastName}` : (user?.email || "Unknown")),
+          evaluationDate: new Date().toISOString(),
+          scores: receiveEvalScoresRef.current,
+          totalScore: receiveEvalScoresRef.current.q1 + receiveEvalScoresRef.current.q2,
+          suggestion: receiveEvalScoresRef.current.suggestion || "",
+          evaluationStage: "Receive"
+        };
+        await addData("vendorEvaluations", evalData, null, { skipLog: true }).catch(console.error);
+        receiveEvalScoresRef.current = null;
+      }
 
       if (allFullyReceived) {
         const isPayBeforeReceive = po.receiveType === "Pay before receive" || !!po.payBeforeReceiveChecked;
@@ -1968,6 +2006,19 @@ const ReceiveView = React.memo(() => {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <ReceiveEvaluationModal
+        isOpen={receiveEvalModalOpen}
+        onClose={() => setReceiveEvalModalOpen(false)}
+        vendorName={vendors.find((v: any) => v.id === viewingPO?.vendorId)?.name || ""}
+        onSubmit={(scores: any, suggestion: string) => {
+          receiveEvalScoresRef.current = { ...scores, suggestion };
+          setReceiveEvalModalOpen(false);
+          setTimeout(() => {
+            handleSaveReceive();
+          }, 100);
+        }}
+      />
     </div>
   );
 });

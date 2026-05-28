@@ -8,7 +8,7 @@ import {
   Truck, Package, Paperclip, Clock, Hash, Tag, ClipboardList, FileSpreadsheet, Upload, Download,
   BarChart3, Zap, Building2, ShoppingCart, RefreshCw
 } from "lucide-react";
-import { doc, runTransaction, collection, getDocs } from "firebase/firestore";
+import { doc, runTransaction, collection, getDocs, query, where, deleteDoc } from "firebase/firestore";
 import { db, appId } from "../lib/firebase";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
@@ -137,7 +137,7 @@ const POView = React.memo(() => {
   // UI States
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [vendorEvalModalOpen, setVendorEvalModalOpen] = useState(false);
-  const vendorEvalScoresRef = useRef<{ q1: number; q2: number; q3: number } | null>(null);
+  const vendorEvalScoresRef = useRef<{ q1: number; q2: number; q3: number; suggestion?: string } | null>(null);
   const [isVendorModalOpen, setIsVendorModalOpen] = useState(false);
   const [savePoProgress, setSavePoProgress] = useState<{ show: boolean; pct: number; step: string }>({ show: false, pct: 0, step: "" });
   const [isPrSelectModalOpen, setIsPrSelectModalOpen] = useState(false);
@@ -1453,7 +1453,7 @@ const POView = React.memo(() => {
       return showAlert("ข้อมูลไม่ครบ", L.noType, "warning");
     }
 
-    if (["CR", "SE", "RE"].includes(formData.poType) && !vendorEvalScoresRef.current) {
+    if (["CR", "SE", "RE", "SP"].includes(formData.poType) && !vendorEvalScoresRef.current) {
       setVendorEvalModalOpen(true);
       return;
     }
@@ -1869,8 +1869,20 @@ const POView = React.memo(() => {
             evaluatorName: creatorDisplayName || (creatorFirstName ? `${creatorFirstName} ${creatorLastName}` : (user?.email || "Unknown")),
             evaluationDate: new Date().toISOString(),
             scores: vendorEvalScoresRef.current,
-            totalScore: vendorEvalScoresRef.current.q1 + vendorEvalScoresRef.current.q2 + vendorEvalScoresRef.current.q3
+            totalScore: vendorEvalScoresRef.current.q1 + vendorEvalScoresRef.current.q2 + vendorEvalScoresRef.current.q3,
+            suggestion: vendorEvalScoresRef.current.suggestion || "",
+            evaluationStage: "PO Creation"
           };
+
+          try {
+            const q = query(collection(db, "artifacts", appId, "public", "data", "vendorEvaluations"), where("evaluationNo", "==", resolvedPoNo));
+            const snap = await getDocs(q);
+            const deletePromises = snap.docs.map(d => deleteDoc(doc(db, "artifacts", appId, "public", "data", "vendorEvaluations", d.id)));
+            await Promise.all(deletePromises);
+          } catch (err) {
+            console.error("Error deleting old vendor evaluations:", err);
+          }
+
           await addData("vendorEvaluations", evalData, null, { skipLog: true }).catch(console.error);
         }
         await logAction(
@@ -5208,8 +5220,8 @@ const POView = React.memo(() => {
             isOpen={vendorEvalModalOpen}
             onClose={() => setVendorEvalModalOpen(false)}
             vendorName={vendors.find((v: any) => v.id === formData.vendorId)?.name || ""}
-            onSubmit={(scores: any) => {
-              vendorEvalScoresRef.current = scores;
+            onSubmit={(scores: any, suggestion: string) => {
+              vendorEvalScoresRef.current = { ...scores, suggestion };
               setVendorEvalModalOpen(false);
               setTimeout(() => {
                 executeSavePO();
