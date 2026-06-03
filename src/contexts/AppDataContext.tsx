@@ -155,6 +155,7 @@ export const AppDataProvider = ({
   const [invoices,  setInvoices]  = useState([]);
   const [payments,  setPayments]  = useState([]);
   const [receives,  setReceives]  = useState([]);
+  const [vendorEvaluations, setVendorEvaluations] = useState([]);
   const [availableRoles, setAvailableRoles] = useState<string[]>(() => normalizeRoleNames(USER_ROLES));
 
   // ── Role permissions (admin-controlled, synced to Firestore) ─────────────
@@ -183,8 +184,10 @@ export const AppDataProvider = ({
   // ── Lazy / one-shot loaded collections (getDocs แทน onSnapshot — ลด Firebase read quota) ──
   const [vendorsLoading,   setVendorsLoading]   = useState(false);
   const [materialsLoading, setMaterialsLoading] = useState(false);
+  const [vendorEvaluationsLoading, setVendorEvaluationsLoading] = useState(false);
   const vendorsLoadedRef   = useRef(false);
   const materialsLoadedRef = useRef(false);
+  const vendorEvaluationsLoadedRef = useRef(false);
 
   const loadVendors = useCallback(async () => {
     if (!rolePermissionsReady) return;
@@ -206,6 +209,22 @@ export const AppDataProvider = ({
       setVendorsLoading(false);
     }
   }, [rolePermissionsReady, hasModuleAccessForCurrentRoles]);
+
+  const loadVendorEvaluations = useCallback(async () => {
+    if (!rolePermissionsReady) return;
+    if (vendorEvaluationsLoadedRef.current) return;
+    vendorEvaluationsLoadedRef.current = true;
+    setVendorEvaluationsLoading(true);
+    try {
+      const snap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'vendorEvaluations'));
+      setVendorEvaluations(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    } catch (err) {
+      console.error('Error loading vendorEvaluations:', err);
+      vendorEvaluationsLoadedRef.current = false;
+    } finally {
+      setVendorEvaluationsLoading(false);
+    }
+  }, [rolePermissionsReady]);
 
   const loadMaterials = useCallback(async () => {
     if (!rolePermissionsReady) return;
@@ -890,7 +909,7 @@ export const AppDataProvider = ({
   // ── Context value ──────────────────────────────────────────────────────────
   const value = useMemo(() => ({
     // collections
-    projects, budgets, vendors, materials, prs, pos, invoices, payments, receives,
+    projects, budgets, vendors, materials, prs, pos, invoices, payments, receives, vendorEvaluations, vendorEvaluations,
     // derived
     visibleProjects,
     // pending (global, for bell + sidebar badges)
@@ -900,8 +919,8 @@ export const AppDataProvider = ({
     // CRUD
     addData, updateData, deleteData,
     // lazy / one-shot load (ลดโควต้า — โหลดเมื่อเข้าหน้าที่ใช้)
-    loadVendors, loadMaterials,
-    vendorsLoading, materialsLoading,
+    loadVendors, loadMaterials, loadVendorEvaluations,
+    vendorsLoading, materialsLoading, vendorEvaluationsLoading,
     // column widths
     columnWidths, handleColumnResize,
     // column visibility (per-user)
