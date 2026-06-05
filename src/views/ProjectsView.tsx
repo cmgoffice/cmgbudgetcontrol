@@ -26,6 +26,7 @@ const ProjectsView = React.memo(() => {
   const [editingProjectId, setEditingProjectId] = useState(null);
   const [selectedProject, setSelectedProject] = useState(null);
   const [budgetAttachmentFiles, setBudgetAttachmentFiles] = useState([]);
+  const [contractAttachmentFiles, setContractAttachmentFiles] = useState([]);
   const [budgetRevisionNote, setBudgetRevisionNote] = useState("");
   const [budgetActioning, setBudgetActioning] = useState(false);
   const [detailTab, setDetailTab] = useState("detail");
@@ -45,6 +46,13 @@ const ProjectsView = React.memo(() => {
     cmName: "",
     status: "",
     projectType: "",
+    contractInfo: "",
+    contractName: "",
+    clientName: "",
+    mainContractor: "",
+    subContractor: "",
+    poNo: "",
+    contractAttachments: [],
   };
 
   const [formData, setFormData] = useState(EMPTY_FORM);
@@ -111,6 +119,7 @@ const ProjectsView = React.memo(() => {
   useEffect(() => {
     setBudgetRevisionNote(selectedProject?.budgetRevisionRequest?.note || "");
     setBudgetAttachmentFiles([]);
+    setContractAttachmentFiles([]);
   }, [selectedProject?.id]);
 
   const currentModalProjectId = editingProjectId || formData.id || formData.jobNo;
@@ -122,6 +131,24 @@ const ProjectsView = React.memo(() => {
     for (const f of files) {
       const up = await uploadAttachment(f, {
         type: "project-budget",
+        projectId,
+        docId: projectId,
+      });
+      uploaded.push({
+        ...up,
+        uploadedAt: new Date().toISOString(),
+        uploadedBy: userData?.name || userData?.email || userRole || "",
+      });
+    }
+    return [...(existing || []), ...uploaded];
+  };
+
+  const uploadProjectContractAttachments = async (projectId, files, existing = []) => {
+    if (!projectId || !files?.length) return existing || [];
+    const uploaded = [];
+    for (const f of files) {
+      const up = await uploadAttachment(f, {
+        type: "project-contract",
         projectId,
         docId: projectId,
       });
@@ -164,17 +191,24 @@ const ProjectsView = React.memo(() => {
           budgetAttachmentFiles,
           formData.budgetAttachments || []
         );
+        const nextContractAttachments = await uploadProjectContractAttachments(
+          editingProjectId,
+          contractAttachmentFiles,
+          formData.contractAttachments || []
+        );
         const success = await updateData("projects", editingProjectId, {
           ...formData,
           status: canEditProjectStatus ? formData.status : currentProject?.status || formData.status,
           budgetTotal: currentModalBudgetTotal,
           budgetAttachments: nextAttachments,
+          contractAttachments: nextContractAttachments,
         });
         if (success) {
           setIsModalOpen(false);
           setFormData(EMPTY_FORM);
           setEditingProjectId(null);
           setBudgetAttachmentFiles([]);
+          setContractAttachmentFiles([]);
           setBudgetRevisionNote("");
           showAlert("สำเร็จ", "แก้ไขข้อมูลโครงการเรียบร้อย", "success");
         }
@@ -184,15 +218,22 @@ const ProjectsView = React.memo(() => {
           ...formData,
           budgetTotal: currentModalBudgetTotal,
           budgetAttachments: [],
+          contractAttachments: [],
         }, projectId);
         if (success) {
           const nextAttachments = await uploadProjectBudgetAttachments(projectId, budgetAttachmentFiles, []);
-          if (nextAttachments.length > 0) {
-            await updateData("projects", projectId, { budgetAttachments: nextAttachments, budgetTotal: currentModalBudgetTotal }, { skipLog: true });
+          const nextContractAttachments = await uploadProjectContractAttachments(projectId, contractAttachmentFiles, []);
+          if (nextAttachments.length > 0 || nextContractAttachments.length > 0) {
+            await updateData("projects", projectId, { 
+              budgetAttachments: nextAttachments, 
+              budgetTotal: currentModalBudgetTotal,
+              contractAttachments: nextContractAttachments
+            }, { skipLog: true });
           }
           setIsModalOpen(false);
           setFormData(EMPTY_FORM);
           setBudgetAttachmentFiles([]);
+          setContractAttachmentFiles([]);
           setBudgetRevisionNote("");
           showAlert("สำเร็จ", "เพิ่มโครงการใหม่เรียบร้อยแล้ว", "success");
         }
@@ -206,6 +247,7 @@ const ProjectsView = React.memo(() => {
     setFormData(project);
     setEditingProjectId(project.id);
     setBudgetAttachmentFiles([]);
+    setContractAttachmentFiles([]);
     setBudgetRevisionNote(project?.budgetRevisionRequest?.note || "");
     setSelectedProject(null);
     setIsModalOpen(true);
@@ -938,7 +980,31 @@ const ProjectsView = React.memo(() => {
                     <DetailItem label="CM" value={selectedProject.cmName} className="text-green-600" />
                     <DetailItem label="Project Status" value={renderProjectStatusBadge(selectedProject.status)} />
                     <DetailItem label="Project Type" value={renderProjectTypeBadge(selectedProject.projectType)} />
+                    <DetailItem label="Contract Info" value={selectedProject.contractInfo} />
+                    <DetailItem label="Contract Name" value={selectedProject.contractName} />
+                    <DetailItem label="Client Name" value={selectedProject.clientName} />
+                    <DetailItem label="Main Contractor" value={selectedProject.mainContractor} />
+                    <DetailItem label="Sub-Contractor" value={selectedProject.subContractor} />
+                    <DetailItem label="PO No." value={selectedProject.poNo} />
                   </div>
+                  {selectedProject.contractAttachments?.length > 0 && (
+                    <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-2">Contract Attachments</div>
+                      <div className="flex flex-wrap gap-2">
+                        {selectedProject.contractAttachments.map((att, i) => (
+                          <a
+                            key={`${att.url || att.name}-${i}`}
+                            href={att.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="px-2 py-1 rounded bg-white border text-[11px] text-blue-700 hover:bg-blue-50"
+                          >
+                            {att.name || `Attachment ${i + 1}`}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <div className="mt-4">
                     {renderManageBudgetSection(selectedProject, true)}
                   </div>
@@ -1113,6 +1179,103 @@ const ProjectsView = React.memo(() => {
                   ))}
                 </select>
               </InputGroup>
+              <InputGroup label="Contract Info">
+                <input
+                  type="text"
+                  className="w-full border rounded p-2 text-sm"
+                  value={formData.contractInfo || ""}
+                  onChange={(e) => setFormData({ ...formData, contractInfo: e.target.value })}
+                />
+              </InputGroup>
+              <InputGroup label="Contract Name">
+                <input
+                  type="text"
+                  className="w-full border rounded p-2 text-sm"
+                  value={formData.contractName || ""}
+                  onChange={(e) => setFormData({ ...formData, contractName: e.target.value })}
+                />
+              </InputGroup>
+              <InputGroup label="Client Name">
+                <input
+                  type="text"
+                  className="w-full border rounded p-2 text-sm"
+                  value={formData.clientName || ""}
+                  onChange={(e) => setFormData({ ...formData, clientName: e.target.value })}
+                />
+              </InputGroup>
+              <InputGroup label="Main Contractor">
+                <input
+                  type="text"
+                  className="w-full border rounded p-2 text-sm"
+                  value={formData.mainContractor || ""}
+                  onChange={(e) => setFormData({ ...formData, mainContractor: e.target.value })}
+                />
+              </InputGroup>
+              <InputGroup label="Sub-Contractor">
+                <input
+                  type="text"
+                  className="w-full border rounded p-2 text-sm"
+                  value={formData.subContractor || ""}
+                  onChange={(e) => setFormData({ ...formData, subContractor: e.target.value })}
+                />
+              </InputGroup>
+              <InputGroup label="PO No.">
+                <input
+                  type="text"
+                  className="w-full border rounded p-2 text-sm"
+                  value={formData.poNo || ""}
+                  onChange={(e) => setFormData({ ...formData, poNo: e.target.value })}
+                />
+              </InputGroup>
+              <div className="col-span-2">
+                <InputGroup label="Contract Attachment">
+                  <input
+                    type="file"
+                    multiple
+                    className="w-full border rounded p-2 text-sm bg-white"
+                    disabled={budgetActioning}
+                    onChange={(e) => setContractAttachmentFiles(Array.from(e.target.files || []))}
+                  />
+                  {contractAttachmentFiles.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {contractAttachmentFiles.map((f, i) => (
+                        <span key={`${f.name}-${i}`} className="px-2 py-1 rounded bg-white border text-[11px] text-slate-600">
+                          {f.name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {formData.contractAttachments?.length > 0 && (
+                    <div className="mt-2">
+                      <div className="text-[10px] font-bold uppercase text-slate-400 mb-1">Uploaded Contract Attachments</div>
+                      <div className="flex flex-wrap gap-2">
+                        {formData.contractAttachments.map((att, i) => (
+                          <div key={`${att.url || att.name}-${i}`} className="flex items-center gap-1 bg-white border rounded px-2 py-1">
+                            <a
+                              href={att.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[11px] text-blue-700 hover:text-blue-900"
+                            >
+                              {att.name || `Attachment ${i + 1}`}
+                            </a>
+                            <button
+                              type="button"
+                              className="text-red-500 hover:text-red-700 ml-1"
+                              onClick={() => {
+                                const newAtts = formData.contractAttachments.filter((_, idx) => idx !== i);
+                                setFormData({ ...formData, contractAttachments: newAtts });
+                              }}
+                            >
+                              <Trash2 size={10} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </InputGroup>
+              </div>
             </div>
             </div>
             {renderManageBudgetSection(formData, false)}
