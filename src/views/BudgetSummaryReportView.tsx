@@ -19,9 +19,10 @@ const BudgetSummaryReportView = React.memo(() => {
           (b) => b.projectId === proj.id && b.status === "Approved"
         );
         const budgetTotal = projBudgets.reduce((s, b) => s + (Number(b.amount) || 0), 0);
+        const budgetValue = Number(proj.budgetValue) || 0;
         const contractValue = Number(proj.contractValue) || 0;
-        const expectedProfit = contractValue - budgetTotal;
-        const profitPct = contractValue > 0 ? (expectedProfit / contractValue) * 100 : 0;
+        const expectedProfit = budgetValue - budgetTotal;
+        const profitPct = budgetValue > 0 ? (expectedProfit / budgetValue) * 100 : 0;
 
         // PR Total = sum of totalAmount for all non-Rejected PRs in this project
         const projPrs = prs.filter((r) => r.projectId === proj.id && r.status !== "Rejected");
@@ -43,6 +44,7 @@ const BudgetSummaryReportView = React.memo(() => {
           jobNo: proj.jobNo || "",
           projectName: proj.name || "",
           contractValue,
+          budgetValue,
           budgetTotal,
           expectedProfit,
           profitPct,
@@ -58,14 +60,16 @@ const BudgetSummaryReportView = React.memo(() => {
   const totals = useMemo(() => {
     const sum = (key: string) => rows.reduce((s, r) => s + (r[key] || 0), 0);
     const contractValue = sum("contractValue");
+    const budgetValue = sum("budgetValue");
     const budgetTotal = sum("budgetTotal");
     const expectedProfit = sum("expectedProfit");
-    const profitPct = contractValue > 0 ? (expectedProfit / contractValue) * 100 : 0;
+    const profitPct = budgetValue > 0 ? (expectedProfit / budgetValue) * 100 : 0;
     const poTotal = sum("poTotal");
     const budgetBalance = budgetTotal - poTotal;
     const balancePct = budgetTotal > 0 ? (budgetBalance / budgetTotal) * 100 : 0;
     return {
       contractValue,
+      budgetValue,
       budgetTotal,
       expectedProfit,
       profitPct,
@@ -79,20 +83,20 @@ const BudgetSummaryReportView = React.memo(() => {
 
   const handleExport = () => {
     const headers = [
-      "Job No.", "Project Name", "Contract Value", "Budget Total",
+      "Job No.", "Project Name", "Contract Value", "Budget Value", "Budget Total",
       "Expect Profit", "%Profit", "Budget Balance", "% Balance",
       "PR Total", "PO Total", "Spent (Inv)Total",
     ];
     const dataRows = rows.map((r) => [
       r.jobNo, r.projectName,
-      r.contractValue, r.budgetTotal, r.expectedProfit,
+      r.contractValue, r.budgetValue, r.budgetTotal, r.expectedProfit,
       r.profitPct.toFixed(2),
       r.budgetBalance, r.balancePct.toFixed(2),
       r.prTotal, r.poTotal, r.spentInvTotal,
     ]);
     dataRows.push([
       "Total", "",
-      totals.contractValue, totals.budgetTotal, totals.expectedProfit,
+      totals.contractValue, totals.budgetValue, totals.budgetTotal, totals.expectedProfit,
       totals.profitPct.toFixed(2),
       totals.budgetBalance, totals.balancePct.toFixed(2),
       totals.prTotal, totals.poTotal, totals.spentInvTotal,
@@ -138,6 +142,7 @@ const BudgetSummaryReportView = React.memo(() => {
               <th className={thCell} style={{ width: 110 }}>Job No.</th>
               <th className={thCell} style={{ width: 200 }}>Project Name</th>
               <th className={thCell} style={{ width: 120 }}>Contract Value</th>
+              <th className={thCell} style={{ width: 120 }}>Budget Value</th>
               <th className={thCell} style={{ width: 110 }}>Budget Total</th>
               <th className={thCell} style={{ width: 110 }}>Expect Profit</th>
               <th className={thCell} style={{ width: 70 }}>%Profit</th>
@@ -161,6 +166,7 @@ const BudgetSummaryReportView = React.memo(() => {
                   <td className={`${tdText} font-medium`}>{r.jobNo}</td>
                   <td className={tdText}>{r.projectName}</td>
                   <td className={numCell}>{fmt(r.contractValue)}</td>
+                  <td className={numCell}>{fmt(r.budgetValue)}</td>
                   <td className={numCell}>{fmt(r.budgetTotal)}</td>
                   <td className={numCell}>{fmt(r.expectedProfit)}</td>
                   <td className={numCell}>{r.profitPct !== 0 ? r.profitPct.toFixed(2) + "%" : ""}</td>
@@ -175,6 +181,7 @@ const BudgetSummaryReportView = React.memo(() => {
             <tr>
               <td className="border border-gray-300 bg-[#ffe4b5] px-3 py-1.5 text-xs font-bold" colSpan={2}>Total</td>
               <td className={totalNumCell}>{fmt(totals.contractValue)}</td>
+              <td className={totalNumCell}>{fmt(totals.budgetValue)}</td>
               <td className={totalNumCell}>{fmt(totals.budgetTotal)}</td>
               <td className={totalNumCell}>{fmt(totals.expectedProfit)}</td>
               <td className={totalNumCell}>{totals.profitPct !== 0 ? totals.profitPct.toFixed(2) + "%" : ""}</td>

@@ -39,6 +39,7 @@ const ProjectsView = React.memo(() => {
     jobNo: "",
     name: "",
     location: "",
+    budgetValue: 0,
     contractValue: 0,
     startDate: "",
     endDate: "",
@@ -244,7 +245,11 @@ const ProjectsView = React.memo(() => {
   };
 
   const handleEdit = (project) => {
-    setFormData(project);
+    setFormData({
+      ...project,
+      budgetValue: project.budgetValue || 0,
+      contractValue: project.contractValue || 0,
+    });
     setEditingProjectId(project.id);
     setBudgetAttachmentFiles([]);
     setContractAttachmentFiles([]);
@@ -444,7 +449,7 @@ const ProjectsView = React.memo(() => {
       <div className="rounded-2xl border border-blue-100 bg-blue-50/50 p-4">
         <div className="flex items-center justify-between gap-3 mb-4">
           <div>
-            <h4 className="text-sm font-bold text-slate-800">Section 2: Manage Budget</h4>
+            <h4 className="text-sm font-bold text-slate-800">Section 3: Manage Budget</h4>
             <p className="text-xs text-slate-500">Budget Total อ่านจาก Grand Total ของ Budget Dashboard</p>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -806,6 +811,7 @@ const ProjectsView = React.memo(() => {
               {isColumnVisible("project", "name") && <ResizableTh tableId="project" colKey="name" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.name}>Project Name</ResizableTh>}
               {isColumnVisible("project", "location") && <ResizableTh tableId="project" colKey="location" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.location}>Location</ResizableTh>}
               {isColumnVisible("project", "projectStatus") && <ResizableTh tableId="project" colKey="projectStatus" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.projectStatus}>Project Status</ResizableTh>}
+              {isColumnVisible("project", "budgetValue") && <ResizableTh tableId="project" colKey="budgetValue" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.budgetValue}>Budget Value</ResizableTh>}
               {isColumnVisible("project", "contractValue") && <ResizableTh tableId="project" colKey="contractValue" className="py-2 px-3 text-right" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.contractValue}>Contract Value</ResizableTh>}
               {isColumnVisible("project", "start") && <ResizableTh tableId="project" colKey="start" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.start}>Start</ResizableTh>}
               {isColumnVisible("project", "finish") && <ResizableTh tableId="project" colKey="finish" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={projectTableLayout.handleResize} currentWidth={projectTableLayout.scaled.finish}>Finish</ResizableTh>}
@@ -836,8 +842,13 @@ const ProjectsView = React.memo(() => {
                   ) : "-"}
                 </td>
                 )}
-                {isColumnVisible("project", "contractValue") && (
+                {isColumnVisible("project", "budgetValue") && (
                 <td className="py-2 px-3 text-right font-semibold text-blue-700">
+                  {formatCurrency(p.budgetValue)}
+                </td>
+                )}
+                {isColumnVisible("project", "contractValue") && (
+                <td className="py-2 px-3 text-right font-semibold text-purple-700">
                   {formatCurrency(p.contractValue)}
                 </td>
                 )}
@@ -971,7 +982,8 @@ const ProjectsView = React.memo(() => {
                 <>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <DetailItem label="Job No." value={selectedProject.jobNo} />
-                    <DetailItem label="Contract Value" value={formatCurrency(selectedProject.contractValue)} className="text-blue-700" />
+                    <DetailItem label="Budget Value" value={formatCurrency(selectedProject.budgetValue)} className="text-blue-700" />
+                    <DetailItem label="Contract Value" value={formatCurrency(selectedProject.contractValue)} className="text-purple-700" />
                     <DetailItem label="Project Name" value={selectedProject.name} />
                     <DetailItem label="Location" value={selectedProject.location} />
                     <DetailItem label="Start Date" value={selectedProject.startDate} />
@@ -1058,8 +1070,8 @@ const ProjectsView = React.memo(() => {
             <h3 className="text-lg font-bold mb-4">
               {editingProjectId ? "แก้ไขข้อมูลโครงการ" : "เพิ่มโครงการใหม่"}
             </h3>
-            <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4">
-              <h4 className="text-sm font-bold text-slate-800 mb-3">Section 1: Project Detail</h4>
+            <div className="mb-4 rounded-2xl border border-pink-100 bg-pink-50/50 p-4">
+              <h4 className="text-sm font-bold text-pink-700 mb-3">Section 1: ข้อมูลโครงการ (Project Info)</h4>
             <div className="grid grid-cols-2 gap-4">
               <InputGroup label="Job No.">
                 <input
@@ -1077,15 +1089,15 @@ const ProjectsView = React.memo(() => {
                   disabled={!!editingProjectId && userRole !== "Administrator"}
                 />
               </InputGroup>
-              <InputGroup label="Contract Value">
+              <InputGroup label="Budget Value">
                 <input
                   type="number"
                   className="w-full border rounded p-2 text-sm"
-                  value={formData.contractValue}
+                  value={formData.budgetValue}
                   onChange={(e) =>
                     setFormData({
                       ...formData,
-                      contractValue: Number(e.target.value),
+                      budgetValue: Number(e.target.value),
                     })
                   }
                 />
@@ -1179,14 +1191,33 @@ const ProjectsView = React.memo(() => {
                   ))}
                 </select>
               </InputGroup>
-              <InputGroup label="Contract Info">
-                <input
-                  type="text"
-                  className="w-full border rounded p-2 text-sm"
-                  value={formData.contractInfo || ""}
-                  onChange={(e) => setFormData({ ...formData, contractInfo: e.target.value })}
-                />
-              </InputGroup>
+            </div>
+            </div>
+
+            <div className="mb-4 rounded-2xl border border-purple-100 bg-purple-50/50 p-4">
+              <h4 className="text-sm font-bold text-purple-700 mb-3">Section 2: ข้อมูล Contract (Contract Info)</h4>
+              <div className="grid grid-cols-2 gap-4">
+                <InputGroup label="Contract Value">
+                  <input
+                    type="number"
+                    className="w-full border rounded p-2 text-sm"
+                    value={formData.contractValue}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        contractValue: Number(e.target.value),
+                      })
+                    }
+                  />
+                </InputGroup>
+                <InputGroup label="Contract Info">
+                  <input
+                    type="text"
+                    className="w-full border rounded p-2 text-sm"
+                    value={formData.contractInfo || ""}
+                    onChange={(e) => setFormData({ ...formData, contractInfo: e.target.value })}
+                  />
+                </InputGroup>
               <InputGroup label="Contract Name">
                 <input
                   type="text"

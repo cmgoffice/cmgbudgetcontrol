@@ -100,6 +100,7 @@ export const TABLE_LAYOUT_DEFAULTS: Record<string, Record<string, number>> = {
     name: 200,
     location: 160,
     projectStatus: 110,
+    budgetValue: 120,
     contractValue: 120,
     start: 96,
     finish: 96,
