@@ -513,6 +513,8 @@ const PRView = React.memo(() => {
     purchaseType: "",
     deliveryLocation: "",
     attachment: null as File | null,
+    attachments: [] as File[],
+    existingAttachments: [] as { url: string; name: string }[],
     attachmentUrl: "" as string | undefined,
     attachmentName: "" as string | undefined,
   });
@@ -756,6 +758,8 @@ const PRView = React.memo(() => {
       purchaseType: pr.purchaseType || "",
       deliveryLocation: pr.deliveryLocation || "",
       attachment: null,
+      attachments: [],
+      existingAttachments: pr.attachments || [],
       attachmentUrl: pr.attachmentUrl || "",
       attachmentName: pr.attachmentName || "",
     });
@@ -914,6 +918,8 @@ const PRView = React.memo(() => {
     setProgress(10, "อัปโหลดไฟล์แนบ...");
     let attachmentUrl = headerData.attachmentUrl || null;
     let attachmentName = headerData.attachmentName || null;
+    let finalAttachments = [...(headerData.existingAttachments || [])];
+
     if (headerData.attachment && typeof headerData.attachment === "object" && (headerData.attachment as File).name) {
       try {
         const file = headerData.attachment as File;
@@ -924,18 +930,37 @@ const PRView = React.memo(() => {
         });
         attachmentUrl = res.url;
         attachmentName = res.name;
+        finalAttachments.push({ url: res.url, name: res.name });
       } catch (err) {
         setSavePrProgress({ show: false, pct: 0, step: "" });
         return showAlert("อัปโหลดไฟล์แนบไม่สำเร็จ", err?.message || "ไม่สามารถอัปโหลดไฟล์ได้", "error");
       }
     }
 
-    const { attachment: _omitFile, ...headerWithoutFile } = headerData;
+    if (headerData.attachments && headerData.attachments.length > 0) {
+      try {
+        const uploadPromises = headerData.attachments.map(file => 
+          uploadAttachment(file, { type: "pr", projectId: selectedProjectId || undefined, prNo: resolvedPrNo || undefined })
+        );
+        const results = await Promise.all(uploadPromises);
+        results.forEach(r => finalAttachments.push({ url: r.url, name: r.name }));
+        if (!attachmentUrl && results.length > 0) {
+          attachmentUrl = results[0].url;
+          attachmentName = results[0].name;
+        }
+      } catch (err) {
+        setSavePrProgress({ show: false, pct: 0, step: "" });
+        return showAlert("อัปโหลดไฟล์แนบไม่สำเร็จ", err?.message || "ไม่สามารถอัปโหลดไฟล์ได้", "error");
+      }
+    }
+
+    const { attachment: _omitFile, attachments: _omitAtts, existingAttachments: _omitExisting, ...headerWithoutFile } = headerData;
     const prPayload = {
       ...headerWithoutFile,
       prNo: resolvedPrNo,
       attachmentUrl: attachmentUrl || null,
       attachmentName: attachmentName || null,
+      attachments: finalAttachments.length > 0 ? finalAttachments : null,
       budgetId: headerData.selectedBudgetId || null,
       projectId: selectedProjectId,
       items: lineItems,
@@ -1026,6 +1051,8 @@ const PRView = React.memo(() => {
         purchaseType: "",
         deliveryLocation: "",
         attachment: null,
+        attachments: [],
+        existingAttachments: [],
         attachmentUrl: "",
         attachmentName: "",
       });
@@ -1895,6 +1922,8 @@ const PRView = React.memo(() => {
                   purchaseType: "",
                   deliveryLocation: "",
                   attachment: null,
+                  attachments: [],
+                  existingAttachments: [],
                   attachmentUrl: "",
                   attachmentName: "",
                 });
@@ -2134,14 +2163,17 @@ const PRView = React.memo(() => {
 
                   const allBudgetAttachments = [...budgetAttachments, ...subItemAttachments];
                   const hasBudgetAttachments = allBudgetAttachments.length > 0;
-                  const hasPrAttachments = prLive.attachmentUrl;
+                  const prAttachmentsList: { url: string; name: string }[] = prLive.attachments?.length > 0 
+                    ? prLive.attachments 
+                    : (prLive.attachmentUrl ? [{ url: prLive.attachmentUrl, name: prLive.attachmentName || "ไฟล์แนบจาก PR" }] : []);
+                  const hasPrAttachments = prAttachmentsList.length > 0;
 
                   if (!hasBudgetAttachments && !hasPrAttachments) return null;
 
                   return (
                     <div className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
                       <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1.5 flex items-center gap-1">
-                        <Paperclip size={11} /> ไฟล์แนบทั้งหมด ({allBudgetAttachments.length + (hasPrAttachments ? 1 : 0)} ไฟล์)
+                        <Paperclip size={11} /> ไฟล์แนบทั้งหมด ({allBudgetAttachments.length + prAttachmentsList.length} ไฟล์)
                       </p>
                       <div className="space-y-1">
                         {/* Budget Attachments */}
@@ -2162,21 +2194,21 @@ const PRView = React.memo(() => {
                         ))}
 
                         {/* PR Attachments */}
-                        {hasPrAttachments && (
-                          <div className="flex items-center gap-1.5 text-[11px]">
+                        {hasPrAttachments && prAttachmentsList.map((att, idx) => (
+                          <div key={`pr-att-${idx}`} className="flex items-center gap-1.5 text-[11px]">
                             <span className="text-slate-400">•</span>
                             <span className="text-[9px] px-1 py-0.5 bg-green-100 text-green-700 rounded font-medium">PR</span>
                             <a
-                              href={prLive.attachmentUrl}
+                              href={att.url}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="text-green-600 hover:text-green-800 hover:underline truncate"
-                              title={prLive.attachmentName}
+                              title={att.name}
                             >
-                              {prLive.attachmentName || "ไฟล์แนบจาก PR"}
+                              {att.name || `ไฟล์แนบจาก PR ${idx + 1}`}
                             </a>
                           </div>
-                        )}
+                        ))}
                       </div>
                     </div>
                   );
@@ -2193,6 +2225,7 @@ const PRView = React.memo(() => {
                       <tr>
                         <th className="px-3 py-2 w-8 text-center">#</th>
                         <th className="px-3 py-2">รายการ</th>
+                        <th className="px-3 py-2">หมายเหตุ</th>
                         <th className="px-3 py-2 text-right">จำนวน</th>
                         <th className="px-3 py-2 text-right">ราคา/หน่วย</th>
                         <th className="px-3 py-2 text-right">รวม</th>
@@ -2204,6 +2237,7 @@ const PRView = React.memo(() => {
                         <tr key={idx} className="hover:bg-slate-50">
                           <td className="px-3 py-1.5 text-center text-slate-400">{idx + 1}</td>
                           <td className="px-3 py-1.5 font-medium text-slate-700">{it.description}</td>
+                          <td className="px-3 py-1.5 text-slate-500">{it.note || "-"}</td>
                           <td className="px-3 py-1.5 text-right text-slate-500">{it.quantity} {it.unit}</td>
                           <td className="px-3 py-1.5 text-right text-slate-500">{formatCurrency(it.price)}</td>
                           <td className="px-3 py-1.5 text-right font-semibold text-slate-700">{formatCurrency(it.amount ?? (it.quantity * it.price))}</td>
@@ -2213,7 +2247,7 @@ const PRView = React.memo(() => {
                     </tbody>
                     <tfoot className="bg-slate-800">
                       <tr>
-                        <td colSpan={4} className="px-3 py-2 text-right text-xs font-bold text-white">ยอดรวมทั้งสิ้น:</td>
+                        <td colSpan={5} className="px-3 py-2 text-right text-xs font-bold text-white">ยอดรวมทั้งสิ้น:</td>
                         <td className="px-3 py-2 text-right text-sm font-bold text-white">{formatCurrency(prLive.totalAmount || prLive.amount)}</td>
                         <td />
                       </tr>
@@ -2570,7 +2604,7 @@ const PRView = React.memo(() => {
                   <span className="text-xs font-bold text-slate-700 tracking-wide uppercase">ข้อมูลใบขอซื้อ</span>
                 </div>
                 <div className="p-5">
-                  <div className="grid grid-cols-6 gap-x-4 gap-y-4">
+                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-x-4 gap-y-4">
                     {/* Row 1: PR No. / ประเภท / Sub-Code */}
                     <div className="col-span-2">
                       <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
@@ -2783,27 +2817,30 @@ const PRView = React.memo(() => {
                         </div>
                         <input
                           type="file"
+                          multiple
                           className="hidden"
                           id="pr-attachment"
-                          onChange={(e) =>
-                            setHeaderData({
-                              ...headerData,
-                              attachment: e.target.files?.[0] || null,
-                            })
-                          }
+                          onChange={(e) => {
+                            const files = Array.from(e.target.files || []);
+                            if (files.length > 0) {
+                              setHeaderData({ ...headerData, attachments: files, attachment: null });
+                            }
+                          }}
                         />
                         <label
                           htmlFor="pr-attachment"
                           className="flex-1 text-xs text-slate-600 cursor-pointer"
                         >
-                          {headerData.attachment
-                            ? (headerData.attachment as File).name
-                            : headerData.attachmentUrl
-                              ? (headerData.attachmentName || "ไฟล์แนบ") + " (บันทึกแล้ว)"
-                              : "คลิกเพื่อเลือกไฟล์แนบ (PDF, Image, Excel ฯลฯ)"}
+                          {headerData.attachments && headerData.attachments.length > 0
+                            ? `เลือกแล้ว ${headerData.attachments.length} ไฟล์ (${headerData.attachments.map(f => f.name).join(", ")})`
+                            : headerData.attachment
+                              ? (headerData.attachment as File).name
+                              : (headerData.existingAttachments?.length || 0) > 0 || headerData.attachmentUrl
+                                ? `มีไฟล์แนบอยู่แล้ว (${headerData.existingAttachments?.length || 1} ไฟล์) - คลิกเพื่อเพิ่ม/เปลี่ยน`
+                                : "คลิกเพื่อเลือกไฟล์แนบ (แนบได้หลายไฟล์)"}
                         </label>
-                        {headerData.attachmentUrl && !headerData.attachment && (
-                          <a href={headerData.attachmentUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-600 hover:underline ml-1" onClick={(e) => e.stopPropagation()}>เปิด</a>
+                        {headerData.attachmentUrl && !headerData.attachment && (!headerData.attachments || headerData.attachments.length === 0) && (
+                          <a href={headerData.attachmentUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-600 hover:underline ml-1" onClick={(e) => e.stopPropagation()}>เปิดไฟล์เดิม</a>
                         )}
                       </div>
                       {(() => {
@@ -2851,8 +2888,8 @@ const PRView = React.memo(() => {
                   </span>
                 </div>
                 <div className="p-5">
-                  <div className="grid grid-cols-6 gap-x-4 gap-y-4">
-                    <div className="col-span-3 md:col-span-2 lg:col-span-2">
+                  <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-6 gap-x-4 gap-y-4">
+                    <div className="col-span-1 md:col-span-2 lg:col-span-2">
                       <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">
                         <DollarSign size={11} className="text-slate-500" /> Cost Code
                       </label>
@@ -2975,8 +3012,8 @@ const PRView = React.memo(() => {
                   )}
                 </div>
                 <div className="p-5">
-                  <div className="grid grid-cols-12 gap-3 items-end">
-                    <div className="col-span-4">
+                  <div className="grid grid-cols-2 md:grid-cols-12 gap-3 items-end">
+                    <div className="col-span-2 md:col-span-4">
                       <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wider">
                         <Package size={10} className="text-slate-500" /> รายละเอียดสินค้า
                       </label>
@@ -2987,6 +3024,20 @@ const PRView = React.memo(() => {
                         value={newItem.description}
                         onChange={(e) =>
                           setNewItem({ ...newItem, description: e.target.value })
+                        }
+                      />
+                    </div>
+                    <div className="col-span-2 md:col-span-3">
+                      <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wider">
+                        <FileText size={10} className="text-slate-500" /> หมายเหตุ
+                      </label>
+                      <input
+                        type="text"
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm hover:border-slate-300 focus:border-slate-400 focus:ring-1 focus:ring-slate-100 transition-all placeholder:text-slate-400"
+                        placeholder="(ไม่บังคับ)"
+                        value={newItem.note || ""}
+                        onChange={(e) =>
+                          setNewItem({ ...newItem, note: e.target.value })
                         }
                       />
                     </div>
@@ -3015,7 +3066,7 @@ const PRView = React.memo(() => {
                         }
                       />
                     </div>
-                    <div className="col-span-2">
+                    <div className="col-span-1 md:col-span-2">
                       <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wider">
                         <DollarSign size={10} className="text-slate-500" /> ราคา/หน่วย
                       </label>
@@ -3031,7 +3082,7 @@ const PRView = React.memo(() => {
                         }
                       />
                     </div>
-                    <div className="col-span-2">
+                    <div className="col-span-1 md:col-span-2">
                       <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wider">
                         <Calendar size={10} className="text-slate-500" /> วันที่ใช้
                       </label>
@@ -3044,7 +3095,7 @@ const PRView = React.memo(() => {
                         }
                       />
                     </div>
-                    <div className="col-span-2">
+                    <div className="col-span-2 md:col-span-2">
                       <Button
                         onClick={handleAddItem}
                         variant={editingItemId ? "warning" : "primary"}
@@ -3059,7 +3110,7 @@ const PRView = React.memo(() => {
               </div>
 
               {/* Items Table */}
-              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden flex-1">
+              <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto flex-1">
                 <div className="flex items-center justify-between px-4 py-2.5 bg-slate-100 border-b border-slate-200">
                   <div className="flex items-center gap-2">
                     <div className="w-6 h-6 bg-slate-600 rounded-md flex items-center justify-center">
@@ -3076,6 +3127,7 @@ const PRView = React.memo(() => {
                     <tr>
                       <th className="py-2.5 px-4 w-10 text-center">#</th>
                       <th className="py-2.5 px-4">รายละเอียด</th>
+                      <th className="py-2.5 px-4">หมายเหตุ</th>
                       <th className="py-2.5 px-4 text-center">หน่วย</th>
                       <th className="py-2.5 px-4 text-right">จำนวน</th>
                       <th className="py-2.5 px-4 text-right">ราคา/หน่วย</th>
@@ -3106,6 +3158,7 @@ const PRView = React.memo(() => {
                           <span className="inline-flex items-center justify-center w-6 h-6 bg-slate-100 rounded-full text-[11px] font-bold text-slate-600">{index + 1}</span>
                         </td>
                         <td className="py-2.5 px-4 font-semibold text-slate-800">{item.description}</td>
+                        <td className="py-2.5 px-4 text-slate-500">{item.note || "-"}</td>
                         <td className="py-2.5 px-4 text-center">
                           <span className="px-2 py-0.5 bg-slate-100 rounded-md text-[11px] font-medium">{item.unit}</span>
                         </td>
@@ -3146,7 +3199,7 @@ const PRView = React.memo(() => {
                   {lineItems.length > 0 && (
                     <tfoot>
                       <tr className="bg-slate-600">
-                        <td colSpan="5" className="py-3 px-4 text-right text-xs text-slate-200 font-medium">
+                        <td colSpan="6" className="py-3 px-4 text-right text-xs text-slate-200 font-medium">
                           ยอดรวมทั้งสิ้น (Total Amount):
                         </td>
                         <td className="py-3 px-4 text-right">

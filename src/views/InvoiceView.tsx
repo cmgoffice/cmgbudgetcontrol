@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React, { useState, useMemo, useCallback, useContext } from "react";
+import { createPortal } from "react-dom";
 import { collection, doc, getDocs, query, where, writeBatch } from "firebase/firestore";
 import {
   ChevronDown, ChevronRight, FileText, Eye, X, Search, Trash2,
@@ -1882,6 +1883,7 @@ const InvoiceView = React.memo(() => {
       {/* ══════════════════════════════════════
           Modal: ลงข้อมูลใบแจ้งหนี้
       ══════════════════════════════════════ */}
+      {typeof document !== "undefined" && createPortal(
       <AnimatePresence>
         {viewingPO && (
           <motion.div
@@ -2299,10 +2301,12 @@ const InvoiceView = React.memo(() => {
             </motion.div>
           </motion.div>
         )}
-      </AnimatePresence>
+      </AnimatePresence>,
+      document.body)}
       {/* ══════════════════════════════════════
           Create Invoice from Receives Modal
       ══════════════════════════════════════ */}
+      {typeof document !== "undefined" && createPortal(
       <AnimatePresence>
         {isCreateInvoiceModalOpen && (
           <motion.div
@@ -2483,7 +2487,8 @@ const InvoiceView = React.memo(() => {
             </motion.div>
           </motion.div>
         )}
-      </AnimatePresence>
+      </AnimatePresence>,
+      document.body)}
     </div>
   );
 });
