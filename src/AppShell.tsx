@@ -1173,11 +1173,40 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
           if (creatorSig) {
             try { bytes = await stampSignatureToField(bytes, creatorSig, "Signature1"); } catch (e) { console.warn("Stamp Signature1 failed", e); }
           }
-          const pcmSig = po.pcmSignatureDataUrl;
+
+          let pcmSig = po.pcmSignatureDataUrl;
+          if (!pcmSig && po.pcmApprovedBy) {
+            try {
+              const usersRef = collection(db, "artifacts", appId, "public", "data", "users");
+              const q = query(usersRef, where("email", "==", po.pcmApprovedBy));
+              const snap = await getDocs(q);
+              if (!snap.empty) {
+                const approverUser = snap.docs[0].data();
+                pcmSig = approverUser.signatureDataUrl || approverUser.signatureUrl;
+              }
+            } catch (e) { console.warn("Fetch PCM sig failed", e); }
+          }
           if (pcmSig) {
             try { bytes = await stampSignatureToField(bytes, pcmSig, "Signature2"); } catch (e) { console.warn("Stamp Signature2 failed", e); }
           }
-          const gmSig = po.gmSignatureDataUrl;
+
+          let gmSig = po.gmSignatureDataUrl;
+          if (!gmSig) {
+            try {
+              const usersRef = collection(db, "artifacts", appId, "public", "data", "users");
+              let q;
+              if (po.gmApprovedBy) {
+                q = query(usersRef, where("email", "==", po.gmApprovedBy));
+              } else {
+                q = query(usersRef, where("role", "==", "GM"));
+              }
+              const snap = await getDocs(q);
+              if (!snap.empty) {
+                const approverUser = snap.docs[0].data();
+                gmSig = approverUser.signatureDataUrl || approverUser.signatureUrl;
+              }
+            } catch (e) { console.warn("Fetch GM sig failed", e); }
+          }
           if (gmSig) {
             try { bytes = await stampSignatureToField(bytes, gmSig, "Signature3"); } catch (e) { console.warn("Stamp Signature3 failed", e); }
           }

@@ -2125,9 +2125,12 @@ const POView = React.memo(() => {
         await deleteGeneratedPdf(pdfPath);
         updatedPdfUrl = await uploadGeneratedPdf(bytes, pdfPath);
 
-        // เก็บ signature ของ PCM ไว้ใช้ตอน GM regenerate ในรอบถัดไป
+        // เก็บ signature ของ PCM และ GM ไว้ใช้ตอน regenerate ในรอบถัดไป
         if (isPCMApprove && approverSig) {
           firestoreExtra.pcmSignatureDataUrl = approverSig;
+        }
+        if (isGMApprove && approverSig) {
+          firestoreExtra.gmSignatureDataUrl = approverSig;
         }
       } catch (stampErr) {
         console.warn(`[PO Approve] PDF regeneration/stamp failed:`, stampErr);
