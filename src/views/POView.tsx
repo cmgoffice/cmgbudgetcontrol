@@ -1968,6 +1968,8 @@ const POView = React.memo(() => {
     );
   }, [logAction, openConfirm, selectedProjectId, updateData]);
 
+
+
   // Quick Add Vendor
   const handleQuickAddVendor = async () => {
     if (!newVendor.name) return;
@@ -2530,6 +2532,7 @@ const POView = React.memo(() => {
               ยืนยัน Close
             </Button>
           )}
+
         </div>
       </td>
     )
@@ -2955,6 +2958,7 @@ const POView = React.memo(() => {
                                     ยืนยัน Close
                                   </Button>
                                 )}
+
                               </td>}
                             </tr>
                           </React.Fragment>
@@ -3153,6 +3157,7 @@ const POView = React.memo(() => {
                                   ยืนยัน Close
                                 </Button>
                               )}
+
                             </td>}
                           </tr>
                         </React.Fragment>

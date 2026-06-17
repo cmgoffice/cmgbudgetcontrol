@@ -18,7 +18,7 @@ import {
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL, uploadBytesResumable, getBytes } from "firebase/storage";
 import { db, appId, storage, FORM_TEMPLATE_PATHS } from "./lib/firebase";
-import { generatePRPdfBytes, generatePOPdfBytes, downloadBytes, uploadGeneratedPdf, deleteGeneratedPdf } from "./lib/pdfForms";
+import { generatePRPdfBytes, generatePOPdfBytes, downloadBytes, uploadGeneratedPdf, deleteGeneratedPdf, stampSignatureToField } from "./lib/pdfForms";
 import { getResumeStatusForPR } from "./lib/prAllocation";
 import { computeBudgetUsedAfterPrRevision, getLinkedPoRefsForPr, getPrBudgetReturnInfo, scalePrItemsToTotal } from "./lib/prBudgetReturn";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "./components/ui";
@@ -1144,6 +1144,63 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   const canViewPrBalance = isPR && canUseFunction("pr-table", "viewBalance");
   const canReturnPrBalance = isPR && canUseFunction("pr-table", "returnBalance");
 
+  const handleRecreatePO = React.useCallback((po: any) => {
+    openConfirm?.(
+      "Recreate PO",
+      `คุณต้องการ Re-generate PDF ของ PO ${po.poNo || po.id} ใช่หรือไม่?`,
+      async () => {
+        try {
+          showAlert?.("Info", "กำลัง Re-generate PO กรุณารอสักครู่...", "info");
+          
+          const safePONo = (po.poNo || po.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
+          const safeProjId = po.projectId || "unknown";
+          const vendor = vendors?.find((v: any) => v.id === po.vendorId) || null;
+          const project = projects?.find((p: any) => p.id === po.projectId) || null;
+
+          const pcmdate = po.pcmApprovedAt ? new Date(po.pcmApprovedAt).toLocaleDateString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric" }) : "";
+          const gmdate = po.gmApprovedAt ? new Date(po.gmApprovedAt).toLocaleDateString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric" }) : "";
+
+          const poDataForPdf = {
+            ...po,
+            pcmdate,
+            gmdate,
+            reason: po.reason || "",
+          };
+
+          let bytes = await generatePOPdfBytes(poDataForPdf, { vendor, project });
+
+          const creatorSig = po.creatorSignatureDataUrl;
+          if (creatorSig) {
+            try { bytes = await stampSignatureToField(bytes, creatorSig, "Signature1"); } catch (e) { console.warn("Stamp Signature1 failed", e); }
+          }
+          const pcmSig = po.pcmSignatureDataUrl;
+          if (pcmSig) {
+            try { bytes = await stampSignatureToField(bytes, pcmSig, "Signature2"); } catch (e) { console.warn("Stamp Signature2 failed", e); }
+          }
+          const gmSig = po.gmSignatureDataUrl;
+          if (gmSig) {
+            try { bytes = await stampSignatureToField(bytes, gmSig, "Signature3"); } catch (e) { console.warn("Stamp Signature3 failed", e); }
+          }
+
+          const pdfPath = `generated/pos/${safeProjId}/${safePONo}.pdf`;
+          await deleteGeneratedPdf(pdfPath);
+          const updatedPdfUrl = await uploadGeneratedPdf(bytes, pdfPath);
+
+          await updateData?.("pos", po.id, { pdfUrl: updatedPdfUrl, pdfUpdatedAt: new Date().toISOString() });
+
+          if (logAction) {
+            await logAction("Recreate PO", `Recreate PO PDF ${po.poNo || po.id}`, po.projectId || selectedProjectId);
+          }
+          showAlert?.("สำเร็จ", "Re-generate PO สำเร็จแล้ว", "success");
+        } catch (e: any) {
+          console.error("Recreate PO failed:", e);
+          showAlert?.("ข้อผิดพลาด", "ไม่สามารถ Re-generate PO ได้: " + (e.message || String(e)), "error");
+        }
+      },
+      "info"
+    );
+  }, [openConfirm, showAlert, vendors, projects, updateData, logAction, selectedProjectId]);
+
   const getRelatedInvoicesForPo = React.useCallback((po: any) => {
     if (!po) return [];
     const poNo = String(po.poNo || "").trim();
@@ -2045,6 +2102,16 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                               }}
                             >
                               <CheckCircle size={14} />
+                            </button>
+                          )}
+                          {!isPR && (userRoles.some((role: string) => role.toUpperCase() === "ADMINISTRATOR") || userRole?.toUpperCase() === "ADMINISTRATOR") && (
+                            <button
+                              type="button"
+                              className="p-1.5 rounded hover:bg-blue-100 text-blue-700"
+                              title="Recreate PO"
+                              onClick={() => handleRecreatePO(r)}
+                            >
+                              <RefreshCw size={14} />
                             </button>
                           )}
                           {canUseFunction(tableModule, "delete") && !isPR && (
