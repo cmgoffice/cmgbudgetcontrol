@@ -16,7 +16,7 @@ import {
   ReceiptText,
   Search,
   Trash2,
-  Wallet,PO26J01-CR0129
+  Wallet,
   X,
 } from "lucide-react";
 import { useAppData } from "../contexts/AppDataContext";
