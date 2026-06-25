@@ -8,7 +8,7 @@ import {
   Truck, Package, Paperclip, Clock, Hash, Tag, ClipboardList, FileSpreadsheet, Upload, Download,
   BarChart3, Zap, Building2, ShoppingCart, RefreshCw
 } from "lucide-react";
-import { doc, runTransaction, collection, getDocs, query, where, deleteDoc } from "firebase/firestore";
+import { doc, runTransaction, collection, getDocs, query, where, deleteDoc, deleteField } from "firebase/firestore";
 import { db, appId } from "../lib/firebase";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
@@ -123,7 +123,7 @@ const POView = React.memo(() => {
     savePrAgain: (prNo, status) => `PR ${prNo} มีสถานะ ${status} — กรุณา Active PR รายการนี้ก่อน แล้วค่อยบันทึก PO อีกครั้ง`,
     amountDrop: "ยอด PO ลดลง",
   };
-  const { prs, pos, projects, budgets, vendors, materials, receives, invoices, addData, updateData, deleteData, loadVendors, loadMaterials,
+  const { prs, pos, projects, budgets, vendors, materials, receives, invoices, payments = [], pays = [], addData, updateData, deleteData, loadVendors, loadMaterials,
     showAlert, openConfirm, logAction, userRole, userRoles, columnWidths, handleColumnResize,
     visibleProjects, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,
     userData, user, canUseFunction, canAccessModule, isColumnVisible } = useAppData();
@@ -322,6 +322,29 @@ const POView = React.memo(() => {
       [v.name, v.code, v.type, v.tel].some(f => String(f || "").toLowerCase().includes(q))
     );
   }, [vendors, vendorSearchQuery]);
+  const prById = useMemo(() => new Map((prs || []).map((pr: any) => [pr.id, pr])), [prs]);
+  const vendorById = useMemo(() => new Map((vendors || []).map((vendor: any) => [vendor.id, vendor])), [vendors]);
+  const [poMetaHydrated, setPoMetaHydrated] = useState(false);
+
+  useEffect(() => {
+    setPoMetaHydrated(false);
+    const hydrate = () => setPoMetaHydrated(true);
+    let timerId: any = null;
+    let idleId: any = null;
+
+    if (typeof window !== "undefined" && typeof (window as any).requestIdleCallback === "function") {
+      idleId = (window as any).requestIdleCallback(hydrate, { timeout: 500 });
+    } else {
+      timerId = setTimeout(hydrate, 150);
+    }
+
+    return () => {
+      if (idleId != null && typeof (window as any).cancelIdleCallback === "function") {
+        (window as any).cancelIdleCallback(idleId);
+      }
+      if (timerId != null) clearTimeout(timerId);
+    };
+  }, [pos, selectedProjectId]);
 
   // โหลด vendors + materials เมื่อเข้าหน้า PO (ลดโควต้าเปิดแอป)
   useEffect(() => {
@@ -1387,7 +1410,8 @@ const POView = React.memo(() => {
         createdByUid: editingPo?.createdByUid || user?.uid || null,
         createdByFirstName: editingPo?.createdByFirstName || creatorFirstName || null,
         createdByLastName: editingPo?.createdByLastName || creatorLastName || null,
-        creatorSignatureDataUrl: editingPo?.creatorSignatureDataUrl || userData?.signatureDataUrl || userData?.signatureUrl || null,
+        creatorSignatureUrl: editingPo?.creatorSignatureUrl || userData?.signatureUrl || null,
+        ...(editingPoId ? { creatorSignatureDataUrl: deleteField() } : {}),
         ...(creatorDisplayName
           ? { createdByName: editingPo?.createdByName || creatorDisplayName }
           : {}),
@@ -1691,7 +1715,12 @@ const POView = React.memo(() => {
             createdByName: existingPoForCreator?.createdByName || creatorDisplayName,
           }
           : {}),
-        creatorSignatureDataUrl: userData?.signatureDataUrl || userData?.signatureUrl || null,
+        creatorSignatureUrl: existingPoForCreator?.creatorSignatureUrl || userData?.signatureUrl || null,
+        ...(editingPoId ? {
+          creatorSignatureDataUrl: deleteField(),
+          pcmSignatureDataUrl: deleteField(),
+          gmSignatureDataUrl: deleteField(),
+        } : {}),
         payBeforeReceiveChecked: configuredFlowPayload.payBeforeReceiveChecked,
         payBeforeReceiveInvoiceSetup: configuredFlowPayload.payBeforeReceiveInvoiceSetup,
         receivedAfterPaymentChecked: configuredFlowPayload.receivedAfterPaymentChecked,
@@ -2099,14 +2128,14 @@ const POView = React.memo(() => {
         let bytes = await generatePOPdfBytes(poDataForPdf, { vendor, project });
 
         // Stamp Signature1 = ผู้สร้าง PO
-        const creatorSig = po.creatorSignatureDataUrl;
+        const creatorSig = po.creatorSignatureDataUrl || po.creatorSignatureUrl;
         if (creatorSig) {
           try { bytes = await stampSignatureToField(bytes, creatorSig, "Signature1"); }
           catch (e) { console.warn("[PO Approve] Stamp Signature1 failed:", e); }
         }
 
-        // Stamp Signature2 = PCM (ถ้า GM กำลัง approve ให้ใช้ pcmSignatureDataUrl ที่เก็บไว้)
-        const pcmSig = isPCMApprove ? approverSig : po.pcmSignatureDataUrl;
+        // Stamp Signature2 = PCM (ถ้า GM กำลัง approve ให้ใช้ pcmSignatureUrl ที่เก็บไว้)
+        const pcmSig = isPCMApprove ? approverSig : (po.pcmSignatureDataUrl || po.pcmSignatureUrl);
         if (pcmSig) {
           try { bytes = await stampSignatureToField(bytes, pcmSig, "Signature2"); }
           catch (e) { console.warn("[PO Approve] Stamp Signature2 failed:", e); }
@@ -2125,12 +2154,15 @@ const POView = React.memo(() => {
         await deleteGeneratedPdf(pdfPath);
         updatedPdfUrl = await uploadGeneratedPdf(bytes, pdfPath);
 
-        // เก็บ signature ของ PCM และ GM ไว้ใช้ตอน regenerate ในรอบถัดไป
-        if (isPCMApprove && approverSig) {
-          firestoreExtra.pcmSignatureDataUrl = approverSig;
+        // เก็บเฉพาะ Storage URL ไว้ใช้ตอน regenerate ในรอบถัดไป ห้ามเก็บ base64 ลง PO
+        firestoreExtra.creatorSignatureDataUrl = deleteField();
+        firestoreExtra.pcmSignatureDataUrl = deleteField();
+        firestoreExtra.gmSignatureDataUrl = deleteField();
+        if (isPCMApprove) {
+          firestoreExtra.pcmSignatureUrl = userData?.signatureUrl || null;
         }
-        if (isGMApprove && approverSig) {
-          firestoreExtra.gmSignatureDataUrl = approverSig;
+        if (isGMApprove) {
+          firestoreExtra.gmSignatureUrl = userData?.signatureUrl || null;
         }
       } catch (stampErr) {
         console.warn(`[PO Approve] PDF regeneration/stamp failed:`, stampErr);
@@ -2298,6 +2330,30 @@ const POView = React.memo(() => {
     return po.createdByName || nameFromFirstLast || nameFromUidMap || (po.createdByUid ? `${String(po.createdByUid).slice(0, 8)}…` : "—");
   }, [userNameByUid]);
 
+  const getFastPoPrNos = useCallback((po: any) => {
+    const itemPrNos = Array.isArray(po.items)
+      ? po.items.map((item: any) => item?.prNo || item?.linkedPrNo).filter(Boolean)
+      : [];
+    const directPrNos = Array.isArray(po.prNos) ? po.prNos.filter(Boolean) : [];
+    return [...new Set([...directPrNos, ...itemPrNos])].join(", ");
+  }, []);
+
+  const buildPoDisplayEntry = useCallback((po: any) => {
+    const vendor = po.vendorName
+      ? { id: po.vendorId, name: po.vendorName, code: po.vendorCode, type: po.vendorType }
+      : poMetaHydrated
+        ? vendorById.get(po.vendorId)
+        : null;
+    const prNos = poMetaHydrated
+      ? getPoRefPrIds(po).map(id => prById.get(id)?.prNo || "-").join(", ")
+      : getFastPoPrNos(po);
+    const firstDesc = po.items && po.items.length > 0 ? po.items[0].description : "-";
+    const descSummary = po.items && po.items.length > 1 ? `${firstDesc} (+${po.items.length - 1})` : firstDesc;
+    const vendorName = vendor?.name || po.vendor || "-";
+    const creatorName = getPoCreatorDisplayName(po);
+    return { po, vendorName, prNos, descSummary, creatorName };
+  }, [getFastPoPrNos, getPoCreatorDisplayName, getPoRefPrIds, poMetaHydrated, prById, vendorById]);
+
   const getPoSortValue = useCallback((entry, key) => {
     const { po, prNos, descSummary, vendorName, creatorName } = entry;
     switch (key) {
@@ -2340,19 +2396,7 @@ const POView = React.memo(() => {
           !hiddenSystemStatuses.includes(currentStatus)
         );
       })
-      .map((po) => {
-        // ใช้ข้อมูล Vendor จาก PO object โดยตรง (fallback ไปที่ vendors array ถ้าไม่มี)
-        const vendor = po.vendorName 
-          ? { id: po.vendorId, name: po.vendorName, code: po.vendorCode, type: po.vendorType }
-          : vendors.find((v) => v.id === po.vendorId);
-        const prIds = getPoRefPrIds(po);
-        const prNos = prIds.map(id => prs.find(p => p.id === id)?.prNo || "-").join(", ");
-        const firstDesc = po.items && po.items.length > 0 ? po.items[0].description : "-";
-        const descSummary = po.items && po.items.length > 1 ? `${firstDesc} (+${po.items.length - 1})` : firstDesc;
-        const vendorName = vendor?.name || "-";
-        const creatorName = getPoCreatorDisplayName(po);
-        return { po, vendorName, prNos, descSummary, creatorName };
-      });
+      .map(buildPoDisplayEntry);
 
     const filtered = !q
       ? base
@@ -2394,7 +2438,7 @@ const POView = React.memo(() => {
         ? String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: "base" })
         : String(bv).localeCompare(String(av), undefined, { numeric: true, sensitivity: "base" });
     });
-  }, [pos, selectedProjectId, vendors, prs, getPoRefPrIds, getPoCreatorDisplayName, poTableSearchText, poSortConfig, getPoSortValue]);
+  }, [pos, selectedProjectId, buildPoDisplayEntry, poTableSearchText, poSortConfig, getPoSortValue]);
 
   const displayedPOsNormal = useMemo(() => {
     const q = (poTableSearchText || "").trim().toLowerCase();
@@ -2411,19 +2455,7 @@ const POView = React.memo(() => {
           !pendingActionStatuses.includes(po.status)
         );
       })
-      .map((po) => {
-        // ใช้ข้อมูล Vendor จาก PO object โดยตรง (fallback ไปที่ vendors array ถ้าไม่มี)
-        const vendor = po.vendorName 
-          ? { id: po.vendorId, name: po.vendorName, code: po.vendorCode, type: po.vendorType }
-          : vendors.find((v) => v.id === po.vendorId);
-        const prIds = getPoRefPrIds(po);
-        const prNos = prIds.map(id => prs.find(p => p.id === id)?.prNo || "-").join(", ");
-        const firstDesc = po.items && po.items.length > 0 ? po.items[0].description : "-";
-        const descSummary = po.items && po.items.length > 1 ? `${firstDesc} (+${po.items.length - 1})` : firstDesc;
-        const vendorName = vendor?.name || "-";
-        const creatorName = getPoCreatorDisplayName(po);
-        return { po, vendorName, prNos, descSummary, creatorName };
-      });
+      .map(buildPoDisplayEntry);
 
     const filtered = !q
       ? base
@@ -2465,7 +2497,7 @@ const POView = React.memo(() => {
         ? String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: "base" })
         : String(bv).localeCompare(String(av), undefined, { numeric: true, sensitivity: "base" });
     });
-  }, [pos, selectedProjectId, vendors, prs, getPoRefPrIds, getPoCreatorDisplayName, poTableSearchText, poSortConfig, getPoSortValue]);
+  }, [pos, selectedProjectId, buildPoDisplayEntry, poTableSearchText, poSortConfig, getPoSortValue]);
 
   const renderPoHeaderCells = () => (
     <>
@@ -3238,8 +3270,98 @@ const POView = React.memo(() => {
               ? { id: viewingPO.vendorId, name: viewingPO.vendorName, code: viewingPO.vendorCode, type: viewingPO.vendorType }
               : vendors.find((v: any) => v.id === viewingPO.vendorId);
             const poPrIds = getPoRefPrIds(viewingPO);
-            const poPrNos = poPrIds.map((id: string) => prs.find((p: any) => p.id === id)?.prNo || "-").join(", ");
             const subtotal = (viewingPO.items || []).reduce((s: number, i: any) => s + Number(i.quantity) * Number(i.price), 0);
+            const normalizeText = (value: any) => String(value || "").trim();
+            const sameText = (a: any, b: any) => normalizeText(a) !== "" && normalizeText(a) === normalizeText(b);
+            const poId = normalizeText(viewingPO.id);
+            const poNo = normalizeText(viewingPO.poNo);
+            const dedupeDocs = (items: any[]) => {
+              const seen = new Set<string>();
+              return (items || []).filter((item: any) => {
+                const key = normalizeText(item?.id || item?.docNo || item?.paymentNo || item?.invNo || item?.rpNo || item?.receiveNo);
+                if (!key) return true;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+              });
+            };
+            const getDocUrl = (doc: any) => (
+              doc?.pdfUrl ||
+              doc?.attachmentUrl ||
+              doc?.paySlipUrl ||
+              doc?.slipUrl ||
+              doc?.paymentAttachments?.find?.((att: any) => att?.url)?.url ||
+              doc?.attachments?.find?.((att: any) => att?.url)?.url ||
+              ""
+            );
+            const openRelatedDoc = (doc: any, label: string, docNo: string) => {
+              const url = getDocUrl(doc);
+              if (url) {
+                window.open(url, "_blank", "noopener,noreferrer");
+                return;
+              }
+              showAlert?.("ไม่พบไฟล์ให้เปิด", `${label} ${docNo || doc?.id || "-"} ยังไม่มี PDF / ไฟล์แนบให้เปิด`, "info");
+            };
+            const relatedPRs = dedupeDocs(poPrIds
+              .map((prId: string) => prs.find((pr: any) => sameText(pr?.id, prId)))
+              .filter(Boolean));
+            const relatedPayments = dedupeDocs((payments || []).filter((payment: any) => (
+              sameText(payment?.poId, poId) ||
+              sameText(payment?.poNo, poNo) ||
+              (Array.isArray(payment?.selectedPrIds) && payment.selectedPrIds.some((id: any) => sameText(id, poId))) ||
+              (Array.isArray(payment?.items) && payment.items.some((item: any) => sameText(item?.poId, poId) || sameText(item?.prId, poId))) ||
+              (poNo && normalizeText(payment?.paymentNo).startsWith(poNo))
+            )));
+            const relatedReceives = dedupeDocs((receives || []).filter((receive: any) => (
+              sameText(receive?.poId, poId) ||
+              sameText(receive?.poNo, poNo) ||
+              sameText(receive?.poRef, poNo)
+            )));
+            const relatedInvoices = dedupeDocs((invoices || []).filter((invoice: any) => (
+              sameText(invoice?.poId, poId) ||
+              sameText(invoice?.poNo, poNo) ||
+              sameText(invoice?.poRef, poNo)
+            )));
+            const relatedInvoiceIds = new Set(relatedInvoices.map((invoice: any) => normalizeText(invoice?.id)).filter(Boolean));
+            const relatedInvoiceNos = new Set(relatedInvoices.flatMap((invoice: any) => [invoice?.invNo, invoice?.id].map(normalizeText)).filter(Boolean));
+            const relatedInvoicePayNos = new Set(relatedInvoices.map((invoice: any) => normalizeText(invoice?.payNo)).filter(Boolean));
+            const isPaidInvoiceForPay = (invoice: any) => {
+              const status = normalizeText(invoice?.status || invoice?.statusNow).toLowerCase();
+              const paymentType = normalizeText(invoice?.paymentType);
+              return status === "paid" || ["เงินสด", "โอน", "เช็ค"].includes(paymentType);
+            };
+            const relatedPayDocs = (pays || []).filter((pay: any) => (
+              sameText(pay?.poId, poId) ||
+              sameText(pay?.poNo, poNo) ||
+              sameText(pay?.poRef, poNo) ||
+              relatedInvoicePayNos.has(normalizeText(pay?.docNo || pay?.payNo)) ||
+              (Array.isArray(pay?.invoiceIds) && pay.invoiceIds.some((id: any) => relatedInvoiceIds.has(normalizeText(id)))) ||
+              (Array.isArray(pay?.invoiceRefs) && pay.invoiceRefs.some((ref: any) => relatedInvoiceNos.has(normalizeText(ref)))) ||
+              (Array.isArray(pay?.invoices) && pay.invoices.some((invoice: any) => sameText(invoice?.poNo, poNo) || relatedInvoiceIds.has(normalizeText(invoice?.id))))
+            ));
+            const relatedPayFromInvoices = relatedInvoices
+              .filter((invoice: any) => isPaidInvoiceForPay(invoice))
+              .map((invoice: any) => ({
+                ...invoice,
+                id: `invoice-pay-${invoice.id || invoice.payNo || invoice.invNo}`,
+                docNo: invoice.payNo || invoice.invNo || invoice.id,
+                payNo: invoice.payNo || invoice.invNo || invoice.id,
+              }));
+            const relatedPays = dedupeDocs([...relatedPayDocs, ...relatedPayFromInvoices]);
+            const relatedDocGroups = [
+              { key: "pr", label: "PR", icon: ClipboardList, tone: "blue", docs: relatedPRs, getNo: (doc: any) => doc.prNo || doc.docNo || doc.id },
+              { key: "payment", label: "Payment", icon: DollarSign, tone: "orange", docs: relatedPayments, getNo: (doc: any) => doc.paymentNo || doc.docNo || doc.id },
+              { key: "receive", label: "Receive", icon: Package, tone: "emerald", docs: relatedReceives, getNo: (doc: any) => doc.rpNo || doc.receiveNo || doc.docNo || doc.id },
+              { key: "invoice", label: "INV", icon: FileText, tone: "violet", docs: relatedInvoices, getNo: (doc: any) => doc.invNo || doc.docNo || doc.id },
+              { key: "pay", label: "Pay", icon: FileOutput, tone: "cyan", docs: relatedPays, getNo: (doc: any) => doc.docNo || doc.payNo || doc.id },
+            ];
+            const relatedToneClass: Record<string, string> = {
+              blue: "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 hover:text-blue-800",
+              orange: "border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 hover:text-orange-800",
+              emerald: "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800",
+              violet: "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 hover:text-violet-800",
+              cyan: "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100 hover:text-cyan-800",
+            };
             return (
               <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10010] p-4">
                 <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-[90vh] flex flex-col">
@@ -3273,33 +3395,91 @@ const POView = React.memo(() => {
                   {/* Body */}
                   <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
                     {/* PDF Thumbnail (ถ้ามี) — ใช้ key บังคับ remount เมื่อ status เปลี่ยน เพื่อโชว์ฉบับลายเซ็นล่าสุด */}
-                    {viewingPO.pdfUrl && (() => {
-                      const pdfUrlWithCacheBuster = `${viewingPO.pdfUrl}${viewingPO.pdfUrl.includes("?") ? "&" : "?"}t=${Date.now()}`;
+                    {(() => {
+                      const basePdfUrl = viewingPO.pdfUrl || "";
+                      const pdfUrlWithCacheBuster = basePdfUrl ? `${basePdfUrl}${basePdfUrl.includes("?") ? "&" : "?"}t=${Date.now()}` : "";
                       const iframeKey = `po-pdf-${viewingPO.id}-${viewingPO.status}`;
                       return (
-                        <div className="mb-4">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">เอกสาร PDF</span>
-                          </div>
-                          <a
-                            href={pdfUrlWithCacheBuster}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="group relative block w-48 h-64 border border-slate-200 rounded-xl overflow-hidden bg-slate-50 hover:border-blue-400 hover:shadow-md transition-all"
-                            title="คลิกเพื่อเปิด PDF ในแท็บใหม่"
-                          >
-                            <iframe
-                              key={iframeKey}
-                              src={`${pdfUrlWithCacheBuster}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`}
-                              className="w-full h-full pointer-events-none opacity-80 group-hover:opacity-100 transition-opacity"
-                              title="PO PDF Thumbnail"
-                            />
-                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors flex items-center justify-center">
-                              <div className="bg-white/90 backdrop-blur-sm text-blue-600 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5 transform translate-y-2 group-hover:translate-y-0">
-                                <FileOutput size={14} /> เปิดดู PDF
-                              </div>
+                        <div className="mb-4 grid grid-cols-1 md:grid-cols-[12rem_1fr] gap-4 items-stretch">
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">เอกสาร PDF</span>
                             </div>
-                          </a>
+                            {viewingPO.pdfUrl ? (
+                              <a
+                                href={pdfUrlWithCacheBuster}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="group relative block w-48 h-64 border border-slate-200 rounded-xl overflow-hidden bg-slate-50 hover:border-blue-400 hover:shadow-md transition-all"
+                                title="คลิกเพื่อเปิด PDF ในแท็บใหม่"
+                              >
+                                <iframe
+                                  key={iframeKey}
+                                  src={`${pdfUrlWithCacheBuster}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`}
+                                  className="w-full h-full pointer-events-none opacity-80 group-hover:opacity-100 transition-opacity"
+                                  title="PO PDF Thumbnail"
+                                />
+                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors flex items-center justify-center">
+                                  <div className="bg-white/90 backdrop-blur-sm text-blue-600 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5 transform translate-y-2 group-hover:translate-y-0">
+                                    <FileOutput size={14} /> เปิดดู PDF
+                                  </div>
+                                </div>
+                              </a>
+                            ) : (
+                              <div className="w-48 h-64 border border-dashed border-slate-200 rounded-xl bg-slate-50 flex items-center justify-center text-xs font-semibold text-slate-400">
+                                ไม่มี PDF
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-3 self-start">
+                            <div className="flex items-center justify-between gap-2 mb-2">
+                              <span className="text-xs font-bold text-blue-900 uppercase tracking-wide">เอกสารที่ผูกกับ PO นี้</span>
+                              <span className="text-[10px] font-semibold text-blue-700 bg-white border border-blue-100 rounded-full px-2 py-0.5">
+                                {relatedDocGroups.reduce((sum, group) => sum + group.docs.length, 0)} รายการ
+                              </span>
+                            </div>
+                            <div className="space-y-1">
+                              {relatedDocGroups.map((group) => {
+                                const Icon = group.icon;
+                                return (
+                                  <div key={group.key} className="flex items-center gap-2 min-h-7 rounded-md px-1">
+                                    <span className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 w-20 shrink-0">
+                                      <Icon size={13} className="text-slate-400" /> {group.label}
+                                    </span>
+                                    <div className="flex-1 min-w-0">
+                                      {group.docs.length > 0 ? (
+                                        <div className="flex flex-wrap gap-1">
+                                          {group.docs.map((doc: any) => {
+                                            const docNo = group.getNo(doc) || "-";
+                                            return (
+                                              <button
+                                                key={`${group.key}-${doc.id || docNo}`}
+                                                type="button"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  openRelatedDoc(doc, group.label, docNo);
+                                                }}
+                                                className={`inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-semibold leading-tight transition-colors ${relatedToneClass[group.tone]}`}
+                                                title={`คลิกเพื่อเปิด ${group.label} ${docNo}`}
+                                              >
+                                                {docNo}
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      ) : (
+                                        <span className="text-[11px] text-slate-400">ยังไม่มีรายการ</span>
+                                      )}
+                                    </div>
+                                    <span className="text-[10px] text-slate-400 font-semibold w-14 text-right shrink-0">
+                                      {group.docs.length} รายการ
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
                         </div>
                       );
                     })()}
@@ -3321,40 +3501,6 @@ const POView = React.memo(() => {
                           <p className="font-semibold text-slate-700 truncate" title={value}>{value}</p>
                         </div>
                       ))}
-
-                      {/* Special handling for Ref PR No. - clickable PR numbers */}
-                      <div className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
-                        <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">Ref PR No.</p>
-                        <div className="flex flex-wrap gap-1">
-                          {poPrIds.length > 0 ? poPrIds.map((prId: string) => {
-                            const pr = prs.find((p: any) => p.id === prId);
-                            if (!pr) return <span key={prId} className="text-slate-700">-</span>;
-
-                            return (
-                              <button
-                                key={prId}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (pr.pdfUrl) {
-                                    window.open(pr.pdfUrl, '_blank', 'noopener,noreferrer');
-                                  } else {
-                                    showAlert?.("ไม่พบไฟล์ PDF", `PR ${pr.prNo} ยังไม่มีไฟล์ PDF`, "warning");
-                                  }
-                                }}
-                                className={`text-xs font-semibold px-2 py-0.5 rounded transition-colors ${pr.pdfUrl
-                                    ? "text-blue-600 bg-blue-50 hover:bg-blue-100 hover:text-blue-700 border border-blue-200"
-                                    : "text-slate-500 bg-slate-100 cursor-not-allowed"
-                                  }`}
-                                title={pr.pdfUrl ? `คลิกเพื่อเปิด PDF ของ ${pr.prNo}` : `${pr.prNo} - ยังไม่มีไฟล์ PDF`}
-                              >
-                                {pr.prNo}
-                              </button>
-                            );
-                          }) : (
-                            <span className="font-semibold text-slate-700">-</span>
-                          )}
-                        </div>
-                      </div>
 
                       {/* ไฟล์แนบ - Display all attachments (Budget + PR) */}
                       {(() => {

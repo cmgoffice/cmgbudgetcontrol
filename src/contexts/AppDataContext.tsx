@@ -154,6 +154,7 @@ export const AppDataProvider = ({
   const [pos,       setPos]       = useState([]);
   const [invoices,  setInvoices]  = useState([]);
   const [payments,  setPayments]  = useState([]);
+  const [pays,      setPays]      = useState([]);
   const [receives,  setReceives]  = useState([]);
   const [vendorEvaluations, setVendorEvaluations] = useState([]);
   const [availableRoles, setAvailableRoles] = useState<string[]>(() => normalizeRoleNames(USER_ROLES));
@@ -255,15 +256,23 @@ export const AppDataProvider = ({
     (hasModuleAccessForCurrentRoles("invoice") ||
       hasModuleAccessForCurrentRoles("billing") ||
       hasModuleAccessForCurrentRoles("pay"));
+  const canSyncPay = rolePermissionsReady && hasModuleAccessForCurrentRoles("pay");
   const canSyncReceive = rolePermissionsReady && hasModuleAccessForCurrentRoles("receive");
 
   // ── Firebase sync (realtime ผ่าน onSnapshot — แก้ไขที่ใดก็ตามจะอัปเดตทุกที่โดยไม่ต้องรีเฟรช) ─
   useEffect(() => {
-    const syncCollection = (collectionName, setter) => {
+    const syncCollection = (collectionName, setter, onFirstSnapshot = null) => {
       const ref = collection(db, "artifacts", appId, "public", "data", collectionName);
+      let gotFirstSnapshot = false;
       return onSnapshot(
         query(ref),
-        (snap) => setter(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+        (snap) => {
+          setter(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+          if (!gotFirstSnapshot) {
+            gotFirstSnapshot = true;
+            onFirstSnapshot?.();
+          }
+        },
         (err)  => console.error(`Error syncing ${collectionName}:`, err)
       );
     };
@@ -310,12 +319,22 @@ export const AppDataProvider = ({
 
     // vendors, materials ไม่ sync ที่นี่ — ใช้ loadVendors() / loadMaterials() เมื่อเข้าหน้าที่ใช้
     // Staged subscriptions:
-    // keep first screen responsive by loading critical data first,
-    // then progressively attach heavier listeners.
+    // prioritize PR first, then attach the heavier PO listener right after
+    // the first PR snapshot is rendered.
+    let posSyncStarted = false;
+    let unsubPos = () => {};
+    let posTimer = null;
+    const startPosSync = () => {
+      if (posSyncStarted) return;
+      posSyncStarted = true;
+      posTimer = setTimeout(() => {
+        unsubPos = syncCollection("pos", setPos);
+      }, 100);
+    };
+
     const unsubs = [
       syncCollection("budgets", setBudgets),
-      stagedSync("prs", setPrs, 250),
-      stagedSync("pos", setPos, 900),
+      syncCollection("prs", setPrs, startPosSync),
       stagedSync("payments", setPayments, 1500),
     ];
 
@@ -332,6 +351,8 @@ export const AppDataProvider = ({
 
     return () => {
       unsubs.forEach((u) => u());
+      if (posTimer) clearTimeout(posTimer);
+      unsubPos();
       unsubProjects();
       unsubColWidths();
       unsubRolePerms();
@@ -365,11 +386,16 @@ export const AppDataProvider = ({
     } else {
       setReceives([]);
     }
+    if (canSyncPay) {
+      unsubs.push(syncCollection("pays", setPays));
+    } else {
+      setPays([]);
+    }
 
     return () => {
       unsubs.forEach((u) => u());
     };
-  }, [canSyncInvoice, canSyncReceive]);
+  }, [canSyncInvoice, canSyncReceive, canSyncPay]);
 
   // ── Column resize ──────────────────────────────────────────────────────────
   const handleColumnResize = useCallback((tableId, colKey, width) => {
@@ -909,7 +935,7 @@ export const AppDataProvider = ({
   // ── Context value ──────────────────────────────────────────────────────────
   const value = useMemo(() => ({
     // collections
-    projects, budgets, vendors, materials, prs, pos, invoices, payments, receives, vendorEvaluations, vendorEvaluations,
+    projects, budgets, vendors, materials, prs, pos, invoices, payments, pays, receives, vendorEvaluations, vendorEvaluations,
     // derived
     visibleProjects,
     // pending (global, for bell + sidebar badges)
@@ -939,7 +965,7 @@ export const AppDataProvider = ({
     // raw Firebase (for views that need direct Firestore access)
     db, appId,
   }), [
-    projects, budgets, vendors, materials, prs, pos, invoices, payments, receives,
+    projects, budgets, vendors, materials, prs, pos, invoices, payments, pays, receives,
     visibleProjects,
     pendingBudgetsGlobal, pendingSubItemsGlobal,
     pendingPRsGlobal, pendingPOsGlobal, pendingPaymentsGlobal,

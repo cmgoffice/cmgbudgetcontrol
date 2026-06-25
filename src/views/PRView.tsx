@@ -3305,7 +3305,14 @@ const PRView = React.memo(() => {
                         </span>
                       </h4>
                       <div className="border border-slate-200 border-t-0 rounded-b-md overflow-hidden">
-                        <table className="w-full text-left text-xs">
+                        <table className="w-full table-fixed text-left text-xs">
+                          <colgroup>
+                            <col className="w-[19%]" />
+                            <col className="w-[37%]" />
+                            <col className="w-[14%]" />
+                            <col className="w-[14%]" />
+                            <col className="w-[16%]" />
+                          </colgroup>
                           <thead className="bg-slate-50 text-slate-600 font-semibold border-b">
                             <tr>
                               <th className="py-1.5 px-3">Cost Code</th>
@@ -3338,8 +3345,10 @@ const PRView = React.memo(() => {
                                         {b.code}
                                       </div>
                                     </td>
-                                    <td className="py-1.5 px-3 text-slate-600 font-medium italic">
-                                      {b.description}
+                                    <td className="py-1.5 px-3 text-slate-600 font-medium italic min-w-0 overflow-hidden" title={b.description || ""}>
+                                      <span className="cell-text">
+                                        {b.description}
+                                      </span>
                                     </td>
                                     <td className="py-1.5 px-3 text-right text-slate-500">
                                       {formatCurrency(b.budgetAmount)}
@@ -3387,8 +3396,10 @@ const PRView = React.memo(() => {
                                             {selectedSubItemsForPR.some((i) => i.id === sub.id) && <span className="w-1.5 h-1.5 rounded-full bg-white block" />}
                                           </span>
                                         </td>
-                                        <td className="py-1.5 px-3 text-slate-700">
-                                          {sub.description}
+                                        <td className="py-1.5 px-3 text-slate-700 min-w-0 overflow-hidden" title={sub.description || ""}>
+                                          <span className="cell-text">
+                                            {sub.description}
+                                          </span>
                                         </td>
                                         <td className="py-1.5 px-3 text-right text-slate-600 font-medium">
                                           {formatCurrency(sub.amount)}

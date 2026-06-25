@@ -87,6 +87,7 @@ const BudgetView = React.memo(() => {
     key: null,
     direction: "ascending",
   });
+  const [budgetTableFilter, setBudgetTableFilter] = useState("");
   const [editingBudgetId, setEditingBudgetId] = useState(null);
   const [selectedBudget, setSelectedBudget] = useState(null);
   const [editingSubItem, setEditingSubItem] = useState(null);
@@ -1333,25 +1334,6 @@ const BudgetView = React.memo(() => {
     return statsMap;
   }, [selectedProjectBudgets, getBudgetStats]);
 
-  const headerTotals = useMemo(() => {
-    return sortedBudgets.reduce(
-      (acc, b) => {
-        const totalBudget = Number(calculateTotalBudget(b)) || 0;
-        const hasSubItems = Array.isArray(b.subItems) && b.subItems.length > 0;
-        const sumSubItems = hasSubItems ? sumSubItemAmounts(b.subItems) : 0;
-        const stats = budgetStatsById.get(b.id) || { prTotal: 0, poTotal: 0, invoiceTotal: 0 };
-        const budgetBalance = hasSubItems ? totalBudget - sumSubItems : totalBudget - stats.invoiceTotal;
-
-        acc.budget += totalBudget;
-        acc.prTotal += stats.prTotal || 0;
-        acc.poTotal += stats.poTotal || 0;
-        acc.balance += budgetBalance;
-        return acc;
-      },
-      { budget: 0, prTotal: 0, poTotal: 0, balance: 0 }
-    );
-  }, [sortedBudgets, budgetStatsById]);
-
   const getMinimumBudgetAmountForNonNegativeBalance = (budget) => {
     if (!budget) return 0;
     const hasSubItems = Array.isArray(budget.subItems) && budget.subItems.length > 0;
@@ -1727,6 +1709,102 @@ const BudgetView = React.memo(() => {
 
     return [...statuses].sort((a, b) => getRank(b.label) - getRank(a.label))[0] || null;
   };
+
+  const hasBudgetTableFilter = useMemo(
+    () => String(budgetTableFilter || "").trim() !== "",
+    [budgetTableFilter]
+  );
+
+  const normalizeBudgetFilterText = useCallback((value) => {
+    return String(value ?? "")
+      .toLowerCase()
+      .replace(/[,\s฿]/g, "");
+  }, []);
+
+  const getBudgetFilterText = useCallback((budget) => {
+    const totalBudget = Number(calculateTotalBudget(budget)) || 0;
+    const hasSubItems = Array.isArray(budget.subItems) && budget.subItems.length > 0;
+    const sumSubItemsAmount = hasSubItems ? sumSubItemAmounts(budget.subItems) : 0;
+    const stats = budgetStatsById.get(budget.id) || { prTotal: 0, poTotal: 0, invoiceTotal: 0, relatedPRs: [], relatedPOs: [] };
+    const budgetBalance = hasSubItems ? totalBudget - sumSubItemsAmount : totalBudget - stats.invoiceTotal;
+    const subItems = Array.isArray(budget.subItems) ? budget.subItems : [];
+    const mainAttachments = Array.isArray(budget.attachments) ? budget.attachments : [];
+    const subAttachments = subItems.flatMap((sub) => Array.isArray(sub.attachments) ? sub.attachments : []);
+    const nowStatuses = getNowStatus(budget, stats, "ALL");
+    const latestNowStatus = pickLatestNowStatus(nowStatuses);
+    const statusText = nowStatuses
+      .map((status) => [
+        status.label,
+        status.amount != null ? formatCurrency(status.amount) : "",
+        typeof status.receivePercent === "number" ? `${status.receivePercent}%` : "",
+        typeof status.spPaymentProgress === "number" ? `${status.spPaymentProgress}%` : "",
+      ].filter(Boolean).join(" "))
+      .join(" ");
+
+    return [
+      budget.code,
+      budget.description,
+      budget.revisionReason,
+      budget.rejectReason,
+      totalBudget,
+      formatCurrency(totalBudget),
+      budget.status,
+      ...mainAttachments.map((att) => att?.name || att?.url || "file"),
+      budgetBalance,
+      formatCurrency(budgetBalance),
+      stats.prTotal || 0,
+      formatCurrency(stats.prTotal || 0),
+      stats.poTotal || 0,
+      formatCurrency(stats.poTotal || 0),
+      latestNowStatus?.label,
+      statusText,
+      ...subItems.flatMap((sub) => [
+        sub.quantity,
+        sub.description,
+        sub.rejectReason,
+        sub.unit,
+        sub.unitPrice,
+        sub.amount,
+        formatCurrency(Number(sub.amount) || 0),
+        sub.status || "Approved",
+      ]),
+      ...subAttachments.map((att) => att?.name || att?.url || "file"),
+    ].join(" ");
+  }, [budgetStatsById, getNowStatus, normalizeBudgetFilterText, pickLatestNowStatus, sumSubItemAmounts]);
+
+  const filteredBudgets = useMemo(() => {
+    if (!hasBudgetTableFilter) return sortedBudgets;
+    const filterValue = normalizeBudgetFilterText(budgetTableFilter);
+
+    return sortedBudgets.filter((budget) =>
+      normalizeBudgetFilterText(getBudgetFilterText(budget)).includes(filterValue)
+    );
+  }, [
+    budgetTableFilter,
+    getBudgetFilterText,
+    hasBudgetTableFilter,
+    normalizeBudgetFilterText,
+    sortedBudgets,
+  ]);
+
+  const headerTotals = useMemo(() => {
+    return filteredBudgets.reduce(
+      (acc, b) => {
+        const totalBudget = Number(calculateTotalBudget(b)) || 0;
+        const hasSubItems = Array.isArray(b.subItems) && b.subItems.length > 0;
+        const sumSubItemsAmount = hasSubItems ? sumSubItemAmounts(b.subItems) : 0;
+        const stats = budgetStatsById.get(b.id) || { prTotal: 0, poTotal: 0, invoiceTotal: 0 };
+        const budgetBalance = hasSubItems ? totalBudget - sumSubItemsAmount : totalBudget - stats.invoiceTotal;
+
+        acc.budget += totalBudget;
+        acc.prTotal += stats.prTotal || 0;
+        acc.poTotal += stats.poTotal || 0;
+        acc.balance += budgetBalance;
+        return acc;
+      },
+      { budget: 0, prTotal: 0, poTotal: 0, balance: 0 }
+    );
+  }, [filteredBudgets, budgetStatsById, sumSubItemAmounts]);
 
   const getBudgetReturnNotifications = (budget) => {
     if (!budget || !Array.isArray(budget.budgetReturnNotifications)) return [];
@@ -3521,6 +3599,32 @@ const BudgetView = React.memo(() => {
               </div>
             </div>
 
+            {budgetCategory !== "OVERVIEW" && (
+              <div className="flex-1 min-w-[260px] max-w-[430px]">
+                <label className="relative block">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={budgetTableFilter}
+                    onChange={(e) => setBudgetTableFilter(e.target.value)}
+                    className="h-9 w-full rounded-lg border border-slate-200 bg-white/95 pl-9 pr-10 text-xs font-medium text-slate-700 placeholder:text-slate-400 shadow-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                    placeholder="ค้นหาทุกคอลัมน์"
+                    title="Filter all columns"
+                  />
+                  {hasBudgetTableFilter && (
+                    <button
+                      type="button"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md px-1.5 py-0.5 text-[10px] font-bold text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                      onClick={() => setBudgetTableFilter("")}
+                      title="Clear filter"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </label>
+              </div>
+            )}
+
             <div className="flex gap-2 flex-wrap">
               {canClearAllBudgets && (
                 <Button
@@ -3581,10 +3685,10 @@ const BudgetView = React.memo(() => {
                         <input
                           type="checkbox"
                           className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                          checked={sortedBudgets.length > 0 && selectedBudgetIds.length === sortedBudgets.length}
+                          checked={filteredBudgets.length > 0 && filteredBudgets.every((b) => selectedBudgetIds.includes(b.id))}
                           onChange={(e) => {
-                            if (e.target.checked) setSelectedBudgetIds(sortedBudgets.map((b) => b.id));
-                            else setSelectedBudgetIds([]);
+                            if (e.target.checked) setSelectedBudgetIds(filteredBudgets.map((b) => b.id));
+                            else setSelectedBudgetIds((prev) => prev.filter((id) => !filteredBudgets.some((b) => b.id === id)));
                           }}
                         />
                         <span className="block text-[9px] text-slate-500 mt-0.5">Select all</span>
@@ -3619,7 +3723,7 @@ const BudgetView = React.memo(() => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {sortedBudgets.map((b) => {
+                  {filteredBudgets.map((b) => {
                     const totalBudget = calculateTotalBudget(b);
                     const hasSubItems = b.subItems && b.subItems.length > 0;
                     const sumSubItems = hasSubItems ? sumSubItemAmounts(b.subItems) : 0;
