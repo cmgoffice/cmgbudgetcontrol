@@ -14,9 +14,9 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import {
   collection, doc, onSnapshot, query, updateDoc, addDoc, deleteDoc,
-  orderBy, limit, getDocs, where,
+  orderBy, limit, getDocs, where, deleteField,
 } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL, uploadBytesResumable, getBytes } from "firebase/storage";
+import { ref, uploadBytes, getDownloadURL, uploadBytesResumable } from "firebase/storage";
 import { db, appId, storage, FORM_TEMPLATE_PATHS } from "./lib/firebase";
 import { generatePRPdfBytes, generatePOPdfBytes, downloadBytes, uploadGeneratedPdf, deleteGeneratedPdf } from "./lib/pdfForms";
 import { stampPoSignaturesToPdf } from "./lib/poSignatureStamps";
@@ -1120,6 +1120,16 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   const [returnBalanceContext, setReturnBalanceContext] = React.useState<any>(null);
   const [returnBalanceValue, setReturnBalanceValue] = React.useState("");
   const [returnBalanceReason, setReturnBalanceReason] = React.useState("");
+  const [recreatePoProgress, setRecreatePoProgress] = React.useState({
+    show: false,
+    poId: "",
+    poNo: "",
+    pct: 0,
+    step: "",
+    status: "idle",
+    error: "",
+  });
+  const recreatePoInFlightId = recreatePoProgress.status === "running" ? recreatePoProgress.poId : "";
 
   const parseReturnBalanceInput = (value: any) => {
     const n = Number(String(value || "").replace(/,/g, ""));
@@ -1147,53 +1157,155 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   const canReturnPrBalance = isPR && canUseFunction("pr-table", "returnBalance");
 
   const handleRecreatePO = React.useCallback((po: any) => {
-    openConfirm?.(
-      "Recreate PO",
-      `คุณต้องการ Re-generate PDF ของ PO ${po.poNo || po.id} ใช่หรือไม่?`,
-      async () => {
-        try {
-          showAlert?.("Info", "กำลัง Re-generate PO กรุณารอสักครู่...", "info");
-          
-          const safePONo = (po.poNo || po.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
-          const safeProjId = po.projectId || "unknown";
-          const vendor = vendors?.find((v: any) => v.id === po.vendorId) || null;
-          const project = projects?.find((p: any) => p.id === po.projectId) || null;
+    if (!po?.id) {
+      setRecreatePoProgress({
+        show: true,
+        poId: "",
+        poNo: "-",
+        pct: 0,
+        step: "Recreate PO ไม่สำเร็จ",
+        status: "error",
+        error: "ไม่พบ ID ของ PO",
+      });
+      return;
+    }
 
-          const pcmdate = po.pcmApprovedAt ? new Date(po.pcmApprovedAt).toLocaleDateString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric" }) : "";
-          const gmdate = po.gmApprovedAt ? new Date(po.gmApprovedAt).toLocaleDateString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric" }) : "";
+    if (recreatePoInFlightId) return;
 
-          const poDataForPdf = {
-            ...po,
-            pcmdate,
-            gmdate,
-            reason: po.reason || "",
-          };
+    const poId = po.id;
+    const poNo = po.poNo || po.id;
+    const totalUnits = 8;
+    let completedUnits = 0;
 
-          let bytes = await generatePOPdfBytes(poDataForPdf, { vendor, project });
-          bytes = await stampPoSignaturesToPdf(bytes, poDataForPdf, {
-            currentUserData: userData,
-            currentAuthUser: user,
-            logPrefix: "[PO Recreate]",
-          });
+    const toPct = (units: number) => Math.max(0, Math.min(99, Math.round((units / totalUnits) * 100)));
+    const formatBytes = (bytes: number) => {
+      const n = Number(bytes || 0);
+      if (!Number.isFinite(n) || n <= 0) return "0 KB";
+      if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+      return `${(n / 1024 / 1024).toFixed(2)} MB`;
+    };
+    const getErrorMessage = (e: any) => {
+      if (!e) return "เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ";
+      if (typeof e === "string") return e;
+      return e.message || e.code || String(e);
+    };
+    const setRunningProgress = (units: number, step: string) => {
+      setRecreatePoProgress({
+        show: true,
+        poId,
+        poNo,
+        pct: toPct(units),
+        step,
+        status: "running",
+        error: "",
+      });
+    };
+    const completeUnit = (step: string) => {
+      completedUnits = Math.min(totalUnits, completedUnits + 1);
+      setRunningProgress(completedUnits, step);
+    };
 
-          const pdfPath = `generated/pos/${safeProjId}/${safePONo}.pdf`;
-          await deleteGeneratedPdf(pdfPath);
-          const updatedPdfUrl = await uploadGeneratedPdf(bytes, pdfPath);
+    setRunningProgress(0, "เริ่มต้น Recreate PO...");
 
-          await updateData?.("pos", po.id, { pdfUrl: updatedPdfUrl, pdfUpdatedAt: new Date().toISOString() });
+    (async () => {
+      try {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
-          if (logAction) {
-            await logAction("Recreate PO", `Recreate PO PDF ${po.poNo || po.id}`, po.projectId || selectedProjectId);
-          }
-          showAlert?.("สำเร็จ", "Re-generate PO สำเร็จแล้ว", "success");
-        } catch (e: any) {
-          console.error("Recreate PO failed:", e);
-          showAlert?.("ข้อผิดพลาด", "ไม่สามารถ Re-generate PO ได้: " + (e.message || String(e)), "error");
+        setRunningProgress(completedUnits, "เตรียมข้อมูล PO...");
+        const safePONo = String(poNo).replace(/[^a-zA-Z0-9\-_]/g, "_");
+        const safeProjId = po.projectId || "unknown";
+        const vendor = vendors?.find((v: any) => v.id === po.vendorId) || null;
+        const project = projects?.find((p: any) => p.id === po.projectId) || null;
+        const pcmdate = po.pcmApprovedAt ? new Date(po.pcmApprovedAt).toLocaleDateString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric" }) : "";
+        const gmdate = po.gmApprovedAt ? new Date(po.gmApprovedAt).toLocaleDateString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric" }) : "";
+        const poDataForPdf = {
+          ...po,
+          pcmdate,
+          gmdate,
+          reason: po.reason || "",
+        };
+        const pdfPath = `generated/pos/${safeProjId}/${safePONo}.pdf`;
+        completeUnit("เตรียมข้อมูล PO เสร็จ");
+
+        setRunningProgress(completedUnits, "กำลังสร้าง PDF จากแบบฟอร์ม...");
+        let bytes = await generatePOPdfBytes(poDataForPdf, { vendor, project });
+        completeUnit("สร้าง PDF เสร็จ");
+
+        setRunningProgress(completedUnits, "กำลังตรวจและปั๊มลายเซ็น...");
+        const signatureBaseUnits = completedUnits;
+        bytes = await stampPoSignaturesToPdf(bytes, poDataForPdf, {
+          currentUserData: userData,
+          currentAuthUser: user,
+          logPrefix: "[PO Recreate]",
+          requireApprovedSignatures: true,
+          onProgress: ({ slotLabel, done, total }) => {
+            const units = signatureBaseUnits + (Math.max(0, Math.min(done, total)) / total) * 3;
+            setRunningProgress(units, `ปั๊มลายเซ็น: ${slotLabel}`);
+          },
+        });
+        completedUnits = signatureBaseUnits + 3;
+        setRunningProgress(completedUnits, "ปั๊มลายเซ็นครบ");
+
+        setRunningProgress(completedUnits, "อัปโหลด PDF ใหม่ 0%...");
+        const uploadBaseUnits = completedUnits;
+        const updatedPdfUrl = await uploadGeneratedPdf(bytes, pdfPath, {
+          onProgress: ({ bytesTransferred, totalBytes, pct }) => {
+            const ratio = totalBytes > 0 ? bytesTransferred / totalBytes : Math.max(0, Math.min(100, pct || 0)) / 100;
+            const uploadPct = Math.max(0, Math.min(100, pct || Math.round(ratio * 100)));
+            setRunningProgress(
+              uploadBaseUnits + Math.max(0, Math.min(1, ratio)),
+              `อัปโหลด PDF ใหม่ ${uploadPct}% (${formatBytes(bytesTransferred)} / ${formatBytes(totalBytes)})`
+            );
+          },
+        });
+        completedUnits = uploadBaseUnits + 1;
+        setRunningProgress(completedUnits, "อัปโหลด PDF สำเร็จ");
+
+        setRunningProgress(completedUnits, "บันทึกลิงก์ PDF ในระบบ...");
+        if (!updateData) throw new Error("ไม่พบฟังก์ชันบันทึกข้อมูล PO");
+        const updated = await updateData("pos", poId, {
+          pdfUrl: updatedPdfUrl,
+          pdfUpdatedAt: new Date().toISOString(),
+        });
+        if (updated === false) throw new Error("บันทึกลิงก์ PDF ในระบบไม่สำเร็จ");
+        completeUnit("บันทึกลิงก์ PDF เสร็จ");
+
+        setRunningProgress(completedUnits, "บันทึก System Log...");
+        if (logAction) {
+          await logAction("Recreate PO", `Recreate PO PDF ${poNo}`, po.projectId || selectedProjectId);
         }
-      },
-      "info"
-    );
-  }, [openConfirm, showAlert, vendors, projects, updateData, logAction, selectedProjectId]);
+        completedUnits = totalUnits;
+        setRecreatePoProgress({
+          show: true,
+          poId,
+          poNo,
+          pct: 100,
+          step: "Recreate PO สำเร็จ",
+          status: "success",
+          error: "",
+        });
+        window.setTimeout(() => {
+          setRecreatePoProgress((prev) =>
+            prev.poId === poId && prev.status === "success"
+              ? { ...prev, show: false, status: "idle" }
+              : prev
+          );
+        }, 1200);
+      } catch (e: any) {
+        const message = getErrorMessage(e);
+        console.error("Recreate PO failed:", e);
+        setRecreatePoProgress((prev) => ({
+          ...prev,
+          show: true,
+          poId,
+          poNo,
+          status: "error",
+          step: "Recreate PO ไม่สำเร็จ",
+          error: message,
+        }));
+      }
+    })();
+  }, [recreatePoInFlightId, vendors, projects, updateData, logAction, selectedProjectId, userData, user]);
 
   const getRelatedInvoicesForPo = React.useCallback((po: any) => {
     if (!po) return [];
@@ -1717,6 +1829,79 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
   return (
     <div className="space-y-4">
+      {recreatePoProgress.show && ReactDOM.createPortal(
+        <div className="fixed inset-0 z-[999999] flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex flex-col items-center text-center gap-4">
+              <div className="relative flex h-20 w-20 items-center justify-center">
+                <svg className="absolute inset-0 h-20 w-20 -rotate-90" viewBox="0 0 80 80" aria-hidden="true">
+                  <circle cx="40" cy="40" r="34" fill="none" stroke="#e2e8f0" strokeWidth="7" />
+                  <circle
+                    cx="40"
+                    cy="40"
+                    r="34"
+                    fill="none"
+                    stroke={recreatePoProgress.status === "error" ? "#dc2626" : recreatePoProgress.status === "success" ? "#16a34a" : "#2563eb"}
+                    strokeWidth="7"
+                    strokeLinecap="round"
+                    strokeDasharray={`${2 * Math.PI * 34}`}
+                    strokeDashoffset={`${2 * Math.PI * 34 * (1 - Math.max(0, Math.min(100, recreatePoProgress.pct)) / 100)}`}
+                    style={{ transition: "stroke-dashoffset 0.25s ease, stroke 0.2s ease" }}
+                  />
+                </svg>
+                <span className={`text-lg font-bold ${recreatePoProgress.status === "error" ? "text-red-600" : recreatePoProgress.status === "success" ? "text-emerald-600" : "text-blue-700"}`}>
+                  {recreatePoProgress.pct}%
+                </span>
+              </div>
+
+              <div>
+                <div className="text-base font-bold text-slate-800">
+                  {recreatePoProgress.status === "error" ? "Recreate PO ไม่สำเร็จ" : recreatePoProgress.status === "success" ? "Recreate PO สำเร็จ" : "กำลัง Recreate PO"}
+                </div>
+                <div className="mt-1 text-xs font-semibold text-slate-500">
+                  PO: {recreatePoProgress.poNo || "-"}
+                </div>
+              </div>
+
+              <div className="w-full">
+                <div className="mb-2 flex items-center justify-between gap-3 text-[11px] font-semibold text-slate-500">
+                  <span className="truncate text-left">{recreatePoProgress.step || "กำลังดำเนินการ..."}</span>
+                  <span className="shrink-0">{recreatePoProgress.pct}%</span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className={`h-full rounded-full transition-all duration-300 ${recreatePoProgress.status === "error" ? "bg-red-500" : recreatePoProgress.status === "success" ? "bg-emerald-500" : "bg-blue-600"}`}
+                    style={{ width: `${Math.max(0, Math.min(100, recreatePoProgress.pct))}%` }}
+                  />
+                </div>
+              </div>
+
+              {recreatePoProgress.error ? (
+                <div className="w-full rounded-lg border border-red-200 bg-red-50 p-3 text-left text-xs leading-relaxed text-red-700">
+                  {recreatePoProgress.error}
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-xs text-slate-400">
+                  {recreatePoProgress.status === "running" && <RefreshCw size={13} className="animate-spin" />}
+                  <span>{recreatePoProgress.status === "running" ? "กรุณารอจนกว่าจะเสร็จ ห้ามปิดหน้าจอ" : "เสร็จสิ้น"}</span>
+                </div>
+              )}
+
+              {recreatePoProgress.status !== "running" && (
+                <button
+                  type="button"
+                  className={`mt-1 w-full rounded-xl px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors ${recreatePoProgress.status === "error" ? "bg-red-600 hover:bg-red-700" : "bg-emerald-600 hover:bg-emerald-700"}`}
+                  onClick={() => setRecreatePoProgress((prev) => ({ ...prev, show: false, status: "idle" }))}
+                >
+                  ปิด
+                </button>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
       {/* Header bar */}
       <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-2 md:flex-row md:items-center md:justify-between">
         <div className="flex items-center gap-3">
@@ -2105,11 +2290,15 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                           {!isPR && (userRoles.some((role: string) => role.toUpperCase() === "ADMINISTRATOR") || userRole?.toUpperCase() === "ADMINISTRATOR") && (
                             <button
                               type="button"
-                              className="p-1.5 rounded hover:bg-blue-100 text-blue-700"
-                              title="Recreate PO"
-                              onClick={() => handleRecreatePO(r)}
+                              disabled={Boolean(recreatePoInFlightId)}
+                              className="p-1.5 rounded hover:bg-blue-100 text-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+                              title={recreatePoInFlightId === r.id ? "กำลัง Recreate PO..." : "Recreate PO"}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRecreatePO(r);
+                              }}
                             >
-                              <RefreshCw size={14} />
+                              <RefreshCw size={14} className={recreatePoInFlightId === r.id ? "animate-spin" : ""} />
                             </button>
                           )}
                           {canUseFunction(tableModule, "delete") && !isPR && (
@@ -2626,37 +2815,6 @@ const UserProfile = () => {
     setSignatureUrl(userData?.signatureUrl || null);
   }, [userData?.signatureUrl]);
 
-  // Auto-generate signatureDataUrl for existing users (แก้ปัญหา CORS ตอน stamp)
-  useEffect(() => {
-    if (!user?.uid) return;
-    if (!userData?.signatureUrl) return;
-    if (userData?.signatureDataUrl) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const storageRef = ref(storage, `signatures/${user.uid}/signature.png`);
-        const bytes = await getBytes(storageRef);
-        if (cancelled) return;
-        const blob = new Blob([bytes], { type: "image/png" });
-        const dataUrl: string = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result || ""));
-          reader.onerror = () => reject(new Error("Read signature failed"));
-          reader.readAsDataURL(blob);
-        });
-        if (cancelled) return;
-        await updateDoc(
-          doc(db, "artifacts", appId, "public", "data", "users", user.uid),
-          { signatureDataUrl: dataUrl }
-        );
-        await refreshUserData();
-      } catch (_) {
-        // ignore: user can re-upload if needed
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [user?.uid, userData?.signatureUrl, userData?.signatureDataUrl]);
-
   const handleUpdate = async () => {
     if (!canEditProfile) return;
     try {
@@ -2702,14 +2860,6 @@ const UserProfile = () => {
     }
     setUploadingSignature(true);
     try {
-      const toDataUrl = (f: File) =>
-        new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result || ""));
-          reader.onerror = () => reject(new Error("Read file failed"));
-          reader.readAsDataURL(f);
-        });
-
       const toPngFile = async (inputFile: File) => {
         if (inputFile.type !== "image/webp") return inputFile;
         const bmp = await createImageBitmap(inputFile);
@@ -2727,12 +2877,11 @@ const UserProfile = () => {
 
       const storageRef = ref(storage, `signatures/${user.uid}/signature.png`);
       const uploadFile = await toPngFile(file);
-      const signatureDataUrl = await toDataUrl(uploadFile);
       await uploadBytes(storageRef, uploadFile, { contentType: uploadFile.type });
       const url = await getDownloadURL(storageRef);
       await updateDoc(
         doc(db, "artifacts", appId, "public", "data", "users", user.uid),
-        { signatureUrl: url, signatureDataUrl }
+        { signatureUrl: url, signatureDataUrl: deleteField() }
       );
       setSignatureUrl(url);
       await refreshUserData();
@@ -2751,7 +2900,7 @@ const UserProfile = () => {
     try {
       await updateDoc(
         doc(db, "artifacts", appId, "public", "data", "users", user.uid),
-        { signatureUrl: null, signatureDataUrl: null }
+        { signatureUrl: null, signatureDataUrl: deleteField() }
       );
       setSignatureUrl(null);
       await refreshUserData();

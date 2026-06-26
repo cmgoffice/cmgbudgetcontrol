@@ -1,9 +1,20 @@
 // @ts-nocheck
 import { collection, doc, getDoc, getDocs, limit, query, where } from "firebase/firestore";
-import { appId, db } from "./firebase";
+import { getBytes, ref } from "firebase/storage";
+import { appId, db, storage } from "./firebase";
 import { stampSignatureToField } from "./pdfForms";
 
 type PoSignatureSlot = "Signature1" | "Signature2" | "Signature3";
+
+const SLOT_LABELS: Record<PoSignatureSlot, string> = {
+  Signature1: "ผู้สั่งสินค้า / Purchase by",
+  Signature2: "ผู้จัดการฝ่ายจัดซื้อ / Procurement Manager",
+  Signature3: "ผู้จัดการทั่วไป / General Manager",
+};
+
+const SIGNATURE_STORAGE_TIMEOUT_MS = 2500;
+const signatureStorageDataUrlCache = new Map<string, Promise<string | null>>();
+let lastSignatureStorageError = "";
 
 const SLOT_CONFIG: Record<PoSignatureSlot, any> = {
   Signature1: {
@@ -21,6 +32,7 @@ const SLOT_CONFIG: Record<PoSignatureSlot, any> = {
     fallbackUidFields: ["pcmApprovedByUid"],
     fallbackEmailFields: ["pcmApprovedByEmail", "pcmApprovedBy"],
     fallbackNameFields: ["pcmApprovedByName"],
+    fallbackRoles: ["PCM"],
   },
   Signature3: {
     prefix: "signature3",
@@ -29,6 +41,7 @@ const SLOT_CONFIG: Record<PoSignatureSlot, any> = {
     fallbackUidFields: ["gmApprovedByUid"],
     fallbackEmailFields: ["gmApprovedByEmail", "gmApprovedBy"],
     fallbackNameFields: ["gmApprovedByName"],
+    fallbackRoles: ["GM"],
   },
 };
 
@@ -38,6 +51,11 @@ function firstValue(record: any, fields: string[]) {
     if (value != null && String(value).trim() !== "") return value;
   }
   return null;
+}
+
+function pushUnique(values: any[], value: any) {
+  if (value == null || String(value).trim() === "") return;
+  if (!values.includes(value)) values.push(value);
 }
 
 export function getUserIdentity(userData: any, authUser: any = null) {
@@ -62,6 +80,13 @@ export function getUserIdentity(userData: any, authUser: any = null) {
 
 export function getUserSignatureImage(userData: any) {
   return userData?.signatureDataUrl || userData?.signatureUrl || null;
+}
+
+export async function resolveCurrentUserSignatureImage(userData: any, authUser: any = null) {
+  const identity = getUserIdentity(userData, authUser);
+  const uid = identity.uid || userData?.id;
+  const storageSig = await getUserStorageSignatureDataUrl({ id: uid, uid });
+  return userData?.signatureDataUrl || storageSig || userData?.signatureUrl || null;
 }
 
 export function buildPoSignatureUserFields(slot: PoSignatureSlot, userData: any, authUser: any = null) {
@@ -148,7 +173,109 @@ async function findUserByIdentity(identity: any) {
   return null;
 }
 
+async function findUserByRoles(roles: string[] = []) {
+  const usersPath = ["artifacts", appId, "public", "data", "users"];
+  for (const role of roles) {
+    try {
+      const snap = await getDocs(query(collection(db, ...usersPath), where("role", "==", role), limit(1)));
+      if (!snap.empty) return { id: snap.docs[0].id, ...snap.docs[0].data() };
+    } catch (_) {}
+
+    try {
+      const snap = await getDocs(query(collection(db, ...usersPath), where("roles", "array-contains", role), limit(1)));
+      if (!snap.empty) return { id: snap.docs[0].id, ...snap.docs[0].data() };
+    } catch (_) {}
+  }
+
+  return null;
+}
+
+async function blobToDataUrl(blob: Blob) {
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Read signature failed"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function getStorageCorsHint(error: any) {
+  const origin = typeof window !== "undefined" ? window.location.origin : "current origin";
+  const raw = error?.message || error?.code || String(error || "");
+  if (/cors|failed to fetch|err_failed|timeout/i.test(raw)) {
+    return `อ่านไฟล์ลายเซ็นจาก Firebase Storage ไม่ได้ เพราะ Storage CORS/permission บล็อก origin ${origin}`;
+  }
+  return raw || "อ่านไฟล์ลายเซ็นจาก Firebase Storage ไม่ได้";
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: any;
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+async function getUserStorageSignatureDataUrl(userDoc: any) {
+  const uid = userDoc?.uid || userDoc?.id;
+  if (!uid) return null;
+
+  const cacheKey = String(uid);
+  if (!signatureStorageDataUrlCache.has(cacheKey)) {
+    signatureStorageDataUrlCache.set(cacheKey, (async () => {
+      try {
+        const bytes = await withTimeout(
+          getBytes(ref(storage, `signatures/${uid}/signature.png`)),
+          SIGNATURE_STORAGE_TIMEOUT_MS,
+          `signature storage timeout (${SIGNATURE_STORAGE_TIMEOUT_MS}ms)`
+        );
+        return await blobToDataUrl(new Blob([bytes], { type: "image/png" }));
+      } catch (e) {
+        lastSignatureStorageError = getStorageCorsHint(e);
+        console.warn(`[PO Signature] Cannot read storage signature for ${uid}:`, e);
+        return null;
+      }
+    })());
+  }
+  return await signatureStorageDataUrlCache.get(cacheKey);
+}
+
+function formatSignatureCandidateError(error: any) {
+  const raw = error?.message || error?.code || String(error || "");
+  if (/cors|failed to fetch|err_failed|access-control-allow-origin/i.test(raw)) {
+    return getStorageCorsHint(error);
+  }
+  return raw || lastSignatureStorageError || "ปั๊มลายเซ็นไม่สำเร็จ";
+}
+
+function hasSlotApproval(po: any, slot: PoSignatureSlot) {
+  if (slot === "Signature1") return true;
+  if (slot === "Signature2") {
+    return Boolean(
+      po?.pcmApprovedAt ||
+      po?.pcmdate ||
+      ["Pending GM", "Approved", "Received", "Wait Invoice", "Paid", "Closed PO"].includes(String(po?.status || ""))
+    );
+  }
+  return Boolean(
+    po?.gmApprovedAt ||
+    po?.gmdate ||
+    ["Approved", "Received", "Wait Invoice", "Paid", "Closed PO"].includes(String(po?.status || ""))
+  );
+}
+
 export async function resolvePoSignatureImage(
+  po: any,
+  slot: PoSignatureSlot,
+  opts: { currentUserData?: any; currentAuthUser?: any } = {}
+) {
+  const candidates = await resolvePoSignatureImages(po, slot, opts);
+  return candidates[0] || null;
+}
+
+async function resolvePoSignatureImages(
   po: any,
   slot: PoSignatureSlot,
   opts: { currentUserData?: any; currentAuthUser?: any } = {}
@@ -156,6 +283,7 @@ export async function resolvePoSignatureImage(
   const cfg = SLOT_CONFIG[slot];
   const identity = getSlotIdentity(po, slot);
   const currentIdentity = getUserIdentity(opts.currentUserData, opts.currentAuthUser);
+  const candidates: any[] = [];
 
   const isCurrentUser =
     (identity.uid && currentIdentity.uid && String(identity.uid) === String(currentIdentity.uid)) ||
@@ -163,14 +291,28 @@ export async function resolvePoSignatureImage(
 
   if (isCurrentUser) {
     const currentSig = getUserSignatureImage(opts.currentUserData);
-    if (currentSig) return currentSig;
+    pushUnique(candidates, currentSig);
+    pushUnique(candidates, await getUserStorageSignatureDataUrl({ id: currentIdentity.uid, uid: currentIdentity.uid }));
   }
 
   const userDoc = await findUserByIdentity(identity);
-  const userSig = userDoc?.signatureDataUrl || userDoc?.signatureUrl || null;
-  if (userSig) return userSig;
+  pushUnique(candidates, await getUserStorageSignatureDataUrl({ id: identity.uid, uid: identity.uid }));
+  pushUnique(candidates, userDoc?.signatureDataUrl);
+  pushUnique(candidates, await getUserStorageSignatureDataUrl(userDoc));
+  pushUnique(candidates, userDoc?.signatureUrl);
 
-  return firstValue(po, cfg.legacyDataUrlFields) || firstValue(po, cfg.legacyUrlFields);
+  pushUnique(candidates, firstValue(po, cfg.legacyDataUrlFields));
+
+  if (hasSlotApproval(po, slot)) {
+    const roleUser = await findUserByRoles(cfg.fallbackRoles);
+    pushUnique(candidates, roleUser?.signatureDataUrl);
+    pushUnique(candidates, await getUserStorageSignatureDataUrl(roleUser));
+    pushUnique(candidates, roleUser?.signatureUrl);
+  }
+
+  pushUnique(candidates, firstValue(po, cfg.legacyUrlFields));
+
+  return candidates;
 }
 
 export async function stampPoSignaturesToPdf(
@@ -181,18 +323,56 @@ export async function stampPoSignaturesToPdf(
     currentUserData?: any;
     currentAuthUser?: any;
     logPrefix?: string;
+    requireApprovedSignatures?: boolean;
+    onProgress?: (progress: { slot: PoSignatureSlot; slotLabel: string; done: number; total: number; stamped: boolean }) => void;
   } = {}
 ) {
   const slots = opts.slots || ["Signature1", "Signature2", "Signature3"];
   let bytes = pdfBytes;
 
-  for (const slot of slots) {
+  for (let slotIndex = 0; slotIndex < slots.length; slotIndex += 1) {
+    const slot = slots[slotIndex];
+    const slotLabel = SLOT_LABELS[slot] || slot;
     try {
-      const signatureImage = await resolvePoSignatureImage(po, slot, opts);
-      if (!signatureImage) continue;
-      bytes = await stampSignatureToField(bytes, signatureImage, slot);
+      const signatureImages = await resolvePoSignatureImages(po, slot, opts);
+      if (!signatureImages.length) {
+        const detail = lastSignatureStorageError ? `: ${lastSignatureStorageError}` : "";
+        const msg = `ไม่พบลายเซ็น ${slotLabel}${detail}`;
+        if (opts.requireApprovedSignatures && hasSlotApproval(po, slot)) {
+          throw new Error(msg);
+        }
+        console.warn(`${opts.logPrefix || "[PO Signature]"} ${msg}`);
+        opts.onProgress?.({ slot, slotLabel, done: slotIndex + 1, total: slots.length, stamped: false });
+        continue;
+      }
+
+      let stamped = false;
+      let lastError: any = null;
+      for (const signatureImage of signatureImages) {
+        try {
+          bytes = await stampSignatureToField(bytes, signatureImage, slot);
+          stamped = true;
+          break;
+        } catch (candidateErr) {
+          lastError = candidateErr;
+          console.warn(`${opts.logPrefix || "[PO Signature]"} Stamp ${slot} candidate failed:`, candidateErr);
+        }
+      }
+      if (!stamped) {
+        const detail = formatSignatureCandidateError(lastError);
+        const msg = `ปั๊มลายเซ็น ${slotLabel} ไม่สำเร็จ: ${detail}`;
+        if (opts.requireApprovedSignatures && hasSlotApproval(po, slot)) {
+          throw new Error(msg);
+        }
+        console.warn(`${opts.logPrefix || "[PO Signature]"} ${msg}`);
+      }
+      opts.onProgress?.({ slot, slotLabel, done: slotIndex + 1, total: slots.length, stamped });
     } catch (err) {
       console.warn(`${opts.logPrefix || "[PO Signature]"} Stamp ${slot} failed:`, err);
+      if (opts.requireApprovedSignatures && hasSlotApproval(po, slot)) {
+        throw err;
+      }
+      opts.onProgress?.({ slot, slotLabel, done: slotIndex + 1, total: slots.length, stamped: false });
     }
   }
 

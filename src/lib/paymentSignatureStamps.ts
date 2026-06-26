@@ -2,7 +2,7 @@
 import { collection, doc, getDoc, getDocs, limit, query, where } from "firebase/firestore";
 import { appId, db } from "./firebase";
 import { stampSignatureToField } from "./pdfForms";
-import { getUserIdentity, getUserSignatureImage } from "./poSignatureStamps";
+import { getUserIdentity, getUserSignatureImage, resolveCurrentUserSignatureImage } from "./poSignatureStamps";
 
 type PaymentSignatureSlot = "Signature1" | "Signature2" | "Signature3";
 
@@ -12,18 +12,21 @@ const SLOT_CONFIG: Record<PaymentSignatureSlot, any> = {
     fallbackUidFields: ["periodPreparedByUid", "preparedByUid", "createdByUid"],
     fallbackEmailFields: ["periodPreparedByEmail", "preparedByEmail", "createdByEmail"],
     fallbackNameFields: ["periodPreparedBy", "preparedByName", "createdByName", "createdBy"],
+    signatureUrlFields: ["signature1UserSignatureUrl", "periodPreparedSignatureUrl", "preparedBySignatureUrl", "creatorSignatureUrl"],
   },
   Signature2: {
     prefix: "signature2",
     fallbackUidFields: ["periodCheckedByUid", "cmApprovedByUid"],
     fallbackEmailFields: ["periodCheckedByEmail", "cmApprovedByEmail"],
     fallbackNameFields: ["periodCheckedBy", "cmApprovedByName"],
+    signatureUrlFields: ["signature2UserSignatureUrl", "periodCheckedSignatureUrl", "cmApprovedSignatureUrl", "cmSignatureUrl"],
   },
   Signature3: {
     prefix: "signature3",
     fallbackUidFields: ["periodApprovedByUid", "pmApprovedByUid"],
     fallbackEmailFields: ["periodApprovedByEmail", "pmApprovedByEmail"],
     fallbackNameFields: ["periodApprovedBy", "pmApprovedByName"],
+    signatureUrlFields: ["signature3UserSignatureUrl", "periodApprovedSignatureUrl", "pmApprovedSignatureUrl", "pmSignatureUrl"],
   },
 };
 
@@ -41,6 +44,7 @@ function getSlotIdentity(payment: any, slot: PaymentSignatureSlot) {
     uid: payment?.[`${cfg.prefix}UserUid`] || firstValue(payment, cfg.fallbackUidFields),
     email: payment?.[`${cfg.prefix}UserEmail`] || firstValue(payment, cfg.fallbackEmailFields),
     name: payment?.[`${cfg.prefix}UserName`] || firstValue(payment, cfg.fallbackNameFields),
+    signatureUrl: payment?.[`${cfg.prefix}UserSignatureUrl`] || firstValue(payment, cfg.signatureUrlFields || []),
   };
 }
 
@@ -48,6 +52,9 @@ async function findUserByIdentity(identity: any) {
   const usersPath = ["artifacts", appId, "public", "data", "users"];
   const uid = identity?.uid ? String(identity.uid) : "";
   const email = identity?.email ? String(identity.email).trim() : "";
+  const name = identity?.name ? String(identity.name).trim() : "";
+  const emailLikeName = !email && name.includes("@") ? name : "";
+  const lookupEmail = email || emailLikeName;
 
   if (uid) {
     try {
@@ -61,9 +68,9 @@ async function findUserByIdentity(identity: any) {
     } catch (_) {}
   }
 
-  if (email) {
+  if (lookupEmail) {
     try {
-      const snap = await getDocs(query(collection(db, ...usersPath), where("email", "==", email), limit(1)));
+      const snap = await getDocs(query(collection(db, ...usersPath), where("email", "==", lookupEmail), limit(1)));
       if (!snap.empty) return { id: snap.docs[0].id, ...snap.docs[0].data() };
     } catch (_) {}
   }
@@ -78,6 +85,7 @@ export function buildPaymentSignatureUserFields(slot: PaymentSignatureSlot, user
     [`${cfg.prefix}UserUid`]: identity.uid || null,
     [`${cfg.prefix}UserEmail`]: identity.email || null,
     [`${cfg.prefix}UserName`]: identity.name || null,
+    [`${cfg.prefix}UserSignatureUrl`]: userData?.signatureUrl || null,
   };
 }
 
@@ -88,29 +96,36 @@ export function clearPaymentSignatureUserFields(slots: PaymentSignatureSlot[]) {
     patch[`${cfg.prefix}UserUid`] = null;
     patch[`${cfg.prefix}UserEmail`] = null;
     patch[`${cfg.prefix}UserName`] = null;
+    patch[`${cfg.prefix}UserSignatureUrl`] = null;
   });
   return patch;
 }
 
-async function resolvePaymentSignatureImage(
+export async function resolvePaymentSignatureImage(
   payment: any,
   slot: PaymentSignatureSlot,
   opts: { currentUserData?: any; currentAuthUser?: any } = {}
 ) {
   const identity = getSlotIdentity(payment, slot);
+  const identityEmail = identity.email || (identity.name && String(identity.name).includes("@") ? String(identity.name).trim() : "");
   const currentIdentity = getUserIdentity(opts.currentUserData, opts.currentAuthUser);
   const isCurrentUser =
     (identity.uid && currentIdentity.uid && String(identity.uid) === String(currentIdentity.uid)) ||
-    (identity.email && currentIdentity.email && String(identity.email).toLowerCase() === String(currentIdentity.email).toLowerCase()) ||
+    (identityEmail && currentIdentity.email && String(identityEmail).toLowerCase() === String(currentIdentity.email).toLowerCase()) ||
     (identity.name && currentIdentity.name && String(identity.name).trim().toLowerCase() === String(currentIdentity.name).trim().toLowerCase());
 
   if (isCurrentUser) {
-    const currentSig = getUserSignatureImage(opts.currentUserData);
+    const directCurrentSig = getUserSignatureImage(opts.currentUserData);
+    if (directCurrentSig) return directCurrentSig;
+    const currentSig = await resolveCurrentUserSignatureImage(opts.currentUserData, opts.currentAuthUser);
     if (currentSig) return currentSig;
   }
 
   const userDoc = await findUserByIdentity(identity);
-  return userDoc?.signatureDataUrl || userDoc?.signatureUrl || null;
+  const directUserSig = getUserSignatureImage(userDoc);
+  if (directUserSig) return directUserSig;
+  const storageUserSig = await resolveCurrentUserSignatureImage(userDoc);
+  return storageUserSig || identity.signatureUrl || null;
 }
 
 export async function stampPaymentSignaturesToPdf(

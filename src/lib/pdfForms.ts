@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { PDFDocument, StandardFonts, rgb, PDFName, PDFString } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
-import { getDownloadURL, ref, uploadBytes, getBytes, deleteObject } from "firebase/storage";
+import { getDownloadURL, ref, uploadBytes, uploadBytesResumable, getBytes, deleteObject } from "firebase/storage";
 import { storage, FORM_TEMPLATE_PATHS } from "./firebase";
 
 const nf2 = new Intl.NumberFormat("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -72,6 +72,28 @@ async function tryLoadPdfFromUrl(url: string, timeoutMs = 6000): Promise<ArrayBu
     return await res.arrayBuffer();
   } catch (_) {
     return null;
+  }
+}
+
+async function fetchArrayBufferWithTimeout(url: string, timeoutMs = 5000, label = "file"): Promise<ArrayBuffer> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error(`Cannot fetch ${label}: ${res.status}`);
+    return await res.arrayBuffer();
+  } catch (e: any) {
+    const raw = e?.message || e?.code || String(e || "");
+    if (e?.name === "AbortError") {
+      throw new Error(`Cannot fetch ${label}: timeout ${timeoutMs}ms`);
+    }
+    if (/failed to fetch|cors|err_failed|access-control-allow-origin/i.test(raw)) {
+      const origin = typeof window !== "undefined" ? window.location.origin : "current origin";
+      throw new Error(`Cannot fetch ${label}: Firebase Storage CORS blocked origin ${origin}`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -966,9 +988,7 @@ async function stampSignatureToFieldByName(
     for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
     imgBytes = arr.buffer;
   } else {
-    const res = await fetch(signatureImageUrl);
-    if (!res.ok) throw new Error(`Cannot fetch signature: ${res.status}`);
-    imgBytes = await res.arrayBuffer();
+    imgBytes = await fetchArrayBufferWithTimeout(signatureImageUrl, 5000, "signature");
   }
 
   let embeddedImg: any;
@@ -1063,9 +1083,7 @@ export async function stampSignatureToField(
     for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
     imgBytes = arr.buffer;
   } else {
-    const res = await fetch(signatureImageUrl);
-    if (!res.ok) throw new Error(`Cannot fetch signature: ${res.status}`);
-    imgBytes = await res.arrayBuffer();
+    imgBytes = await fetchArrayBufferWithTimeout(signatureImageUrl, 5000, "signature");
   }
 
   let embeddedImg: any;
@@ -1258,9 +1276,7 @@ export async function stampSignatureToPdf(
     for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
     imgBytes = arr.buffer;
   } else {
-    const res = await fetch(signatureImageUrl);
-    if (!res.ok) throw new Error(`Cannot fetch signature: ${res.status}`);
-    imgBytes = await res.arrayBuffer();
+    imgBytes = await fetchArrayBufferWithTimeout(signatureImageUrl, 5000, "signature");
   }
 
   // Embed image (try PNG first, fallback JPG)
@@ -1302,9 +1318,34 @@ export function downloadBytes(bytes: Uint8Array, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export async function uploadGeneratedPdf(bytes: Uint8Array, path: string) {
+export async function uploadGeneratedPdf(
+  bytes: Uint8Array,
+  path: string,
+  opts: { onProgress?: (progress: { bytesTransferred: number; totalBytes: number; pct: number }) => void } = {}
+) {
   const storageRef = ref(storage, path);
-  await uploadBytes(storageRef, bytes, { contentType: "application/pdf" } as any);
+  if (opts?.onProgress) {
+    opts.onProgress({ bytesTransferred: 0, totalBytes: bytes?.byteLength || 0, pct: 0 });
+    const task = uploadBytesResumable(storageRef, bytes, { contentType: "application/pdf" } as any);
+    await new Promise<void>((resolve, reject) => {
+      task.on(
+        "state_changed",
+        (snapshot) => {
+          const totalBytes = snapshot.totalBytes || bytes?.byteLength || 0;
+          const pct = totalBytes > 0 ? Math.round((snapshot.bytesTransferred / totalBytes) * 100) : 0;
+          opts.onProgress?.({
+            bytesTransferred: snapshot.bytesTransferred,
+            totalBytes,
+            pct,
+          });
+        },
+        reject,
+        () => resolve()
+      );
+    });
+  } else {
+    await uploadBytes(storageRef, bytes, { contentType: "application/pdf" } as any);
+  }
   return await getDownloadURL(storageRef);
 }
 

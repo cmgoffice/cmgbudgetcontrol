@@ -18,6 +18,7 @@ import { generatePaymentPdfBytes } from "../lib/pdfForms";
 import {
   buildPaymentSignatureUserFields,
   clearPaymentSignatureUserFields,
+  resolvePaymentSignatureImage,
   stampPaymentSignaturesToPdf,
 } from "../lib/paymentSignatureStamps";
 import { getUserIdentity } from "../lib/poSignatureStamps";
@@ -133,6 +134,7 @@ const PaymentView = React.memo(() => {
   // ─── UI State ───────────────────────────────────────────────────────────────
 
   const [viewingPayment, setViewingPayment] = useState<any>(null);
+  const [paymentSignatureImages, setPaymentSignatureImages] = useState<Record<string, string | null>>({});
   const [saving, setSaving] = useState(false);
   const [actioning, setActioning] = useState(false);
 
@@ -185,6 +187,43 @@ const PaymentView = React.memo(() => {
 
   // ─── Period Navigation ─────────────────────────────────────────────────────
   const [viewPeriodIdx, setViewPeriodIdx] = useState(-1);
+
+  React.useEffect(() => {
+    if (!viewingPayment) {
+      setPaymentSignatureImages({});
+      return;
+    }
+
+    let cancelled = false;
+    const allPeriods = viewingPayment.periods || [];
+    const source =
+      viewPeriodIdx >= 0 && viewPeriodIdx < allPeriods.length
+        ? allPeriods[viewPeriodIdx]
+        : viewingPayment;
+
+    setPaymentSignatureImages({});
+    (async () => {
+      const entries = await Promise.all(
+        ["Signature1", "Signature2", "Signature3"].map(async (slot) => {
+          try {
+            const image = await resolvePaymentSignatureImage(source, slot, {
+              currentUserData: userData,
+              currentAuthUser: user,
+            });
+            return [slot, image || null];
+          } catch (err) {
+            console.warn(`[Payment Signature UI] Resolve ${slot} failed:`, err);
+            return [slot, null];
+          }
+        })
+      );
+      if (!cancelled) setPaymentSignatureImages(Object.fromEntries(entries));
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [viewingPayment, viewPeriodIdx, userData, user]);
 
   // ─── Period Attachment Upload ─────────────────────────────────────────────
   const [periodAttachFile, setPeriodAttachFile] = useState<File | null>(null);
@@ -2016,39 +2055,53 @@ const PaymentView = React.memo(() => {
                       const src = isViewingOldPeriod ? activePeriod : vp;
                       return [
                         {
-                          title: "PREPARE BY", position: "ผู้จัดทำ",
+                          slot: "Signature1", title: "PREPARE BY", position: "ผู้จัดทำ",
                           name: src?.periodPreparedBy, date: src?.periodPreparedAt,
-                          filled: !!src?.periodPreparedBy,
+                          filled: !!(src?.periodPreparedBy || src?.periodPreparedByUid || src?.periodPreparedByEmail || src?.signature1UserSignatureUrl),
                         },
                         {
-                          title: "CHECK BY", position: "Construction Manager",
+                          slot: "Signature2", title: "CHECK BY", position: "Construction Manager",
                           name: src?.periodCheckedBy, date: src?.periodCheckedAt,
-                          filled: !!src?.periodCheckedBy,
+                          filled: !!(src?.periodCheckedBy || src?.periodCheckedByUid || src?.periodCheckedByEmail || src?.signature2UserSignatureUrl),
                         },
                         {
-                          title: "APPROVE BY", position: "Project Manager",
+                          slot: "Signature3", title: "APPROVE BY", position: "Project Manager",
                           name: src?.periodApprovedBy, date: src?.periodApprovedAt,
-                          filled: !!src?.periodApprovedBy,
+                          filled: !!(src?.periodApprovedBy || src?.periodApprovedByUid || src?.periodApprovedByEmail || src?.signature3UserSignatureUrl),
                         },
                       ];
-                    })().map((sig) => (
-                      <div key={sig.title} className={`border rounded-lg p-3 text-center space-y-3 ${sig.filled ? "border-green-300 bg-green-50/40" : "border-slate-200 bg-slate-50/50"}`}>
-                        <p className="font-bold text-slate-700 text-[11px]">{sig.title}</p>
-                        <div className="h-8 flex items-center justify-center">
-                          {sig.filled ? (
-                            <span className="text-[11px] font-bold text-green-700 border-b-2 border-green-500 pb-0.5 px-2">{sig.name}</span>
-                          ) : (
-                            <span className="text-[10px] text-slate-300 italic">— ยังไม่ได้ลงนาม —</span>
-                          )}
+                    })().map((sig) => {
+                      const hasResolvedSignature = Object.prototype.hasOwnProperty.call(paymentSignatureImages, sig.slot);
+                      const signatureImageUrl = paymentSignatureImages[sig.slot];
+                      return (
+                        <div key={sig.title} className={`border rounded-lg p-3 text-center space-y-3 ${sig.filled ? "border-green-300 bg-green-50/40" : "border-slate-200 bg-slate-50/50"}`}>
+                          <p className="font-bold text-slate-700 text-[11px]">{sig.title}</p>
+                          <div className={`h-12 flex items-center justify-center px-2 py-1 ${sig.filled ? "border-b-2 border-green-500" : ""}`}>
+                            {sig.filled ? (
+                              signatureImageUrl ? (
+                                <img
+                                  src={signatureImageUrl}
+                                  alt={`ลายเซ็น ${sig.title}`}
+                                  className="max-h-full max-w-full object-contain"
+                                />
+                              ) : (
+                                <span className="text-[10px] text-slate-400 italic">
+                                  {hasResolvedSignature ? "— ไม่มีรูปลายเซ็น —" : "กำลังโหลดลายเซ็น..."}
+                                </span>
+                              )
+                            ) : (
+                              <span className="text-[10px] text-slate-300 italic">— ยังไม่ได้ลงนาม —</span>
+                            )}
+                          </div>
+                          <div className="border-t border-slate-300 pt-2 space-y-1">
+                            <p className="text-[10px] text-slate-500">POSITION : <span className="font-semibold text-slate-700">{sig.position}</span></p>
+                            <p className="text-[10px] text-slate-500">
+                              DATE : {sig.date ? new Date(sig.date).toLocaleDateString("th-TH", { day: "2-digit", month: "short", year: "numeric" }) : "_______________"}
+                            </p>
+                          </div>
                         </div>
-                        <div className="border-t border-slate-300 pt-2 space-y-1">
-                          <p className="text-[10px] text-slate-500">POSITION : <span className="font-semibold text-slate-700">{sig.position}</span></p>
-                          <p className="text-[10px] text-slate-500">
-                            DATE : {sig.date ? new Date(sig.date).toLocaleDateString("th-TH", { day: "2-digit", month: "short", year: "numeric" }) : "_______________"}
-                          </p>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
 
                   {/* Note */}

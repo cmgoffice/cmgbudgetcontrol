@@ -9,6 +9,7 @@ import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 import { Card, Badge, formatCurrency } from "../components/ui";
+import { resolvePaymentSignatureImage } from "../lib/paymentSignatureStamps";
 
 const PaymentTableView = React.memo(() => {
   const {
@@ -22,6 +23,8 @@ const PaymentTableView = React.memo(() => {
     logAction,
     canUseFunction,
     userRole,
+    userData,
+    user,
     isColumnVisible,
   } = useAppData();
 
@@ -32,10 +35,42 @@ const PaymentTableView = React.memo(() => {
   const [filterType, setFilterType] = useState("all");
   const [filterProject, setFilterProject] = useState(selectedProjectId || "all");
   const [viewingPayment, setViewingPayment] = useState<any>(null);
+  const [paymentSignatureImages, setPaymentSignatureImages] = useState<Record<string, string | null>>({});
 
   React.useEffect(() => {
     setFilterProject(selectedProjectId || "all");
   }, [selectedProjectId]);
+
+  React.useEffect(() => {
+    if (!viewingPayment) {
+      setPaymentSignatureImages({});
+      return;
+    }
+
+    let cancelled = false;
+    setPaymentSignatureImages({});
+    (async () => {
+      const entries = await Promise.all(
+        ["Signature1", "Signature2", "Signature3"].map(async (slot) => {
+          try {
+            const image = await resolvePaymentSignatureImage(viewingPayment, slot, {
+              currentUserData: userData,
+              currentAuthUser: user,
+            });
+            return [slot, image || null];
+          } catch (err) {
+            console.warn(`[PaymentTable Signature UI] Resolve ${slot} failed:`, err);
+            return [slot, null];
+          }
+        })
+      );
+      if (!cancelled) setPaymentSignatureImages(Object.fromEntries(entries));
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [viewingPayment, userData, user]);
 
   const allStatuses = ["Draft", "Pending", "Approved", "Reject", "Paid"];
 
@@ -600,27 +635,59 @@ const PaymentTableView = React.memo(() => {
                   {/* ── Signature section ── */}
                   <div className="grid grid-cols-3 gap-4 text-xs mt-2 px-2">
                     {[
-                      { title: "PREPARE BY", position: "ผู้จัดทำ", name: viewingPayment.periodPreparedBy, date: viewingPayment.periodPreparedAt },
-                      { title: "CHECK BY", position: "Construction Manager", name: viewingPayment.periodCheckedBy, date: viewingPayment.periodCheckedAt },
-                      { title: "APPROVE BY", position: "Project Manager", name: viewingPayment.periodApprovedBy, date: viewingPayment.periodApprovedAt },
-                    ].map((sig) => (
-                      <div key={sig.title} className={`border rounded-lg p-3 text-center space-y-3 ${sig.name ? "border-green-300 bg-green-50/40" : "border-slate-200 bg-slate-50/50"}`}>
-                        <p className="font-bold text-slate-700 text-[11px]">{sig.title}</p>
-                        <div className="h-8 flex items-center justify-center">
-                          {sig.name ? (
-                            <span className="text-[11px] font-bold text-green-700 border-b-2 border-green-500 pb-0.5 px-2">{sig.name}</span>
-                          ) : (
-                            <span className="text-[10px] text-slate-300 italic">— ยังไม่ได้ลงนาม —</span>
-                          )}
+                      {
+                        slot: "Signature1",
+                        title: "PREPARE BY",
+                        position: "ผู้จัดทำ",
+                        date: viewingPayment.periodPreparedAt,
+                        filled: !!(viewingPayment.periodPreparedBy || viewingPayment.periodPreparedByUid || viewingPayment.periodPreparedByEmail || viewingPayment.signature1UserSignatureUrl),
+                      },
+                      {
+                        slot: "Signature2",
+                        title: "CHECK BY",
+                        position: "Construction Manager",
+                        date: viewingPayment.periodCheckedAt,
+                        filled: !!(viewingPayment.periodCheckedBy || viewingPayment.periodCheckedByUid || viewingPayment.periodCheckedByEmail || viewingPayment.signature2UserSignatureUrl),
+                      },
+                      {
+                        slot: "Signature3",
+                        title: "APPROVE BY",
+                        position: "Project Manager",
+                        date: viewingPayment.periodApprovedAt,
+                        filled: !!(viewingPayment.periodApprovedBy || viewingPayment.periodApprovedByUid || viewingPayment.periodApprovedByEmail || viewingPayment.signature3UserSignatureUrl),
+                      },
+                    ].map((sig) => {
+                      const hasResolvedSignature = Object.prototype.hasOwnProperty.call(paymentSignatureImages, sig.slot);
+                      const signatureImageUrl = paymentSignatureImages[sig.slot];
+                      return (
+                        <div key={sig.title} className={`border rounded-lg p-3 text-center space-y-3 ${sig.filled ? "border-green-300 bg-green-50/40" : "border-slate-200 bg-slate-50/50"}`}>
+                          <p className="font-bold text-slate-700 text-[11px]">{sig.title}</p>
+                          <div className={`h-12 flex items-center justify-center px-2 py-1 ${sig.filled ? "border-b-2 border-green-500" : ""}`}>
+                            {sig.filled ? (
+                              signatureImageUrl ? (
+                                <img
+                                  src={signatureImageUrl}
+                                  alt={`ลายเซ็น ${sig.title}`}
+                                  className="max-h-full max-w-full object-contain"
+                                />
+                              ) : (
+                                <span className="text-[10px] text-slate-400 italic">
+                                  {hasResolvedSignature ? "— ไม่มีรูปลายเซ็น —" : "กำลังโหลดลายเซ็น..."}
+                                </span>
+                              )
+                            ) : (
+                              <span className="text-[10px] text-slate-300 italic">— ยังไม่ได้ลงนาม —</span>
+                            )}
+                          </div>
+                          <div className="border-t border-slate-300 pt-2 space-y-1">
+                            <p className="text-[10px] text-slate-500">POSITION : <span className="font-semibold text-slate-700">{sig.position}</span></p>
+                            <p className="text-[10px] text-slate-500">
+                              DATE : {sig.date ? new Date(sig.date).toLocaleDateString("th-TH", { day: "2-digit", month: "short", year: "numeric" }) : "_______________"}
+                            </p>
+                          </div>
                         </div>
-                        <div className="border-t border-slate-300 pt-2 space-y-1">
-                          <p className="text-[10px] text-slate-500">POSITION : <span className="font-semibold text-slate-700">{sig.position}</span></p>
-                          <p className="text-[10px] text-slate-500">
-                            DATE : {sig.date ? new Date(sig.date).toLocaleDateString("th-TH", { day: "2-digit", month: "short", year: "numeric" }) : "_______________"}
-                          </p>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
 
                   {/* Note */}

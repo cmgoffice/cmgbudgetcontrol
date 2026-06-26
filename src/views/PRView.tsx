@@ -19,7 +19,7 @@ import { useProportionalTableLayout } from "../hooks/useProportionalTableLayout"
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 import { PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, PURCHASE_TYPE_EQUIPMENT, DELIVERY_LOCATIONS, getPurchaseTypeDisplayLabel, COST_CATEGORIES } from "../lib/constants";
 import { uploadAttachment } from "../lib/uploadAttachment";
-import { getUserIdentity } from "../lib/poSignatureStamps";
+import { getUserIdentity, resolveCurrentUserSignatureImage } from "../lib/poSignatureStamps";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
 import { computeBudgetUsedAfterPrRevision, getLinkedPoRefsForPr, getPrBudgetReturnInfo, restorePrItemsFromRevision, scalePrItemsToTotal } from "../lib/prBudgetReturn";
 import { motion, AnimatePresence } from "framer-motion";
@@ -984,9 +984,6 @@ const PRView = React.memo(() => {
       const project = projects.find((p: any) => p.id === selectedProjectId) || null;
       const safePRNo = (resolvedPrNo || "unknown").replace(/[^a-zA-Z0-9\-_]/g, "_");
       const safeProjId = selectedProjectId || "unknown";
-      // Prefer dataURL to avoid CORS on Storage URL
-      const creatorSignatureUrl = userData?.signatureDataUrl || userData?.signatureUrl || null;
-
       setProgress(20, "กำลังสร้าง PDF...");
       let bytes = await generatePRPdfBytes(prPayload, {
         projectName: project?.name || "",
@@ -1328,7 +1325,7 @@ const PRView = React.memo(() => {
       setPrApproveFlightFromStatus((s) => ({ ...s, [id]: pr.status }));
       const emailField = isCMApprove ? "cmApproverEmail" : isPMApprove ? "pmApproverEmail" : null;
       const approverEmail = userData?.email || user?.email || "";
-      const approverSig = userData?.signatureDataUrl || userData?.signatureUrl;
+      const approverSig = await resolveCurrentUserSignatureImage(userData, user);
       const stampField = isCMApprove ? "Signature2" : isPMApprove ? "Signature3" : null;
 
       let updatedPdfUrl: string | undefined;

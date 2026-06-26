@@ -22,6 +22,7 @@ import {
   formatLogCurrency,
   truncateLogText,
 } from "../lib/systemLogDetails";
+import { resolveCurrentUserSignatureImage } from "../lib/poSignatureStamps";
 
 const PO_TYPE_LABELS = {
   CR: "CR — เครดิต",
@@ -539,7 +540,7 @@ const ReceiveView = React.memo(() => {
           createdAt: now.toISOString(),
         };
 
-        const signatureUrl = userData?.signatureUrl || null;
+        const signatureUrl = await resolveCurrentUserSignatureImage(userData, user);
         let rpPdfBytes = await generateRPPdfBytes(rpData, { signatureUrl });
 
         // Merge PO PDF into the RP PDF
