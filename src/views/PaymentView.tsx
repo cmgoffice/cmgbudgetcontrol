@@ -16,6 +16,12 @@ import { Card, Button, formatCurrency } from "../components/ui";
 import { uploadAttachment, deleteStorageFile } from "../lib/uploadAttachment";
 import { generatePaymentPdfBytes } from "../lib/pdfForms";
 import {
+  buildPaymentSignatureUserFields,
+  clearPaymentSignatureUserFields,
+  stampPaymentSignaturesToPdf,
+} from "../lib/paymentSignatureStamps";
+import { getUserIdentity } from "../lib/poSignatureStamps";
+import {
   buildDeleteLogDetails,
   buildRecordSummary,
   formatLogCurrency,
@@ -306,11 +312,28 @@ const PaymentView = React.memo(() => {
     const label = p.status === "Pending Procurement" ? "Active" : next;
     setActioning(true);
     try {
+      const approver = getUserIdentity(userData, user);
+      const approvalSignatureFields =
+        p.status === "Pending CM" ? {
+          ...buildPaymentSignatureUserFields("Signature2", userData, user),
+          cmApprovedByUid: approver.uid || null,
+          cmApprovedByEmail: approver.email || null,
+          cmApprovedByName: approver.name || null,
+          cmApprovedAt: new Date().toISOString(),
+        } :
+        p.status === "Pending PM" ? {
+          ...buildPaymentSignatureUserFields("Signature3", userData, user),
+          pmApprovedByUid: approver.uid || null,
+          pmApprovedByEmail: approver.email || null,
+          pmApprovedByName: approver.name || null,
+          pmApprovedAt: new Date().toISOString(),
+        } : {};
       await updateData("payments", p.id, {
         status: next,
-        [`approvedBy.${p.status.replace("Pending ", "")}`]: userData?.name || user?.email || "",
+        [`approvedBy.${p.status.replace("Pending ", "")}`]: approver.name || userData?.name || user?.email || "",
         [`approvedAt.${p.status.replace("Pending ", "")}`]: new Date().toISOString(),
         revisionRequested: false,
+        ...approvalSignatureFields,
       }, { skipLog: true });
 
 
@@ -494,12 +517,21 @@ const PaymentView = React.memo(() => {
 
       if (finalize) {
         extraFields.status = "งวดงาน Pending CM";
-        extraFields.periodPreparedBy = userData?.name || user?.email || "";
+        const preparedBy = getUserIdentity(userData, user);
+        extraFields.periodPreparedBy = preparedBy.name || userData?.name || user?.email || "";
+        extraFields.periodPreparedByUid = preparedBy.uid || null;
+        extraFields.periodPreparedByEmail = preparedBy.email || null;
         extraFields.periodPreparedAt = now;
+        Object.assign(extraFields, buildPaymentSignatureUserFields("Signature1", userData, user));
+        Object.assign(extraFields, clearPaymentSignatureUserFields(["Signature2", "Signature3"]));
         // reset previous period approvals when re-submitting
         extraFields.periodCheckedBy = null;
+        extraFields.periodCheckedByUid = null;
+        extraFields.periodCheckedByEmail = null;
         extraFields.periodCheckedAt = null;
         extraFields.periodApprovedBy = null;
+        extraFields.periodApprovedByUid = null;
+        extraFields.periodApprovedByEmail = null;
         extraFields.periodApprovedAt = null;
       }
       await updateData("payments", p.id, { items: updatedItems, amount: totalAmt, ...extraFields }, { skipLog: true });
@@ -536,9 +568,14 @@ const PaymentView = React.memo(() => {
         rejectReason: reason,
         rejectedBy,
         rejectedAt,
+        ...clearPaymentSignatureUserFields(["Signature2", "Signature3"]),
         periodCheckedBy: null,
+        periodCheckedByUid: null,
+        periodCheckedByEmail: null,
         periodCheckedAt: null,
         periodApprovedBy: null,
+        periodApprovedByUid: null,
+        periodApprovedByEmail: null,
         periodApprovedAt: null,
       }, { skipLog: true });
       await logAction(
@@ -611,10 +648,17 @@ const PaymentView = React.memo(() => {
     const dateField = isCheckStep ? "periodCheckedAt" : "periodApprovedAt";
     setActioning(true);
     try {
+      const approver = getUserIdentity(userData, user);
+      const uidField = isCheckStep ? "periodCheckedByUid" : "periodApprovedByUid";
+      const emailField = isCheckStep ? "periodCheckedByEmail" : "periodApprovedByEmail";
+      const signatureFields = buildPaymentSignatureUserFields(isCheckStep ? "Signature2" : "Signature3", userData, user);
       await updateData("payments", p.id, {
         status: nextStatus,
-        [sigField]: userData?.name || user?.email || "",
+        [sigField]: approver.name || userData?.name || user?.email || "",
+        [uidField]: approver.uid || null,
+        [emailField]: approver.email || null,
         [dateField]: new Date().toISOString(),
+        ...signatureFields,
       }, { skipLog: true });
 
 
@@ -839,7 +883,12 @@ const PaymentView = React.memo(() => {
         ? { id: payment.contractorId, name: payment.contractorName, code: payment.contractorCode, type: payment.contractorType }
         : vendors.find((v: any) => v.id === payment.contractorId);
       const project = (projects || []).find((p: any) => p.id === payment.projectId);
-      const bytes = await generatePaymentPdfBytes(payment, { project, contractor, pos });
+      let bytes = await generatePaymentPdfBytes(payment, { project, contractor, pos });
+      bytes = await stampPaymentSignaturesToPdf(bytes, payment, {
+        currentUserData: userData,
+        currentAuthUser: user,
+        logPrefix: "[Payment PDF]",
+      });
       const blob = new Blob([bytes], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
       setPdfPreviewUrl(url);
@@ -875,6 +924,7 @@ const PaymentView = React.memo(() => {
 
     setActioning(true);
     try {
+      const creator = getUserIdentity(userData, user);
       const currentItems = p.items || [];
 
       // Carry over accumulated quantities and reset thisPeriod
@@ -904,11 +954,17 @@ const PaymentView = React.memo(() => {
         status: "Active",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        createdBy: userData?.name || user?.email || '',
-        activatedBy: userData?.name || user?.email || '',
+        createdBy: creator.name || userData?.name || user?.email || '',
+        createdByUid: creator.uid || null,
+        createdByEmail: creator.email || null,
+        createdByName: creator.name || null,
+        activatedBy: creator.name || userData?.name || user?.email || '',
+        activatedByUid: creator.uid || null,
+        activatedByEmail: creator.email || null,
         activatedAt: new Date().toISOString(),
         poRef: p.poRef || p.selectedPrIds?.[0] || null,
         previousPaymentId: p.id,
+        ...clearPaymentSignatureUserFields(["Signature1", "Signature2", "Signature3"]),
       };
 
       await addData("payments", newPayload, null, { skipLog: true });
@@ -1019,6 +1075,7 @@ const PaymentView = React.memo(() => {
         contractorCode: po.vendorCode || '',
         contractorType: po.vendorType || '',
       };
+      const creator = getUserIdentity(userData, user);
       
       const payload = {
         paymentNo: `${po.poNo || po.id}-001`,
@@ -1037,8 +1094,13 @@ const PaymentView = React.memo(() => {
         status: 'Active',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        createdBy: userData?.name || user?.email || '',
-        activatedBy: userData?.name || user?.email || '',
+        createdBy: creator.name || userData?.name || user?.email || '',
+        createdByUid: creator.uid || null,
+        createdByEmail: creator.email || null,
+        createdByName: creator.name || null,
+        activatedBy: creator.name || userData?.name || user?.email || '',
+        activatedByUid: creator.uid || null,
+        activatedByEmail: creator.email || null,
         activatedAt: new Date().toISOString(),
         rejectReason: null,
         rejectedBy: null,

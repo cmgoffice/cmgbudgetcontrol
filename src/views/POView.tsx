@@ -25,7 +25,12 @@ import {
 } from "../lib/constants";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
 import { motion, AnimatePresence } from "framer-motion";
-import { generatePOPdfBytes, uploadGeneratedPdf, stampSignatureToField, stampSignatureToPdf, deleteGeneratedPdf, stampTextToFieldRect } from "../lib/pdfForms";
+import { generatePOPdfBytes, uploadGeneratedPdf, deleteGeneratedPdf, stampTextToFieldRect } from "../lib/pdfForms";
+import {
+  buildPoApprovalIdentityFields,
+  buildPoCreatorIdentityFields,
+  stampPoSignaturesToPdf,
+} from "../lib/poSignatureStamps";
 import { uploadAttachment } from "../lib/uploadAttachment";
 import {
   buildAutoReceiveData,
@@ -1385,6 +1390,7 @@ const POView = React.memo(() => {
 
       const editingPo = editingPoId ? pos.find((p) => p.id === editingPoId) : null;
       const preserveRevision = editingPo?.status === "Draft" && editingPo?.originalPoAmount != null;
+      const creatorIdentityFields = buildPoCreatorIdentityFields(editingPo, userData, user);
 
       const draftPayload: Record<string, any> = {
         poNo: resolvedPoNo,
@@ -1407,14 +1413,9 @@ const POView = React.memo(() => {
         rejectReason: "",
         attachments,
         selectedPrIds: formData.selectedPrIds || [],
-        createdByUid: editingPo?.createdByUid || user?.uid || null,
-        createdByFirstName: editingPo?.createdByFirstName || creatorFirstName || null,
-        createdByLastName: editingPo?.createdByLastName || creatorLastName || null,
+        ...creatorIdentityFields,
         creatorSignatureUrl: editingPo?.creatorSignatureUrl || userData?.signatureUrl || null,
         ...(editingPoId ? { creatorSignatureDataUrl: deleteField() } : {}),
-        ...(creatorDisplayName
-          ? { createdByName: editingPo?.createdByName || creatorDisplayName }
-          : {}),
         payBeforeReceiveChecked: configuredFlowPayload.payBeforeReceiveChecked,
         payBeforeReceiveInvoiceSetup: configuredFlowPayload.payBeforeReceiveInvoiceSetup,
         receivedAfterPaymentChecked: configuredFlowPayload.receivedAfterPaymentChecked,
@@ -1619,6 +1620,8 @@ const POView = React.memo(() => {
       }
 
       // แสดง Progress Modal
+      const existingPoForCreator = editingPoId ? pos.find((p) => p.id === editingPoId) : null;
+      const creatorIdentityFields = buildPoCreatorIdentityFields(existingPoForCreator, userData, user);
       const setProgress = (pct: number, step: string) => setSavePoProgress({ show: true, pct, step });
       setProgress(5, "เตรียมข้อมูล...");
 
@@ -1637,6 +1640,8 @@ const POView = React.memo(() => {
           discount: formData.discount || 0,
           reason: formData.reason || "",
           location: formData.location || "",
+          ...creatorIdentityFields,
+          creatorSignatureUrl: existingPoForCreator?.creatorSignatureUrl || userData?.signatureUrl || null,
           poDate: formData.poOpenDate
             ? new Date(formData.poOpenDate + "T00:00:00").toISOString()
             : new Date().toISOString(),
@@ -1644,21 +1649,17 @@ const POView = React.memo(() => {
         };
         const safePONo = resolvedPoNo.replace(/[^a-zA-Z0-9\-_]/g, "_");
         const safeProjId = selectedProjectId || "unknown";
-        // Prefer dataURL to avoid CORS on Storage URL
-        const creatorSignatureUrl = userData?.signatureDataUrl || userData?.signatureUrl || null;
-
         const generateAndUpload = async () => {
           setProgress(20, "กำลังสร้าง PDF...");
           let bytes = await generatePOPdfBytes(draftPayload, { vendor, project });
 
           setProgress(50, "ประทับลายเซ็นผู้สร้าง...");
-          if (creatorSignatureUrl) {
-            try {
-              bytes = await stampSignatureToField(bytes, creatorSignatureUrl, "Signature1");
-            } catch (sigErr) {
-              console.warn("[PO Save] Stamp Signature1 failed:", sigErr);
-            }
-          }
+          bytes = await stampPoSignaturesToPdf(bytes, draftPayload, {
+            slots: ["Signature1"],
+            currentUserData: userData,
+            currentAuthUser: user,
+            logPrefix: "[PO Save]",
+          });
 
           setProgress(70, "อัปโหลด PDF ขึ้น Cloud...");
           const pdfPath = `generated/pos/${safeProjId}/${safePONo}.pdf`;
@@ -1681,7 +1682,6 @@ const POView = React.memo(() => {
 
       setProgress(85, L.savingStep);
 
-      const existingPoForCreator = editingPoId ? pos.find((p) => p.id === editingPoId) : null;
       // เพิ่มข้อมูล Vendor เพื่อให้ Role อื่นๆ ที่ไม่มีสิทธิ์เข้าถึง Vendor Management สามารถเห็นชื่อ Vendor ได้
       const selectedVendor = vendors.find((v: any) => v.id === formData.vendorId);
       const vendorInfo = selectedVendor ? {
@@ -1707,14 +1707,7 @@ const POView = React.memo(() => {
         ...(manualVatOverride != null && !isNaN(manualVatOverride) ? { manualVat: manualVatOverride } : {}),
         ...(pdfUrl ? { pdfUrl, pdfPath: `generated/pos/${(selectedProjectId || "unknown")}/${resolvedPoNo.replace(/[^a-zA-Z0-9\-_]/g, "_")}.pdf` } : {}),
         attachments: attachmentList,
-        createdByUid: existingPoForCreator?.createdByUid ?? user?.uid ?? null,
-        createdByFirstName: existingPoForCreator?.createdByFirstName ?? creatorFirstName ?? null,
-        createdByLastName: existingPoForCreator?.createdByLastName ?? creatorLastName ?? null,
-        ...(creatorDisplayName || existingPoForCreator?.createdByName
-          ? {
-            createdByName: existingPoForCreator?.createdByName || creatorDisplayName,
-          }
-          : {}),
+        ...creatorIdentityFields,
         creatorSignatureUrl: existingPoForCreator?.creatorSignatureUrl || userData?.signatureUrl || null,
         ...(editingPoId ? {
           creatorSignatureDataUrl: deleteField(),
@@ -2103,7 +2096,20 @@ const POView = React.memo(() => {
       let updatedPdfUrl: string | undefined;
       let firestoreExtra: Record<string, any> = {};
 
-      const approverSig = userData?.signatureDataUrl || userData?.signatureUrl;
+      const approvalIdentityForPdf = {
+        ...(isPCMApprove ? buildPoApprovalIdentityFields("Signature2", userData, user) : {}),
+        ...(isGMApprove ? buildPoApprovalIdentityFields("Signature3", userData, user) : {}),
+      };
+      firestoreExtra.creatorSignatureDataUrl = deleteField();
+      firestoreExtra.pcmSignatureDataUrl = deleteField();
+      firestoreExtra.gmSignatureDataUrl = deleteField();
+      Object.assign(firestoreExtra, approvalIdentityForPdf);
+      if (isPCMApprove) {
+        firestoreExtra.pcmSignatureUrl = userData?.signatureUrl || null;
+      }
+      if (isGMApprove) {
+        firestoreExtra.gmSignatureUrl = userData?.signatureUrl || null;
+      }
       const nowDate = new Date().toLocaleDateString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric" });
       const nowIso = new Date().toISOString();
 
@@ -2119,6 +2125,7 @@ const POView = React.memo(() => {
 
         const poDataForPdf = {
           ...po,
+          ...approvalIdentityForPdf,
           pcmdate,
           gmdate,
           reason: po.reason || "",
@@ -2128,24 +2135,15 @@ const POView = React.memo(() => {
         let bytes = await generatePOPdfBytes(poDataForPdf, { vendor, project });
 
         // Stamp Signature1 = ผู้สร้าง PO
-        const creatorSig = po.creatorSignatureDataUrl || po.creatorSignatureUrl;
-        if (creatorSig) {
-          try { bytes = await stampSignatureToField(bytes, creatorSig, "Signature1"); }
-          catch (e) { console.warn("[PO Approve] Stamp Signature1 failed:", e); }
-        }
+        bytes = await stampPoSignaturesToPdf(bytes, poDataForPdf, {
+          currentUserData: userData,
+          currentAuthUser: user,
+          logPrefix: "[PO Approve]",
+        });
 
         // Stamp Signature2 = PCM (ถ้า GM กำลัง approve ให้ใช้ pcmSignatureUrl ที่เก็บไว้)
-        const pcmSig = isPCMApprove ? approverSig : (po.pcmSignatureDataUrl || po.pcmSignatureUrl);
-        if (pcmSig) {
-          try { bytes = await stampSignatureToField(bytes, pcmSig, "Signature2"); }
-          catch (e) { console.warn("[PO Approve] Stamp Signature2 failed:", e); }
-        }
 
         // Stamp Signature3 = GM
-        if (isGMApprove && approverSig) {
-          try { bytes = await stampSignatureToField(bytes, approverSig, "Signature3"); }
-          catch (e) { console.warn("[PO Approve] Stamp Signature3 failed:", e); }
-        }
 
         // pcmdate / gmdate ถูก embed โดยตรงผ่าน form field ใน generatePOPdfBytes แล้ว
         // ไม่ต้อง stampTextToFieldRect ซ้ำ (ถ้า stamp ซ้ำจะทำให้ข้อความทับกัน)

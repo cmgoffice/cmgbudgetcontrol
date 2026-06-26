@@ -19,6 +19,7 @@ import { useProportionalTableLayout } from "../hooks/useProportionalTableLayout"
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 import { PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, PURCHASE_TYPE_EQUIPMENT, DELIVERY_LOCATIONS, getPurchaseTypeDisplayLabel, COST_CATEGORIES } from "../lib/constants";
 import { uploadAttachment } from "../lib/uploadAttachment";
+import { getUserIdentity } from "../lib/poSignatureStamps";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
 import { computeBudgetUsedAfterPrRevision, getLinkedPoRefsForPr, getPrBudgetReturnInfo, restorePrItemsFromRevision, scalePrItemsToTotal } from "../lib/prBudgetReturn";
 import { motion, AnimatePresence } from "framer-motion";
@@ -955,6 +956,8 @@ const PRView = React.memo(() => {
     }
 
     const { attachment: _omitFile, attachments: _omitAtts, existingAttachments: _omitExisting, ...headerWithoutFile } = headerData;
+    const editingPrForCreator = editingPRId ? prs.find((p: any) => p.id === editingPRId) : null;
+    const prCreator = getUserIdentity(userData, user);
     const prPayload = {
       ...headerWithoutFile,
       prNo: resolvedPrNo,
@@ -966,6 +969,11 @@ const PRView = React.memo(() => {
       items: lineItems,
       totalAmount: thisPrTotal,
       status: "Pending CM",
+      createdByUid: editingPrForCreator?.createdByUid || prCreator.uid || null,
+      createdByEmail: editingPrForCreator?.createdByEmail || prCreator.email || null,
+      createdByFirstName: editingPrForCreator?.createdByFirstName || prCreator.firstName || null,
+      createdByLastName: editingPrForCreator?.createdByLastName || prCreator.lastName || null,
+      createdByName: editingPrForCreator?.createdByName || prCreator.name || null,
       ...(wasEditBudget ? { editBudgetReason: null, editBudgetBy: null, editBudgetAt: null } : {}),
     };
 
@@ -1226,6 +1234,7 @@ const PRView = React.memo(() => {
     }
 
     const { attachment: _omitFile, ...headerWithoutFile } = contractHeaderData;
+    const prCreator = getUserIdentity(userData, user);
     const prPayload = {
       ...headerWithoutFile,
       prNo: resolvedPrNo,
@@ -1237,6 +1246,11 @@ const PRView = React.memo(() => {
       totalAmount: contractTotal,
       status: "Pending CM",
       prType: "contract",
+      createdByUid: prCreator.uid || null,
+      createdByEmail: prCreator.email || null,
+      createdByFirstName: prCreator.firstName || null,
+      createdByLastName: prCreator.lastName || null,
+      createdByName: prCreator.name || null,
     };
 
     let pdfUrl: string | undefined;

@@ -37,6 +37,7 @@ import {
   buildDeleteLogDetails as buildCrudDeleteLogDetails,
   buildUpdateLogDetails as buildCrudUpdateLogDetails,
 } from "../lib/systemLogDetails";
+import { buildPoApprovalIdentityFields } from "../lib/poSignatureStamps";
 
 // Firestore document paths for dynamic permissions
 const ROLE_PERMISSIONS_DOC = ["artifacts", appId, "public", "data", "settings", "rolePermissions"];
@@ -757,9 +758,11 @@ export const AppDataProvider = ({
     const isAutoReceive = isReceiveAutoType(po.receiveType);
     const hasConfiguredInvoice = hasConfiguredPayBeforeReceive(po);
     const hasConfiguredReceive = hasConfiguredReceiveAfterPayment(po);
+    const isPCMApprove = action === "approve" && po.status === "Pending PCM" && (roles.includes("PCM") || roles.includes("Administrator"));
+    const isGMApprove = action === "approve" && po.status === "Pending GM" && (roles.includes("GM") || roles.includes("Administrator"));
     if (action === "approve") {
-      if (po.status === "Pending PCM" && (roles.includes("PCM") || roles.includes("Administrator"))) newStatus = "Pending GM";
-      else if (po.status === "Pending GM" && (roles.includes("GM") || roles.includes("Administrator"))) {
+      if (isPCMApprove) newStatus = "Pending GM";
+      else if (isGMApprove) {
         newStatus = getPoFinalApprovalStatus(po);
       }
     } else if (action === "reject") {
@@ -770,7 +773,25 @@ export const AppDataProvider = ({
       if (newStatus === "Received") payload.statusNow = "Received";
       if (newStatus === "Wait Invoice") payload.statusNow = "Wait Invoice";
       if (newStatus === "Paid") payload.statusNow = "Paid";
-      if (action === "approve") payload.rejectReason = "";
+      if (action === "approve") {
+        payload.rejectReason = "";
+        payload.creatorSignatureDataUrl = deleteField();
+        payload.pcmSignatureDataUrl = deleteField();
+        payload.gmSignatureDataUrl = deleteField();
+        const approvedAt = new Date().toISOString();
+        if (isPCMApprove) {
+          Object.assign(payload, buildPoApprovalIdentityFields("Signature2", userData, user), {
+            pcmApprovedAt: approvedAt,
+            pcmSignatureUrl: userData?.signatureUrl || null,
+          });
+        }
+        if (isGMApprove) {
+          Object.assign(payload, buildPoApprovalIdentityFields("Signature3", userData, user), {
+            gmApprovedAt: approvedAt,
+            gmSignatureUrl: userData?.signatureUrl || null,
+          });
+        }
+      }
       let autoInvoiceNo = "";
       if (action === "approve" && po.status === "Pending GM" && hasConfiguredInvoice) {
         const existingInvoice = invoices.find((invoice) => invoice.poId === po.id);

@@ -625,14 +625,16 @@ export async function generatePaymentPdfBytes(
     preiod: payment.periodNo || "1",
     month: monthValue,
     today: safeDate(payment.createdAt || new Date().toISOString()),
-    createdate: safeDate(payment.createdAt || new Date().toISOString()),
-    cmdate: safeDate(payment.cmApprovedAt || payment.cmApprovedDate || ""),
-    pmdate: safeDate(payment.pmApprovedAt || payment.pmApprovedDate || ""),
+    createdate: safeDate(payment.periodPreparedAt || payment.createdAt || new Date().toISOString()),
+    cmdate: safeDate(payment.periodCheckedAt || payment.cmApprovedAt || payment.cmApprovedDate || ""),
+    pmdate: safeDate(payment.periodApprovedAt || payment.pmApprovedAt || payment.pmApprovedDate || ""),
   };
 
   if (hasForm) {
     const mergedPdf = await PDFDocument.create();
     const MAX_ROWS = 17;
+    const sigRects: Record<string, any> = {};
+    const fieldRects: Record<string, any> = {};
 
     // Estimate how many "line units" an item consumes based on description length
     function estimateLineCost(description: string): number {
@@ -702,6 +704,22 @@ export async function generatePaymentPdfBytes(
       setTextIfExists(form, ["cmdate"], headerData.cmdate, pageCustomFont);
       setTextIfExists(form, ["pmdate"], headerData.pmdate, pageCustomFont);
 
+      const saveFieldRect = (name: string) => {
+        try {
+          const f = form.getField(name);
+          const widgets = f.acroField.getWidgets();
+          if (widgets.length > 0) {
+            const rect = widgets[0].getRectangle();
+            fieldRects[name] = { x: rect.x, y: rect.y, width: rect.width, height: rect.height, page: c };
+          }
+        } catch (_) {}
+      };
+
+      ["Signature1", "Signature2", "Signature3"].forEach((name) => {
+        saveFieldRect(name);
+        if (fieldRects[name]) sigRects[name] = fieldRects[name];
+      });
+
       // 3. Fill grand total fields
       const totalContractAmount = items.reduce((s: number, it: any) => s + Number(it.contractAmount || 0), 0);
       const totalAccumQty       = items.reduce((s: number, it: any) => s + (Number(it.prevAccumQty || 0) + Number(it.thisPeriodQty || 0)), 0);
@@ -721,6 +739,24 @@ export async function generatePaymentPdfBytes(
 
       const [copiedPage] = await mergedPdf.copyPages(pdfDoc, [0]);
       mergedPdf.addPage(copiedPage);
+    }
+
+    try { mergedPdf.getForm(); } catch (_) {}
+    if (Object.keys(sigRects).length > 0) {
+      try {
+        const newForm = mergedPdf.getForm();
+        const metaField = newForm.createTextField("_sigRects");
+        metaField.setText(JSON.stringify(sigRects));
+        metaField.addToPage(mergedPdf.getPages()[0], { x: -200, y: -200, width: 1, height: 1, borderWidth: 0 });
+      } catch (_) {}
+    }
+    if (Object.keys(fieldRects).length > 0) {
+      try {
+        const newForm = mergedPdf.getForm();
+        const metaField = newForm.createTextField("_fieldRects");
+        metaField.setText(JSON.stringify(fieldRects));
+        metaField.addToPage(mergedPdf.getPages()[0], { x: -200, y: -201, width: 1, height: 1, borderWidth: 0 });
+      } catch (_) {}
     }
 
     return await mergedPdf.save();
