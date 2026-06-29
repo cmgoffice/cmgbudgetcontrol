@@ -3,6 +3,7 @@ import React, { useState, useMemo, useCallback, useContext, useEffect } from "re
 import {
   ChevronDown, ChevronRight, Package, Eye, FileText,
   Plus, X, Check, Clock, ExternalLink, Truck, ImageIcon, List, Search, Trash2,
+  RefreshCw,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAppData } from "../contexts/AppDataContext";
@@ -23,6 +24,7 @@ import {
   truncateLogText,
 } from "../lib/systemLogDetails";
 import { resolveCurrentUserSignatureImage } from "../lib/poSignatureStamps";
+import { isCmgStoreEligibleReceiveType, sendReceiveToCmgStore } from "../lib/cmgStoreSync";
 
 const PO_TYPE_LABELS = {
   CR: "CR — เครดิต",
@@ -48,6 +50,23 @@ const getReceiveReceiverName = (rcv: any, po: any) => {
     return po.createdByName || nameFromFirstLast || rcv.receivedByName || "System";
   }
   return rcv.receivedByName || "-";
+};
+
+const getCmgStoreSyncBadge = (sync: any) => {
+  const status = String(sync?.status || "").toLowerCase();
+  if (status === "success") {
+    return { label: "ส่งแล้ว", className: "bg-emerald-50 text-emerald-700 border-emerald-200" };
+  }
+  if (status === "failed") {
+    return { label: "ส่งไม่สำเร็จ", className: "bg-red-50 text-red-700 border-red-200" };
+  }
+  if (status === "pending") {
+    return { label: "กำลังส่ง", className: "bg-amber-50 text-amber-700 border-amber-200" };
+  }
+  if (status === "skipped") {
+    return { label: "ไม่ส่ง", className: "bg-slate-50 text-slate-500 border-slate-200" };
+  }
+  return { label: "-", className: "bg-slate-50 text-slate-400 border-slate-200" };
 };
 
 const ReceiveView = React.memo(() => {
@@ -78,6 +97,7 @@ const ReceiveView = React.memo(() => {
   const [photoPreview, setPhotoPreview] = useState(null);
   const [viewingRcv, setViewingRcv] = useState(null);
   const [uploadingPhotos, setUploadingPhotos] = useState({});
+  const [cmgStoreRetryingId, setCmgStoreRetryingId] = useState<string | null>(null);
 
   // Receive Evaluation state
   const [receiveEvalModalOpen, setReceiveEvalModalOpen] = useState(false);
@@ -266,6 +286,10 @@ const ReceiveView = React.memo(() => {
       return {
         poItemIndex: idx,
         lineNo,
+        iditem: item.iditem || item.idItem || item.itemId || item.materialId || "",
+        idItem: item.idItem || "",
+        itemId: item.itemId || "",
+        materialId: item.materialId || "",
         materialNo: item.materialNo || "",
         description: item.description || "",
         unit: item.unit || "",
@@ -507,6 +531,10 @@ const ReceiveView = React.memo(() => {
         }
         savedItems.push({
           poItemIndex: item.poItemIndex,
+          iditem: item.iditem || "",
+          idItem: item.idItem || "",
+          itemId: item.itemId || "",
+          materialId: item.materialId || "",
           materialNo: item.materialNo,
           description: item.description,
           unit: item.unit,
@@ -581,6 +609,7 @@ const ReceiveView = React.memo(() => {
       // ─────────────────────────────────────────────────────────────────────
 
       setSavingStep("กำลังบันทึกข้อมูล...");
+      const shouldSyncCmgStore = isCmgStoreEligibleReceiveType(po.receiveType);
       const receiveData = {
         receiveNo,
         rpNo: receiveNo,
@@ -597,20 +626,77 @@ const ReceiveView = React.memo(() => {
         receivedByName,
         note: receiveNote,
         createdAt: now.toISOString(),
+        receiveType: po.receiveType || "",
+        cmgStoreSync: shouldSyncCmgStore
+          ? {
+              status: "pending",
+              target: "CMG Store Management",
+              targetModule: "Approve Incoming Items",
+              lastAttemptAt: now.toISOString(),
+            }
+          : {
+              status: "skipped",
+              target: "CMG Store Management",
+              targetModule: "Approve Incoming Items",
+              reason: `receiveType ${po.receiveType || "-"} ไม่ใช่ Material/EQM`,
+            },
         ...(pdfUrl ? { pdfUrl, pdfPath } : {}),
         ...(totalPhotos > 0 ? { totalPhotos } : {}),
       };
 
-      const success = await addData("receives", receiveData, null, { skipLog: true });
-      if (!success) {
+      const createdReceiveId = await addData("receives", receiveData, null, { skipLog: true });
+      if (!createdReceiveId) {
         setSaving(false);
         setSavingStep("");
         return;
       }
 
+      let cmgStoreSyncFailed = false;
+      let cmgStoreSyncSuccess = false;
+      if (shouldSyncCmgStore) {
+        setSavingStep("กำลังส่งข้อมูลไป CMG Store Management...");
+        try {
+          const syncResult = await sendReceiveToCmgStore({ receive: receiveData, po });
+          const nextSync = syncResult.skipped
+            ? {
+                status: "skipped",
+                target: "CMG Store Management",
+                targetModule: "Approve Incoming Items",
+                reason: syncResult.reason || "ไม่เข้าเงื่อนไขส่งข้อมูล",
+                lastAttemptAt: new Date().toISOString(),
+              }
+            : {
+                status: "success",
+                target: "CMG Store Management",
+                targetModule: "Approve Incoming Items",
+                requestId: syncResult.requestId,
+                path: syncResult.path,
+                itemCount: syncResult.itemCount,
+                sentAt: syncResult.sentAt,
+                lastAttemptAt: new Date().toISOString(),
+                errorMessage: "",
+              };
+          receiveData.cmgStoreSync = nextSync;
+          cmgStoreSyncSuccess = nextSync.status === "success";
+          await updateData("receives", createdReceiveId, { cmgStoreSync: nextSync }, { skipLog: true });
+        } catch (syncErr: any) {
+          cmgStoreSyncFailed = true;
+          const failedSync = {
+            status: "failed",
+            target: "CMG Store Management",
+            targetModule: "Approve Incoming Items",
+            errorMessage: syncErr?.message || String(syncErr),
+            lastAttemptAt: new Date().toISOString(),
+          };
+          receiveData.cmgStoreSync = failedSync;
+          await updateData("receives", createdReceiveId, { cmgStoreSync: failedSync }, { skipLog: true });
+          console.warn("[ReceiveView] Failed to sync receive to CMG Store Management:", syncErr);
+        }
+      }
+
       await logAction?.(
         "Create Receive",
-        `สร้าง Receive | ${getReceiveLogSummary(receiveData, { id: receiveNo })} | มูลค่ารับรวม: ${formatLogCurrency(savedItems.reduce((sum, item) => sum + Number(item.amount || 0), 0)) || "฿0"}${resolvedPrNo ? ` | PR: ${resolvedPrNo}` : ""}`,
+        `สร้าง Receive | ${getReceiveLogSummary(receiveData, { id: receiveNo })} | มูลค่ารับรวม: ${formatLogCurrency(savedItems.reduce((sum, item) => sum + Number(item.amount || 0), 0)) || "฿0"}${resolvedPrNo ? ` | PR: ${resolvedPrNo}` : ""}${cmgStoreSyncSuccess ? " | CMG Store: success" : ""}${cmgStoreSyncFailed ? ` | CMG Store: failed (${receiveData.cmgStoreSync?.errorMessage || "-"})` : ""}`,
         selectedProjectId
       );
 
@@ -649,13 +735,17 @@ const ReceiveView = React.memo(() => {
         showAlert(
           "รับของครบ",
           isPayBeforeReceive
-            ? `PO ${po.poNo} รับของครบทุกรายการ — สถานะเปลี่ยนเป็น Paid`
-            : `PO ${po.poNo} รับของครบทุกรายการ — สถานะเปลี่ยนเป็น Received`,
-          "success"
+            ? `PO ${po.poNo} รับของครบทุกรายการ — สถานะเปลี่ยนเป็น Paid${cmgStoreSyncFailed ? "\n\nแต่ส่งไป CMG Store Management ไม่สำเร็จ สามารถ retry ได้จากรายการ Receive" : cmgStoreSyncSuccess ? "\n\nส่งข้อมูลไป CMG Store Management แล้ว" : ""}`
+            : `PO ${po.poNo} รับของครบทุกรายการ — สถานะเปลี่ยนเป็น Received${cmgStoreSyncFailed ? "\n\nแต่ส่งไป CMG Store Management ไม่สำเร็จ สามารถ retry ได้จากรายการ Receive" : cmgStoreSyncSuccess ? "\n\nส่งข้อมูลไป CMG Store Management แล้ว" : ""}`,
+          cmgStoreSyncFailed ? "warning" : "success"
         );
       } else {
         await updateData("pos", po.id, { statusNow: "Partial Receive" }, { skipLog: true });
-        showAlert("สำเร็จ", `บันทึกรับของ ${receiveNo} เรียบร้อย`, "success");
+        showAlert(
+          cmgStoreSyncFailed ? "บันทึกรับของแล้ว แต่ส่ง Store ไม่สำเร็จ" : "สำเร็จ",
+          `บันทึกรับของ ${receiveNo} เรียบร้อย${cmgStoreSyncFailed ? "\n\nสามารถ retry การส่งไป CMG Store Management ได้จากรายการ Receive" : cmgStoreSyncSuccess ? "\n\nส่งข้อมูลไป CMG Store Management แล้ว" : ""}`,
+          cmgStoreSyncFailed ? "warning" : "success"
+        );
       }
 
       setViewingPO(null);
@@ -741,6 +831,128 @@ const ReceiveView = React.memo(() => {
       return poNoMatch && vendorMatch;
     });
   }, [sortedReceiveHistory, histPOSearch, histVendorSearch]);
+
+  const handleRetryCmgStoreSync = useCallback(async (rcv) => {
+    if (!rcv?.id) return;
+
+    const po = pos.find((entry) => entry.id === rcv.poId);
+    if (!po) {
+      showAlert("ไม่พบ PO", "ไม่สามารถ retry ได้เพราะไม่พบ PO ที่ผูกกับ Receive นี้", "warning");
+      return;
+    }
+    if (!isCmgStoreEligibleReceiveType(po.receiveType || rcv.receiveType)) {
+      showAlert("ไม่เข้าเงื่อนไข", "ส่งไป CMG Store ได้เฉพาะ PO receiveType Material หรือ EQM เท่านั้น", "warning");
+      return;
+    }
+
+    const pendingSync = {
+      status: "pending",
+      target: "CMG Store Management",
+      targetModule: "Approve Incoming Items",
+      lastAttemptAt: new Date().toISOString(),
+    };
+
+    setCmgStoreRetryingId(rcv.id);
+    await updateData("receives", rcv.id, { cmgStoreSync: pendingSync }, { skipLog: true });
+    setViewingRcv((prev) => (
+      prev && prev.rcv?.id === rcv.id
+        ? { ...prev, rcv: { ...prev.rcv, cmgStoreSync: pendingSync } }
+        : prev
+    ));
+
+    try {
+      const syncResult = await sendReceiveToCmgStore({
+        receive: { ...rcv, cmgStoreSync: pendingSync },
+        po,
+      });
+      const nextSync = syncResult.skipped
+        ? {
+            status: "skipped",
+            target: "CMG Store Management",
+            targetModule: "Approve Incoming Items",
+            reason: syncResult.reason || "ไม่เข้าเงื่อนไขส่งข้อมูล",
+            lastAttemptAt: new Date().toISOString(),
+          }
+        : {
+            status: "success",
+            target: "CMG Store Management",
+            targetModule: "Approve Incoming Items",
+            requestId: syncResult.requestId,
+            path: syncResult.path,
+            itemCount: syncResult.itemCount,
+            sentAt: syncResult.sentAt,
+            lastAttemptAt: new Date().toISOString(),
+            errorMessage: "",
+          };
+
+      await updateData("receives", rcv.id, { cmgStoreSync: nextSync }, { skipLog: true });
+      setViewingRcv((prev) => (
+        prev && prev.rcv?.id === rcv.id
+          ? { ...prev, rcv: { ...prev.rcv, cmgStoreSync: nextSync } }
+          : prev
+      ));
+      await logAction?.(
+        "Retry CMG Store Sync",
+        `ส่ง Receive ${rcv.rpNo || rcv.receiveNo || rcv.id} ไป CMG Store Management สำเร็จ | ${nextSync.path || "-"}`,
+        rcv.projectId || selectedProjectId
+      );
+      showAlert("ส่งสำเร็จ", `ส่ง ${rcv.rpNo || rcv.receiveNo || "Receive"} ไป CMG Store Management แล้ว`, "success");
+    } catch (error: any) {
+      const failedSync = {
+        status: "failed",
+        target: "CMG Store Management",
+        targetModule: "Approve Incoming Items",
+        errorMessage: error?.message || String(error),
+        lastAttemptAt: new Date().toISOString(),
+      };
+      await updateData("receives", rcv.id, { cmgStoreSync: failedSync }, { skipLog: true });
+      setViewingRcv((prev) => (
+        prev && prev.rcv?.id === rcv.id
+          ? { ...prev, rcv: { ...prev.rcv, cmgStoreSync: failedSync } }
+          : prev
+      ));
+      await logAction?.(
+        "Retry CMG Store Sync Failed",
+        `ส่ง Receive ${rcv.rpNo || rcv.receiveNo || rcv.id} ไป CMG Store Management ไม่สำเร็จ | ${failedSync.errorMessage}`,
+        rcv.projectId || selectedProjectId
+      );
+      showAlert("ส่งไม่สำเร็จ", failedSync.errorMessage, "error");
+    } finally {
+      setCmgStoreRetryingId(null);
+    }
+  }, [logAction, pos, selectedProjectId, showAlert, updateData]);
+
+  const renderCmgStoreSyncStatus = useCallback((rcv) => {
+    const badge = getCmgStoreSyncBadge(rcv?.cmgStoreSync);
+    const failed = String(rcv?.cmgStoreSync?.status || "").toLowerCase() === "failed";
+    return (
+      <div className="flex flex-col items-center gap-1">
+        <span
+          className={`inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap ${badge.className}`}
+          title={rcv?.cmgStoreSync?.errorMessage || rcv?.cmgStoreSync?.reason || ""}
+        >
+          {badge.label}
+        </span>
+        {failed && (
+          <>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-amber-200 bg-white hover:bg-amber-50 text-amber-600 text-[10px] font-medium transition-colors disabled:opacity-60"
+              onClick={() => handleRetryCmgStoreSync(rcv)}
+              disabled={cmgStoreRetryingId === rcv.id}
+            >
+              <RefreshCw size={11} className={cmgStoreRetryingId === rcv.id ? "animate-spin" : ""} /> ส่ง Store
+            </button>
+            {rcv?.cmgStoreSync?.errorMessage && (
+              <span className="max-w-[160px] truncate text-[9px] text-red-500" title={rcv.cmgStoreSync.errorMessage}>
+                {rcv.cmgStoreSync.errorMessage}
+              </span>
+            )}
+          </>
+        )}
+      </div>
+    );
+  }, [cmgStoreRetryingId, handleRetryCmgStoreSync]);
 
   // Delete receive record
   const handleDeleteReceive = useCallback((rcv) => {
@@ -1021,6 +1233,7 @@ const ReceiveView = React.memo(() => {
                   {isColumnVisible("receive-history", "type") && <th className="py-1 px-3">Type</th>}
                   {isColumnVisible("receive-history", "vendor") && <th className="py-1 px-3">Vendor</th>}
                   {isColumnVisible("receive-history", "items") && <th className="py-1 px-3 text-center">รายการสินค้า</th>}
+                  {isColumnVisible("receive-history", "storeSync") && <th className="py-1 px-3 text-center">Store</th>}
                   {isColumnVisible("receive-history", "receivedBy") && <th className="py-1 px-3">ผู้รับของ</th>}
                   {isColumnVisible("receive-history", "note") && <th className="py-1 px-3">หมายเหตุ</th>}
                   <th className="hidden py-1 px-3 text-center md:table-cell">Actions</th>
@@ -1053,6 +1266,16 @@ const ReceiveView = React.memo(() => {
                               onClick={() => handleDeleteReceive(rcv)}
                             >
                               <Trash2 size={11} /> ลบ
+                            </button>
+                          )}
+                          {rcv.cmgStoreSync?.status === "failed" && (
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-amber-200 bg-white hover:bg-amber-50 text-amber-600 text-[10px] font-medium transition-colors disabled:opacity-60"
+                              onClick={() => handleRetryCmgStoreSync(rcv)}
+                              disabled={cmgStoreRetryingId === rcv.id}
+                            >
+                              <RefreshCw size={11} className={cmgStoreRetryingId === rcv.id ? "animate-spin" : ""} /> ส่ง Store
                             </button>
                           )}
                         </div>
@@ -1100,6 +1323,11 @@ const ReceiveView = React.memo(() => {
                           </div>
                         </td>
                       )}
+                      {isColumnVisible("receive-history", "storeSync") && (
+                        <td className="py-1 px-3 text-center" onClick={(e) => e.stopPropagation()}>
+                          {renderCmgStoreSyncStatus(rcv)}
+                        </td>
+                      )}
                       {isColumnVisible("receive-history", "receivedBy") && (
                         <td className="py-1 px-3 whitespace-nowrap">{getReceiveReceiverName(rcv, po)}</td>
                       )}
@@ -1124,6 +1352,16 @@ const ReceiveView = React.memo(() => {
                               onClick={() => handleDeleteReceive(rcv)}
                             >
                               <Trash2 size={11} /> ลบ
+                            </button>
+                          )}
+                          {rcv.cmgStoreSync?.status === "failed" && (
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-amber-200 bg-white hover:bg-amber-50 text-amber-600 text-[10px] font-medium transition-colors disabled:opacity-60"
+                              onClick={() => handleRetryCmgStoreSync(rcv)}
+                              disabled={cmgStoreRetryingId === rcv.id}
+                            >
+                              <RefreshCw size={11} className={cmgStoreRetryingId === rcv.id ? "animate-spin" : ""} /> ส่ง Store
                             </button>
                           )}
                         </div>

@@ -469,7 +469,7 @@ export const AppDataProvider = ({
           deriveLogProjectId(collectionName, newId, data, listBundle)
         );
       }
-      return true;
+      return newId || true;
     } catch (e) {
       showAlert("Error", "เกิดข้อผิดพลาดในการบันทึกข้อมูล: " + e.message, "error");
       return false;

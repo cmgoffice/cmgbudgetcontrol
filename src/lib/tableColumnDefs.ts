@@ -212,6 +212,7 @@ export const TABLE_COLUMN_DEFS: Record<string, ColumnDef[]> = {
     { key: "type",       label: "Type",          defaultVisible: true },
     { key: "vendor",     label: "Vendor",        defaultVisible: true },
     { key: "items",      label: "รายการสินค้า",   defaultVisible: true },
+    { key: "storeSync",  label: "Store",         defaultVisible: true },
     { key: "receivedBy", label: "ผู้รับของ",      defaultVisible: true },
     { key: "note",       label: "หมายเหตุ",       defaultVisible: true },
     { key: "actions",    label: "Actions",        defaultVisible: true, locked: true },
