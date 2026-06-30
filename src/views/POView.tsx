@@ -57,6 +57,7 @@ const getDefaultPoFormData = () => ({
   poNo: "",
   poType: "",
   receiveType: "",
+  inventoryType: "",
   vendorId: "",
   requiredDate: "",
   poOpenDate: new Date().toISOString().split("T")[0],
@@ -222,6 +223,12 @@ const POView = React.memo(() => {
     { value: "Receive Auto", label: "Receive Auto" },
     { value: "RE", label: "RE" },
   ];
+  const INVENTORY_TYPES = [
+    { value: "Inventory", label: "Inventory" },
+    { value: "none inventory", label: "none inventory" },
+  ];
+  const isValidInventoryType = (inventoryType: string) =>
+    INVENTORY_TYPES.some((type) => type.value === inventoryType);
 
   // Payment Subcontract specific
   const getDefaultReceiveType = (poType: string) => {
@@ -1395,6 +1402,7 @@ const POView = React.memo(() => {
       const draftPayload: Record<string, any> = {
         poNo: resolvedPoNo,
         poType: formData.poType,
+        inventoryType: formData.inventoryType || "",
         ...(configuredFlowPayload.receiveType ? { receiveType: configuredFlowPayload.receiveType } : {}),
         projectId: selectedProjectId,
         vendorId: formData.vendorId || "",
@@ -1478,6 +1486,10 @@ const POView = React.memo(() => {
       return showAlert("ข้อมูลไม่ครบ", L.noType, "warning");
     }
 
+    if (!isValidInventoryType(formData.inventoryType || "")) {
+      return showAlert("ข้อมูลไม่ครบ", "กรุณาเลือก Inventory หรือ none inventory ก่อนกด submit", "warning");
+    }
+
     if (["CR", "SE", "RE", "SP"].includes(formData.poType) && !vendorEvalScoresRef.current) {
       setVendorEvalModalOpen(true);
       return;
@@ -1490,6 +1502,10 @@ const POView = React.memo(() => {
     if (poDraftInFlightRef.current || poSendInFlightRef.current) return;
     if (!formData.poType) {
       return showAlert("ข้อมูลไม่ครบ", L.noType, "warning");
+    }
+
+    if (!isValidInventoryType(formData.inventoryType || "")) {
+      return showAlert("ข้อมูลไม่ครบ", "กรุณาเลือก Inventory หรือ none inventory ก่อนกด submit", "warning");
     }
 
     poSendInFlightRef.current = true;
@@ -1633,6 +1649,7 @@ const POView = React.memo(() => {
         const project = projects.find((p: any) => p.id === selectedProjectId) || null;
         const draftPayload = {
           poNo: resolvedPoNo, poType: formData.poType,
+          inventoryType: formData.inventoryType || "",
           receiveType: configuredFlowPayload.receiveType,
           projectId: selectedProjectId, vendorId: formData.vendorId,
           requiredDate: formData.requiredDate, vatType: formData.vatType,
@@ -1693,6 +1710,7 @@ const POView = React.memo(() => {
       const basePayload = {
         poNo: resolvedPoNo,
         poType: formData.poType,
+        inventoryType: formData.inventoryType || "",
         ...(configuredFlowPayload.receiveType ? { receiveType: configuredFlowPayload.receiveType } : {}),
         projectId: selectedProjectId,
         vendorId: formData.vendorId,
@@ -2925,6 +2943,7 @@ const POView = React.memo(() => {
                                         poNo: po.poNo || "",
                                         poType: po.poType || "",
                                         receiveType: po.receiveType || "",
+                                        inventoryType: po.inventoryType || "",
                                         vendorId: po.vendorId || "",
                                         requiredDate: po.requiredDate || "",
                                         poOpenDate: poOpenDateVal,
@@ -3124,6 +3143,7 @@ const POView = React.memo(() => {
                                       poNo: po.poNo || "",
                                       poType: po.poType || "",
                                       receiveType: po.receiveType || "",
+                                      inventoryType: po.inventoryType || "",
                                       vendorId: po.vendorId || "",
                                       requiredDate: po.requiredDate || "",
                                       poOpenDate: poOpenDateVal,
@@ -4183,12 +4203,45 @@ const POView = React.memo(() => {
                         </div>
                         
                         {/* Vendor Details — ครึ่งขวา */}
-                        <div className="border border-slate-200 rounded-xl bg-slate-50/80 overflow-hidden self-stretch flex flex-col min-w-0">
-                          <div className="px-4 py-2.5 bg-slate-200/80 border-b border-slate-200 flex items-center gap-2">
-                            <Building2 size={16} className="text-slate-600" />
-                            <span className="text-sm font-bold text-slate-700 uppercase tracking-wide">Vendor Details</span>
+                        <div className="border border-violet-300 rounded-xl bg-violet-50/80 overflow-hidden self-stretch flex flex-col min-w-0 shadow-sm shadow-violet-100">
+                          <div className="px-4 py-2.5 bg-gradient-to-r from-violet-700 to-purple-600 border-b border-violet-500 flex items-center gap-2">
+                            <Building2 size={16} className="text-white" />
+                            <span className="text-sm font-bold text-white uppercase tracking-wide">CMG Store Management</span>
                           </div>
-                          <div className="p-3 text-sm">
+                          <div className="px-3 py-2 border-b border-violet-200 bg-violet-100/70">
+                            <label className="flex items-center gap-1.5 text-[11px] font-bold text-violet-900 mb-2 uppercase tracking-wider">
+                              <Package size={11} className="text-violet-700 shrink-0" /> Inventory Type
+                            </label>
+                            <div className="flex flex-wrap gap-2">
+                              {INVENTORY_TYPES.map((type) => {
+                                const checked = formData.inventoryType === type.value;
+                                return (
+                                  <label
+                                    key={type.value}
+                                    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold ${
+                                      checked
+                                        ? "border-violet-600 bg-violet-700 text-white shadow-sm"
+                                        : "border-violet-200 bg-white text-violet-800 hover:border-violet-400 hover:bg-violet-50"
+                                    } cursor-pointer`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={(e) => {
+                                        setFormData({
+                                          ...formData,
+                                          inventoryType: e.target.checked ? type.value : "",
+                                        });
+                                      }}
+                                      className="rounded border-violet-300 text-violet-700 focus:ring-violet-200"
+                                    />
+                                    <span>{type.label}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+                          <div className="p-3 text-sm bg-white/90">
                             {formData.vendorId && (() => {
                               const v = vendors.find((x: any) => x.id === formData.vendorId);
                               if (!v) return <p className="text-slate-400">กำลังโหลด...</p>;
@@ -4210,10 +4263,10 @@ const POView = React.memo(() => {
 
                           {/* PR Attachments Section */}
                           {formData.selectedPrIds.length > 0 && (
-                            <div className="border-t border-slate-200 bg-white">
-                              <div className="px-4 py-2.5 bg-slate-100/80 border-b border-slate-200 flex items-center gap-2">
-                                <Paperclip size={16} className="text-slate-600" />
-                                <span className="text-sm font-bold text-slate-700 uppercase tracking-wide">เอกสารแนบจาก PR</span>
+                            <div className="border-t border-violet-200 bg-white">
+                              <div className="px-4 py-2.5 bg-violet-100/80 border-b border-violet-200 flex items-center gap-2">
+                                <Paperclip size={16} className="text-violet-700" />
+                                <span className="text-sm font-bold text-violet-900 uppercase tracking-wide">เอกสารแนบจาก PR</span>
                               </div>
                               <div className="p-3 text-sm max-h-40 overflow-y-auto">
                                 {(() => {

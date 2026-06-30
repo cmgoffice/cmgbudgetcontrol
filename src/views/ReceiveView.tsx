@@ -24,7 +24,11 @@ import {
   truncateLogText,
 } from "../lib/systemLogDetails";
 import { resolveCurrentUserSignatureImage } from "../lib/poSignatureStamps";
-import { isCmgStoreEligibleReceiveType, sendReceiveToCmgStore } from "../lib/cmgStoreSync";
+import {
+  getCmgStoreTargetProjectCode,
+  isCmgStoreEligibleInventoryStatus,
+  sendReceiveToCmgStore,
+} from "../lib/cmgStoreSync";
 
 const PO_TYPE_LABELS = {
   CR: "CR — เครดิต",
@@ -505,8 +509,14 @@ const ReceiveView = React.memo(() => {
       const now = new Date();
       const receivedByName = `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim();
       const resolvedPrNo = getPrNoFromPo(po);
-      const resolvedProjectCode = po.projectItemCode
-        || (resolvedPrNo ? resolvedPrNo.split(",")[0].trim().substring(0, 3) : "");
+      const resolvedProjectCode = (
+        isCmgStoreEligibleInventoryStatus(po.inventoryType)
+          ? getCmgStoreTargetProjectCode({
+              receive: { prNo: resolvedPrNo, poNo: po.poNo },
+              po,
+            })
+          : ""
+      ) || po.projectItemCode || (resolvedPrNo ? resolvedPrNo.split(",")[0].trim().substring(0, 3) : "");
       // ดึงชื่อผู้จำหน่ายจาก vendors list โดยตรง (เป็นค่าจริง ไม่ใช่ "-")
       const vendorObj = vendors.find((v) => v.id === po.vendorId);
       const resolvedVendorName =
@@ -609,7 +619,7 @@ const ReceiveView = React.memo(() => {
       // ─────────────────────────────────────────────────────────────────────
 
       setSavingStep("กำลังบันทึกข้อมูล...");
-      const shouldSyncCmgStore = isCmgStoreEligibleReceiveType(po.receiveType);
+      const shouldSyncCmgStore = isCmgStoreEligibleInventoryStatus(po.inventoryType);
       const receiveData = {
         receiveNo,
         rpNo: receiveNo,
@@ -627,6 +637,8 @@ const ReceiveView = React.memo(() => {
         note: receiveNote,
         createdAt: now.toISOString(),
         receiveType: po.receiveType || "",
+        inventoryType: po.inventoryType || "",
+        deliveryLocation: po.location || "",
         cmgStoreSync: shouldSyncCmgStore
           ? {
               status: "pending",
@@ -638,7 +650,7 @@ const ReceiveView = React.memo(() => {
               status: "skipped",
               target: "CMG Store Management",
               targetModule: "Approve Incoming Items",
-              reason: `receiveType ${po.receiveType || "-"} ไม่ใช่ Material/EQM`,
+              reason: `CMG Store Management Status ${po.inventoryType || "-"} ไม่ใช่ Inventory`,
             },
         ...(pdfUrl ? { pdfUrl, pdfPath } : {}),
         ...(totalPhotos > 0 ? { totalPhotos } : {}),
@@ -773,6 +785,13 @@ const ReceiveView = React.memo(() => {
 
   const currentPrNo = useMemo(() => getPrNoFromPo(viewingPO), [viewingPO, getPrNoFromPo]);
   const projectItemCode = useMemo(() => {
+    if (isCmgStoreEligibleInventoryStatus(viewingPO?.inventoryType)) {
+      const cmgProjectCode = getCmgStoreTargetProjectCode({
+        receive: { prNo: currentPrNo, poNo: viewingPO?.poNo },
+        po: viewingPO,
+      });
+      if (cmgProjectCode) return cmgProjectCode;
+    }
     if (viewingPO?.projectItemCode) return viewingPO.projectItemCode;
     if (currentPrNo) {
       const first = String(currentPrNo).split(",")[0].trim();
@@ -840,8 +859,8 @@ const ReceiveView = React.memo(() => {
       showAlert("ไม่พบ PO", "ไม่สามารถ retry ได้เพราะไม่พบ PO ที่ผูกกับ Receive นี้", "warning");
       return;
     }
-    if (!isCmgStoreEligibleReceiveType(po.receiveType || rcv.receiveType)) {
-      showAlert("ไม่เข้าเงื่อนไข", "ส่งไป CMG Store ได้เฉพาะ PO receiveType Material หรือ EQM เท่านั้น", "warning");
+    if (!isCmgStoreEligibleInventoryStatus(po.inventoryType || rcv.inventoryType)) {
+      showAlert("ไม่เข้าเงื่อนไข", "ส่งไป CMG Store ได้เฉพาะ PO ที่ CMG Store Management Status เป็น Inventory เท่านั้น", "warning");
       return;
     }
 

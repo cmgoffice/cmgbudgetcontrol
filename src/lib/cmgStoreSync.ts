@@ -22,6 +22,45 @@ export function isCmgStoreEligibleReceiveType(receiveType: any) {
   return normalized === "material" || normalized === "eqm";
 }
 
+export function isCmgStoreEligibleInventoryStatus(inventoryType: any) {
+  return normalizeKey(inventoryType) === "inventory";
+}
+
+function normalizeCmgProjectCode(value: any) {
+  const raw = normalizeText(value);
+  if (!raw) return "";
+  const upper = raw.toUpperCase().replace(/\s+/g, "");
+  const match = upper.match(/^J-?(\d{1,3}[A-Z]?)$/);
+  if (!match) return upper;
+  return `J-${match[1]}`;
+}
+
+function extractProjectCodeFromDocNo(value: any) {
+  const raw = normalizeText(value);
+  if (!raw) return "";
+  const first = raw.split(",")[0].trim();
+  const match = first.match(/J-?\d{1,3}[A-Z]?/i);
+  return match ? normalizeCmgProjectCode(match[0]) : "";
+}
+
+export function getCmgStoreTargetProjectCode({ receive, po }: { receive?: any; po?: any }) {
+  const location = normalizeKey(po?.location || receive?.location || receive?.deliveryLocation);
+
+  if (location.includes("headoffice") || location.includes("head office")) {
+    return "J-01";
+  }
+  if (location.includes("workshop")) {
+    return "J-02B";
+  }
+
+  const fromDocNo =
+    extractProjectCodeFromDocNo(receive?.prNo || po?.prNo) ||
+    extractProjectCodeFromDocNo(receive?.poNo || po?.poNo);
+  if (fromDocNo) return fromDocNo;
+
+  return normalizeCmgProjectCode(receive?.projectItemCode || po?.projectItemCode);
+}
+
 function getEnvValue(key: string, fallbackKey?: string) {
   return process.env[key] || (fallbackKey ? process.env[fallbackKey] : undefined) || "";
 }
@@ -77,6 +116,19 @@ function safeDocId(value: any) {
   return source.replace(/[/?#[\].]/g, "_").replace(/\s+/g, "_");
 }
 
+function extractRunningNoFromReceiveNo(value: any) {
+  const raw = normalizeText(value);
+  if (!raw) return "";
+  const match = raw.match(/(\d+)$/);
+  return match ? match[1] : "";
+}
+
+function buildReceivingRequestDocId(cmgProjectCode: string, receiveNo: string) {
+  const runningNo = extractRunningNoFromReceiveNo(receiveNo);
+  const source = runningNo ? `${cmgProjectCode}-${runningNo}` : `${cmgProjectCode}-${receiveNo}`;
+  return safeDocId(source);
+}
+
 function getItemIdentity(item: any) {
   return (
     normalizeText(item?.iditem) ||
@@ -99,13 +151,17 @@ function buildItemIdempotencyKey(receiveNo: string, item: any) {
 
 export function buildCmgStoreReceiveRequest({ receive, po }: { receive: any; po: any }) {
   const receiveNo = normalizeText(receive?.receiveNo || receive?.rpNo);
-  const receiveType = normalizeText(po?.receiveType || receive?.receiveType);
+  const inventoryType = normalizeText(po?.inventoryType || receive?.inventoryType);
+  const targetProjectCode = getCmgStoreTargetProjectCode({ receive, po });
 
   if (!receiveNo) {
     throw new Error("ไม่พบ receiveNo/rpNo สำหรับส่งไป CMG Store Management");
   }
-  if (!isCmgStoreEligibleReceiveType(receiveType)) {
+  if (!isCmgStoreEligibleInventoryStatus(inventoryType)) {
     return null;
+  }
+  if (!targetProjectCode) {
+    throw new Error("ส่งไม่ได้: ไม่พบรหัสโครงการสำหรับส่งไป CMG Store Management");
   }
 
   const header = {
@@ -115,7 +171,11 @@ export function buildCmgStoreReceiveRequest({ receive, po }: { receive: any; po:
     poId: normalizeText(receive?.poId || po?.id),
     poNo: normalizeText(receive?.poNo || po?.poNo),
     prNo: normalizeText(receive?.prNo || po?.prNo),
-    projectId: normalizeText(receive?.projectId || po?.projectId),
+    projectId: targetProjectCode,
+    projectItemCode: targetProjectCode,
+    cmgProjectCode: targetProjectCode,
+    sourceProjectId: normalizeText(receive?.projectId || po?.projectId),
+    deliveryLocation: normalizeText(po?.location || receive?.location || receive?.deliveryLocation),
     vendorId: normalizeText(po?.vendorId || receive?.vendorId),
     vendorName: normalizeText(receive?.vendorName || po?.vendorName),
     documentNo: normalizeText(receive?.documentNo),
@@ -124,7 +184,8 @@ export function buildCmgStoreReceiveRequest({ receive, po }: { receive: any; po:
     receivedByName: normalizeText(receive?.receivedByName),
     note: normalizeText(receive?.note),
     createdAt: normalizeText(receive?.createdAt) || new Date().toISOString(),
-    receiveType,
+    receiveType: normalizeText(po?.receiveType || receive?.receiveType),
+    inventoryType,
   };
 
   const rawItems = receive?.items || [];
@@ -183,7 +244,7 @@ export function buildCmgStoreReceiveRequest({ receive, po }: { receive: any; po:
     throw new Error("ส่งไม่ได้: ไม่มีรายการ receive ที่มีจำนวนรับสำหรับส่งไป CMG Store Management");
   }
 
-  const requestId = safeDocId(receiveNo);
+  const requestId = buildReceivingRequestDocId(targetProjectCode, receiveNo);
   const sentAt = new Date().toISOString();
 
   return {
@@ -193,6 +254,9 @@ export function buildCmgStoreReceiveRequest({ receive, po }: { receive: any; po:
     sourcePayloadVersion: 1,
     status: "pending",
     header,
+    projectId: targetProjectCode,
+    projectItemCode: targetProjectCode,
+    cmgProjectCode: targetProjectCode,
     items,
     itemCount: items.length,
     sentAt,
@@ -206,7 +270,7 @@ export async function sendReceiveToCmgStore({ receive, po }: { receive: any; po:
     return {
       skipped: true,
       status: "skipped",
-      reason: `receiveType ${po?.receiveType || receive?.receiveType || "-"} ไม่ใช่ Material/EQM`,
+      reason: `CMG Store Management Status ${po?.inventoryType || receive?.inventoryType || "-"} ไม่ใช่ Inventory`,
     };
   }
 
