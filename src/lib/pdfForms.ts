@@ -97,7 +97,34 @@ async function fetchArrayBufferWithTimeout(url: string, timeoutMs = 5000, label 
   }
 }
 
-let globalFontBytes: ArrayBuffer | null = null;
+const DEFAULT_PDF_FONT_PATH = "/fonts/THSarabunNew.ttf";
+const PO_PDF_FONT_PATH = "/fonts/EucrosiaUPCBoldItalic.ttf";
+const fontBytesCache: Record<string, ArrayBuffer | null> = {};
+
+function getPdfFontCandidates(kind?: "pr" | "po" | "rp" | "payment") {
+  return kind === "po" ? [PO_PDF_FONT_PATH, DEFAULT_PDF_FONT_PATH] : [DEFAULT_PDF_FONT_PATH];
+}
+
+async function loadFontBytes(path: string): Promise<ArrayBuffer | null> {
+  if (path in fontBytesCache) return fontBytesCache[path];
+  try {
+    const fontRes = await fetch(path);
+    fontBytesCache[path] = fontRes.ok ? await fontRes.arrayBuffer() : null;
+  } catch (_) {
+    fontBytesCache[path] = null;
+  }
+  return fontBytesCache[path];
+}
+
+async function embedConfiguredFont(pdfDoc: any, kind?: "pr" | "po" | "rp" | "payment") {
+  for (const path of getPdfFontCandidates(kind)) {
+    try {
+      const fontBytes = await loadFontBytes(path);
+      if (fontBytes) return await pdfDoc.embedFont(fontBytes);
+    } catch (_) {}
+  }
+  return null;
+}
 
 async function loadTemplate(kind: "pr" | "po" | "rp" | "payment"): Promise<{ pdfDoc: any; hasForm: boolean; customFont?: any; templateBytes?: ArrayBuffer }> {
   const base =
@@ -139,15 +166,7 @@ async function loadTemplate(kind: "pr" | "po" | "rp" | "payment"): Promise<{ pdf
       const pdfDoc = await PDFDocument.load(arrayBuffer);
       pdfDoc.registerFontkit(fontkit);
       try {
-        if (!globalFontBytes) {
-          const fontRes = await fetch("/fonts/THSarabunNew.ttf");
-          if (fontRes.ok) {
-            globalFontBytes = await fontRes.arrayBuffer();
-          }
-        }
-        if (globalFontBytes) {
-          customFont = await pdfDoc.embedFont(globalFontBytes);
-        }
+        customFont = await embedConfiguredFont(pdfDoc, kind);
       } catch (_) {}
       if (!customFont) {
         const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -324,8 +343,8 @@ export async function generatePRPdfBytes(pr: any, { projectName = "", budgetDesc
       
       if (c > 0) {
         pdfDoc.registerFontkit(fontkit);
-        if (globalFontBytes) pageCustomFont = await pdfDoc.embedFont(globalFontBytes);
-        else {
+        pageCustomFont = await embedConfiguredFont(pdfDoc, "pr");
+        if (!pageCustomFont) {
           pageCustomFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
           pdfDoc.getForm().updateFieldAppearances(pageCustomFont);
         }
@@ -474,8 +493,8 @@ export async function generatePOPdfBytes(po: any, { vendor = null, project = nul
       
       if (c > 0) {
         pdfDoc.registerFontkit(fontkit);
-        if (globalFontBytes) pageCustomFont = await pdfDoc.embedFont(globalFontBytes);
-        else {
+        pageCustomFont = await embedConfiguredFont(pdfDoc, "po");
+        if (!pageCustomFont) {
           pageCustomFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
           pdfDoc.getForm().updateFieldAppearances(pageCustomFont);
         }
@@ -694,8 +713,8 @@ export async function generatePaymentPdfBytes(
 
       if (c > 0) {
         pdfDoc.registerFontkit(fontkit);
-        if (globalFontBytes) pageCustomFont = await pdfDoc.embedFont(globalFontBytes);
-        else {
+        pageCustomFont = await embedConfiguredFont(pdfDoc, "payment");
+        if (!pageCustomFont) {
           pageCustomFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
         }
       }
@@ -864,8 +883,8 @@ export async function generateRPPdfBytes(
       
       if (c > 0) {
         pdfDoc.registerFontkit(fontkit);
-        if (globalFontBytes) pageCustomFont = await pdfDoc.embedFont(globalFontBytes);
-        else {
+        pageCustomFont = await embedConfiguredFont(pdfDoc, "rp");
+        if (!pageCustomFont) {
           pageCustomFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
           pdfDoc.getForm().updateFieldAppearances(pageCustomFont);
         }
@@ -1175,7 +1194,7 @@ export async function stampTextToFieldRect(
   pdfBytes: Uint8Array,
   text: string,
   fieldName: string,
-  opts: { fontSize?: number; padding?: number } = {}
+  opts: { fontSize?: number; padding?: number; fontKind?: "pr" | "po" | "rp" | "payment" } = {}
 ): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.load(pdfBytes);
   const pages = pdfDoc.getPages();
@@ -1186,11 +1205,7 @@ export async function stampTextToFieldRect(
   let font: any = null;
   try {
     pdfDoc.registerFontkit(fontkit);
-    const res = await fetch("/fonts/THSarabunNew.ttf");
-    if (res.ok) {
-      const bytes = await res.arrayBuffer();
-      font = await pdfDoc.embedFont(bytes);
-    }
+    font = await embedConfiguredFont(pdfDoc, opts.fontKind || (fieldName === "reason" ? "po" : undefined));
   } catch (_) {}
   if (!font) font = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
