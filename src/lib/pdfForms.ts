@@ -98,7 +98,7 @@ async function fetchArrayBufferWithTimeout(url: string, timeoutMs = 5000, label 
 }
 
 const DEFAULT_PDF_FONT_PATH = "/fonts/THSarabunNew.ttf";
-const PO_PDF_FONT_PATH = "/fonts/EucrosiaUPCBoldItalic.ttf";
+const PO_PDF_FONT_PATH = "/fonts/upcel.ttf";
 const fontBytesCache: Record<string, ArrayBuffer | null> = {};
 
 function getPdfFontCandidates(kind?: "pr" | "po" | "rp" | "payment") {
