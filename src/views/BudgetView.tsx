@@ -350,6 +350,49 @@ const BudgetView = React.memo(() => {
       return sum + (Number(sub?.quantity || 0) * Number(sub?.unitPrice || 0));
     }, 0);
   }, []);
+  const getSubItemAmount = useCallback((sub) => {
+    const amount = Number(sub?.amount);
+    if (Number.isFinite(amount)) return amount;
+    return (Number(sub?.quantity || 0) * Number(sub?.unitPrice || 0)) || 0;
+  }, []);
+  const getSubItemPrUsed = useCallback((budget, sub) => {
+    if (!budget || !sub) return 0;
+
+    const budgetCode = budget.code || "";
+    const budgetDocId = budget.id;
+    const subItemId = sub.id || "";
+    const subDescription = (sub.description || "").trim();
+    const hasDuplicateCostCode = duplicateBudgetCodeSet.has(budgetCode);
+
+    const itemBelongsToBudget = (pr, item) => {
+      if (item?.budgetId) return item.budgetId === budgetDocId;
+      if (pr?.budgetId) return pr.budgetId === budgetDocId;
+      const itemCode = item?.costCode || pr?.costCode || "";
+      return !hasDuplicateCostCode && itemCode === budgetCode;
+    };
+
+    const itemMatchesSubItem = (pr, item) => {
+      if (subItemId && (item?.subItemId === subItemId || item?.budgetSubItemId === subItemId)) return true;
+      if (!itemBelongsToBudget(pr, item)) return false;
+
+      const itemDescription = (item?.description || "").trim();
+      if (!item?.subItemId && !item?.budgetSubItemId && itemDescription === subDescription) {
+        const hasAnySubItemId = (pr.items || []).some((prItem) => prItem?.subItemId || prItem?.budgetSubItemId);
+        return !hasAnySubItemId;
+      }
+
+      return false;
+    };
+
+    return projectPrs
+      .filter((pr) => pr.status !== "Rejected")
+      .reduce((sum, pr) => {
+        const usedInPr = (pr.items || [])
+          .filter((item) => itemMatchesSubItem(pr, item))
+          .reduce((itemSum, item) => itemSum + getItemAmount(item), 0);
+        return sum + usedInPr;
+      }, 0);
+  }, [duplicateBudgetCodeSet, getItemAmount, projectPrs]);
   const isSelectedProjectActive = (selectedProject?.status || "Active") === "Active";
   const latestRevisionBudgetTotal = Number(selectedProject?.budgetTotal || 0);
   const shouldEnforceRevisionBudgetTotal = isSelectedProjectActive && latestRevisionBudgetTotal > 0;
@@ -1758,19 +1801,27 @@ const BudgetView = React.memo(() => {
       formatCurrency(stats.poTotal || 0),
       latestNowStatus?.label,
       statusText,
-      ...subItems.flatMap((sub) => [
-        sub.quantity,
-        sub.description,
-        sub.rejectReason,
-        sub.unit,
-        sub.unitPrice,
-        sub.amount,
-        formatCurrency(Number(sub.amount) || 0),
-        sub.status || "Approved",
-      ]),
+      ...subItems.flatMap((sub) => {
+        const subPrUsed = getSubItemPrUsed(budget, sub);
+        const subBalance = getSubItemAmount(sub) - subPrUsed;
+        return [
+          sub.quantity,
+          sub.description,
+          sub.rejectReason,
+          sub.unit,
+          sub.unitPrice,
+          sub.amount,
+          formatCurrency(Number(sub.amount) || 0),
+          subPrUsed,
+          formatCurrency(subPrUsed),
+          subBalance,
+          formatCurrency(subBalance),
+          sub.status || "Approved",
+        ];
+      }),
       ...subAttachments.map((att) => att?.name || att?.url || "file"),
     ].join(" ");
-  }, [budgetStatsById, getNowStatus, normalizeBudgetFilterText, pickLatestNowStatus, sumSubItemAmounts]);
+  }, [budgetStatsById, getNowStatus, getSubItemAmount, getSubItemPrUsed, normalizeBudgetFilterText, pickLatestNowStatus, sumSubItemAmounts]);
 
   const filteredBudgets = useMemo(() => {
     if (!hasBudgetTableFilter) return sortedBudgets;
@@ -4002,6 +4053,8 @@ const BudgetView = React.memo(() => {
                               (() => {
                                 const pendingSubReturns = getPendingSubBudgetReturnNotifications(b, sub.id);
                                 const hasPendingSubReturn = pendingSubReturns.length > 0;
+                                const subPrUsed = getSubItemPrUsed(b, sub);
+                                const subBalance = getSubItemAmount(sub) - subPrUsed;
                                 return (
                               <tr
                                 key={sub.id}
@@ -4096,7 +4149,15 @@ const BudgetView = React.memo(() => {
                                     </div>
                                   </div>
                                 </td>}
-                                {(() => { const cnt = [isColumnVisible("budget", "balance"), isColumnVisible("budget", "prTotal"), isColumnVisible("budget", "poTotal")].filter(Boolean).length; return cnt > 0 ? <td colSpan={cnt} className="border-b border-slate-100"></td> : null; })()}
+                                {isColumnVisible("budget", "balance") && (
+                                  <td
+                                    className="py-0.5 px-3 text-right border-r border-b border-slate-100 font-bold text-blue-600"
+                                    title={`ใช้ไปจาก PR: ${formatCurrency(subPrUsed)}`}
+                                  >
+                                    {formatCurrency(subBalance)}
+                                  </td>
+                                )}
+                                {(() => { const cnt = [isColumnVisible("budget", "prTotal"), isColumnVisible("budget", "poTotal")].filter(Boolean).length; return cnt > 0 ? <td colSpan={cnt} className="border-b border-slate-100"></td> : null; })()}
                                 {isColumnVisible("budget", "nowStatus") && <td className="py-0.5 px-3 text-center min-w-0 border-b border-slate-100">{renderNowStatusBadges((() => {
                                   const latest = pickLatestNowStatus(getNowStatus(b, stats, "SUB_ITEM", sub.id));
                                   return latest ? [latest] : [];
