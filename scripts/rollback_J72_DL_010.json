@@ -1,0 +1,830 @@
+{
+  "timestamp": "2026-07-09T06:00:25.951Z",
+  "pr": {
+    "name": "projects/cmg-budget-control/databases/(default)/documents/artifacts/cmg-budget-control-default/public/data/prs/J72-DL-010",
+    "fields": {
+      "purchaseType": {
+        "stringValue": "จ้างเหมา > DL"
+      },
+      "pdfPath": {
+        "stringValue": "generated/prs/J-72/J72-DL-010.pdf"
+      },
+      "selectedSubItemId": {
+        "stringValue": ""
+      },
+      "totalAmount": {
+        "integerValue": "1048355"
+      },
+      "requestor": {
+        "stringValue": "วิริยะ บุตรเขียว"
+      },
+      "pdfUpdatedAt": {
+        "stringValue": "2026-06-25T03:46:51.094Z"
+      },
+      "items": {
+        "arrayValue": {
+          "values": [
+            {
+              "mapValue": {
+                "fields": {
+                  "unit": {
+                    "stringValue": "ea"
+                  },
+                  "note": {
+                    "stringValue": ""
+                  },
+                  "budgetSubItemId": {
+                    "stringValue": "a99a4a91-6736-42bc-adc8-c61417b1f9b5"
+                  },
+                  "id": {
+                    "stringValue": "0e970a5d-82da-4786-b815-19182e35c10b"
+                  },
+                  "requiredDate": {
+                    "stringValue": "2026-06-24"
+                  },
+                  "budgetId": {
+                    "stringValue": "J-72-004002001-Civil Sub contractor (ผู้รับเหมาช่วงค่าแรง)"
+                  },
+                  "price": {
+                    "integerValue": "850"
+                  },
+                  "description": {
+                    "stringValue": "งานติดตั้งPrecast Foundation"
+                  },
+                  "subItemId": {
+                    "stringValue": "a99a4a91-6736-42bc-adc8-c61417b1f9b5"
+                  },
+                  "quantity": {
+                    "integerValue": "263"
+                  }
+                }
+              }
+            },
+            {
+              "mapValue": {
+                "fields": {
+                  "subItemId": {
+                    "nullValue": null
+                  },
+                  "quantity": {
+                    "integerValue": "3368"
+                  },
+                  "price": {
+                    "integerValue": "35"
+                  },
+                  "description": {
+                    "stringValue": "งานขุดดิน"
+                  },
+                  "note": {
+                    "stringValue": ""
+                  },
+                  "budgetSubItemId": {
+                    "nullValue": null
+                  },
+                  "id": {
+                    "stringValue": "dbaea344-ebe6-4306-b76e-91ecdf1f3f4d"
+                  },
+                  "budgetId": {
+                    "stringValue": "J-72-004002001-Civil Sub contractor (ผู้รับเหมาช่วงค่าแรง)"
+                  },
+                  "requiredDate": {
+                    "stringValue": "2026-06-25"
+                  },
+                  "unit": {
+                    "stringValue": "m3"
+                  }
+                }
+              }
+            },
+            {
+              "mapValue": {
+                "fields": {
+                  "unit": {
+                    "stringValue": "m3"
+                  },
+                  "budgetSubItemId": {
+                    "nullValue": null
+                  },
+                  "note": {
+                    "stringValue": ""
+                  },
+                  "id": {
+                    "stringValue": "4751d1b9-d823-44a3-bea1-ebe99a090689"
+                  },
+                  "requiredDate": {
+                    "stringValue": "2026-06-25"
+                  },
+                  "budgetId": {
+                    "stringValue": "J-72-004002001-Civil Sub contractor (ผู้รับเหมาช่วงค่าแรง)"
+                  },
+                  "price": {
+                    "integerValue": "65"
+                  },
+                  "description": {
+                    "stringValue": "งานถมดินกลับ"
+                  },
+                  "subItemId": {
+                    "nullValue": null
+                  },
+                  "quantity": {
+                    "integerValue": "2777"
+                  }
+                }
+              }
+            },
+            {
+              "mapValue": {
+                "fields": {
+                  "note": {
+                    "stringValue": ""
+                  },
+                  "budgetSubItemId": {
+                    "nullValue": null
+                  },
+                  "id": {
+                    "stringValue": "3aeef028-5568-45c4-b804-814df8129be0"
+                  },
+                  "budgetId": {
+                    "stringValue": "J-72-004002001-Civil Sub contractor (ผู้รับเหมาช่วงค่าแรง)"
+                  },
+                  "requiredDate": {
+                    "stringValue": "2026-06-25"
+                  },
+                  "unit": {
+                    "stringValue": "m3"
+                  },
+                  "subItemId": {
+                    "nullValue": null
+                  },
+                  "quantity": {
+                    "integerValue": "381"
+                  },
+                  "price": {
+                    "integerValue": "820"
+                  },
+                  "description": {
+                    "stringValue": "งานหินคลุก"
+                  }
+                }
+              }
+            },
+            {
+              "mapValue": {
+                "fields": {
+                  "description": {
+                    "stringValue": "งานขนย้ายดิน"
+                  },
+                  "price": {
+                    "integerValue": "50"
+                  },
+                  "quantity": {
+                    "integerValue": "4280"
+                  },
+                  "subItemId": {
+                    "nullValue": null
+                  },
+                  "unit": {
+                    "stringValue": "m3"
+                  },
+                  "id": {
+                    "stringValue": "1e1860d0-e18f-4ad3-a49c-536788a7e314"
+                  },
+                  "budgetSubItemId": {
+                    "nullValue": null
+                  },
+                  "note": {
+                    "stringValue": ""
+                  },
+                  "requiredDate": {
+                    "stringValue": "2026-06-25"
+                  },
+                  "budgetId": {
+                    "stringValue": "J-72-004002001-Civil Sub contractor (ผู้รับเหมาช่วงค่าแรง)"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "projectId": {
+        "stringValue": "J-72"
+      },
+      "urgency": {
+        "stringValue": "Urgent"
+      },
+      "rejectReason": {
+        "stringValue": ""
+      },
+      "updatedAt": {
+        "stringValue": "2026-07-06T07:48:32.955Z"
+      },
+      "status": {
+        "stringValue": "Closed PR Auto"
+      },
+      "attachmentName": {
+        "stringValue": "1782271463175.jpg"
+      },
+      "preCloseStatus": {
+        "stringValue": "Approved"
+      },
+      "attachmentUrl": {
+        "stringValue": "https://firebasestorage.googleapis.com/v0/b/cmg-budget-control.firebasestorage.app/o/attachments%2Fcmg-budget-control-default%2Fpr%2FJ-72%2FJ72-DL-010_1782286912156_1782271463175.jpg?alt=media&token=95c7ea67-89cd-45a1-9537-5808448acf8e"
+      },
+      "costCode": {
+        "stringValue": "004002001"
+      },
+      "prNo": {
+        "stringValue": "J72-DL-010"
+      },
+      "cmApproverEmail": {
+        "stringValue": "wiriya.cmg@gmail.com"
+      },
+      "deliveryLocation": {
+        "stringValue": "จัดส่งเข้าโครงการทันที"
+      },
+      "subCode": {
+        "stringValue": "DL"
+      },
+      "requestDate": {
+        "stringValue": "2026-06-24"
+      },
+      "requestorEmail": {
+        "stringValue": "wiriya.cmg@gmail.com"
+      },
+      "selectedBudgetId": {
+        "stringValue": "J-72-004002001-Civil Sub contractor (ผู้รับเหมาช่วงค่าแรง)"
+      },
+      "pdfUrl": {
+        "stringValue": "https://firebasestorage.googleapis.com/v0/b/cmg-budget-control.firebasestorage.app/o/generated%2Fprs%2FJ-72%2FJ72-DL-010.pdf?alt=media&token=0c33fa4b-1e75-48fa-a647-4ac3278f22f5"
+      },
+      "budgetId": {
+        "stringValue": "J-72-004002001-Civil Sub contractor (ผู้รับเหมาช่วงค่าแรง)"
+      },
+      "attachments": {
+        "arrayValue": {
+          "values": [
+            {
+              "mapValue": {
+                "fields": {
+                  "url": {
+                    "stringValue": "https://firebasestorage.googleapis.com/v0/b/cmg-budget-control.firebasestorage.app/o/attachments%2Fcmg-budget-control-default%2Fpr%2FJ-72%2FJ72-DL-010_1782286912156_1782271463175.jpg?alt=media&token=95c7ea67-89cd-45a1-9537-5808448acf8e"
+                  },
+                  "name": {
+                    "stringValue": "1782271463175.jpg"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "createTime": "2026-06-24T07:42:02.010103Z",
+    "updateTime": "2026-07-06T07:48:33.059757Z"
+  },
+  "po": {
+    "name": "projects/cmg-budget-control/databases/(default)/documents/artifacts/cmg-budget-control-default/public/data/pos/nOc1V9vQYPMDKBzqzqJs",
+    "fields": {
+      "projectId": {
+        "stringValue": "J-72"
+      },
+      "inventoryType": {
+        "stringValue": "none inventory"
+      },
+      "vendorCode": {
+        "stringValue": "SUB-CO-106"
+      },
+      "vendorType": {
+        "stringValue": ""
+      },
+      "vatType": {
+        "stringValue": "ex-vat"
+      },
+      "gmApprovedByUid": {
+        "stringValue": "axFgMok5djSybC4NfDXtQDRZtYB2"
+      },
+      "payBeforeReceiveChecked": {
+        "booleanValue": false
+      },
+      "gmApprovedByEmail": {
+        "stringValue": "saowalux.ppe@gmail.com"
+      },
+      "receiveType": {
+        "stringValue": "Subcontractor"
+      },
+      "statusNow": {
+        "stringValue": "PMT In Process"
+      },
+      "vendorId": {
+        "stringValue": "8IFqHVW4GLFpqBYBtVLd"
+      },
+      "createdDate": {
+        "stringValue": "2026-07-06T07:48:32.227Z"
+      },
+      "selectedPrIds": {
+        "arrayValue": {
+          "values": [
+            {
+              "stringValue": "J72-DL-010"
+            }
+          ]
+        }
+      },
+      "createdByEmail": {
+        "stringValue": "thitiporn.cmg@gmail.com"
+      },
+      "requiredDate": {
+        "stringValue": ""
+      },
+      "receivedAfterPaymentChecked": {
+        "booleanValue": false
+      },
+      "signature3UserName": {
+        "stringValue": "เสาวลักษณ์ พินิจผล"
+      },
+      "status": {
+        "stringValue": "Approved"
+      },
+      "createdByUid": {
+        "stringValue": "8unWaABK8YMFLYLE2yHgymp7AIj2"
+      },
+      "amount": {
+        "doubleValue": 1121739.85
+      },
+      "createdByFirstName": {
+        "stringValue": "ฐิติพร"
+      },
+      "creatorSignatureUrl": {
+        "stringValue": "https://firebasestorage.googleapis.com/v0/b/cmg-budget-control.firebasestorage.app/o/signatures%2F8unWaABK8YMFLYLE2yHgymp7AIj2%2Fsignature.png?alt=media&token=dca4195f-6fd8-4123-80d3-ca52c829014e"
+      },
+      "receivedAfterPaymentSetup": {
+        "nullValue": null
+      },
+      "updatedAt": {
+        "stringValue": "2026-07-08T00:29:00.322Z"
+      },
+      "gmApprovedByName": {
+        "stringValue": "เสาวลักษณ์ พินิจผล"
+      },
+      "grandTotal": {
+        "doubleValue": 1121739.85
+      },
+      "pdfUpdatedAt": {
+        "stringValue": "2026-07-07T07:08:41.260Z"
+      },
+      "pdfPath": {
+        "stringValue": "generated/pos/J-72/PO26J72-SP0018.pdf"
+      },
+      "gmApprovedAt": {
+        "stringValue": "2026-07-07T07:08:41.260Z"
+      },
+      "createdByLastName": {
+        "stringValue": "ศรีราธารา"
+      },
+      "pdfUrl": {
+        "stringValue": "https://firebasestorage.googleapis.com/v0/b/cmg-budget-control.firebasestorage.app/o/generated%2Fpos%2FJ-72%2FPO26J72-SP0018.pdf?alt=media&token=970ced11-28b2-4b68-a088-721e9721ea5e"
+      },
+      "location": {
+        "stringValue": "จัดส่งเข้าโครงการทันที"
+      },
+      "signature3UserUid": {
+        "stringValue": "axFgMok5djSybC4NfDXtQDRZtYB2"
+      },
+      "rejectReason": {
+        "stringValue": ""
+      },
+      "reason": {
+        "stringValue": "เงื่อนไขการชำระเงิน\n1. งวดวันที่ 1-15 ส่งมอบงานและวางบิลไม่เกินวันที่ 18 จะจ่ายเงินรอบวันที่ 25\n2. งวดวันที่ 16-30 ส่งมอบงานและวางบิลไม่เกินวันที่ 3 จะจ่ายเงินรอบวันที่ 10"
+      },
+      "gmSignatureUrl": {
+        "stringValue": "https://firebasestorage.googleapis.com/v0/b/cmg-budget-control.firebasestorage.app/o/signatures%2FaxFgMok5djSybC4NfDXtQDRZtYB2%2Fsignature.png?alt=media&token=dcbc0999-351d-49ec-9790-dbacd0e9709a"
+      },
+      "vendorName": {
+        "stringValue": "บริษัท พรหมรังสี คอนสตรัคชั่น จำกัด"
+      },
+      "pcmApprovedAt": {
+        "stringValue": "2026-07-07T02:00:57.391Z"
+      },
+      "payBeforeReceiveInvoiceSetup": {
+        "nullValue": null
+      },
+      "signature1UserName": {
+        "stringValue": "ฐิติพร ศรีราธารา"
+      },
+      "poDate": {
+        "stringValue": "2026-07-05T17:00:00.000Z"
+      },
+      "signature3UserEmail": {
+        "stringValue": "saowalux.ppe@gmail.com"
+      },
+      "signature1UserEmail": {
+        "stringValue": "thitiporn.cmg@gmail.com"
+      },
+      "poNo": {
+        "stringValue": "PO26J72-SP0018"
+      },
+      "gmApprovedBy": {
+        "stringValue": "saowalux.ppe@gmail.com"
+      },
+      "discount": {
+        "integerValue": "0"
+      },
+      "attachments": {
+        "arrayValue": {}
+      },
+      "signature1UserUid": {
+        "stringValue": "8unWaABK8YMFLYLE2yHgymp7AIj2"
+      },
+      "items": {
+        "arrayValue": {
+          "values": [
+            {
+              "mapValue": {
+                "fields": {
+                  "unit": {
+                    "stringValue": "ea"
+                  },
+                  "prItemIndex": {
+                    "integerValue": "0"
+                  },
+                  "amount": {
+                    "integerValue": "223550"
+                  },
+                  "price": {
+                    "integerValue": "850"
+                  },
+                  "subItemId": {
+                    "stringValue": "a99a4a91-6736-42bc-adc8-c61417b1f9b5"
+                  },
+                  "quantity": {
+                    "integerValue": "263"
+                  },
+                  "disPrAllocations": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "mapValue": {
+                            "fields": {
+                              "amount": {
+                                "integerValue": "223550"
+                              },
+                              "prNo": {
+                                "stringValue": "J72-DL-010"
+                              },
+                              "prId": {
+                                "stringValue": "J72-DL-010"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "materialNo": {
+                    "stringValue": "EP-SUB-0980"
+                  },
+                  "remainingQty": {
+                    "integerValue": "263"
+                  },
+                  "costCode": {
+                    "stringValue": "004002001"
+                  },
+                  "description": {
+                    "stringValue": "งานติดตั้ง Precast Foundation "
+                  },
+                  "budgetSubItemId": {
+                    "stringValue": "a99a4a91-6736-42bc-adc8-c61417b1f9b5"
+                  },
+                  "disPrPlan": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "stringValue": "J72-DL-010"
+                        }
+                      ]
+                    }
+                  },
+                  "prId": {
+                    "stringValue": "J72-DL-010"
+                  },
+                  "budgetId": {
+                    "stringValue": "J-72-004002001-Civil Sub contractor (ผู้รับเหมาช่วงค่าแรง)"
+                  }
+                }
+              }
+            },
+            {
+              "mapValue": {
+                "fields": {
+                  "amount": {
+                    "integerValue": "117880"
+                  },
+                  "subItemId": {
+                    "nullValue": null
+                  },
+                  "price": {
+                    "integerValue": "35"
+                  },
+                  "unit": {
+                    "stringValue": "m3"
+                  },
+                  "prItemIndex": {
+                    "integerValue": "1"
+                  },
+                  "budgetSubItemId": {
+                    "nullValue": null
+                  },
+                  "budgetId": {
+                    "stringValue": "J-72-004002001-Civil Sub contractor (ผู้รับเหมาช่วงค่าแรง)"
+                  },
+                  "prId": {
+                    "stringValue": "J72-DL-010"
+                  },
+                  "disPrPlan": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "stringValue": "J72-DL-010"
+                        }
+                      ]
+                    }
+                  },
+                  "disPrAllocations": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "mapValue": {
+                            "fields": {
+                              "amount": {
+                                "integerValue": "117880"
+                              },
+                              "prId": {
+                                "stringValue": "J72-DL-010"
+                              },
+                              "prNo": {
+                                "stringValue": "J72-DL-010"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "quantity": {
+                    "integerValue": "3368"
+                  },
+                  "description": {
+                    "stringValue": "งานขุดดิน"
+                  },
+                  "costCode": {
+                    "stringValue": "004002001"
+                  },
+                  "remainingQty": {
+                    "integerValue": "3368"
+                  },
+                  "materialNo": {
+                    "stringValue": "EP-SUB-0929"
+                  }
+                }
+              }
+            },
+            {
+              "mapValue": {
+                "fields": {
+                  "disPrAllocations": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "mapValue": {
+                            "fields": {
+                              "prId": {
+                                "stringValue": "J72-DL-010"
+                              },
+                              "prNo": {
+                                "stringValue": "J72-DL-010"
+                              },
+                              "amount": {
+                                "integerValue": "180505"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "quantity": {
+                    "integerValue": "2777"
+                  },
+                  "costCode": {
+                    "stringValue": "004002001"
+                  },
+                  "description": {
+                    "stringValue": "งานถมดินกลับ"
+                  },
+                  "remainingQty": {
+                    "integerValue": "2777"
+                  },
+                  "materialNo": {
+                    "stringValue": "EP-SUB-0150         "
+                  },
+                  "budgetSubItemId": {
+                    "nullValue": null
+                  },
+                  "prId": {
+                    "stringValue": "J72-DL-010"
+                  },
+                  "budgetId": {
+                    "stringValue": "J-72-004002001-Civil Sub contractor (ผู้รับเหมาช่วงค่าแรง)"
+                  },
+                  "disPrPlan": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "stringValue": "J72-DL-010"
+                        }
+                      ]
+                    }
+                  },
+                  "unit": {
+                    "stringValue": "m3"
+                  },
+                  "prItemIndex": {
+                    "integerValue": "2"
+                  },
+                  "amount": {
+                    "integerValue": "180505"
+                  },
+                  "subItemId": {
+                    "nullValue": null
+                  },
+                  "price": {
+                    "integerValue": "65"
+                  }
+                }
+              }
+            },
+            {
+              "mapValue": {
+                "fields": {
+                  "prItemIndex": {
+                    "integerValue": "3"
+                  },
+                  "unit": {
+                    "stringValue": "m3"
+                  },
+                  "subItemId": {
+                    "nullValue": null
+                  },
+                  "price": {
+                    "integerValue": "820"
+                  },
+                  "amount": {
+                    "integerValue": "312420"
+                  },
+                  "costCode": {
+                    "stringValue": "004002001"
+                  },
+                  "description": {
+                    "stringValue": "งานเหมาหินคลุก ( ถม ปรับ และบดอัด) "
+                  },
+                  "remainingQty": {
+                    "integerValue": "381"
+                  },
+                  "materialNo": {
+                    "stringValue": "EP-SUB-0981"
+                  },
+                  "disPrAllocations": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "mapValue": {
+                            "fields": {
+                              "amount": {
+                                "integerValue": "312420"
+                              },
+                              "prNo": {
+                                "stringValue": "J72-DL-010"
+                              },
+                              "prId": {
+                                "stringValue": "J72-DL-010"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "quantity": {
+                    "integerValue": "381"
+                  },
+                  "prId": {
+                    "stringValue": "J72-DL-010"
+                  },
+                  "budgetId": {
+                    "stringValue": "J-72-004002001-Civil Sub contractor (ผู้รับเหมาช่วงค่าแรง)"
+                  },
+                  "disPrPlan": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "stringValue": "J72-DL-010"
+                        }
+                      ]
+                    }
+                  },
+                  "budgetSubItemId": {
+                    "nullValue": null
+                  }
+                }
+              }
+            },
+            {
+              "mapValue": {
+                "fields": {
+                  "budgetSubItemId": {
+                    "nullValue": null
+                  },
+                  "budgetId": {
+                    "stringValue": "J-72-004002001-Civil Sub contractor (ผู้รับเหมาช่วงค่าแรง)"
+                  },
+                  "prId": {
+                    "stringValue": "J72-DL-010"
+                  },
+                  "disPrPlan": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "stringValue": "J72-DL-010"
+                        }
+                      ]
+                    }
+                  },
+                  "quantity": {
+                    "integerValue": "4280"
+                  },
+                  "disPrAllocations": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "mapValue": {
+                            "fields": {
+                              "prId": {
+                                "stringValue": "J72-DL-010"
+                              },
+                              "prNo": {
+                                "stringValue": "J72-DL-010"
+                              },
+                              "amount": {
+                                "integerValue": "214000"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "materialNo": {
+                    "stringValue": "EP-SUB-0930"
+                  },
+                  "description": {
+                    "stringValue": "งานขนย้ายดิน"
+                  },
+                  "costCode": {
+                    "stringValue": "004002001"
+                  },
+                  "remainingQty": {
+                    "integerValue": "4280"
+                  },
+                  "amount": {
+                    "integerValue": "214000"
+                  },
+                  "price": {
+                    "integerValue": "50"
+                  },
+                  "subItemId": {
+                    "nullValue": null
+                  },
+                  "unit": {
+                    "stringValue": "m3"
+                  },
+                  "prItemIndex": {
+                    "integerValue": "4"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "poType": {
+        "stringValue": "SP"
+      },
+      "createdByName": {
+        "stringValue": "ฐิติพร ศรีราธารา"
+      }
+    },
+    "createTime": "2026-07-06T07:48:32.654101Z",
+    "updateTime": "2026-07-08T00:28:59.913559Z"
+  }
+}

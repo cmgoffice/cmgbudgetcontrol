@@ -3566,7 +3566,15 @@ const AdminDashboard = () => {
   // Replace old-style "ID: <uuid>" patterns in legacy log details with readable label
   const cleanLogDetails = (details: string): string => {
     if (!details) return "";
-    return details
+    let cleaned = details;
+
+    // ลบ Prefix Action (เช่น "Approve — ", "Submit — ") เพราะมีบอกในคอลัมน์ Action อยู่แล้ว
+    cleaned = cleaned.replace(/^[a-zA-Z]+\s*—\s*/, "");
+
+    // ลบข้อความที่บอกสถานะยืดเยื้อ เช่น ": Pending Close -> Closed PR" หรือ "→" (ข้ามถ้ามีวงเล็บ เพื่อไม่ให้ลบรายละเอียดการคืน Budget)
+    cleaned = cleaned.replace(/:\s*[^:()]+?(?:->|→)\s*[^:()]+$/, "");
+
+    return cleaned
       .replace(/Sub-Item ID:\s*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "Sub-Item")
       .replace(/\bID:\s*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "")
       .replace(/\bin Budget:\s*([^\s]+)/gi, "(Budget $1)")

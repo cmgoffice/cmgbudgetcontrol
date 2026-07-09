@@ -2472,26 +2472,8 @@ const BudgetView = React.memo(() => {
         const payload: any = {};
         const acceptedBy = userData ? `${userData.firstName || ""} ${userData.lastName || ""}`.trim() : (userRole || "Unknown");
 
-        if (latestNotification.subItemId) {
-          const subItems = Array.isArray(latestBudget.subItems) ? [...latestBudget.subItems] : [];
-          const subIndex = subItems.findIndex((s: any) => s.id === latestNotification.subItemId);
-          if (subIndex === -1) {
-            showAlert("ไม่พบ Subitem", "ไม่พบรายการย่อยสำหรับรับยอดคืน", "warning");
-            return;
-          }
-          const targetSub = subItems[subIndex];
-          const currentAmount = Number(targetSub?.amount || 0);
-          const nextAmount = Math.max(0, currentAmount - amount);
-          const qty = Number(targetSub?.quantity || 0);
-          subItems[subIndex] = {
-            ...targetSub,
-            amount: nextAmount,
-            unitPrice: qty > 0 ? nextAmount / qty : Number(targetSub?.unitPrice || 0),
-          };
-          payload.subItems = subItems;
-        } else {
-          payload.amount = (Number(latestBudget.amount || 0) + amount);
-        }
+        // Removed: logic that mutates budget amount and subItems amount.
+        // PR amounts are already reduced, so balance naturally increases.
 
         payload.budgetReturnNotifications = latestNotifications.map((n: any) =>
           n?.id === latestNotification.id
@@ -2759,6 +2741,17 @@ const BudgetView = React.memo(() => {
     }
     if (!subItemData.description.trim()) return showAlert("ข้อมูลไม่ครบ", "กรุณากรอกชื่อรายการ", "warning");
     const amountToAdd = Number(subItemData.quantity) * Number(subItemData.unitPrice);
+    
+    if (editingSubItem) {
+      const subPrUsed = getSubItemPrUsed(selectedBudget, editingSubItem);
+      if (amountToAdd < subPrUsed) {
+        return showAlert(
+          "ไม่สามารถบันทึก Amount ได้",
+          `ยอดเงินใหม่ (${formatCurrency(amountToAdd)}) ต่ำกว่ายอดที่มีการเปิด PR ไปแล้ว (${formatCurrency(subPrUsed)}) เพื่อไม่ให้ Balance ติดลบ`,
+          "warning"
+        );
+      }
+    }
     const newSubItem = {
       ...(editingSubItem || {}),
       id: editingSubItem ? editingSubItem.id : crypto.randomUUID(),
@@ -2832,12 +2825,26 @@ const BudgetView = React.memo(() => {
       showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ลบรายการย่อย", "warning");
       return;
     }
+    const mainBudget = budgets.find((b) => b.id === mainId);
+    if (!mainBudget) return;
+    
+    const subToDelete = mainBudget.subItems?.find(s => s.id === subId);
+    if (subToDelete) {
+      const subPrUsed = getSubItemPrUsed(mainBudget, subToDelete);
+      if (subPrUsed > 0) {
+        showAlert(
+          "ไม่สามารถลบได้",
+          `รายการนี้มีการเบิกใช้งาน PR ไปแล้ว (${formatCurrency(subPrUsed)}) ไม่สามารถลบได้`,
+          "warning"
+        );
+        return;
+      }
+    }
+
     openConfirm(
       "ยืนยันการลบ",
       "ต้องการลบรายการย่อยนี้หรือไม่?",
       async () => {
-        const mainBudget = budgets.find((b) => b.id === mainId);
-        if (!mainBudget) return;
         const updatedSubItems = mainBudget.subItems.filter(
           (sub) => sub.id !== subId
         );
@@ -3688,21 +3695,7 @@ const BudgetView = React.memo(() => {
                 </Button>
               )}
 
-              {(userRole === "Administrator" || userRole === "MD") && canRecalculateBudget && (
-                <Button
-                  variant="outline"
-                  onClick={handleRecalculateTotals}
-                  className="text-[10px] h-8 border-blue-200 text-blue-500 hover:bg-blue-50 px-2"
-                  disabled={isRecalculating}
-                >
-                  {isRecalculating ? (
-                    <RefreshCw size={12} className="animate-spin" />
-                  ) : (
-                    <RefreshCw size={12} />
-                  )}
-                  <span className="ml-1">Recalculate PO</span>
-                </Button>
-              )}
+
 
               {canUseFunction("budget", "add") && !budgetSetupDisabledByActiveProject && (
                 <Button

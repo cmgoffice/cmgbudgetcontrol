@@ -420,37 +420,7 @@ const PRView = React.memo(() => {
             !(n?.prId === latestPr.id && removedRevNos.has(Number(n?.revNo || 0)))
           );
 
-          let rollbackMainAmount = 0;
-          const rollbackBySubId: Record<string, number> = {};
-          removedNotifications.forEach((n: any) => {
-            if ((n?.status || "pending") !== "accepted") return;
-            const amt = Number(n?.amount || 0);
-            if (!Number.isFinite(amt) || amt <= 0) return;
-            if (n?.subItemId) {
-              rollbackBySubId[n.subItemId] = Number(rollbackBySubId[n.subItemId] || 0) + amt;
-            } else {
-              rollbackMainAmount += amt;
-            }
-          });
-
           const budgetPayload: any = { usedAmount, budgetReturnNotifications: nextNotifications };
-          if (rollbackMainAmount > 0) {
-            budgetPayload.amount = Math.max(0, Number(budget.amount || 0) - rollbackMainAmount);
-          }
-          if (Object.keys(rollbackBySubId).length > 0 && Array.isArray(budget.subItems)) {
-            budgetPayload.subItems = budget.subItems.map((sub: any) => {
-              const rollback = Number(rollbackBySubId[sub?.id] || 0);
-              if (!(rollback > 0)) return sub;
-              const currentAmount = Number(sub?.amount || 0);
-              const nextAmount = currentAmount + rollback;
-              const qty = Number(sub?.quantity || 0);
-              return {
-                ...sub,
-                amount: nextAmount,
-                unitPrice: qty > 0 ? nextAmount / qty : Number(sub?.unitPrice || 0),
-              };
-            });
-          }
           await updateData("budgets", budget.id, budgetPayload, { skipLog: true });
         }
 
@@ -1258,6 +1228,20 @@ const PRView = React.memo(() => {
 
     const { attachment: _omitFile, ...headerWithoutFile } = contractHeaderData;
     const prCreator = getUserIdentity(userData, user);
+
+    const contractSelectedBudgetIdForItems = contractHeaderData.selectedBudgetId || null;
+    const contractSelectedSubItemIdForItems =
+      budgetItem.subItems && budgetItem.subItems.length > 0
+        ? (contractHeaderData.selectedSubItemId || null)
+        : null;
+
+    const contractLineItemsForSave = contractLineItems.map((item) => ({
+      ...item,
+      budgetId: contractSelectedBudgetIdForItems,
+      subItemId: contractSelectedSubItemIdForItems,
+      budgetSubItemId: contractSelectedSubItemIdForItems,
+    }));
+
     const prPayload = {
       ...headerWithoutFile,
       prNo: resolvedPrNo,
@@ -1265,7 +1249,7 @@ const PRView = React.memo(() => {
       attachmentName: attachmentName || null,
       budgetId: contractHeaderData.selectedBudgetId || null,
       projectId: selectedProjectId,
-      items: contractLineItems,
+      items: contractLineItemsForSave,
       totalAmount: contractTotal,
       status: "Pending CM",
       prType: "contract",
