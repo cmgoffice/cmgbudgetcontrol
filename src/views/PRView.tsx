@@ -699,10 +699,15 @@ const PRView = React.memo(() => {
         "กรุณากรอกรายละเอียดและจำนวนให้ถูกต้อง",
         "warning"
       );
+    const itemBudgetFields = {
+      subItemId: headerData.selectedSubItemId || null,
+      budgetId: headerData.selectedBudgetId || null,
+      budgetSubItemId: headerData.selectedSubItemId || null,
+    };
     if (editingItemId) {
       setLineItems(
         lineItems.map((item) =>
-          item.id === editingItemId ? { ...newItem, id: editingItemId } : item
+          item.id === editingItemId ? { ...newItem, ...itemBudgetFields, id: editingItemId } : item
         )
       );
       setEditingItemId(null);
@@ -710,9 +715,7 @@ const PRView = React.memo(() => {
       setLineItems([...lineItems, {
         ...newItem,
         id: crypto.randomUUID(),
-        subItemId: headerData.selectedSubItemId || null,
-        budgetId: headerData.selectedBudgetId || null,
-        budgetSubItemId: headerData.selectedSubItemId || null,
+        ...itemBudgetFields,
       }]);
     }
     setNewItem({
@@ -754,7 +757,7 @@ const PRView = React.memo(() => {
       requestorEmail: pr.requestorEmail || "",
       costCode: pr.costCode,
       selectedBudgetId: pr.budgetId || "",
-      selectedSubItemId: pr.subItemId || "",
+      selectedSubItemId: pr.selectedSubItemId || pr.subItemId || pr.items?.[0]?.budgetSubItemId || pr.items?.[0]?.subItemId || "",
       urgency: pr.urgency || "Normal",
       purchaseType: pr.purchaseType || "",
       deliveryLocation: pr.deliveryLocation || "",
@@ -813,11 +816,23 @@ const PRView = React.memo(() => {
         "error"
       );
 
+    const selectedBudgetIdForItems = budgetItem.id || headerData.selectedBudgetId || null;
+    const selectedSubItemIdForItems =
+      budgetItem.subItems && budgetItem.subItems.length > 0
+        ? (headerData.selectedSubItemId || null)
+        : null;
+    const lineItemsForSave = lineItems.map((item) => ({
+      ...item,
+      budgetId: selectedBudgetIdForItems,
+      subItemId: selectedSubItemIdForItems,
+      budgetSubItemId: selectedSubItemIdForItems,
+    }));
+
     // ตรวจสอบว่า Sub-item ที่เลือกยังคง Approved อยู่ และยอดไม่เกิน (กรณีที่ budget มี sub-items)
     if (budgetItem.subItems && budgetItem.subItems.length > 0) {
       // หา sub-item ที่ตรงกับ selectedSubItemId → subItemId ใน lineItem → description ใน lineItem
-      const firstLineSubId = lineItems.length > 0 && lineItems[0].subItemId ? lineItems[0].subItemId : "";
-      const firstLineDesc = lineItems.length > 0 ? (lineItems[0].description || "").trim() : "";
+      const firstLineSubId = lineItemsForSave.length > 0 && lineItemsForSave[0].subItemId ? lineItemsForSave[0].subItemId : "";
+      const firstLineDesc = lineItemsForSave.length > 0 ? (lineItemsForSave[0].description || "").trim() : "";
       const resolvedSubId = headerData.selectedSubItemId || firstLineSubId;
 
       let selectedSub = resolvedSubId
@@ -892,7 +907,7 @@ const PRView = React.memo(() => {
     // Skip main budget validation if budget has sub-items and we have a selected sub-item
     // because sub-item validation above is more accurate and specific
     const hasSubItemSelected = budgetItem.subItems && budgetItem.subItems.length > 0 &&
-      (headerData.selectedSubItemId || (lineItems.length > 0 && lineItems[0].subItemId));
+      (headerData.selectedSubItemId || (lineItemsForSave.length > 0 && lineItemsForSave[0].subItemId));
 
     if (!hasSubItemSelected && currentPrTotal + thisPrTotal > totalBudget) {
       return showAlert(
@@ -964,9 +979,12 @@ const PRView = React.memo(() => {
       attachmentUrl: attachmentUrl || null,
       attachmentName: attachmentName || null,
       attachments: finalAttachments.length > 0 ? finalAttachments : null,
-      budgetId: headerData.selectedBudgetId || null,
+      selectedBudgetId: selectedBudgetIdForItems,
+      selectedSubItemId: selectedSubItemIdForItems,
+      subItemId: selectedSubItemIdForItems,
+      budgetId: selectedBudgetIdForItems,
       projectId: selectedProjectId,
-      items: lineItems,
+      items: lineItemsForSave,
       totalAmount: thisPrTotal,
       status: "Pending CM",
       createdByUid: editingPrForCreator?.createdByUid || prCreator.uid || null,
@@ -1116,7 +1134,15 @@ const PRView = React.memo(() => {
         note: "",
       };
     });
-    setLineItems((prev) => [...prev, ...newItems]);
+    setLineItems((prev) => [
+      ...prev.map((item) => ({
+        ...item,
+        subItemId: subItemId || null,
+        budgetId: budgetId || null,
+        budgetSubItemId: subItemId || null,
+      })),
+      ...newItems,
+    ]);
     setSelectedSubItemsForPR([]);
     setIsCostCodeModalOpen(false);
   };
