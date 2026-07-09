@@ -1,0 +1,698 @@
+=== Potential Duplicate Invoices Report ===
+
+Project: บ้าน วงศ์อมาตย์ (ID: J-99)
+PO No: PO26J01A-DC0014 | Amount: 25,607.96
+  - Inv ID: 43nBpWhwnXZbxIH2EJry | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T02:35:18.643Z
+  - Inv ID: AjDDKtJjYSdxy9h4xx5R | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T06:22:24.399Z
+
+Project: บ้าน วงศ์อมาตย์ (ID: J-99)
+PO No: PO26J01A-DC0016 | Amount: 5,320.75
+  - Inv ID: 5R6OJH3nOPNJcrA8p4KJ | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-09T06:20:18.043Z
+  - Inv ID: DDdH1jwZQapkUyvmZkQg | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-15T02:53:29.122Z
+
+Project: บ้าน วงศ์อมาตย์ (ID: J-99)
+PO No: PO26J01A-DC0015 | Amount: 1,417.50
+  - Inv ID: QZQGwul0R5oYd6KZcdnq | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T02:35:06.178Z
+  - Inv ID: z9uR9EkqFkFID9EDdWdM | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T06:22:04.024Z
+
+Project: Birla Carbon (ID: J-72)
+PO No: PO26J72-WF0048 | Amount: 6,226.24
+  - Inv ID: 7At2fN2uwTu7mpWPMhEn | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-15T02:43:35.290Z
+  - Inv ID: dCqccrEkskyzCPVPXTVq | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-10T02:59:42.677Z
+
+Project: Birla Carbon (ID: J-72)
+PO No: PO26J72-DC0024 | Amount: 30,838.17
+  - Inv ID: 8lpsMT8iw5IiGSXovO97 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T02:33:49.247Z
+  - Inv ID: dy3GYECpSwBW6Yf8LyvX | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T01:20:36.474Z
+
+Project: Birla Carbon (ID: J-72)
+PO No: PO26J72-DC0036 | Amount: 121,918.50
+  - Inv ID: ABI8qQVvseXmeULvcUy7 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-30T04:44:26.228Z
+  - Inv ID: QcmAzwGT4jlJ4bFXQOtx | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-23T09:06:53.986Z
+
+Project: Birla Carbon (ID: J-72)
+PO No: PO26J72-DC0031 | Amount: 119,679.22
+  - Inv ID: By09tmgSkajk22M1mItX | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-09T06:18:39.283Z
+  - Inv ID: lFNhKX5xUy8GvGbB49YB | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-15T02:42:37.558Z
+
+Project: Birla Carbon (ID: J-72)
+PO No: PO26J72-WF0047 | Amount: 1,000.00
+  - Inv ID: EUyPGzjNGHtbNBxLyRzL | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-15T02:41:31.099Z
+  - Inv ID: xtnrStzmSlikWmEid8xY | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-15T02:41:27.352Z
+
+Project: Birla Carbon (ID: J-72)
+PO No: PO26J72-DC0030 | Amount: 139,685.91
+  - Inv ID: M8qcumYFhEbPSB9PJLnU | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-15T02:42:58.002Z
+  - Inv ID: WhJaQs2fCun3Y4o4KLUH | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-09T06:18:42.508Z
+
+Project: Birla Carbon (ID: J-72)
+PO No: PO26J72-DC0035 | Amount: 72,458.12
+  - Inv ID: MwN02PjvZl4LOjjDNBJk | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-23T09:06:43.959Z
+  - Inv ID: qQoNO43MoJ9QCiakzzd7 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-30T04:44:52.072Z
+
+Project: Birla Carbon (ID: J-72)
+PO No: PO26J72-DC0032 | Amount: 2,641.00
+  - Inv ID: OxkFkm92cfT3XIcIkyvd | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-15T02:43:15.986Z
+  - Inv ID: RVui6QLQAHuitgOIUSqz | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-09T06:18:51.620Z
+
+Project: Birla Carbon (ID: J-72)
+PO No: PO26J72-CR0065 | Amount: 700.00
+  - Inv ID: W2ycbsswsdYA0tIO9bCp | Inv No: N/A | Status: paid | PayType: เงินสด | Date: N/A
+  - Inv ID: n4euhFbE0JXOFwpuDVHH | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-04T01:18:53.324Z
+
+Project: Birla Carbon (ID: J-72)
+PO No: PO26J72-DC0034 | Amount: 93,301.57
+  - Inv ID: WmKf8LDLjvkZ70O9wkDH | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-23T09:07:01.206Z
+  - Inv ID: fw8n0Ak8uQPrqMrgQHwC | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-30T04:43:24.472Z
+
+Project: Birla Carbon (ID: J-72)
+PO No: PO26J72-WF0037 | Amount: 15,463.918
+  - Inv ID: ZruYP555nTqYrCRhIbG4 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T01:21:25.621Z
+  - Inv ID: a5UlTZXzRpRWKPcJqfVr | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-28T04:45:21.704Z
+
+Project: Birla Carbon (ID: J-72)
+PO No: PO26J72-WF0052 | Amount: 1,000.00
+  - Inv ID: oelMD84YfSmM6GRbRfQb | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-12T09:33:44.038Z
+  - Inv ID: pczgQP8uvkeSfliZtZKy | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-15T02:42:14.586Z
+
+Project: Birla Carbon (ID: J-72)
+PO No: PO26J72-DC0033 | Amount: 32,363.25
+  - Inv ID: oy7u16bcUBo3NSY4xz88 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-09T06:18:47.080Z
+  - Inv ID: rvgyihowtdkmxrTaa0H0 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-15T02:41:51.881Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-DC0030 | Amount: 62,440.69
+  - Inv ID: 0HTAOwEIHgxqZn8jp8RK | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-07-01T01:43:26.596Z
+  - Inv ID: 6LmUC6JtbeD7MXBoAF20 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-23T09:08:27.594Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-DC0027 | Amount: 3,049.995
+  - Inv ID: 0ql3oYVt5DDkFqqIYb9k | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-15T02:56:13.135Z
+  - Inv ID: O5331Ks7AXAYIjmevhsN | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-10T03:00:12.218Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-DC0019 | Amount: 199,793.90
+  - Inv ID: 26KC4lUI7x5TzDmG1XG8 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T02:34:37.884Z
+  - Inv ID: vOSHYwcSI1PiVIQsgNU5 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T04:28:09.419Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-CA0028 | Amount: 3,400.00
+  - Inv ID: 5CBz8xBWb2D38cmR3nmA | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-07-01T01:44:40.730Z
+  - Inv ID: FgPLySmJCRYINI21tdtl | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-01T09:10:24.158Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-DC0018 | Amount: 32,176.756
+  - Inv ID: 6v6FYfYgwlLVOOR6rwe4 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T04:29:10.926Z
+  - Inv ID: TnNCgCYKFOMi2UDdNtHC | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T02:34:18.024Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-DC0024 | Amount: 41,368.26
+  - Inv ID: 7Ayxg1sxtkb1POmHI2X4 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-15T02:56:33.505Z
+  - Inv ID: XBdojnd6ZByMDv9indk0 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-10T03:00:02.826Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-DC0016 | Amount: 36,284.69
+  - Inv ID: 8QsKw597BIooDCQDCo7O | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T02:34:10.756Z
+  - Inv ID: Pxd0rJIIGwjXWxcAwmXQ | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T04:27:19.900Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-CA0027 | Amount: 540.00
+  - Inv ID: 9qSw5hSd3xPnpf5r9tWz | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-04T04:49:17.005Z
+  - Inv ID: ZecFJWE3tshItCkRIYy2 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-01T09:08:42.540Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-CR0086 | Amount: 1,000.00
+  - Inv ID: CAwSX9gSTGwnZ7Fe6D3F | Inv No: N/A | Status: Invcredit | PayType: เครดิต | Date: 2026-06-10T02:46:18.861Z
+  - Inv ID: RZE2UoMWQbYEfiG6MROW | Inv No: N/A | Status: Invcredit | PayType: เครดิต | Date: 2026-07-01T03:15:07.070Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-DC0025 | Amount: 294,695.74
+  - Inv ID: Cg5GHwATurPUzWGeGyEg | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-10T03:00:23.316Z
+  - Inv ID: YsTljeZQYBeTSB442Wcy | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-15T02:55:54.969Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-DC0032 | Amount: 161,070.91
+  - Inv ID: ET0yaoHfKIJP1WxjejZb | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-07-01T01:41:50.153Z
+  - Inv ID: tLTYnZ8Vx1ZgsQl1N0ut | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-23T09:07:52.718Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-DC0026 | Amount: 62,219.34
+  - Inv ID: HntRVTKYO7b3UvMz48Lu | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-10T03:00:08.441Z
+  - Inv ID: hqT8ctbLsdHw4P3EGW6j | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-15T02:55:16.712Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-DC0020 | Amount: 25,315.42
+  - Inv ID: JcNXOH5lDrMT1QJUsPL0 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T02:34:09.631Z
+  - Inv ID: N0TgOM0binEVreAocs0U | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T04:29:32.754Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-DC0023 | Amount: 11,249.00
+  - Inv ID: K8fIb2JdyC1EVJjTIRTr | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-15T02:54:54.519Z
+  - Inv ID: ZdioyupIoOGZMnSTplzb | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-10T02:59:57.662Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-DC0031 | Amount: 247,227.21
+  - Inv ID: Kha3A8O9HA6XMwlYncno | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-23T09:07:52.201Z
+  - Inv ID: aorLDjggqxo4rVadivwa | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-07-01T02:59:50.469Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-DC0034 | Amount: 3,423.75
+  - Inv ID: L9t9iPJzkYfDE37MQI0f | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-23T09:08:23.378Z
+  - Inv ID: eilCU2BPEH4H1E4AU4Rx | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-07-01T01:44:44.288Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-DC0021 | Amount: 6,754.996
+  - Inv ID: LVhfbVt4u6IEsJO86vUZ | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T02:34:37.623Z
+  - Inv ID: uWb3XUpGhmDwWuL3pbhH | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T04:28:50.466Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-SL0001 | Amount: 26,640.00
+  - Inv ID: MatDTYL06m6sHrioDwZK | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-07-01T03:36:00.674Z
+  - Inv ID: P7RDV2jAfY5iJkaG4Yb7 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-23T09:07:18.810Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-DC0033 | Amount: 121,316.72
+  - Inv ID: O3hFZC5KxbtUCvdUcCW8 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-23T09:07:45.612Z
+  - Inv ID: msBruU7wrI6Eecw6Mig0 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-07-01T01:44:19.451Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-RE0002 | Amount: 6,000.00
+  - Inv ID: Oov48p2UjDIAUSSDQeBJ | Inv No: N/A | Status: paid | PayType: โอน | Date: N/A
+  - Inv ID: xgYh5V76vOJfTsih22ZA | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-23T01:58:50.913Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-DC0017 | Amount: 11,361.00
+  - Inv ID: Q6GdXOTv5FAFAZzy6j8m | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T04:28:29.919Z
+  - Inv ID: W3EE8jcw6pCMUXUXDUGB | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T02:34:26.417Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-DC0028 | Amount: 46,866.88
+  - Inv ID: YmYUtectWWnrH11UJoVP | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-07-01T03:00:18.176Z
+  - Inv ID: ZnwQPvc0NYagHPTiv293 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-23T09:07:58.896Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-DC0029 | Amount: 9,933.00
+  - Inv ID: chh7KLWFQ2Q9WEeKP3Db | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-23T09:08:11.518Z
+  - Inv ID: mjM0lFlfcNXPIW855y7J | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-07-01T01:43:52.480Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-CA0026 | Amount: 2,300.00
+  - Inv ID: hC5AZMt5rgOxvxDIhpbY | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-15T03:04:25.332Z
+  - Inv ID: iKYmcaF1qqxz0dEp0zIl | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-01T09:07:27.710Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-DC0022 | Amount: 42,659.06
+  - Inv ID: iEVSfdxFT3lGLsnB3dkt | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-09T06:19:29.707Z
+  - Inv ID: ki9daynCUQ5xVmG7u9TC | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-15T02:55:34.589Z
+
+Project: Building GMTP (ID: J-74)
+PO No: PO26J74-WF0020 | Amount: 25,773.20
+  - Inv ID: qFGghMmPo7DMoj609vji | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-17T05:13:08.163Z
+  - Inv ID: xXe8mCvqwehHSNGfiUOv | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T02:59:11.146Z
+
+Project: CMG Camp management (ID: J-02C-2026-CMG Camp)
+PO No: PO26J02C-DC0013 | Amount: 12,002.12
+  - Inv ID: FeYXxGDVxTCg3jLJkthw | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-09T06:18:20.413Z
+  - Inv ID: Nm8GA1ykiwAMiOyrAfrB | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-15T02:40:06.095Z
+
+Project: CMG Camp management (ID: J-02C-2026-CMG Camp)
+PO No: PO26J02C-DC0014 | Amount: 13,434.81
+  - Inv ID: JSyaoYPsNXJO41AgJlla | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T09:52:09.894Z
+  - Inv ID: hCtbGbzI7CyTEfm3j44O | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-23T02:12:46.569Z
+
+Project: CMG Camp management (ID: J-02C-2026-CMG Camp)
+PO No: PO26J02C-DC0015 | Amount: 1,900.00
+  - Inv ID: SiKe3k0etPq9442nwkeA | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-23T02:12:46.569Z
+  - Inv ID: s8DfZAlV0ZwgAWL2vSF8 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T09:52:08.104Z
+
+Project: CMG Camp management (ID: J-02C-2026-CMG Camp)
+PO No: PO26J02C-DC0012 | Amount: 7,294.75
+  - Inv ID: W3apNoFdlRYU916QuOwO | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T02:33:29.382Z
+  - Inv ID: nZQxXw2o7kev4yVRJrAc | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T03:56:26.879Z
+
+Project: CMG Camp management (ID: J-02C-2026-CMG Camp)
+PO No: PO26J02C-WF0015 | Amount: 16,761.82
+  - Inv ID: yXAB96XiirUfzXte1pET | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-17T05:12:35.605Z
+  - Inv ID: zaSjpkJxHOzSBm5KFhd2 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T02:38:05.688Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-CA0182 | Amount: 3,000.00
+  - Inv ID: 1AkecXGHOHkWoImeZSfX | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-22T06:54:52.972Z
+  - Inv ID: yWxE5dCIs8NbjLbq4HaD | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T03:34:15.155Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-CA0196 | Amount: 1,009.66
+  - Inv ID: 1Routk1oWWsKEJUqO29G | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-04T03:30:38.223Z
+  - Inv ID: O34nS6cfCA8UZuMOruN0 | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-05-25T09:47:39.587Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-CA0213 | Amount: 850.00
+  - Inv ID: 48PbbqbjaT20OHXfDf4q | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-01T09:04:15.810Z
+  - Inv ID: g2jPLQVwpJmXpPvsH5fO | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-04T03:45:53.127Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-CA0225 | Amount: 4,970.00
+  - Inv ID: 5Yam3rtTAaUcNAXkytUO | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T02:37:38.218Z
+  - Inv ID: aRDP571fJt9hr98v2gl5 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-12T09:33:11.645Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-INW005 | Amount: 81,279.44
+  - Inv ID: 67RReEAqAhWkRnGFEzZp | Inv No: N/A | Status: Draft | PayType: เครดิต | Date: 2026-06-23T01:58:22.835Z
+  - Inv ID: SAVkMg79HDfD9fOihI9v | Inv No: N/A | Status: paid | PayType: เช็ค | Date: 2026-06-12T09:30:16.460Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-DC0011 | Amount: 47,614.20
+  - Inv ID: 9uL2skNhpGSS1oJJIOzU | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T03:23:56.335Z
+  - Inv ID: LHIAj6SLKCqnTSR8E1DU | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T02:32:21.339Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-CA0214 | Amount: 200.00
+  - Inv ID: AEg7IqFgHtxGEZg7Yjsz | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-04T03:43:40.037Z
+  - Inv ID: mz1oWMfB4K9DMqSLFQHM | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-01T09:04:43.973Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-CA0220 | Amount: 9,142.00
+  - Inv ID: CHF24qkdryH9kKuVgKmT | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T02:36:10.992Z
+  - Inv ID: ZyqeTCwvBN1BbKwSfuLN | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-10T06:42:04.876Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-CA0183 | Amount: 6,500.00
+  - Inv ID: DBQw4pqev4WR64Bn9fP9 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T03:34:38.826Z
+  - Inv ID: Uz3HSDAZCu8pkA5Rdgba | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-22T06:54:42.525Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-CA0224 | Amount: 2,468.00
+  - Inv ID: Hhf8esR61keueXgWH3W9 | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-15T02:26:53.753Z
+  - Inv ID: dH9BGNKTaAd7xIaLTcjT | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-12T09:31:27.479Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-CA0195 | Amount: 4,800.00
+  - Inv ID: IandXa1fke58fF9aFdcg | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-04T03:23:20.321Z
+  - Inv ID: osTRqs4mQrtjvSEi5EUm | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T09:48:27.408Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-CA0198 | Amount: 800.00
+  - Inv ID: Ji0YnqVoAsJTPldmIlRg | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-26T02:08:46.187Z
+  - Inv ID: WwLYeUnUqwhzyOq7uI2C | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-04T03:45:32.029Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-CA0212 | Amount: 140.00
+  - Inv ID: LgBlCAqaHkXqy2A5tER9 | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-01T09:04:26.155Z
+  - Inv ID: TSwlZqbsx37EnI0oC94g | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-04T03:24:38.846Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-CA0239 | Amount: 7,500.00
+  - Inv ID: MnjkSsOI4e9RSw5KFWAA | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-25T07:51:15.469Z
+  - Inv ID: OZlvzJN6TuAEV8xOZRUx | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-30T04:33:35.084Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-CA0249 | Amount: 1,110.28
+  - Inv ID: N7CSzPrgJzLf7w559ZRQ | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-30T04:32:32.206Z
+  - Inv ID: wS7f14poXCfFMEgyROOy | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-29T04:24:01.899Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-DC0014 | Amount: 50,378.65
+  - Inv ID: Rs96ir6R3HJTxj1JU0u1 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T09:51:34.801Z
+  - Inv ID: uLZDpM9cgNDOxlp0cDLg | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-23T01:58:13.819Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-DC0012 | Amount: 8,001.94
+  - Inv ID: SQHtkNI0uNkiinldnAL9 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T03:24:17.902Z
+  - Inv ID: u5HVW8gw3S4O4Y9IMBXB | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T02:32:54.107Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-CA0241 | Amount: 19,626.168
+  - Inv ID: TezXRCtuG06Xj2x84xeg | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-25T07:51:36.616Z
+  - Inv ID: oGIaH9oNuhYI8nzX43Ov | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-07-08T02:41:37.917Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-CA0240 | Amount: 1,870.00
+  - Inv ID: XqPqLA7RxvtRHihd5Y62 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-25T07:51:18.804Z
+  - Inv ID: xBQI3yEAGnCUvDPr2bME | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-30T04:31:54.488Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-DC0013 | Amount: 49,161.81
+  - Inv ID: bS5jWRDDRJb7tUgufJST | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-09T06:16:28.056Z
+  - Inv ID: tRHgByvL4niILRJabXBL | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-15T02:26:07.537Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-CA0223 | Amount: 2,400.00
+  - Inv ID: hZrI0oo2zPOU09x1qeDc | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-12T09:29:54.884Z
+  - Inv ID: zVJLyor50q0bZXu7fNFZ | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-22T02:35:42.521Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-CA0205 | Amount: 13,573.832
+  - Inv ID: iu0WDAVV7jJ0BEMmWLhL | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-15T02:35:06.437Z
+  - Inv ID: mi3E8SGAMGEak8FQfcZh | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-29T02:52:55.828Z
+
+Project: CMG Equipment Center (ID: J-02B-2026-Equipment)
+PO No: PO26J02B-CA0197 | Amount: 1,500.00
+  - Inv ID: oJYkxXePAkFGA8JJT8Hf | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-04T03:38:22.443Z
+  - Inv ID: ulveIFgjrXaLaSV4ehIM | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T09:46:56.576Z
+
+Project: CMG Work Shop & Development (ID: J-02A-2026-Work)
+PO No: PO26J02A-DC0028 | Amount: 542.68
+  - Inv ID: 1vjIWxiCGN4YSpHhEqfL | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T09:51:15.197Z
+  - Inv ID: noMEIgMmRCaSSjE9E5oY | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-30T04:25:22.997Z
+
+Project: CMG Work Shop & Development (ID: J-02A-2026-Work)
+PO No: PO26J02A-DC0027 | Amount: 5,220.00
+  - Inv ID: 5b2Rl3On64EcNJ433b8N | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T15:16:35.139Z
+  - Inv ID: 8DZHzj5gwVnV6ef0ChvW | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T09:51:16.682Z
+
+Project: CMG Work Shop & Development (ID: J-02A-2026-Work)
+PO No: PO26J02A-DC0025 | Amount: 2,073.75
+  - Inv ID: 6gw6DofTV2UiHvxXtzpy | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T09:51:17.585Z
+  - Inv ID: OOQohQm1QkBPfmblZUE9 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-30T04:25:22.997Z
+
+Project: CMG Work Shop & Development (ID: J-02A-2026-Work)
+PO No: PO26J02A-DC0015 | Amount: 1,277.38
+  - Inv ID: FWeaiwyyKgH02S8DXtok | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T03:38:48.067Z
+  - Inv ID: b4383931ZxkGO5Bhw6Ab | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T03:20:08.619Z
+
+Project: CMG Work Shop & Development (ID: J-02A-2026-Work)
+PO No: PO26J02A-DC0017 | Amount: 6,247.50
+  - Inv ID: FaIaf4U1ujpaUL0r6ifH | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T03:38:49.520Z
+  - Inv ID: j2CkEeFPtMT23OBJjnt0 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T03:20:31.332Z
+
+Project: CMG Work Shop & Development (ID: J-02A-2026-Work)
+PO No: PO26J02A-DC0024 | Amount: 7,820.88
+  - Inv ID: Hx8qH0OwABaUM5kzxWzu | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-30T04:25:22.997Z
+  - Inv ID: gzSsPFDE0s1yYFzL1YsI | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T09:51:20.045Z
+
+Project: CMG Work Shop & Development (ID: J-02A-2026-Work)
+PO No: PO26J02A-DC0022 | Amount: 1,275.00
+  - Inv ID: Jc2dMYxuvwAek1NXfhwv | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-09T06:16:15.206Z
+  - Inv ID: iFedtPEb6eFNQNshA3JI | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-15T02:23:47.569Z
+
+Project: CMG Work Shop & Development (ID: J-02A-2026-Work)
+PO No: PO26J02A-DC0016 | Amount: 14,609.38
+  - Inv ID: KyDkykFALO61gW8JGW31 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T03:38:47.988Z
+  - Inv ID: zPOifn6DmvZPiSiQuEyw | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T03:20:55.217Z
+
+Project: CMG Work Shop & Development (ID: J-02A-2026-Work)
+PO No: PO26J02A-DC0014 | Amount: 92,829.11
+  - Inv ID: OJu7umGHrK6vWM043rEK | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T03:38:46.571Z
+  - Inv ID: WiQGvzF5Jrq6cR1WUBtS | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T03:21:18.555Z
+
+Project: CMG Work Shop & Development (ID: J-02A-2026-Work)
+PO No: PO26J02A-DC0019 | Amount: 10,350.16
+  - Inv ID: PfEgF3kUnK75je9F3DbM | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-15T02:23:06.521Z
+  - Inv ID: SAjE5S6JHz3W0kZN6q5j | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-09T06:16:07.870Z
+
+Project: CMG Work Shop & Development (ID: J-02A-2026-Work)
+PO No: PO26J02A-DC0018 | Amount: 44,873.76
+  - Inv ID: QjnDDi3CFIak8cPcY97a | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-15T02:21:36.654Z
+  - Inv ID: hWvN3cS0FWWgZvmLyWyD | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-09T06:16:05.431Z
+
+Project: CMG Work Shop & Development (ID: J-02A-2026-Work)
+PO No: PO26J02A-DC0020 | Amount: 1,545.31
+  - Inv ID: UO6c7Qrn26OvenW85ASY | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-09T06:16:09.706Z
+  - Inv ID: orhI8YR60KLtKEC1XMbz | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-15T02:21:56.018Z
+
+Project: CMG Work Shop & Development (ID: J-02A-2026-Work)
+PO No: PO26J02A-DC0026 | Amount: 32,224.46
+  - Inv ID: X6eXJ7Tw8FAChswtIAXZ | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T09:51:23.980Z
+  - Inv ID: ubAlFT5iJks4nsOrhEql | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-30T04:25:22.997Z
+
+Project: CMG Work Shop & Development (ID: J-02A-2026-Work)
+PO No: PO26J02A-DC0023 | Amount: 4,647.50
+  - Inv ID: YlgQY1wy7ocJDgYyL167 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-15T02:23:28.066Z
+  - Inv ID: nwChZj0P6E84NHQP2tTl | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-09T06:16:09.137Z
+
+Project: CMG Work Shop & Development (ID: J-02A-2026-Work)
+PO No: PO26J02A-DC0021 | Amount: 1,472.50
+  - Inv ID: foaRG8uT7T95AK9O2tOc | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-09T06:16:03.288Z
+  - Inv ID: oyZc1ARu9uNM3moiuVA6 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-15T02:22:42.434Z
+
+Project: Google Data Center (ID: J-75)
+PO No: PO26J75-OC0001 | Amount: 1,073,856.03
+  - Inv ID: 0NI3aiESJQTbLZdanQRh | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-19T03:28:51.539Z
+  - Inv ID: mUjwnu6fmJs6yY5LJAHN | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-23T02:00:54.905Z
+
+Project: Google Data Center (ID: J-75)
+PO No: PO26J75-WF0044 | Amount: 679.00
+  - Inv ID: 0ob1cgxRyhkO6TJ4Umex | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-29T04:29:12.204Z
+  - Inv ID: fSJtPtebPCrVkCRssSqU | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-07-01T01:51:23.247Z
+
+Project: Google Data Center (ID: J-75)
+PO No: PO26J75-SL0003 | Amount: 317,428.806
+  - Inv ID: 0xmVuXbGLMff9cHfA2Np | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T02:34:48.569Z
+  - Inv ID: RUeZ0EGsmLdLeBvZycw2 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T06:04:33.051Z
+
+Project: Google Data Center (ID: J-75)
+PO No: PO26J75-DC0039 | Amount: 349,420.61
+  - Inv ID: 3nu8RzsZTM1mu8mciEtv | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-19T03:29:01.837Z
+  - Inv ID: 3woQ9Cy7MfNywn6gdVI1 | Inv No: N/A | Status: Draft | PayType: เครดิต | Date: 2026-06-23T02:00:34.861Z
+
+Project: Google Data Center (ID: J-75)
+PO No: PO26J75-DC0037 | Amount: 218,140.63
+  - Inv ID: 7fwMU5zNRzLx5ivawZD7 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T01:54:16.723Z
+  - Inv ID: mXO4Wl8Gks3w9A0n1mvA | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T02:34:49.771Z
+
+Project: Google Data Center (ID: J-75)
+PO No: PO26J75-DC0036 | Amount: 131,509.52
+  - Inv ID: 9oM1blzxgcLksErF0eFM | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T01:54:16.723Z
+  - Inv ID: qsOMZopERuTlKT70xzD2 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T02:34:47.616Z
+
+Project: Google Data Center (ID: J-75)
+PO No: PO26J75-DC0041 | Amount: 87,767.47
+  - Inv ID: A3EjlfBpCyOwC9osSZPN | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-07-01T03:49:39.925Z
+  - Inv ID: yrupPf6qyEyq8EzHqBmK | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-23T09:08:41.559Z
+
+Project: Google Data Center (ID: J-75)
+PO No: PO26J75-DC0038 | Amount: 180,005.15
+  - Inv ID: D9JJztDdyOBrl1mySzo2 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T02:34:47.647Z
+  - Inv ID: EVcNUzJJUgB6wC1ZcZhb | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T01:54:16.723Z
+
+Project: Google Data Center (ID: J-75)
+PO No: PO26J75-WF0045 | Amount: 211.59
+  - Inv ID: EtwHDBSYb7YoJaJ6Nfha | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-29T04:27:59.159Z
+  - Inv ID: ymda44v8qZmpSWNiuTIs | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-07-01T01:51:48.505Z
+
+Project: Google Data Center (ID: J-75)
+PO No: PO26J75-WF0039 | Amount: 679.00
+  - Inv ID: GE5AMSHa8OYsmy8l8jeh | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-01T09:13:53.073Z
+  - Inv ID: usE8M8HkqCflvrlz3whs | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-04T06:06:46.109Z
+
+Project: Google Data Center (ID: J-75)
+PO No: BL0020 | Amount: 240.00
+  - Inv ID: IPlGCpqPxj41XhDMBtKZ | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-18T05:46:00.666Z
+  - Inv ID: wRjT2JiuK6MJj9rSnz0h | Inv No: N/A | Status: Draft | PayType: เครดิต | Date: 2026-06-23T02:00:34.861Z
+
+Project: Google Data Center (ID: J-75)
+PO No: PO26J75-DC0040 | Amount: 177,239.57
+  - Inv ID: MqlZoinutyD18zd2M9dO | Inv No: N/A | Status: Draft | PayType: เครดิต | Date: 2026-06-23T02:00:34.861Z
+  - Inv ID: NvdjNrjQgb3Vj5natRsP | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-19T03:29:21.940Z
+
+Project: Google Data Center (ID: J-75)
+PO No: PO26J75-WF0038 | Amount: 679.00
+  - Inv ID: QPrbLeEFqZP4QAjs7huB | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-04T06:06:27.331Z
+  - Inv ID: lhaYRvAS3pvZtVoTuo7T | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-01T09:11:49.256Z
+
+Project: Google Data Center (ID: J-75)
+PO No: PO26J75-SL0004 | Amount: 285,949.44
+  - Inv ID: Sis1rT5HYNaR3PnulDFl | Inv No: N/A | Status: Draft | PayType: เครดิต | Date: 2026-06-23T02:00:45.253Z
+  - Inv ID: aEtcAHnkImStwLHRIDVL | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-19T03:29:07.564Z
+
+Project: Google Data Center (ID: J-75)
+PO No: PO26J75-DC0042 | Amount: 2,600.00
+  - Inv ID: UZ4wrnpzA7ln9L6mUa34 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-23T09:08:42.831Z
+  - Inv ID: qA4rSUEsYmtHFdT0izDP | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-07-01T03:49:10.133Z
+
+Project: Google Data Center (ID: J-75)
+PO No: PO26J75-CR0097 | Amount: 1,200.00
+  - Inv ID: Y1J77FM6zSpTQsRQ39BK | Inv No: N/A | Status: paid | PayType: โอน | Date: N/A
+  - Inv ID: dP4gdvFbusuYUv6mMFln | Inv No: N/A | Status: paid | PayType: โอน | Date: N/A
+
+Project: Google Data Center (ID: J-75)
+PO No: PO26J75-CR0096 | Amount: 3,500.00
+  - Inv ID: YNTlLtV6o0mcs9pmzCRa | Inv No: N/A | Status: paid | PayType: เงินสด | Date: N/A
+  - Inv ID: cM3H6GW74cyBendWUc2p | Inv No: N/A | Status: paid | PayType: โอน | Date: N/A
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-WF0154 | Amount: 1,000.00
+  - Inv ID: 0UKhCGHKD4sC9MQ1A7Aq | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-01T09:14:09.246Z
+  - Inv ID: KrxJuDirfaQUptwbcrDF | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-04T02:14:36.066Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-INW083 | Amount: 291,740.00
+  - Inv ID: 1a0FGgTk3altKkjYF4aO | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T02:34:19.550Z
+  - Inv ID: CwPplJ7DnVMWlYPkVcuq | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-28T04:43:28.528Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-WF0169 | Amount: 100.00
+  - Inv ID: 1yDtKAI6cmVI7Vqib03S | Inv No: N/A | Status: Invcredit | PayType: เครดิต | Date: 2026-06-22T01:50:03.431Z
+  - Inv ID: Sj8iMhnMhEL4d1bdOqwL | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-17T05:10:48.025Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-WF0172 | Amount: 70,414.68
+  - Inv ID: 23vyRwJdoR5TDXiRknIt | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T02:02:58.353Z
+  - Inv ID: HrUxrPf9bReIN8pjGWuK | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-19T03:20:29.454Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-WF0161 | Amount: 500.00
+  - Inv ID: 2oAaX8iHXyO0VN03IOWd | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-15T02:14:02.792Z
+  - Inv ID: vBYKb04tF6MkBJ8GNSET | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-10T02:59:00.742Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-INW0084 | Amount: 115.00
+  - Inv ID: 3FT0yg0ZCJ2An2gRPQpe | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-04T02:09:40.404Z
+  - Inv ID: she6RDNUwifktESN4IAo | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-01T09:02:52.860Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-WF0152 | Amount: 1,000.00
+  - Inv ID: 3LtCinIMTUkY2STUFvDR | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-04T02:16:31.977Z
+  - Inv ID: nCzMniFOaO2TUOVxPCap | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-01T09:14:06.076Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-WF0151 | Amount: 3,316.00
+  - Inv ID: 419Z5d9HOsGfonZIkvNw | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-01T09:03:43.944Z
+  - Inv ID: Oiyow77JoiE8ExnTFs4C | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-04T02:38:04.315Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-DC0027 | Amount: 23,097.19
+  - Inv ID: 4EGh0ZNYmBWCuiVrXcow | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T02:32:08.584Z
+  - Inv ID: fOHa3q07XYUOWdk91DMo | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T02:08:34.366Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-WF0173 | Amount: 8,730.96
+  - Inv ID: 5qyzKYscjTLvomDEVhCQ | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-19T03:19:13.546Z
+  - Inv ID: 792LmCaeHCjlH13twwHt | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T02:02:18.209Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-WF0164 | Amount: 199.00
+  - Inv ID: 6aUuiyvOxqwkHOP8VTRl | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-22T01:48:20.789Z
+  - Inv ID: IpbCIreDit6CpPfMGNH8 | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-17T05:10:48.151Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-DC0024 | Amount: 13,799.56
+  - Inv ID: 8YPnqdSsGhz8GRhtVuCZ | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T02:08:17.079Z
+  - Inv ID: KvQttu9K7z70Aa8OkgPk | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T02:32:08.789Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-DC0029 | Amount: 16,876.00
+  - Inv ID: 94obsb5El508qqBiYjEP | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-09T06:14:57.450Z
+  - Inv ID: ntc7hPnKBDlCHISfQk3D | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-15T02:12:27.487Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-OL0045 | Amount: 1,078.00
+  - Inv ID: CCXOkv1MgvnW3vncwQFp | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-09T06:14:24.262Z
+  - Inv ID: FYC0owwWDKtQY0sntxJM | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-15T02:13:24.159Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-DC0025 | Amount: 5,000.00
+  - Inv ID: Cz9BFJTSsQadmjpQvQrx | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T02:07:57.223Z
+  - Inv ID: vE8L2PdoA8Ex3sTR5p0S | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T02:32:07.631Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-INW0120 | Amount: 644.58
+  - Inv ID: DA3eC063XoGpEfe9twXQ | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-23T01:52:45.354Z
+  - Inv ID: NUKOgpfQH5skIHIeuv0F | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-17T03:12:33.287Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-DC0034 | Amount: 18,697.00
+  - Inv ID: De8ni8VR20zFbqUZj0Lr | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-23T01:52:23.010Z
+  - Inv ID: rQXZdDjeBE31o2K5yFdw | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T09:43:49.182Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-CA0093 | Amount: 2,850.00
+  - Inv ID: Dmg0IfeMIjRYj8D6TobA | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-28T04:41:33.904Z
+  - Inv ID: MthYyiGSE4wC6EihmWd1 | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-04T02:31:52.481Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-DC0028 | Amount: 17,376.80
+  - Inv ID: EsrOvBbNLcEoq9HQm1ws | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-09T06:15:11.874Z
+  - Inv ID: YPyeIdGfZZdnZTvenrFn | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-15T02:12:08.776Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-OL0043 | Amount: 1,965.00
+  - Inv ID: GBEacXXZV5Ux4amxHRg0 | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-01T09:03:31.787Z
+  - Inv ID: NMxdbkctvYTLkKQaND4B | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-04T02:10:25.164Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-DC0035 | Amount: 9,410.00
+  - Inv ID: GcUGxEm3qTycjdbwUSgh | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-23T01:52:23.010Z
+  - Inv ID: delVKYt6jrzj3yqKoeYt | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T09:50:52.726Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-WF0170 | Amount: 2,988.51
+  - Inv ID: HyL3Wkc19yx9MEdX6Enk | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T01:42:48.337Z
+  - Inv ID: iE7W30eKACPb599FEQsy | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-17T05:10:48.189Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-DC0036 | Amount: 22,630.88
+  - Inv ID: JGHovxF5k7G0g0IUb1cY | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T09:48:23.001Z
+  - Inv ID: pmTKs3y4U1av7byZNq0w | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T15:17:26.435Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-WF0166 | Amount: 1,299.00
+  - Inv ID: JZlvHfO66PIGOaB322fC | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-22T01:50:21.011Z
+  - Inv ID: zZyrhZfFh2VfzFH7xeIl | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-17T05:10:48.307Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-WF0153 | Amount: 1,000.00
+  - Inv ID: JurZLSjPZ5LNoH6Y0lV9 | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-01T09:14:07.505Z
+  - Inv ID: z4YRbfYek2BB3Bjjm6iw | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-04T02:07:25.546Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-WF0165 | Amount: 199.00
+  - Inv ID: KF3s2RjOIuPaRL0M8Qa6 | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-17T05:10:48.226Z
+  - Inv ID: TQZaVSQCedzUJTwlhCqp | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-22T01:49:07.724Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-INW122 | Amount: 291,740.00
+  - Inv ID: KfFimIXUgk701rR9swJq | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-26T08:17:37.467Z
+  - Inv ID: s3kkdX7oMDHsi2flrw0q | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-30T03:52:47.108Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-DC0033 | Amount: 21,839.50
+  - Inv ID: Kx6hOIejvHZ2MigK1xWk | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-23T01:52:23.010Z
+  - Inv ID: dphfwOlp8bOEwGpuvjol | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T09:47:35.025Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-WF0174 | Amount: 2,589.00
+  - Inv ID: N841zc0JLVtvAE3mZIVp | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-19T03:19:43.103Z
+  - Inv ID: hn4Ol8GSsSkV6XS51vRy | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T02:02:36.211Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-DC0026 | Amount: 25,925.00
+  - Inv ID: NPUn0CGLHdvpQ85H7MHo | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-05-25T02:32:07.899Z
+  - Inv ID: VEe9imxwRVEZlUV07u0n | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-04T02:08:49.219Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-WF0160 | Amount: 300.00
+  - Inv ID: Qc647ArAvkVDuGb6lBGu | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-10T02:58:57.695Z
+  - Inv ID: wvYtAVQwWB4AQ9BXm5uQ | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-15T02:14:46.399Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-WF0163 | Amount: 2,695.83
+  - Inv ID: TYzELHX5ZT5F4SmUQGYi | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-15T02:21:06.378Z
+  - Inv ID: Wrq8ZqjvPCmiN39tdkTy | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-12T09:27:33.212Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-WF0167 | Amount: 1,299.00
+  - Inv ID: UKym0UEnsiQxlwpc5lZd | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-17T05:10:48.384Z
+  - Inv ID: uZalxQ8SQfbsLa25Vzs6 | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-22T01:49:30.012Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-DC0032 | Amount: 16,313.25
+  - Inv ID: cOkn6h0LsPrPptLUX7n9 | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-23T01:52:23.010Z
+  - Inv ID: iNT9k4kYxfQrzQloWBSp | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-22T09:45:49.898Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-WF0150 | Amount: 1,000.00
+  - Inv ID: dF5eZ6JiNbYBXEjl1pcM | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-04T02:09:21.819Z
+  - Inv ID: p4IzFFFU4HBDyJViGbVa | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-01T09:02:48.361Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-DC0030 | Amount: 20,000.00
+  - Inv ID: fl0xIRK7CYQtzvFARsQF | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-09T06:14:40.304Z
+  - Inv ID: z9yArGN6bBuIrzdQwjun | Inv No: N/A | Status: paid | PayType: โอน | Date: 2026-06-15T02:12:58.830Z
+
+Project: Head office 2026 (ID: J-01-2026-CMG Head office)
+PO No: PO26J01-WF0168 | Amount: 100.00
+  - Inv ID: p7BhNQXGq0wMrqS21DMf | Inv No: N/A | Status: Invcredit | PayType: เครดิต | Date: 2026-06-22T01:49:48.496Z
+  - Inv ID: y2jbn7jbpLWXhBl4pq36 | Inv No: N/A | Status: paid | PayType: เงินสด | Date: 2026-06-17T05:10:48.266Z
+
+Total POs with identical invoice amounts: 139

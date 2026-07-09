@@ -1366,8 +1366,54 @@ const BudgetView = React.memo(() => {
       }
       return sum;
     }, 0);
-    return { prTotal, poTotal, invoiceTotal, relatedPRs, relatedPOs };
-  }, [duplicateBudgetCodeSet, invoiceAmountByPoRef, projectPos, projectPrById, projectPrs, getItemAmount]);
+
+    const seenSpDocNos = new Set();
+    const spTotal = (spPaymentsForProject || []).reduce((sum, sp) => {
+      // If SP has PO reference, it is already handled by invoiceTotal via relatedPOs loop
+      if (sp.poRef || sp.poNo) return sum;
+      
+      if (!isPaidStatus(sp.status)) return sum;
+      
+      const docNo = sp.docNo || sp.id;
+      if (seenSpDocNos.has(docNo)) return sum;
+      
+      const relatedPrIds = new Set(relatedPRs.map(pr => pr.id));
+      const isRelated = sp.selectedPrIds && sp.selectedPrIds.some(prId => relatedPrIds.has(prId));
+      
+      if (!isRelated) return sum;
+      
+      seenSpDocNos.add(docNo);
+      
+      let budgetSubtotal = 0;
+      let totalPrSubtotal = 0;
+      
+      if (Array.isArray(sp.selectedPrIds)) {
+        sp.selectedPrIds.forEach(prId => {
+          const pr = projectPrById.get(prId);
+          if (!pr || !pr.items) return;
+          
+          pr.items.forEach(i => {
+             const amt = getItemAmount(i);
+             totalPrSubtotal += amt;
+             if (itemBelongsToBudget(i, pr)) {
+                budgetSubtotal += amt;
+             }
+          });
+        });
+      }
+      
+      const spAmt = Number(sp.amount) || 0;
+      
+      if (totalPrSubtotal > 0) {
+        const itemRatio = budgetSubtotal / totalPrSubtotal;
+        return sum + (spAmt * itemRatio);
+      } else {
+        return sum + spAmt;
+      }
+    }, 0);
+
+    return { prTotal, poTotal, invoiceTotal: invoiceTotal + spTotal, relatedPRs, relatedPOs };
+  }, [duplicateBudgetCodeSet, invoiceAmountByPoRef, projectPos, projectPrById, projectPrs, getItemAmount, spPaymentsForProject]);
 
   const budgetStatsById = useMemo(() => {
     const statsMap = new Map();
