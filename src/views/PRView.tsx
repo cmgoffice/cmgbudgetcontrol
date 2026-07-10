@@ -2139,6 +2139,7 @@ const PRView = React.memo(() => {
                     const costCodeDisplay = prLive.costCode
                       ? `${prLive.costCode}${subDesc ? ` ${subDesc}` : ""}`
                       : "";
+                    const combinedRemark = (prLive.items || []).map((i: any) => i.note).filter(Boolean).join(", ");
 
                     return [
                       { label: "PR No.", value: prLive.prNo },
@@ -2149,6 +2150,7 @@ const PRView = React.memo(() => {
                       { label: "ความเร่งด่วน", value: prLive.urgency || "-" },
                       { label: "สถานที่รับของ", value: prLive.deliveryLocation || "-" },
                       { label: "Email", value: prLive.requestorEmail || "-" },
+                      { label: "หมายเหตุ", value: combinedRemark || "-" },
                     ].map(({ label, value }) => (
                       <div key={label} className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
                         <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">{label}</p>
@@ -2246,7 +2248,6 @@ const PRView = React.memo(() => {
                       <tr>
                         <th className="px-3 py-2 w-8 text-center">#</th>
                         <th className="px-3 py-2">รายการ</th>
-                        <th className="px-3 py-2">หมายเหตุ</th>
                         <th className="px-3 py-2 text-right">จำนวน</th>
                         <th className="px-3 py-2 text-right">ราคา/หน่วย</th>
                         <th className="px-3 py-2 text-right">รวม</th>
@@ -2258,7 +2259,6 @@ const PRView = React.memo(() => {
                         <tr key={idx} className="hover:bg-slate-50">
                           <td className="px-3 py-1.5 text-center text-slate-400">{idx + 1}</td>
                           <td className="px-3 py-1.5 font-medium text-slate-700">{it.description}</td>
-                          <td className="px-3 py-1.5 text-slate-500">{it.note || "-"}</td>
                           <td className="px-3 py-1.5 text-right text-slate-500">{it.quantity} {it.unit}</td>
                           <td className="px-3 py-1.5 text-right text-slate-500">{formatCurrency(it.price)}</td>
                           <td className="px-3 py-1.5 text-right font-semibold text-slate-700">{formatCurrency(it.amount ?? (it.quantity * it.price))}</td>
@@ -2268,7 +2268,7 @@ const PRView = React.memo(() => {
                     </tbody>
                     <tfoot className="bg-slate-800">
                       <tr>
-                        <td colSpan={5} className="px-3 py-2 text-right text-xs font-bold text-white">ยอดรวมทั้งสิ้น:</td>
+                        <td colSpan={4} className="px-3 py-2 text-right text-xs font-bold text-white">ยอดรวมทั้งสิ้น:</td>
                         <td className="px-3 py-2 text-right text-sm font-bold text-white">{formatCurrency(prLive.totalAmount || prLive.amount)}</td>
                         <td />
                       </tr>
