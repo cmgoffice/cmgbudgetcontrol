@@ -120,6 +120,10 @@ const PRView = React.memo(() => {
   });
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [savePrProgress, setSavePrProgress] = useState<{ show: boolean; pct: number; step: string }>({ show: false, pct: 0, step: "" });
+  const [isSavingPR, setIsSavingPR] = useState(false);
+  // State updates are asynchronous, so use a ref as the actual synchronous
+  // guard against double-clicks before React has time to disable the button.
+  const savePrInFlightRef = useRef(false);
   const [isPrRejectModalOpen, setIsPrRejectModalOpen] = useState(false);
   const [prRejectReason, setPrRejectReason] = useState("");
   const [isEditBudgetModalOpen, setIsEditBudgetModalOpen] = useState(false);
@@ -742,9 +746,22 @@ const PRView = React.memo(() => {
     setIsFullScreenModalOpen(true);
   };
 
-  const handleSavePR = async () => {
+  const performSavePR = async () => {
     let resolvedPrNo = headerData.prNo;
     const isNewPR = !editingPRId;
+    if (
+      !headerData.costCode ||
+      !headerData.requestDate ||
+      !headerData.purchaseType ||
+      !headerData.deliveryLocation ||
+      lineItems.length === 0
+    ) {
+      return showAlert(
+        "ข้อมูลไม่ครบ",
+        "กรุณากรอกข้อมูลให้ครบถ้วน ทุกช่อง รวมถึงรายการสินค้าอย่างน้อย 1 รายการ",
+        "warning"
+      );
+    }
     if (isNewPR) {
       try {
         resolvedPrNo = await reserveNextPrNo(headerData.subCode, headerData.purchaseType);
@@ -754,12 +771,7 @@ const PRView = React.memo(() => {
       }
     }
     if (
-      !resolvedPrNo ||
-      !headerData.costCode ||
-      !headerData.requestDate ||
-      !headerData.purchaseType ||
-      !headerData.deliveryLocation ||
-      lineItems.length === 0
+      !resolvedPrNo
     ) {
       return showAlert(
         "ข้อมูลไม่ครบ",
@@ -1067,6 +1079,18 @@ const PRView = React.memo(() => {
     }
   };
 
+  const handleSavePR = async () => {
+    if (savePrInFlightRef.current) return;
+    savePrInFlightRef.current = true;
+    setIsSavingPR(true);
+    try {
+      await performSavePR();
+    } finally {
+      savePrInFlightRef.current = false;
+      setIsSavingPR(false);
+    }
+  };
+
   const handleToggleSubItem = (sub, budgetCode, budgetId) => {
     setSelectedSubItemsForPR((prev) => {
       const withBudgetId = { ...sub, parentCode: budgetCode, parentBudgetId: budgetId || (typeof sub.id === "string" && sub.id.startsWith("main-") ? sub.id.replace("main-", "") : null) };
@@ -1177,8 +1201,17 @@ const PRView = React.memo(() => {
     setIsContractCostCodeModalOpen(false);
   };
 
-  const handleSaveContractPR = async () => {
+  const performSaveContractPR = async () => {
     let resolvedPrNo = contractHeaderData.prNo;
+    if (
+      !contractHeaderData.costCode ||
+      !contractHeaderData.requestDate ||
+      !contractHeaderData.purchaseType ||
+      !contractHeaderData.deliveryLocation ||
+      contractLineItems.length === 0
+    ) {
+      return showAlert("ข้อมูลไม่ครบ", "กรุณากรอกข้อมูลให้ครบถ้วน ทุกช่อง รวมถึงรายการสินค้าอย่างน้อย 1 รายการ", "warning");
+    }
     try {
       resolvedPrNo = await reserveNextPrNo(contractHeaderData.subCode, contractHeaderData.purchaseType);
       setContractHeaderData((prev) => ({ ...prev, prNo: resolvedPrNo }));
@@ -1186,12 +1219,7 @@ const PRView = React.memo(() => {
       return showAlert("สร้างเลข PR ไม่สำเร็จ", e?.message || "ไม่สามารถจองเลข PR ใหม่ได้", "error");
     }
     if (
-      !resolvedPrNo ||
-      !contractHeaderData.costCode ||
-      !contractHeaderData.requestDate ||
-      !contractHeaderData.purchaseType ||
-      !contractHeaderData.deliveryLocation ||
-      contractLineItems.length === 0
+      !resolvedPrNo
     ) {
       return showAlert("ข้อมูลไม่ครบ", "กรุณากรอกข้อมูลให้ครบถ้วน ทุกช่อง รวมถึงรายการสินค้าอย่างน้อย 1 รายการ", "warning");
     }
@@ -1297,6 +1325,18 @@ const PRView = React.memo(() => {
       } catch (e2) {
         showAlert("บันทึกไม่สำเร็จ", e2?.message || "เกิดข้อผิดพลาด", "error");
       }
+    }
+  };
+
+  const handleSaveContractPR = async () => {
+    if (savePrInFlightRef.current) return;
+    savePrInFlightRef.current = true;
+    setIsSavingPR(true);
+    try {
+      await performSaveContractPR();
+    } finally {
+      savePrInFlightRef.current = false;
+      setIsSavingPR(false);
     }
   };
 
@@ -2582,11 +2622,12 @@ const PRView = React.memo(() => {
                   </div>
                 </div>
                 <button
+                  disabled={isSavingPR}
                   onClick={() => {
                     setIsModalOpen(false);
                     setIsFullScreenModalOpen(false);
                   }}
-                  className="text-slate-300 hover:text-white hover:bg-slate-500 p-2 rounded-lg transition-all duration-200"
+                  className="text-slate-300 hover:text-white hover:bg-slate-500 p-2 rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <XCircle size={22} />
                 </button>
@@ -3241,6 +3282,7 @@ const PRView = React.memo(() => {
                 <div className="flex gap-3">
                   <Button
                     variant="secondary"
+                    disabled={isSavingPR}
                     onClick={() => {
                       setIsModalOpen(false);
                       setIsFullScreenModalOpen(false);
@@ -3251,9 +3293,10 @@ const PRView = React.memo(() => {
                   </Button>
                   <Button
                     onClick={handleSavePR}
-                    className="px-8 rounded-lg bg-slate-600 hover:bg-slate-700 text-white transition-all"
+                    disabled={isSavingPR}
+                    className="px-8 rounded-lg bg-slate-600 hover:bg-slate-700 text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <Save size={16} /> บันทึก PR
+                    <Save size={16} /> {isSavingPR ? "กำลังบันทึก..." : "บันทึก PR"}
                   </Button>
                 </div>
               </div>

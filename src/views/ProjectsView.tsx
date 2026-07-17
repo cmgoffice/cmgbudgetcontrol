@@ -333,9 +333,25 @@ const ProjectsView = React.memo(() => {
             budgetRevApprovedBy: userData?.name || userData?.email || userRole || "",
           });
           if (ok) {
+            const completedRevisionRequest = project.budgetRevisionRequest
+              ? {
+                  ...project.budgetRevisionRequest,
+                  status: "Completed",
+                  completedBy: userData?.name || userData?.email || userRole || "",
+                  completedAt: new Date().toISOString(),
+                }
+              : null;
             const newRevision = { id: revRef.id, ...revisionData };
             setBudgetRevisions((prev) => [newRevision, ...prev].sort((a, b) => Number(b.revNo || 0) - Number(a.revNo || 0)));
             setBudgetAttachmentFiles([]);
+            setFormData((prev) => editingProjectId === project.id ? {
+              ...prev,
+              budgetTotal: total,
+              currentBudgetRevision: nextRevNo,
+              budgetAttachments: attachments,
+              status: "Active",
+              budgetRevisionRequest: completedRevisionRequest,
+            } : prev);
             showAlert("สำเร็จ", `บันทึก Revision Budget Rev.${nextRevNo} (${formatCurrency(total)}) เรียบร้อย`, "success");
             setSelectedProject((prev) => prev?.id === project.id ? {
               ...prev,
@@ -343,12 +359,7 @@ const ProjectsView = React.memo(() => {
               currentBudgetRevision: nextRevNo,
               budgetAttachments: attachments,
               status: "Active",
-              budgetRevisionRequest: prev.budgetRevisionRequest ? {
-                ...prev.budgetRevisionRequest,
-                status: "Completed",
-                completedBy: userData?.name || userData?.email || userRole || "",
-                completedAt: new Date().toISOString(),
-              } : null,
+              budgetRevisionRequest: completedRevisionRequest,
             } : prev);
           }
         } finally {

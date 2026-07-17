@@ -8,7 +8,7 @@ import {
   BarChart3, Zap, Building2, Wallet, ShoppingCart, FileInput, RefreshCw, UserCheck, History,
   Bell, CircleDot, AtSign, MapPinned, UserCircle, Square, CheckSquare, Flame, Mail, Settings, Send
 } from "lucide-react";
-import { doc, setDoc, updateDoc, deleteDoc } from "firebase/firestore";
+import { doc, setDoc, updateDoc, deleteDoc, runTransaction } from "firebase/firestore";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
@@ -350,6 +350,71 @@ const BudgetView = React.memo(() => {
       return sum + (Number(sub?.quantity || 0) * Number(sub?.unitPrice || 0));
     }, 0);
   }, []);
+  const updateSubItemsWithMainBudgetGuard = useCallback(async (
+    budgetId,
+    transformSubItems,
+    actionLabel = "ดำเนินการ"
+  ) => {
+    const budgetRef = doc(db, "artifacts", appId, "public", "data", "budgets", budgetId);
+
+    try {
+      return await runTransaction(db, async (transaction) => {
+        const snapshot = await transaction.get(budgetRef);
+        if (!snapshot.exists()) {
+          throw Object.assign(new Error("Budget not found"), { guardCode: "BUDGET_NOT_FOUND" });
+        }
+
+        const latestBudget = { id: snapshot.id, ...snapshot.data() };
+        const currentSubItems = Array.isArray(latestBudget.subItems) ? latestBudget.subItems : [];
+        const nextSubItems = transformSubItems(currentSubItems, latestBudget);
+        if (!Array.isArray(nextSubItems)) {
+          throw new Error("Sub-item update must return an array");
+        }
+
+        const mainAmount = Number(latestBudget.amount) || 0;
+        const subTotal = sumSubItemAmounts(nextSubItems);
+        if (subTotal > mainAmount + 0.005) {
+          throw Object.assign(new Error("Sub-items exceed main budget"), {
+            guardCode: "SUB_TOTAL_EXCEEDS_MAIN",
+            mainAmount,
+            subTotal,
+          });
+        }
+
+        transaction.update(budgetRef, { subItems: nextSubItems });
+        return { budget: latestBudget, subItems: nextSubItems };
+      });
+    } catch (error) {
+      if (error?.guardCode === "SUB_TOTAL_EXCEEDS_MAIN") {
+        showAlert(
+          `${actionLabel}ไม่ได้ — ยอด Sub เกิน Main Budget`,
+          `ยอดรวม Sub-Items ${formatCurrency(error.subTotal)} เกิน Main Budget ${formatCurrency(error.mainAmount)} อยู่ ${formatCurrency(error.subTotal - error.mainAmount)} กรุณาปรับยอดให้ถูกต้องก่อน`,
+          "error"
+        );
+        return null;
+      }
+      if (error?.guardCode === "MAIN_NOT_APPROVED") {
+        showAlert(
+          `${actionLabel}ไม่ได้`,
+          "Main item ยังไม่ได้รับการอนุมัติ กรุณาส่งขออนุมัติ Main item ก่อน",
+          "warning"
+        );
+        return null;
+      }
+      if (error?.guardCode === "SUB_ITEM_NOT_FOUND") {
+        showAlert("ไม่พบรายการ", "ไม่พบ Sub-Item ล่าสุด กรุณาโหลดข้อมูลใหม่แล้วลองอีกครั้ง", "warning");
+        return null;
+      }
+      if (error?.guardCode === "BUDGET_NOT_FOUND") {
+        showAlert("ไม่พบข้อมูล", "ไม่พบ Budget ล่าสุด กรุณาโหลดข้อมูลใหม่แล้วลองอีกครั้ง", "warning");
+        return null;
+      }
+
+      console.error(`[Budget Guard] ${actionLabel}:`, error);
+      showAlert("Error", `${actionLabel}ไม่สำเร็จ: ${error?.message || "เกิดข้อผิดพลาด"}`, "error");
+      return null;
+    }
+  }, [appId, db, showAlert, sumSubItemAmounts]);
   const getSubItemAmount = useCallback((sub) => {
     const amount = Number(sub?.amount);
     if (Number.isFinite(amount)) return amount;
@@ -2546,18 +2611,22 @@ const BudgetView = React.memo(() => {
       showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุมัติรายการย่อย", "warning");
       return;
     }
-    const budget = budgets.find(b => b.id === budgetId);
-    if (!budget) return;
-
-    const newSubItems = budget.subItems.map(sub =>
-      sub.id === subItemId ? { ...sub, status: "Approved", rejectReason: "" } : sub
+    const result = await updateSubItemsWithMainBudgetGuard(
+      budgetId,
+      (latestSubItems) => {
+        if (!latestSubItems.some((sub) => sub.id === subItemId)) {
+          throw Object.assign(new Error("Sub-item not found"), { guardCode: "SUB_ITEM_NOT_FOUND" });
+        }
+        return latestSubItems.map((sub) =>
+          sub.id === subItemId ? { ...sub, status: "Approved", rejectReason: "" } : sub
+        );
+      },
+      "อนุมัติ Sub-Item"
     );
+    if (!result) return;
 
-    await updateDoc(
-      doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
-      { subItems: newSubItems }
-    );
-    await logAction("Approve Sub-Item", `Approved Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code})`, budget.projectId || selectedProjectId);
+    const latestBudget = { ...result.budget, subItems: result.subItems };
+    await logAction("Approve Sub-Item", `Approved Sub-Item "${subItemLogDescription(latestBudget, subItemId)}" (Budget ${latestBudget.code})`, latestBudget.projectId || selectedProjectId);
     // ไม่แสดง Modal แจ้งเตือนเมื่อ Approve รายการย่อยสำเร็จ เพื่อลด pop-up ตามคำขอ
   };
 
@@ -2667,20 +2736,25 @@ const BudgetView = React.memo(() => {
       showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
       return;
     }
-    const budget = budgets.find(b => b.id === budgetId);
-    if (!budget) return;
-    if (budget.status !== "Approved") {
-      showAlert("ไม่สามารถส่งคำขออนุมัติได้", "Main item ยังไม่ได้รับการอนุมัติ กรุณาส่งขออนุมัติ Main item ก่อน", "warning");
-      return;
-    }
-    const newSubItems = budget.subItems.map(sub =>
-      sub.id === subItemId ? { ...sub, status: "Wait MD Approve", rejectReason: "" } : sub
+    const result = await updateSubItemsWithMainBudgetGuard(
+      budgetId,
+      (latestSubItems, latestBudget) => {
+        if (latestBudget.status !== "Approved") {
+          throw Object.assign(new Error("Main budget is not approved"), { guardCode: "MAIN_NOT_APPROVED" });
+        }
+        if (!latestSubItems.some((sub) => sub.id === subItemId)) {
+          throw Object.assign(new Error("Sub-item not found"), { guardCode: "SUB_ITEM_NOT_FOUND" });
+        }
+        return latestSubItems.map((sub) =>
+          sub.id === subItemId ? { ...sub, status: "Wait MD Approve", rejectReason: "" } : sub
+        );
+      },
+      "ส่งอนุมัติ Sub-Item"
     );
-    await updateDoc(
-      doc(db, "artifacts", appId, "public", "data", "budgets", budgetId),
-      { subItems: newSubItems }
-    );
-    await logAction("Submit Sub-Item", `Submitted Sub-Item "${subItemLogDescription(budget, subItemId)}" (Budget ${budget.code}) for approval`, budget.projectId || selectedProjectId);
+    if (!result) return;
+
+    const latestBudget = { ...result.budget, subItems: result.subItems };
+    await logAction("Submit Sub-Item", `Submitted Sub-Item "${subItemLogDescription(latestBudget, subItemId)}" (Budget ${latestBudget.code}) for approval`, latestBudget.projectId || selectedProjectId);
   };
 
   const handleRejectSubItem = async (budgetId, subItemId, reason) => {
@@ -2747,28 +2821,36 @@ const BudgetView = React.memo(() => {
       return;
     }
     if (!selectedBudget || !editingSubItem) return;
-    if (selectedBudget.status !== "Approved") {
-      showAlert("ไม่สามารถส่งคำขออนุมัติได้", "Main item ยังไม่ได้รับการอนุมัติ กรุณาส่งขออนุมัติ Main item ก่อน", "warning");
-      return;
-    }
     const amountToAdd = Number(subItemData.quantity) * Number(subItemData.unitPrice);
-    const updatedSub = {
-      ...editingSubItem,
-      description: subItemData.description,
-      quantity: Number(subItemData.quantity),
-      unit: subItemData.unit || "งาน",
-      unitPrice: Number(subItemData.unitPrice),
-      amount: amountToAdd,
-      status: "Wait MD Approve",
-      rejectReason: ""
-    };
-    const updatedSubItems = selectedBudget.subItems.map((sub) =>
-      sub.id === editingSubItem.id ? updatedSub : sub
+    const editingSubItemId = editingSubItem.id;
+    const result = await updateSubItemsWithMainBudgetGuard(
+      selectedBudget.id,
+      (latestSubItems, latestBudget) => {
+        if (latestBudget.status !== "Approved") {
+          throw Object.assign(new Error("Main budget is not approved"), { guardCode: "MAIN_NOT_APPROVED" });
+        }
+        if (!latestSubItems.some((sub) => sub.id === editingSubItemId)) {
+          throw Object.assign(new Error("Sub-item not found"), { guardCode: "SUB_ITEM_NOT_FOUND" });
+        }
+        return latestSubItems.map((sub) =>
+          sub.id === editingSubItemId
+            ? {
+              ...sub,
+              description: subItemData.description,
+              quantity: Number(subItemData.quantity),
+              unit: subItemData.unit || "งาน",
+              unitPrice: Number(subItemData.unitPrice),
+              amount: amountToAdd,
+              status: "Wait MD Approve",
+              rejectReason: "",
+            }
+            : sub
+        );
+      },
+      "ส่งอนุมัติ Sub-Item อีกครั้ง"
     );
-    await updateDoc(
-      doc(db, "artifacts", appId, "public", "data", "budgets", selectedBudget.id),
-      { subItems: updatedSubItems }
-    );
+    if (!result) return;
+
     setPendingSubAttachments([]);
     setIsSubItemModalOpen(false);
     setEditingSubItem(null);
