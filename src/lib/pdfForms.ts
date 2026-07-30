@@ -260,6 +260,130 @@ function fillItemsTable(form: any, items: any[], maxRows = 20, customFont?: any,
   }
 }
 
+const PO_DESCRIPTION_LINES_PER_ROW = 2;
+
+function getTextFieldLayout(form: any, fieldNames: string[]) {
+  for (const name of fieldNames) {
+    try {
+      const field = form.getTextField(name);
+      const widget = field.acroField.getWidgets()[0];
+      const rect = widget?.getRectangle();
+      const appearance = String(
+        widget?.getDefaultAppearance?.() || field.acroField.getDefaultAppearance?.() || ""
+      );
+      const fontSizeMatch = appearance.match(/([\d.]+)\s+Tf\b/);
+      return {
+        width: Number(rect?.width) || 198,
+        fontSize: Number(fontSizeMatch?.[1]) || 12,
+      };
+    } catch (_) {}
+  }
+  return { width: 198, fontSize: 12 };
+}
+
+function wrapTextByRenderedWidth(text: string, maxWidth: number, fontSize: number, font?: any) {
+  const measure = (value: string) => {
+    if (font?.widthOfTextAtSize) {
+      try { return font.widthOfTextAtSize(value, fontSize); } catch (_) {}
+    }
+    // ใช้เฉพาะกรณีโหลดฟอนต์ไม่ได้ โดยประมาณตัวไทยกว้างกว่าตัวละตินเล็กน้อย
+    return Array.from(value).reduce((sum, char) => sum + (/\s/.test(char) ? 0.25 : /[\u0E00-\u0E7F]/.test(char) ? 0.65 : 0.5) * fontSize, 0);
+  };
+
+  const wrapped: string[] = [];
+  const paragraphs = String(text || "").replace(/\r\n?/g, "\n").split("\n");
+
+  for (const paragraph of paragraphs) {
+    if (!paragraph) {
+      wrapped.push("");
+      continue;
+    }
+
+    let current: string[] = [];
+    let lastBreak = -1;
+    for (const char of Array.from(paragraph)) {
+      const candidate = current.concat(char).join("");
+      if (current.length === 0 || measure(candidate) <= maxWidth) {
+        current.push(char);
+        if (/\s/.test(char)) lastBreak = current.length - 1;
+        continue;
+      }
+
+      if (lastBreak > 0) {
+        wrapped.push(current.slice(0, lastBreak).join("").trimEnd());
+        current = current.slice(lastBreak + 1);
+        while (current.length > 0 && /\s/.test(current[0])) current.shift();
+        current.push(char);
+      } else {
+        wrapped.push(current.join("").trimEnd());
+        current = [char];
+      }
+      lastBreak = -1;
+      for (let i = current.length - 1; i >= 0; i--) {
+        if (/\s/.test(current[i])) {
+          lastBreak = i;
+          break;
+        }
+      }
+    }
+    wrapped.push(current.join("").trimEnd());
+  }
+
+  return wrapped.length > 0 ? wrapped : [""];
+}
+
+function buildPOPrintPages(form: any, items: any[], maxRows: number, customFont?: any) {
+  const layout = getTextFieldLayout(form, ["item_desc_01", "desc_01", "description_01", "fill_15"]);
+  // เผื่อระยะขอบซ้าย/ขวาของ text field เพื่อไม่ให้ตัวท้ายชนกรอบ
+  const maxTextWidth = Math.max(20, layout.width - 6);
+  const pages: any[][] = [[]];
+
+  items.forEach((item, itemIndex) => {
+    const lines = wrapTextByRenderedWidth(item.description || "", maxTextWidth, layout.fontSize, customFont);
+    const printRows = [];
+    for (let i = 0; i < lines.length; i += PO_DESCRIPTION_LINES_PER_ROW) {
+      printRows.push({
+        item: i === 0 ? item : null,
+        displayNum: i === 0 ? String(itemIndex + 1) : "",
+        description: lines.slice(i, i + PO_DESCRIPTION_LINES_PER_ROW).join("\n"),
+      });
+    }
+
+    let page = pages[pages.length - 1];
+    // ถ้ารายการนี้ใส่หน้าใหม่ได้ทั้งรายการ ให้หลีกเลี่ยงการตัดค้างระหว่างหน้า
+    if (printRows.length <= maxRows && page.length > 0 && page.length + printRows.length > maxRows) {
+      pages.push([]);
+      page = pages[pages.length - 1];
+    }
+
+    for (const row of printRows) {
+      if (page.length >= maxRows) {
+        pages.push([]);
+        page = pages[pages.length - 1];
+      }
+      page.push(row);
+    }
+  });
+
+  return pages;
+}
+
+function fillPOPrintRows(form: any, rows: any[], maxRows: number, customFont?: any) {
+  for (let i = 1; i <= maxRows; i++) {
+    const idx2 = String(i).padStart(2, "0");
+    const row = rows[i - 1];
+    const item = row?.item;
+    setTextIfExists(form, [`item_no_${idx2}`, `no_${idx2}`, `fill_no_${idx2}`, `fill_${8 + i}`], row?.displayNum || "", customFont);
+    setTextIfExists(form, [`item_material_${idx2}`, `item_material_no_${idx2}`, `material_${idx2}`, `product_code_${idx2}`, `fill_${13 + i}`], item?.materialNo || "", customFont);
+    setTextIfExists(form, [`item_desc_${idx2}`, `desc_${idx2}`, `description_${idx2}`, `fill_${14 + i}`], row?.description || "", customFont);
+    setTextIfExists(form, [`item_qty_${idx2}`, `qty_${idx2}`, `quantity_${idx2}`, `fill_${15 + i}`], item ? fmtQty(item.quantity) : "", customFont);
+    setTextIfExists(form, [`item_unit_${idx2}`, `unit_${idx2}`, `fill_${16 + i}`], item?.unit || "", customFont);
+    setTextIfExists(form, [`item_unit_price_${idx2}`, `unit_price_${idx2}`, `price_${idx2}`, `fill_${17 + i}`], item ? fmtMoney(item.price) : "", customFont);
+    setTextIfExists(form, [`item_discount_${idx2}`, `discount_${idx2}`, `fill_${18 + i}`], item?.discount ? fmtMoney(item.discount) : "", customFont);
+    setTextIfExists(form, [`item_amount_${idx2}`, `amount_${idx2}`, `fill_${19 + i}`], item ? fmtMoney(item.amount ?? (Number(item.quantity) * Number(item.price))) : "", customFont);
+  }
+}
+
 function safePct(num: number, den: number) {
   if (den <= 0) return "";
   return String(Math.round((num / den) * 10000) / 100) + "%";
@@ -477,11 +601,7 @@ export async function generatePOPdfBytes(po: any, { vendor = null, project = nul
   if (hasForm) {
     const mergedPdf = await PDFDocument.create();
     const MAX_ROWS = 10;
-    const itemChunks = [];
-    if (items.length === 0) itemChunks.push([]);
-    else {
-      for (let i = 0; i < items.length; i += MAX_ROWS) itemChunks.push(items.slice(i, i + MAX_ROWS));
-    }
+    const itemChunks = buildPOPrintPages(initialDoc.getForm(), items, MAX_ROWS, customFont);
 
     const sigRects: Record<string, any> = {};
     const fieldRects: Record<string, any> = {};
@@ -522,8 +642,7 @@ export async function generatePOPdfBytes(po: any, { vendor = null, project = nul
       setMultilineIfExists(form, ["vendor_address", "vendoraddress"], vendorAddressWithTel, pageCustomFont);
       setTextIfExists(form, ["vendor_credit_term", "vendor", "vendorcredit", "vendorco"], vendorCredit, pageCustomFont);
 
-      const startIndex = (c * MAX_ROWS) + 1;
-      fillItemsTable(form, chunk, MAX_ROWS, pageCustomFont, startIndex);
+      fillPOPrintRows(form, chunk, MAX_ROWS, pageCustomFont);
 
       setTextIfExists(form, ["total_amount", "amount", "fill_10"], fmtMoney(subtotal), pageCustomFont);
       setTextIfExists(form, ["discount", "fill_11"], fmtMoney(discount), pageCustomFont);
