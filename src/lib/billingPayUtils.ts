@@ -48,11 +48,17 @@ export const getProjectPayHistoryTotal = (projectId: string, invoices: any[], pa
   const orphanPayDocs = payDocs.filter((row: any) => {
     const linkedInvoiceIds = normalizeIdList(row.invoiceIds || []);
     const hasLinkedPaidInvoice = linkedInvoiceIds.some((invoiceId) => paidInvoiceIds.has(invoiceId));
+    const hasInvoiceByPayment = (invoices || []).some((invoice: any) => (
+      invoice?.sourceType === "payment" && (
+        String(invoice?.paymentId || "") === String(row?.id || "") ||
+        String(invoice?.paymentNo || "") === String(row?.paymentNo || "")
+      ) && isPaidInvoiceRecord(invoice)
+    ));
     const hasInvoiceByPayNo = (invoices || []).some((invoice: any) => (
       isPaidInvoiceRecord(invoice) &&
       String(invoice?.payNo || "") === String(row?.docNo || "")
     ));
-    return !hasLinkedPaidInvoice && !hasInvoiceByPayNo;
+    return !hasLinkedPaidInvoice && !hasInvoiceByPayment && !hasInvoiceByPayNo;
   }).map((row: any) => ({
     amount: Number(row.amount) || 0,
   }));

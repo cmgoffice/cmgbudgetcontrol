@@ -277,6 +277,9 @@ const BudgetView = React.memo(() => {
     const projectPoNos = new Set(
       projectPos.map((po: any) => po.poNo).filter(Boolean)
     );
+    const paymentById = new Map(
+      (payments || []).map((payment: any) => [String(payment.id), payment])
+    );
 
     const paidInvoiceIds = new Set();
 
@@ -294,9 +297,28 @@ const BudgetView = React.memo(() => {
 
     uniqueInvoices.forEach((invoice: any) => {
       const amount = Number(invoice.amount) || (Number(invoice.invoiceQty || 0) * Number(invoice.price || 0)) || 0;
-      if (invoice.poRef) {
+      if (invoice.sourceType === "payment") {
+        const payment = paymentById.get(String(invoice.paymentId || invoice.poId || ""));
+        const sourceRefs = [
+          invoice.sourcePoId,
+          ...(Array.isArray(payment?.selectedPrIds) ? payment.selectedPrIds : []),
+          payment?.poRef,
+        ].filter(Boolean);
+        const sourcePoNos = Array.from(new Set(sourceRefs.map((sourceRef: any) => {
+          const sourcePo = projectPos.find((po: any) => String(po.id) === String(sourceRef));
+          return sourcePo?.poNo || (projectPoNos.has(sourceRef) ? sourceRef : "");
+        }).filter(Boolean)));
+        if (sourcePoNos.length > 0) {
+          const allocatedAmount = amount / sourcePoNos.length;
+          sourcePoNos.forEach((poNo: string) => {
+            map.set(poNo, (map.get(poNo) || 0) + allocatedAmount);
+          });
+          return;
+        }
+      }
+      if (invoice.poRef && projectPoNos.has(invoice.poRef)) {
         map.set(invoice.poRef, (map.get(invoice.poRef) || 0) + amount);
-      } else if (invoice.poNo) {
+      } else if (invoice.poNo && projectPoNos.has(invoice.poNo)) {
         map.set(invoice.poNo, (map.get(invoice.poNo) || 0) + amount);
       }
     });
@@ -307,11 +329,17 @@ const BudgetView = React.memo(() => {
     payDocs.forEach((row: any) => {
       const linkedInvoiceIds = normalizeIdList(row.invoiceIds || []);
       const hasLinkedPaidInvoice = linkedInvoiceIds.some((invoiceId) => paidInvoiceIds.has(invoiceId));
+      const hasInvoiceByPayment = Array.from(uniqueInvoices.values()).some((invoice: any) => (
+        invoice?.sourceType === "payment" && (
+          String(invoice?.paymentId || "") === String(row?.id || "") ||
+          String(invoice?.paymentNo || "") === String(row?.paymentNo || "")
+        )
+      ));
       const hasInvoiceByPayNo = Array.from(uniqueInvoices.values()).some((invoice: any) => (
         String(invoice?.payNo || "") === String(row?.docNo || "")
       ));
       
-      if (!hasLinkedPaidInvoice && !hasInvoiceByPayNo) {
+      if (!hasLinkedPaidInvoice && !hasInvoiceByPayment && !hasInvoiceByPayNo) {
         const amount = Number(row.amount) || 0;
         if (row.poRef) {
            map.set(row.poRef, (map.get(row.poRef) || 0) + amount);
@@ -3204,17 +3232,17 @@ const BudgetView = React.memo(() => {
                   <th className="py-3 px-4 text-right bg-blue-100">
                     Budget Total
                   </th>
-                  <th className="py-3 px-4 text-right text-orange-700">
-                    Spent (Inv)
+                  <th className="py-3 px-4 text-right text-slate-600">
+                    PR Total
                   </th>
                   <th className="py-3 px-4 text-right border-r font-bold text-green-800">
                     Balance
                   </th>
                   <th className="py-3 px-4 text-right text-slate-600">
-                    PR Total
-                  </th>
-                  <th className="py-3 px-4 text-right text-slate-600 border-r-0">
                     PO Total
+                  </th>
+                  <th className="py-3 px-4 text-right text-orange-700 border-r-0">
+                    Spent (Inv)
                   </th>
                 </tr>
               </thead>
@@ -3230,8 +3258,8 @@ const BudgetView = React.memo(() => {
                     <td className="py-2 px-4 text-right bg-blue-50/50 font-semibold text-slate-900">
                       {formatCurrency(cat.budget)}
                     </td>
-                    <td className="py-2 px-4 text-right text-orange-600">
-                      {formatCurrency(cat.invoice)}
+                    <td className="py-2 px-4 text-right text-slate-500">
+                      {formatCurrency(cat.pr)}
                     </td>
                     <td
                       className={`py-2 px-4 text-right border-r font-bold ${cat.balance < 0 ? "text-red-600" : "text-green-600"
@@ -3239,17 +3267,17 @@ const BudgetView = React.memo(() => {
                     >
                       {formatCurrency(cat.balance)}
                     </td>
-                    <td className="py-2 px-4 text-right text-slate-500">
-                      {formatCurrency(cat.pr)}
-                    </td>
                     <td
-                      className={`py-2 px-4 text-right border-r-0 ${cat.poExceedsPr ? "text-red-600 font-bold" : "text-slate-500"}`}
+                      className={`py-2 px-4 text-right ${cat.poExceedsPr ? "text-red-600 font-bold" : "text-slate-500"}`}
                       title={cat.poExceedsPr ? `แจ้งเตือน: PO มากกว่า PR ${formatCurrency(cat.poExcessAmount)}` : undefined}
                     >
                       <span className="inline-flex items-center justify-end gap-1">
                         {cat.poExceedsPr && <AlertCircle size={14} aria-label="PO มากกว่า PR" />}
                         {formatCurrency(cat.po)}
                       </span>
+                    </td>
+                    <td className="py-2 px-4 text-right text-orange-600 border-r-0">
+                      {formatCurrency(cat.invoice)}
                     </td>
                   </tr>
                 ))}
@@ -3264,9 +3292,9 @@ const BudgetView = React.memo(() => {
                       categorySummaryTotals.budget
                     )}
                   </td>
-                  <td className="py-2 px-3 text-right text-orange-300">
+                  <td className="py-2 px-3 text-right text-slate-300">
                     {formatCurrency(
-                      categorySummaryTotals.invoice
+                      categorySummaryTotals.pr
                     )}
                   </td>
                   <td className="py-2 px-3 text-right">
@@ -3276,12 +3304,12 @@ const BudgetView = React.memo(() => {
                   </td>
                   <td className="py-2 px-3 text-right text-slate-300">
                     {formatCurrency(
-                      categorySummaryTotals.pr
+                      categorySummaryTotals.po
                     )}
                   </td>
-                  <td className="py-2 px-3 text-right text-slate-300 border-r-0">
+                  <td className="py-2 px-3 text-right text-orange-300 border-r-0">
                     {formatCurrency(
-                      categorySummaryTotals.po
+                      categorySummaryTotals.invoice
                     )}
                   </td>
                 </tr>

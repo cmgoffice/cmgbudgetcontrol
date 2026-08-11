@@ -104,6 +104,22 @@ const isPeriodPendingForMe = (status: string, roles: string[]): boolean => {
   return !!approvers && roles.some((r) => approvers.includes(r));
 };
 
+// Payment numbers use the final numeric segment as the period number (e.g. PO-001).
+// Keep these helpers deterministic so period numbers can never be selected manually.
+const getPaymentPeriodNo = (payment: any): number => {
+  const explicit = Number.parseInt(String(payment?.periodNo ?? ""), 10);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+
+  const suffix = String(payment?.paymentNo || "").match(/-(\d+)$/);
+  const fromPaymentNo = suffix ? Number.parseInt(suffix[1], 10) : NaN;
+  return Number.isFinite(fromPaymentNo) && fromPaymentNo > 0 ? fromPaymentNo : 1;
+};
+
+const getPaymentBaseNo = (paymentNo: any): string => {
+  const value = String(paymentNo || "PAYMENT");
+  return value.replace(/-\d+$/, "");
+};
+
 const PaymentStatusBadge = ({ status }: { status: string }) => {
   const displayStatus = status === "Rejected" ? "Reject" : (status || "Draft");
   return (
@@ -118,7 +134,7 @@ const PaymentStatusBadge = ({ status }: { status: string }) => {
 // ─── Component ────────────────────────────────────────────────────────────────
 const PaymentView = React.memo(() => {
   const {
-    prs, pos, payments = [], vendors, projects, addData, updateData, deleteData, loadVendors,
+    prs, pos, payments = [], invoices = [], vendors, projects, addData, updateData, deleteData, loadVendors,
     showAlert, openConfirm, logAction, userData, user, userRoles, canUseFunction, functionPermissions,
     isColumnVisible, columnWidths, handleColumnResize,
   } = useAppData();
@@ -152,7 +168,6 @@ const PaymentView = React.memo(() => {
   const [savingActiveQty, setSavingActiveQty] = useState(false);
   const [isQtyEditMode, setIsQtyEditMode] = useState(false);
   const [periodBillingCycle, setPeriodBillingCycle] = useState("");
-  const [manualPeriodNo, setManualPeriodNo] = useState("");
 
   // ─── Revision Request ─────────────────────────────────────────────────────
   const [revisionModalPayment, setRevisionModalPayment] = useState<any>(null);
@@ -240,7 +255,6 @@ const PaymentView = React.memo(() => {
     if (["Reject", "Rejected"].includes(paymentStatus)) {
       setIsQtyEditMode(true);
       setPeriodBillingCycle(viewingPayment.billingCycle || "");
-      setManualPeriodNo(viewingPayment.periodNo || "1");
       setActiveQtyEdits({});
     }
   }, [viewingPayment]);
@@ -545,15 +559,6 @@ const PaymentView = React.memo(() => {
         contractTitle: normalizedContractTitle,
       };
 
-      if (manualPeriodNo && manualPeriodNo !== String(p.periodNo)) {
-        extraFields.periodNo = String(manualPeriodNo);
-        let baseNo = p.paymentNo || "PAYMENT";
-        if (baseNo.match(/-\d{2,3}$/)) {
-          baseNo = baseNo.substring(0, baseNo.lastIndexOf("-"));
-        }
-        extraFields.paymentNo = `${baseNo}-${String(manualPeriodNo).padStart(3, '0')}`;
-      }
-
       if (finalize) {
         extraFields.status = "งวดงาน Pending CM";
         const preparedBy = getUserIdentity(userData, user);
@@ -699,6 +704,66 @@ const PaymentView = React.memo(() => {
         [dateField]: new Date().toISOString(),
         ...signatureFields,
       }, { skipLog: true });
+
+      if (nextStatus === "Wait Pay") {
+        const hasInvoice = (invoices || []).some((invoice: any) => (
+          invoice.sourceType === "payment"
+            ? String(invoice.paymentId || invoice.poId || "") === String(p.id)
+            : String(invoice.poId || "") === String(p.id)
+        ));
+        if (!hasInvoice) {
+          const paymentVendor = (vendors || []).find((vendor: any) => String(vendor.id) === String(p.contractorId || p.vendorId || ""));
+          const paymentVendorName = p.contractorName || p.vendorName || paymentVendor?.name || "";
+          const invoiceItems = Array.isArray(p.items)
+            ? p.items.map((item: any, idx: number) => ({
+                poItemIndex: idx,
+                materialNo: item.materialNo || "",
+                description: item.description || "งานจ้างเหมา/ค่าแรง",
+                unit: item.unit || "งวด",
+                quantity: 1,
+                invoiceQty: 1,
+                price: Number(item.thisPeriodAmount) || 0,
+                amount: Number(item.thisPeriodAmount) || 0,
+              }))
+            : [];
+          await addData("invoices", {
+            invNo: "",
+            invDate: new Date().toISOString().split("T")[0],
+            paymentType: "เครดิต",
+            bankAccountNo: "",
+            poId: p.id,
+            poNo: p.paymentNo || p.id,
+            poRef: p.paymentNo || p.id,
+            vendorId: p.contractorId || "",
+            vendorName: paymentVendorName,
+            items: invoiceItems,
+            amount: Number(p.amount) || invoiceItems.reduce((sum: number, item: any) => sum + Number(item.amount || 0), 0),
+            isDeposit: false,
+            depositAmount: 0,
+            originalAmount: Number(p.amount) || 0,
+            remainingAmount: 0,
+            invoiceMode: "payment_subcontract",
+            description: `Payment งวด ${p.periodNo || ""} - ${p.paymentNo || p.id}`,
+            projectId: p.projectId || selectedProjectId,
+            status: "Draft",
+            sourceType: "payment",
+            paymentId: p.id,
+            paymentNo: p.paymentNo || p.id,
+            paymentPeriodNo: p.periodNo || "",
+            paymentPeriodSnapshot: {
+              paymentNo: p.paymentNo || p.id,
+              periodNo: p.periodNo || "",
+              billingCycle: p.billingCycle || "",
+              amount: Number(p.amount) || 0,
+              items: Array.isArray(p.items) ? p.items : [],
+              statusBeforeInvoice: p.status,
+            },
+            invoiceAttachments: [],
+            createdAt: new Date().toISOString(),
+            createdBy: userData?.name || user?.email || "",
+          }, null, { skipLog: true });
+        }
+      }
 
 
 
@@ -952,14 +1017,29 @@ const PaymentView = React.memo(() => {
   const handleStartNextPeriod = async (p: any) => {
     if (!canStartNextPeriod) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์เปิดงวดถัดไป", "warning");
 
-    const currentPeriodNoInt = parseInt(p.periodNo) || 1;
-    const nextPeriodNoInt = currentPeriodNoInt + 1;
-
-    let baseNo = p.paymentNo || "PAYMENT";
-    if (baseNo.match(/-\d{2,3}$/)) {
-      baseNo = baseNo.substring(0, baseNo.lastIndexOf("-"));
+    // Derive the next period from every existing Payment in this chain, rather
+    // than from the current row only. This prevents old periods from being
+    // overwritten when records were imported or created out of order.
+    const baseNo = getPaymentBaseNo(p.paymentNo);
+    const relatedPayments = (payments || []).filter((candidate: any) => {
+      if (candidate.projectId !== (p.projectId || selectedProjectId)) return false;
+      if (getPaymentBaseNo(candidate.paymentNo) !== baseNo) return false;
+      const sourceIds = new Set(p.selectedPrIds || []);
+      const candidateIds = candidate.selectedPrIds || [];
+      return sourceIds.size === 0 || candidateIds.some((id: string) => sourceIds.has(id));
+    });
+    const periodNumbers = [
+      ...relatedPayments,
+      p,
+      ...(Array.isArray(p.periods) ? p.periods : []),
+    ].map(getPaymentPeriodNo);
+    let nextPeriodNoInt = Math.max(0, ...periodNumbers) + 1;
+    const existingPaymentNos = new Set((payments || []).map((candidate: any) => String(candidate.paymentNo || "")));
+    let nextPaymentNo = `${baseNo}-${String(nextPeriodNoInt).padStart(3, '0')}`;
+    while (existingPaymentNos.has(nextPaymentNo)) {
+      nextPeriodNoInt += 1;
+      nextPaymentNo = `${baseNo}-${String(nextPeriodNoInt).padStart(3, '0')}`;
     }
-    const nextPaymentNo = `${baseNo}-${String(nextPeriodNoInt).padStart(3, '0')}`;
 
     setActioning(true);
     try {
@@ -981,6 +1061,8 @@ const PaymentView = React.memo(() => {
         paymentNo: nextPaymentNo,
         paymentType: p.paymentType,
         contractorId: p.contractorId,
+        contractorName: p.contractorName || p.vendorName || (vendors || []).find((vendor: any) => String(vendor.id) === String(p.contractorId || ""))?.name || "",
+        contractorCode: p.contractorCode || (vendors || []).find((vendor: any) => String(vendor.id) === String(p.contractorId || ""))?.code || "",
         contractTitle: p.contractTitle,
         periodNo: String(nextPeriodNoInt),
         openDate: new Date().toISOString().split("T")[0],
@@ -1109,20 +1191,29 @@ const PaymentView = React.memo(() => {
       }));
       
       // เพิ่มข้อมูล Vendor จาก PO เพื่อให้ Role อื่นๆ ที่ไม่มีสิทธิ์เข้าถึง Vendor Management สามารถเห็นชื่อ Vendor ได้
+      const linkedVendor = (vendors || []).find((vendor: any) => String(vendor.id) === String(po.vendorId || ""));
       const vendorInfo = {
-        contractorName: po.vendorName || '',
-        contractorCode: po.vendorCode || '',
-        contractorType: po.vendorType || '',
+        contractorName: po.vendorName || po.vendor || po.supplierName || linkedVendor?.name || '',
+        contractorCode: po.vendorCode || linkedVendor?.code || linkedVendor?.vendorCode || '',
+        contractorType: po.vendorType || linkedVendor?.type || linkedVendor?.vendorType || '',
       };
       const creator = getUserIdentity(userData, user);
+      const paymentBaseNo = getPaymentBaseNo(`${po.poNo || po.id}-001`);
+      const priorPaymentsForPo = (payments || []).filter((payment: any) =>
+        payment.projectId === selectedProjectId &&
+        (payment.selectedPrIds || []).includes(po.id) &&
+        getPaymentBaseNo(payment.paymentNo) === paymentBaseNo
+      );
+      const firstPeriodNo = Math.max(0, ...priorPaymentsForPo.map(getPaymentPeriodNo)) + 1;
+      const firstPaymentNo = `${paymentBaseNo}-${String(firstPeriodNo).padStart(3, '0')}`;
       
       const payload = {
-        paymentNo: `${po.poNo || po.id}-001`,
+        paymentNo: firstPaymentNo,
         paymentType: po.poType,
-        contractorId: po.vendorId || '',
+        contractorId: po.vendorId || linkedVendor?.id || '',
         ...vendorInfo,
         contractTitle: contractTitleOverride || po.contractTitle || po.poNo || '',
-        periodNo: '1',
+        periodNo: String(firstPeriodNo),
         openDate: new Date().toISOString().split('T')[0],
         billingCycle: '',
         note: '',
@@ -1409,24 +1500,16 @@ const PaymentView = React.memo(() => {
                               </Button>
                             </>
                           )}
-                          {p.status === "Wait Pay" && (canPayPayment || canHoldPayment) && (
+                          {p.status === "Wait Pay" && canHoldPayment && (
                             <>
-                              {canPayPayment && <Button
-                                variant="success"
-                                size="sm"
-                                className="px-2 py-0.5 text-[10px] whitespace-nowrap"
-                                onClick={() => { setWaitPayModalPayment(p); setPaySlipFile(null); }}
-                              >
-                                Pay
-                              </Button>}
-                              {canHoldPayment && <Button
+                              <Button
                                 variant="danger"
                                 size="sm"
                                 className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                 onClick={() => { setHoldModalPayment(p); setHoldReasonInput(""); setHoldDecision("keepHold"); }}
                               >
                                 Hold
-                              </Button>}
+                              </Button>
                             </>
                           )}
                           {(p.status || "Draft") === "Draft" && canDeletePayment && (
@@ -1569,24 +1652,16 @@ const PaymentView = React.memo(() => {
                               <Trash2 size={13} />
                             </button>
                           )}
-                          {p.status === "Wait Pay" && (canPayPayment || canHoldPayment) && (
+                          {p.status === "Wait Pay" && canHoldPayment && (
                             <>
-                              {canPayPayment && <Button
-                                variant="success"
-                                size="sm"
-                                className="px-2 py-0.5 text-[10px] whitespace-nowrap"
-                                onClick={() => { setWaitPayModalPayment(p); setPaySlipFile(null); }}
-                              >
-                                Pay
-                              </Button>}
-                              {canHoldPayment && <Button
+                              <Button
                                 variant="danger"
                                 size="sm"
                                 className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                 onClick={() => { setHoldModalPayment(p); setHoldReasonInput(""); setHoldDecision("keepHold"); }}
                               >
                                 Hold
-                              </Button>}
+                              </Button>
                             </>
                           )}
                         </div>
@@ -1614,16 +1689,10 @@ const PaymentView = React.memo(() => {
         const allPeriods = vp.periods || [];
         const isViewingOldPeriod = viewPeriodIdx >= 0 && viewPeriodIdx < allPeriods.length;
         const activePeriod = isViewingOldPeriod ? allPeriods[viewPeriodIdx] : null;
-        const displayPeriodNo = isViewingOldPeriod ? activePeriod.periodNo : (isQtyEditMode ? manualPeriodNo : (vp.periodNo || (allPeriods.length + 1)));
-
-        let displayPaymentNo = isViewingOldPeriod ? activePeriod.paymentNo : vp.paymentNo;
-        if (isQtyEditMode && manualPeriodNo && manualPeriodNo !== String(vp.periodNo)) {
-          let baseNo = vp.paymentNo || "PAYMENT";
-          if (baseNo.match(/-\d{2,3}$/)) {
-            baseNo = baseNo.substring(0, baseNo.lastIndexOf("-"));
-          }
-          displayPaymentNo = `${baseNo}-${String(manualPeriodNo).padStart(3, '0')}`;
-        }
+        const displayPeriodNo = isViewingOldPeriod
+          ? getPaymentPeriodNo(activePeriod)
+          : getPaymentPeriodNo(vp);
+        const displayPaymentNo = isViewingOldPeriod ? activePeriod.paymentNo : vp.paymentNo;
 
         const rawPaySlipUrl = isViewingOldPeriod ? activePeriod.paySlipUrl : vp.paySlipUrl;
         const displayPaySlipUrl = rawPaySlipUrl && typeof rawPaySlipUrl === "object" ? rawPaySlipUrl.url : rawPaySlipUrl;
@@ -1749,20 +1818,14 @@ const PaymentView = React.memo(() => {
                               <ChevronLeft size={14} />
                             </button>
                           )}
-                          {isQtyEditMode && !isViewingOldPeriod ? (
-                            <select
-                              value={manualPeriodNo}
-                              onChange={(e) => setManualPeriodNo(e.target.value)}
-                              className="border border-orange-400 bg-orange-50 text-orange-800 rounded px-2 py-0.5 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-orange-400"
-                            >
-                              {Array.from({ length: 20 }, (_, i) => i + 1).map((num) => (
-                                <option key={num} value={num}>{num}/{num}</option>
-                              ))}
-                            </select>
-                          ) : (
-                            <span className={`font-bold px-2 py-0.5 rounded border ${isViewingOldPeriod ? "text-slate-600 bg-slate-100 border-slate-300" : "text-orange-700 bg-orange-50 border-orange-200"}`}>
-                              {displayPeriodNo} / {displayPeriodNo}
-                            </span>
+                          <span
+                            title="ระบบกำหนดเลขงวดงานอัตโนมัติและไม่สามารถแก้ไขได้"
+                            className={`font-bold px-2 py-0.5 rounded border ${isViewingOldPeriod ? "text-slate-600 bg-slate-100 border-slate-300" : "text-orange-700 bg-orange-50 border-orange-200"}`}
+                          >
+                            {displayPeriodNo} / {displayPeriodNo}
+                          </span>
+                          {!isViewingOldPeriod && (
+                            <span className="text-[10px] text-slate-400 ml-1">(อัตโนมัติ)</span>
                           )}
                           {totalPeriodCount > 1 && (
                             <button
@@ -2243,7 +2306,7 @@ const PaymentView = React.memo(() => {
                       </span>
                     ) : (
                       <button
-                        onClick={() => { setIsQtyEditMode(true); setPeriodBillingCycle(vp.billingCycle || ""); setManualPeriodNo(vp.periodNo || "1"); setActiveQtyEdits({}); }}
+                        onClick={() => { setIsQtyEditMode(true); setPeriodBillingCycle(vp.billingCycle || ""); setActiveQtyEdits({}); }}
                         className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-semibold flex items-center gap-2"
                       >
                         <Edit size={14} /> ใส่ปริมาณ
@@ -2282,23 +2345,16 @@ const PaymentView = React.memo(() => {
                       )}
                     </>
                   )}
-                  {/* Wait Pay → Pay/Hold (Procurement, PCM, Admin) */}
-                  {vp.status === "Wait Pay" && (canPayPayment || canHoldPayment) && (
+                  {/* Wait Pay → Invoice (Pay button removed) / Hold */}
+                  {vp.status === "Wait Pay" && canHoldPayment && (
                     <>
-                      {canPayPayment && <button
-                        disabled={actioning}
-                        onClick={() => { setWaitPayModalPayment(vp); setPaySlipFile(null); }}
-                        className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
-                      >
-                        <Upload size={14} /> Pay
-                      </button>}
-                      {canHoldPayment && <button
+                      <button
                         disabled={actioning}
                         onClick={() => { setHoldModalPayment(vp); setHoldReasonInput(""); setHoldDecision("keepHold"); }}
                         className="px-4 py-2 rounded-lg border border-amber-400 text-amber-700 hover:bg-amber-50 text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
                       >
                         <Clock size={14} /> Hold
-                      </button>}
+                      </button>
                     </>
                   )}
                   {/* In Process → จบงาน (PM/CM) */}
@@ -2343,7 +2399,7 @@ const PaymentView = React.memo(() => {
                   {/* Edit (Draft or Rejected) */}
                   {["Draft", "Reject", "Rejected"].includes(vp.status || "Draft") && !isQtyEditMode && !isViewingOldPeriod && canEditPayment && !["Reject", "Rejected"].includes(vp.status) && (
                     <button
-                      onClick={() => { setIsQtyEditMode(true); setPeriodBillingCycle(vp.billingCycle || ""); setManualPeriodNo(vp.periodNo || "1"); setActiveQtyEdits({}); }}
+                      onClick={() => { setIsQtyEditMode(true); setPeriodBillingCycle(vp.billingCycle || ""); setActiveQtyEdits({}); }}
                       className={`px-4 py-2 rounded-lg text-white text-sm font-medium flex items-center gap-2 ${["Reject", "Rejected"].includes(vp.status) ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"}`}
                     >
                       <Edit size={14} /> แก้ไข{["Reject", "Rejected"].includes(vp.status) ? " (ส่งใหม่)" : ""}
@@ -2757,6 +2813,14 @@ const PaymentView = React.memo(() => {
         const contractTotal = (po.items || []).reduce(
           (s: number, it: any) => s + ((Number(it.quantity) || 0) * (Number(it.price) || Number(it.unitPrice) || 0)), 0
         );
+        const activationBaseNo = getPaymentBaseNo(`${po.poNo || po.id}-001`);
+        const activationPriorPayments = (payments || []).filter((payment: any) =>
+          payment.projectId === (po.projectId || selectedProjectId) &&
+          (payment.selectedPrIds || []).includes(po.id) &&
+          getPaymentBaseNo(payment.paymentNo) === activationBaseNo
+        );
+        const activationPeriodNo = Math.max(0, ...activationPriorPayments.map(getPaymentPeriodNo)) + 1;
+        const activationPaymentNo = `${activationBaseNo}-${String(activationPeriodNo).padStart(3, '0')}`;
         const canActivate = activatingContractTitle.trim().length > 0;
         return (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[10010] p-4">
@@ -2789,9 +2853,9 @@ const PaymentView = React.memo(() => {
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <div className="flex"><span className="w-56 text-slate-500 font-semibold shrink-0">เลขที่เบิกงวดงาน / PAYMENT NO. :</span><span className="font-bold text-blue-800">{po.poNo || po.id}-001</span></div>
+                      <div className="flex"><span className="w-56 text-slate-500 font-semibold shrink-0">เลขที่เบิกงวดงาน / PAYMENT NO. :</span><span className="font-bold text-blue-800">{activationPaymentNo}</span></div>
                       <div className="flex"><span className="w-56 text-slate-500 font-semibold shrink-0">Payment Type :</span><span className="font-bold text-slate-800">{po.poType || "-"}</span></div>
-                      <div className="flex"><span className="w-56 text-slate-500 font-semibold shrink-0">งวดงาน / PERIOD NO. :</span><span className="font-bold px-2 py-0.5 rounded border text-orange-700 bg-orange-50 border-orange-200">1 / 1</span></div>
+                      <div className="flex items-center"><span className="w-56 text-slate-500 font-semibold shrink-0">งวดงาน / PERIOD NO. :</span><span title="ระบบกำหนดเลขงวดงานอัตโนมัติและไม่สามารถแก้ไขได้" className="font-bold px-2 py-0.5 rounded border text-orange-700 bg-orange-50 border-orange-200">{activationPeriodNo} / {activationPeriodNo}</span><span className="text-[10px] text-slate-400 ml-1">(อัตโนมัติ)</span></div>
                       <div className="flex"><span className="w-56 text-slate-500 font-semibold shrink-0">วันที่จัดทำเอกสาร / Date :</span><span className="font-medium text-slate-700">{new Date().toISOString().split("T")[0]}</span></div>
                     </div>
                   </div>

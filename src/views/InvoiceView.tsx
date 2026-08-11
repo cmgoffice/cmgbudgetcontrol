@@ -1,10 +1,10 @@
 // @ts-nocheck
-import React, { useState, useMemo, useCallback, useContext } from "react";
+import React, { useState, useMemo, useCallback, useContext, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { collection, doc, getDocs, query, where, writeBatch } from "firebase/firestore";
 import {
   ChevronDown, ChevronRight, FileText, Eye, X, Search, Trash2,
-  DollarSign, Calendar, CreditCard, Package, Check, AlertCircle, Pencil,
+  DollarSign, Calendar, CreditCard, Package, Check, AlertCircle, Pencil, Paperclip,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAppData } from "../contexts/AppDataContext";
@@ -29,6 +29,7 @@ import {
   formatLogCurrency,
   truncateLogText,
 } from "../lib/systemLogDetails";
+import { uploadAttachment } from "../lib/uploadAttachment";
 
 const PO_TYPE_LABELS: Record<string, string> = {
   CR: "CR — เครดิต",
@@ -137,6 +138,8 @@ const InvoiceView = React.memo(() => {
     items: [] as any[],
   });
   const [saving, setSaving] = useState(false);
+  const [invoiceAttachmentFiles, setInvoiceAttachmentFiles] = useState<File[]>([]);
+  const paymentInvoiceDraftsRef = useRef(new Set<string>());
   const [expandedTypes, setExpandedTypes] = useState<Record<string, boolean>>({});
   const [poPOSearch, setPoPOSearch] = useState("");
   const [poVendorSearch, setPoVendorSearch] = useState("");
@@ -349,7 +352,7 @@ const InvoiceView = React.memo(() => {
     const groups: Record<string, any[]> = {};
     filteredDraftInvoices.forEach((inv: any) => {
        const po = pos.find((p: any) => p.id === inv.poId);
-       const type = po?.poType || "OTHER";
+       const type = inv.sourceType === "payment" ? (inv.poType || "SP") : (po?.poType || "OTHER");
        if (!groups[type]) groups[type] = [];
        groups[type].push(inv);
     });
@@ -597,6 +600,7 @@ const InvoiceView = React.memo(() => {
     if (saving && !force) return;
     setViewingPO(null);
     setEditingInvoice(null);
+    setInvoiceAttachmentFiles([]);
   }, [saving]);
 
   const normalizePaymentSource = useCallback(
@@ -616,21 +620,118 @@ const InvoiceView = React.memo(() => {
         payment.description ||
         `Payment งวด ${payment.periodNo || ""} - ${payment.paymentNo || payment.id || ""}`,
       items: Array.isArray(payment.items)
-        ? payment.items.map((it: any, idx: number) => ({
-            ...it,
-            poItemIndex: Number.isFinite(Number(it?.poItemIndex))
-              ? Number(it.poItemIndex)
-              : idx,
-            description: it.description || "งานจ้างเหมา/ค่าแรง",
-            unit: it.unit || "งวด",
-            quantity: Number(it.quantity || 1) || 1,
-            price: Number(it.thisPeriodAmount ?? it.price ?? it.amount ?? 0) || 0,
-            amount: Number(it.thisPeriodAmount ?? it.amount ?? 0) || 0,
-          }))
+        ? payment.items.map((it: any, idx: number) => {
+            const paymentQty = Number(it.thisPeriodQty ?? it.quantity);
+            const paymentAmount = Number(it.thisPeriodAmount ?? it.amount ?? 0) || 0;
+            const unitPrice = Number(
+              it.contractPrice ?? it.price ??
+              (paymentQty > 0 ? paymentAmount / paymentQty : 0)
+            ) || 0;
+            return {
+              ...it,
+              poItemIndex: Number.isFinite(Number(it?.poItemIndex))
+                ? Number(it.poItemIndex)
+                : idx,
+              description: it.description || "งานจ้างเหมา/ค่าแรง",
+              unit: it.unit || "งวด",
+              quantity: Number.isFinite(paymentQty) ? paymentQty : 1,
+              price: unitPrice,
+              amount: paymentAmount,
+            };
+          })
         : [],
     }),
     []
   );
+
+  const getDraftInvoiceSource = useCallback((draftInv: any) => {
+    const source = draftInv?.sourceType === "payment"
+      ? (payments || []).find((payment: any) => String(payment.id) === String(draftInv.paymentId || draftInv.poId))
+      : pos.find((po: any) => po.id === draftInv.poId);
+    if (draftInv?.sourceType === "payment" && source) return normalizePaymentSource(source);
+    return source || {};
+  }, [normalizePaymentSource, payments, pos]);
+
+  // Payment ที่ผ่านอนุมัติงวดงานและเป็น Wait Pay ต้องมี Invoice Draft จริง
+  // เพื่อให้ผู้ใช้เปิดจากหน้า Invoice แล้วกรอกเลขที่/วันที่/ไฟล์แนบต่อได้
+  useEffect(() => {
+    const waitPayPayments = (payments || []).filter((payment: any) => (
+      payment.projectId === selectedProjectId && payment.status === "Wait Pay"
+    ));
+
+    waitPayPayments.forEach((payment: any) => {
+      const paymentKey = String(payment.id || payment.paymentNo || "");
+      if (!paymentKey || paymentInvoiceDraftsRef.current.has(paymentKey)) return;
+
+      const hasInvoice = (invoices || []).some((invoice: any) => (
+        invoice.sourceType === "payment"
+          ? String(invoice.paymentId || invoice.poId || "") === paymentKey
+          : String(invoice.poId || "") === paymentKey
+      ));
+      if (hasInvoice) {
+        paymentInvoiceDraftsRef.current.add(paymentKey);
+        return;
+      }
+
+      paymentInvoiceDraftsRef.current.add(paymentKey);
+      const paymentVendorName = getVendorName(
+        payment.contractorId || payment.vendorId || "",
+        payment.contractorName || payment.vendorName || ""
+      );
+      const invoiceItems = Array.isArray(payment.items)
+        ? payment.items.map((item: any, idx: number) => ({
+            poItemIndex: idx,
+            materialNo: item.materialNo || "",
+            description: item.description || "งานจ้างเหมา/ค่าแรง",
+            unit: item.unit || "งวด",
+            quantity: 1,
+            invoiceQty: 1,
+            price: Number(item.thisPeriodAmount) || 0,
+            amount: Number(item.thisPeriodAmount) || 0,
+          }))
+        : [];
+      const invoicePayload = {
+        invNo: "",
+        invDate: new Date().toISOString().split("T")[0],
+        paymentType: "เครดิต",
+        bankAccountNo: "",
+        poId: payment.id,
+        poNo: payment.paymentNo || payment.id,
+        poRef: payment.paymentNo || payment.id,
+        vendorId: payment.contractorId || "",
+        vendorName: paymentVendorName,
+        items: invoiceItems,
+        amount: Number(payment.amount) || invoiceItems.reduce((sum: number, item: any) => sum + Number(item.amount || 0), 0),
+        isDeposit: false,
+        depositAmount: 0,
+        originalAmount: Number(payment.amount) || 0,
+        remainingAmount: 0,
+        invoiceMode: "payment_subcontract",
+        description: `Payment งวด ${payment.periodNo || ""} - ${payment.paymentNo || payment.id}`,
+        projectId: selectedProjectId,
+        status: "Draft",
+        sourceType: "payment",
+        paymentId: payment.id,
+        paymentNo: payment.paymentNo || payment.id,
+        paymentPeriodNo: payment.periodNo || "",
+        paymentPeriodSnapshot: {
+          paymentNo: payment.paymentNo || payment.id,
+          periodNo: payment.periodNo || "",
+          billingCycle: payment.billingCycle || "",
+          amount: Number(payment.amount) || 0,
+          items: Array.isArray(payment.items) ? payment.items : [],
+          statusBeforeInvoice: payment.status,
+        },
+        invoiceAttachments: [],
+        createdAt: new Date().toISOString(),
+        createdBy: `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim() || user?.email || "",
+      };
+
+      addData("invoices", invoicePayload, null, { skipLog: true }).then((created) => {
+        if (!created) paymentInvoiceDraftsRef.current.delete(paymentKey);
+      }).catch(() => paymentInvoiceDraftsRef.current.delete(paymentKey));
+    });
+  }, [addData, getVendorName, invoices, payments, selectedProjectId, user?.email, userData?.firstName, userData?.lastName]);
 
   const getInvoiceSource = useCallback(
     (invoice: any) => {
@@ -717,16 +818,16 @@ const InvoiceView = React.memo(() => {
       if (matchedIndex >= 0) usedInvoiceIndexes.add(matchedIndex);
 
       const maxQty = Number(item?.quantity ?? matchedItem?.quantity ?? 0);
-      const invoiceQty = Number(
-        matchedItem?.quantity ?? matchedItem?.invoiceQty ?? item?.quantity ?? 0
-      );
+      const invoiceQty = source?.isPaymentSubcontract
+        ? maxQty
+        : Number(matchedItem?.quantity ?? matchedItem?.invoiceQty ?? item?.quantity ?? 0);
 
       return {
         ...item,
         poItemIndex: itemIndex,
         quantity: maxQty,
         invoiceQty,
-        checked: Boolean(matchedItem),
+        checked: source?.isPaymentSubcontract ? true : Boolean(matchedItem),
       };
     });
 
@@ -746,6 +847,10 @@ const InvoiceView = React.memo(() => {
     return [...normalizedSourceItems, ...remainingInvoiceItems];
   }, []);
 
+  const getPaymentInvoiceFormItems = useCallback((draftInv: any) => (
+    buildInvoiceItemsForForm(getDraftInvoiceSource(draftInv), draftInv)
+  ), [buildInvoiceItemsForForm, getDraftInvoiceSource]);
+
   const getSelectedInvoiceDescription = useCallback(
     (items: any[], fallback = "-") => {
       const selectedItems = (items || []).filter((item) => item.checked);
@@ -764,11 +869,12 @@ const InvoiceView = React.memo(() => {
       invoiceMode: po?.payBeforeReceiveChecked ? "pay_before_receive" : "",
     });
     setEditingInvoice(null);
+    setInvoiceAttachmentFiles([]);
     setViewingPO(source);
       setInvoiceForm({
         invNo: "",
         invDate: new Date().toISOString().split("T")[0],
-        paymentType: po.paymentType || "เครดิต",
+        paymentType: po.isPaymentSubcontract ? "เครดิต" : (po.paymentType || "เครดิต"),
         bankAccountNo: "",
         isDeposit: Boolean(po?.payBeforeReceiveInvoiceSetup?.isDeposit),
         depositAmount: Number(po?.payBeforeReceiveInvoiceSetup?.depositAmount || 0),
@@ -782,6 +888,7 @@ const InvoiceView = React.memo(() => {
     (invoice: any) => {
       const source = getInvoiceSource(invoice);
       setEditingInvoice(invoice);
+      setInvoiceAttachmentFiles([]);
       setViewingPO(source);
       setInvoiceForm({
         invNo: invoice.invNo || "",
@@ -803,6 +910,7 @@ const InvoiceView = React.memo(() => {
       const source = getInvoiceSource(invoice);
       const originalDepositAmount = Number(invoice.depositAmount || 0);
       setEditingInvoice(invoice);
+      setInvoiceAttachmentFiles([]);
       setViewingPO(source);
       setInvoiceForm({
         invNo: invoice.invNo || "",
@@ -831,6 +939,10 @@ const InvoiceView = React.memo(() => {
     }
     if (!viewingPO) return;
     const isTransferPayment = invoiceForm.paymentType === "โอน";
+    const isPaymentInvoice = Boolean(viewingPO?.isPaymentSubcontract);
+    const existingInvoiceAttachments = isPaymentInvoice && isEditingInvoice
+      ? (Array.isArray(editingInvoice?.invoiceAttachments) ? editingInvoice.invoiceAttachments : [])
+      : [];
     if (!invoiceForm.invNo.trim())
       return showAlert("กรุณากรอกข้อมูล", "กรุณากรอกเลขที่ใบแจ้งหนี้", "warning");
     if (isTransferPayment && !invoiceForm.bankAccountNo.trim())
@@ -842,6 +954,8 @@ const InvoiceView = React.memo(() => {
     const selectedItems = invoiceForm.items.filter((i) => i.checked);
     if (selectedItems.length === 0)
       return showAlert("ไม่มีรายการ", "กรุณาเลือกรายการอย่างน้อย 1 รายการ", "warning");
+    if (isPaymentInvoice && existingInvoiceAttachments.length === 0 && invoiceAttachmentFiles.length === 0)
+      return showAlert("ข้อมูลไม่ครบ", "Payment Invoice จำเป็นต้องแนบไฟล์ก่อนบันทึก", "warning");
 
     setSaving(true);
     try {
@@ -864,6 +978,30 @@ const InvoiceView = React.memo(() => {
       if (invoiceForm.settleRemaining && totalAmount <= 0) {
         return showAlert("ข้อมูลไม่ถูกต้อง", "ไม่พบยอดคงเหลือสำหรับจ่ายส่วนที่เหลือ", "warning");
       }
+      const uploadedInvoiceAttachments = isPaymentInvoice && invoiceAttachmentFiles.length > 0
+        ? await Promise.all(
+            invoiceAttachmentFiles.map(async (file) => {
+              const result = await uploadAttachment(file, {
+                type: "invoice",
+                projectId: editingInvoice?.projectId || selectedProjectId,
+                docId: viewingPO.id,
+                subPath: "payment",
+              });
+              return {
+                ...result,
+                uploadedBy: `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim() || user?.email || "",
+                uploadedAt: new Date().toISOString(),
+              };
+            })
+          )
+        : [];
+      const invoiceAttachments = [...existingInvoiceAttachments, ...uploadedInvoiceAttachments];
+      const paymentAttachments = Array.from(new Map(
+        [
+          ...(Array.isArray(viewingPO.paymentAttachments) ? viewingPO.paymentAttachments : []),
+          ...invoiceAttachments.map((att) => ({ ...att, source: "Invoice" })),
+        ].map((att) => [att.url || att.name, att])
+      ).values());
       const invoiceStatus = getPoInvoiceStatus(invoiceForm.paymentType, !invoiceForm.settleRemaining && invoiceForm.isDeposit);
       const invoicePayload = {
         invNo: invoiceForm.invNo.trim(),
@@ -907,6 +1045,13 @@ const InvoiceView = React.memo(() => {
         ),
         projectId: editingInvoice?.projectId || selectedProjectId,
         status: invoiceStatus,
+        ...(isPaymentInvoice ? {
+          sourceType: "payment",
+          paymentId: viewingPO.id,
+          paymentNo: viewingPO.paymentNo || viewingPO.poNo || "",
+          paymentPeriodNo: viewingPO.periodNo || "",
+          invoiceAttachments,
+        } : {}),
         createdBy:
           editingInvoice?.createdBy ||
           `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim(),
@@ -920,6 +1065,27 @@ const InvoiceView = React.memo(() => {
           { skipLog: true }
         );
         if (success) {
+          if (isPaymentInvoice) {
+            const paymentUpdated = await updateData("payments", viewingPO.id, {
+              status: "In Process",
+              invoiceId: editingInvoice.id,
+              invoiceNo: invoicePayload.invNo,
+              invoiceAttachments,
+              paymentAttachments,
+              paySlipUrl: invoiceAttachments[0]?.url || null,
+              paySlipName: invoiceAttachments[0]?.name || null,
+              invoicePeriodNo: viewingPO.periodNo || "",
+              invoicePeriodSnapshot: {
+                paymentNo: viewingPO.paymentNo || viewingPO.poNo || "",
+                periodNo: viewingPO.periodNo || "",
+                billingCycle: viewingPO.billingCycle || "",
+                amount: Number(viewingPO.amount || 0),
+                items: Array.isArray(viewingPO.items) ? viewingPO.items : [],
+                statusBeforeInvoice: viewingPO.status || "Wait Pay",
+              },
+            }, { skipLog: true });
+            if (!paymentUpdated) throw new Error("อัปเดตสถานะ Payment เป็น In Process ไม่สำเร็จ");
+          }
           if (!viewingPO.isPaymentSubcontract) {
             await updateData(
               "pos",
@@ -943,6 +1109,27 @@ const InvoiceView = React.memo(() => {
       } else {
         const success = await addData("invoices", invoicePayload, null, { skipLog: true });
         if (!success) return;
+        if (isPaymentInvoice) {
+          const paymentUpdated = await updateData("payments", viewingPO.id, {
+            status: "In Process",
+            invoiceId: success,
+            invoiceNo: invoicePayload.invNo,
+            invoiceAttachments,
+            paymentAttachments,
+            paySlipUrl: invoiceAttachments[0]?.url || null,
+            paySlipName: invoiceAttachments[0]?.name || null,
+            invoicePeriodNo: viewingPO.periodNo || "",
+            invoicePeriodSnapshot: {
+              paymentNo: viewingPO.paymentNo || viewingPO.poNo || "",
+              periodNo: viewingPO.periodNo || "",
+              billingCycle: viewingPO.billingCycle || "",
+              amount: Number(viewingPO.amount || 0),
+              items: Array.isArray(viewingPO.items) ? viewingPO.items : [],
+              statusBeforeInvoice: viewingPO.status || "Wait Pay",
+            },
+          }, { skipLog: true });
+          if (!paymentUpdated) throw new Error("อัปเดตสถานะ Payment เป็น In Process ไม่สำเร็จ");
+        }
         await logAction(
           "Create Invoice",
           `สร้าง Invoice | ${getInvoiceLogSummary({ ...invoicePayload, id: invoicePayload.invNo || viewingPO.id })} | แหล่งที่มา: ${truncateLogText(viewingPO.poNo || viewingPO.id, 60)}`,
@@ -1360,13 +1547,14 @@ const InvoiceView = React.memo(() => {
                       <tbody className="divide-y divide-slate-100">
                         {draftList.map((draftInv) => (
                           (() => {
-                            const po = pos.find((p: any) => p.id === draftInv.poId) || {};
+                            const po = getDraftInvoiceSource(draftInv);
                             return (
                               <tr
                                 key={draftInv.id}
                                 className={`${c.rowHover} cursor-pointer transition-colors`}
                                 onClick={() => {
                                   setEditingInvoice(draftInv);
+                                  setInvoiceAttachmentFiles([]);
                                   setViewingPO(po);
                                   setInvoiceForm({
                                     invNo: draftInv.invNo || "",
@@ -1377,11 +1565,7 @@ const InvoiceView = React.memo(() => {
                                     depositAmount: draftInv.depositAmount || 0,
                                     originalDepositAmount: draftInv.depositAmount || 0,
                                     settleRemaining: false,
-                                    items: (draftInv.items || []).map((item: any) => ({
-                                      ...item,
-                                      checked: true,
-                                      invoiceQty: item.quantity,
-                                    })),
+                                     items: getPaymentInvoiceFormItems(draftInv),
                                   });
                                 }}
                               >
@@ -1393,6 +1577,7 @@ const InvoiceView = React.memo(() => {
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         setEditingInvoice(draftInv);
+                                        setInvoiceAttachmentFiles([]);
                                         setViewingPO(po);
                                         setInvoiceForm({
                                           invNo: draftInv.invNo || "",
@@ -1403,11 +1588,7 @@ const InvoiceView = React.memo(() => {
                                           depositAmount: draftInv.depositAmount || 0,
                                           originalDepositAmount: draftInv.depositAmount || 0,
                                           settleRemaining: false,
-                                          items: (draftInv.items || []).map((item: any) => ({
-                                            ...item,
-                                            checked: true,
-                                            invoiceQty: item.quantity,
-                                          })),
+                                           items: getPaymentInvoiceFormItems(draftInv),
                                         });
                                       }}
                                     >
@@ -1454,6 +1635,7 @@ const InvoiceView = React.memo(() => {
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         setEditingInvoice(draftInv);
+                                        setInvoiceAttachmentFiles([]);
                                         setViewingPO(po);
                                         setInvoiceForm({
                                           invNo: draftInv.invNo || "",
@@ -1464,11 +1646,7 @@ const InvoiceView = React.memo(() => {
                                           depositAmount: draftInv.depositAmount || 0,
                                           originalDepositAmount: draftInv.depositAmount || 0,
                                           settleRemaining: false,
-                                          items: (draftInv.items || []).map((item: any) => ({
-                                            ...item,
-                                            checked: true,
-                                            invoiceQty: item.quantity,
-                                          })),
+                                           items: getPaymentInvoiceFormItems(draftInv),
                                         });
                                       }}
                                     >
@@ -1585,7 +1763,7 @@ const InvoiceView = React.memo(() => {
                       </td>
                       <td className="py-1.5 px-3 font-semibold text-violet-700">{inv.invNo}</td>
                       <td className="py-1.5 px-3 font-medium text-amber-600">{inv.poNo || inv.poRef || "-"}</td>
-                      <td className="py-1.5 px-3">{inv.vendorName || "-"}</td>
+                      <td className="py-1.5 px-3">{getVendorName(inv.vendorId, inv.vendorName)}</td>
                       <td className="py-1.5 px-3">{inv.invDate || inv.receiveDate || "-"}</td>
                       <td className="py-1.5 px-3">
                         {inv.paymentType ? (
@@ -1797,7 +1975,7 @@ const InvoiceView = React.memo(() => {
                         {inv.poNo || inv.poRef || "-"}
                       </td>
                       <td className="hidden py-1.5 px-3 md:table-cell">
-                        {inv.vendorName || "-"}
+                        {getVendorName(inv.vendorId, inv.vendorName)}
                       </td>
                       <td className="py-1.5 px-3">
                         {inv.invDate || inv.receiveDate || "-"}
@@ -2110,13 +2288,40 @@ const InvoiceView = React.memo(() => {
                       </div>
                     )}
                   </div>
-                </div>
+                  </div>
+
+                {viewingPO.isPaymentSubcontract && (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
+                    <label className="flex items-center gap-1 text-xs font-semibold text-emerald-800 mb-1.5">
+                      <Paperclip size={12} /> ไฟล์แนบ Invoice (จำเป็นสำหรับ Payment)
+                      <span className="text-red-500">*</span>
+                    </label>
+                    {Array.isArray(editingInvoice?.invoiceAttachments) && editingInvoice.invoiceAttachments.length > 0 && (
+                      <div className="mb-2 space-y-1 text-[11px] text-emerald-700">
+                        {editingInvoice.invoiceAttachments.map((att: any, idx: number) => (
+                          <a key={idx} href={att.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 underline">
+                            <Paperclip size={10} /> {att.name || `ไฟล์เดิม ${idx + 1}`}
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                    <input
+                      type="file"
+                      multiple
+                      onChange={(e) => setInvoiceAttachmentFiles(Array.from(e.target.files || []))}
+                      className="block w-full text-xs text-slate-600 file:mr-2 file:rounded-lg file:border-0 file:bg-emerald-600 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-emerald-700"
+                    />
+                    {invoiceAttachmentFiles.length > 0 && (
+                      <p className="mt-1 text-[11px] text-emerald-700">เลือกใหม่ {invoiceAttachmentFiles.length} ไฟล์: {invoiceAttachmentFiles.map((file) => file.name).join(", ")}</p>
+                    )}
+                  </div>
+                )}
 
                 {/* Items Table */}
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <h4 className="text-xs font-bold text-slate-700 flex items-center gap-1">
-                      รายการสินค้าจาก PO
+                      {viewingPO.isPaymentSubcontract ? "รายการจาก Payment" : "รายการสินค้าจาก PO"}
                       <span className="text-[11px] font-normal text-slate-400">
                         ({invoiceForm.items.length} รายการ) — เลือกรายการที่ต้องการวางบิล
                       </span>
@@ -2133,6 +2338,7 @@ const InvoiceView = React.memo(() => {
                                 invoiceForm.items.length > 0 &&
                                 invoiceForm.items.every((i) => i.checked)
                               }
+                              disabled={viewingPO.isPaymentSubcontract}
                               onChange={(e) =>
                                 setInvoiceForm((f) => ({
                                   ...f,
@@ -2172,6 +2378,7 @@ const InvoiceView = React.memo(() => {
                               <input
                                 type="checkbox"
                                 checked={item.checked}
+                                disabled={viewingPO.isPaymentSubcontract}
                                 onChange={(e) =>
                                   setInvoiceForm((f) => ({
                                     ...f,
@@ -2209,7 +2416,7 @@ const InvoiceView = React.memo(() => {
                                   min={0}
                                   max={item.quantity}
                                   value={item.invoiceQty}
-                                  disabled={!item.checked}
+                                  disabled={!item.checked || viewingPO.isPaymentSubcontract}
                                   onChange={(e) =>
                                     setInvoiceForm((f) => ({
                                       ...f,
@@ -2266,7 +2473,9 @@ const InvoiceView = React.memo(() => {
                   <AlertCircle size={11} />
                   {isEditingInvoice
                     ? "Administrator สามารถแก้ไขข้อมูล Invoice ได้จากตารางประวัติ"
-                    : "หลังบันทึก สถานะ PO จะเปลี่ยนตาม Receive Type"}
+                    : viewingPO.isPaymentSubcontract
+                      ? "หลังบันทึก Payment จะเปลี่ยนเป็น In Process และไฟล์จะแสดงที่เอกสารการจ่ายเงิน (Pay / Slip)"
+                      : "หลังบันทึก สถานะ PO จะเปลี่ยนตาม Receive Type"}
                 </p>
                 <div className="flex gap-3">
                   <button

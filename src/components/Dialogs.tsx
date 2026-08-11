@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React from "react";
+import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { CheckCircle, XCircle, AlertTriangle, Info, AlertCircle } from "lucide-react";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
@@ -16,7 +17,7 @@ export const CustomAlert = ({ isOpen, onClose, title, message, type = "info" }: 
   };
   const Config = typeConfig[type];
   const Icon = Config.icon;
-  return (
+  const alertNode = (
     <motion.div className={overlayClasses} initial="hidden" animate="visible" variants={modalOverlayVariants} transition={overlayTransition}>
       <motion.div className={modalClasses} initial="hidden" animate="visible" variants={modalContentVariants} transition={modalTransition}>
         <div className={`w-14 h-14 rounded-full ${Config.bg} flex items-center justify-center mb-5 mx-auto ring-4 ring-white shadow-sm`}>
@@ -36,6 +37,7 @@ export const CustomAlert = ({ isOpen, onClose, title, message, type = "info" }: 
       </motion.div>
     </motion.div>
   );
+  return typeof document !== "undefined" ? createPortal(alertNode, document.body) : null;
 };
 
 export const CustomConfirmModal = ({

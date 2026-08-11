@@ -3,7 +3,7 @@ import React, { useState, useMemo } from "react";
 import ReactDOM from "react-dom";
 import {
   Search, CreditCard, FileSpreadsheet, Paperclip,
-  Trash2, Eye, Filter,
+  Trash2, Eye, Filter, FileText,
 } from "lucide-react";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
@@ -14,7 +14,11 @@ import { resolvePaymentSignatureImage } from "../lib/paymentSignatureStamps";
 const PaymentTableView = React.memo(() => {
   const {
     payments = [],
+    invoices = [],
+    addData,
+    updateData,
     vendors,
+    pos = [],
     projects,
     visibleProjects,
     openConfirm,
@@ -36,6 +40,11 @@ const PaymentTableView = React.memo(() => {
   const [filterProject, setFilterProject] = useState(selectedProjectId || "all");
   const [viewingPayment, setViewingPayment] = useState<any>(null);
   const [paymentSignatureImages, setPaymentSignatureImages] = useState<Record<string, string | null>>({});
+  const [backfillPaymentId, setBackfillPaymentId] = useState<string | null>(null);
+  const [backfilledPaymentIds, setBackfilledPaymentIds] = useState<Set<string>>(new Set());
+  const [invoicePaymentModal, setInvoicePaymentModal] = useState<any>(null);
+  const [historicalPaymentType, setHistoricalPaymentType] = useState("เครดิต");
+  const [historicalBankAccountNo, setHistoricalBankAccountNo] = useState("");
 
   React.useEffect(() => {
     setFilterProject(selectedProjectId || "all");
@@ -99,6 +108,161 @@ const PaymentTableView = React.memo(() => {
     "Reject": "bg-red-50 text-red-700 border-red-200",
     "Rejected": "bg-red-50 text-red-700 border-red-200",
     "Paid": "bg-teal-50 text-teal-700 border-teal-200",
+  };
+
+  const hasInvoiceForPayment = (payment: any) => {
+    const paymentId = String(payment?.id || "");
+    const paymentNo = String(payment?.paymentNo || "");
+    const periodNo = String(payment?.periodNo || "");
+    return (invoices || []).some((invoice: any) => {
+      if (invoice?.sourceType === "payment" && String(invoice.paymentId || invoice.poId || "") === paymentId) return true;
+      if (String(invoice?.poId || "") === paymentId) return true;
+      return paymentNo && String(invoice?.paymentNo || "") === paymentNo && (
+        !periodNo || !invoice?.paymentPeriodNo || String(invoice.paymentPeriodNo) === periodNo
+      );
+    });
+  };
+
+  const canBackfillPaymentInvoice = userRole === "Administrator" || canUseFunction?.("invoice", "add") !== false;
+  const isPaidPayment = (payment: any) => String(payment?.status || "").trim().toLowerCase() === "paid";
+  const openHistoricalInvoiceModal = (payment: any) => {
+    setHistoricalPaymentType("เครดิต");
+    setHistoricalBankAccountNo("");
+    setInvoicePaymentModal(payment);
+  };
+
+  const handleCreateHistoricalInvoice = (payment: any) => {
+    if (!canBackfillPaymentInvoice) {
+      showAlert?.("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์สร้าง Invoice", "warning");
+      return;
+    }
+    if (!isPaidPayment(payment)) {
+      showAlert?.("สร้างไม่ได้", "ฟังก์ชันนี้ใช้สำหรับ Payment ที่สถานะ Paid เท่านั้น", "warning");
+      return;
+    }
+    if (hasInvoiceForPayment(payment) || backfilledPaymentIds.has(String(payment.id))) {
+      showAlert?.("รายการมีอยู่แล้ว", "Payment รายการนี้มี Invoice แล้ว จึงไม่สร้างซ้ำ", "info");
+      return;
+    }
+
+    openConfirm?.(
+      "สร้าง Invoice ย้อนหลัง",
+      `ต้องการสร้าง Invoice สถานะ Paid จาก Payment ${payment.paymentNo || payment.id} ใช่หรือไม่?`,
+      async () => {
+        const paymentId = String(payment.id || "");
+        if (!paymentId || backfillPaymentId) return;
+        setBackfillPaymentId(paymentId);
+        try {
+          if (hasInvoiceForPayment(payment)) {
+            showAlert?.("รายการมีอยู่แล้ว", "พบ Invoice ของ Payment รายการนี้แล้ว", "info");
+            return;
+          }
+
+          const sourcePoId = payment.sourcePoId || payment.poRef || payment.selectedPrIds?.[0] || "";
+          const sourcePo = (pos || []).find((po: any) => String(po.id) === String(sourcePoId));
+          const paymentVendor = (vendors || []).find((vendor: any) => String(vendor.id) === String(payment.contractorId || payment.vendorId || ""));
+          const paymentVendorName = payment.contractorName || payment.vendorName || paymentVendor?.name || "";
+          const paymentItems = Array.isArray(payment.items) ? payment.items : [];
+          const items = paymentItems.map((item: any, index: number) => {
+            const qtyRaw = Number(item.thisPeriodQty ?? item.quantity);
+            const amount = Number(item.thisPeriodAmount ?? item.amount ?? 0) || 0;
+            const quantity = Number.isFinite(qtyRaw) && qtyRaw > 0 ? qtyRaw : 1;
+            return {
+              ...item,
+              poItemIndex: Number.isFinite(Number(item.poItemIndex)) ? Number(item.poItemIndex) : index,
+              description: item.description || "งานจ้างเหมา/ค่าแรง",
+              unit: item.unit || "งวด",
+              quantity,
+              invoiceQty: quantity,
+              price: quantity > 0 ? amount / quantity : 0,
+              amount,
+            };
+          });
+          const amount = Number(payment.amount) || items.reduce((sum: number, item: any) => sum + Number(item.amount || 0), 0);
+          const attachments = Array.isArray(payment.paymentAttachments) && payment.paymentAttachments.length > 0
+            ? payment.paymentAttachments
+            : payment.paySlipUrl
+              ? [{ url: payment.paySlipUrl, name: payment.paySlipName || "Pay Slip" }]
+              : [];
+          const now = new Date().toISOString();
+          const invoiceNo = payment.invoiceNo || `INV-${payment.paymentNo || payment.id}`;
+          const invoicePayload = {
+            invNo: invoiceNo,
+            invDate: payment.payDate || payment.updatedAt || payment.openDate || now.split("T")[0],
+            paymentType: historicalPaymentType,
+            bankAccountNo: historicalPaymentType === "โอน" ? historicalBankAccountNo.trim() : "",
+            poId: payment.id,
+            poNo: payment.paymentNo || payment.id,
+            poRef: payment.paymentNo || payment.id,
+            sourcePoId: sourcePoId || null,
+            sourcePoNo: sourcePo?.poNo || payment.sourcePoNo || "",
+            sourceType: "payment",
+            paymentId: payment.id,
+            paymentNo: payment.paymentNo || payment.id,
+            paymentPeriodNo: payment.periodNo || "",
+            paymentPeriodSnapshot: {
+              paymentNo: payment.paymentNo || payment.id,
+              periodNo: payment.periodNo || "",
+              billingCycle: payment.billingCycle || "",
+              amount,
+              items: paymentItems,
+              statusBeforeInvoice: payment.status || "Paid",
+            },
+            vendorId: payment.contractorId || "",
+            vendorName: paymentVendorName,
+            items,
+            amount,
+            originalAmount: amount,
+            remainingAmount: 0,
+            isDeposit: false,
+            depositAmount: 0,
+            invoiceMode: "payment_subcontract",
+            description: `Payment งวด ${payment.periodNo || ""} - ${payment.paymentNo || payment.id}`,
+            projectId: payment.projectId || selectedProjectId,
+            status: "paid",
+            invoiceAttachments: attachments,
+            legacyBackfill: true,
+            legacyBackfillAt: now,
+            legacyBackfillBy: userData?.name || userData?.email || userRole || "",
+            createdAt: now,
+            createdBy: userData?.name || userData?.email || userRole || "",
+          };
+
+          // Deterministic ID makes the migration idempotent even if two users
+          // click the action before the realtime invoice list refreshes.
+          const historicalInvoiceId = `payment-backfill-${payment.id}-${payment.periodNo || "1"}`;
+          const invoiceId = await addData("invoices", invoicePayload, historicalInvoiceId, { skipLog: true });
+          if (!invoiceId) throw new Error("สร้าง Invoice ไม่สำเร็จ");
+
+          const invoiceIds = Array.from(new Set([
+            ...(Array.isArray(payment.invoiceIds) ? payment.invoiceIds : []),
+            String(invoiceId),
+          ].filter(Boolean)));
+          const paymentUpdated = await updateData("payments", payment.id, {
+            invoiceId: String(invoiceId),
+            invoiceNo,
+            invoiceIds,
+            sourceInvoiceIds: invoiceIds,
+            legacyInvoiceBackfilled: true,
+            legacyInvoiceBackfilledAt: now,
+          }, { skipLog: true });
+          if (!paymentUpdated) throw new Error("สร้าง Invoice แล้ว แต่เชื่อมกลับไปยัง Payment ไม่สำเร็จ");
+
+          await logAction?.(
+            "Create Historical Invoice",
+            `สร้าง Invoice ย้อนหลังจาก Payment ${payment.paymentNo || payment.id} | Invoice ${invoiceNo} | ยอด ${amount.toLocaleString("th-TH", { minimumFractionDigits: 2 })}`,
+            payment.projectId || selectedProjectId
+          );
+          setBackfilledPaymentIds((prev) => new Set([...prev, paymentId]));
+          showAlert?.("สำเร็จ", `สร้าง Invoice ${invoiceNo} สถานะ Paid แล้ว และจะแสดงในประวัติ Pay`, "success");
+        } catch (error: any) {
+          showAlert?.("เกิดข้อผิดพลาด", error?.message || String(error), "error");
+        } finally {
+          setBackfillPaymentId(null);
+        }
+      },
+      "warning"
+    );
   };
 
   const handleDelete = (p: any) => {
@@ -211,6 +375,8 @@ const PaymentTableView = React.memo(() => {
                 const project = projects.find((proj: any) => proj.id === p.projectId);
                 const displayStatus = p.status === "Rejected" ? "Reject" : (p.status || "Draft");
                 const statusCls = statusColors[displayStatus] || "bg-slate-50 text-slate-500 border-slate-200";
+                const paymentHasInvoice = hasInvoiceForPayment(p) || backfilledPaymentIds.has(String(p.id));
+                const isBackfilling = backfillPaymentId === String(p.id);
                 return (
                   <tr
                     key={p.id}
@@ -230,6 +396,16 @@ const PaymentTableView = React.memo(() => {
                           >
                             <Eye size={13} />
                           </button>
+                          {canBackfillPaymentInvoice && isPaidPayment(p) && !paymentHasInvoice && (
+                            <button
+                              className="p-1.5 rounded hover:bg-emerald-100 text-emerald-600 transition-colors disabled:opacity-50"
+                              title="สร้าง Invoice Paid ย้อนหลัง"
+                              disabled={!!backfillPaymentId}
+                              onClick={() => openHistoricalInvoiceModal(p)}
+                            >
+                              {isBackfilling ? <span className="inline-block w-3 h-3 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" /> : <FileText size={13} />}
+                            </button>
+                          )}
                           {canUseFunction?.("payment-subcontract", "delete") !== false && (
                             <button
                               className="p-1.5 rounded hover:bg-red-100 text-red-500 transition-colors"
@@ -305,6 +481,16 @@ const PaymentTableView = React.memo(() => {
                         >
                           <Eye size={13} />
                         </button>
+                        {canBackfillPaymentInvoice && isPaidPayment(p) && !paymentHasInvoice && (
+                          <button
+                            className="p-1.5 rounded hover:bg-emerald-100 text-emerald-600 transition-colors disabled:opacity-50"
+                            title="สร้าง Invoice Paid ย้อนหลัง"
+                            disabled={!!backfillPaymentId}
+                            onClick={() => openHistoricalInvoiceModal(p)}
+                          >
+                            {isBackfilling ? <span className="inline-block w-3 h-3 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" /> : <FileText size={13} />}
+                          </button>
+                        )}
                         {canUseFunction?.("payment-subcontract", "delete") !== false && (
                           <button
                             className="p-1.5 rounded hover:bg-red-100 text-red-500 transition-colors"
@@ -338,6 +524,72 @@ const PaymentTableView = React.memo(() => {
           )}
         </table>
       </Card>
+
+      {invoicePaymentModal && ReactDOM.createPortal(
+        <div className="fixed inset-0 z-[10030] flex items-center justify-center bg-black/50 p-4" onClick={() => setInvoicePaymentModal(null)}>
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+              <div>
+                <h3 className="text-base font-bold text-slate-800">สร้าง Invoice ย้อนหลัง</h3>
+                <p className="mt-1 text-xs text-slate-500">Payment: {invoicePaymentModal.paymentNo || invoicePaymentModal.id}</p>
+              </div>
+              <button type="button" className="text-slate-400 hover:text-slate-700 text-xl" onClick={() => setInvoicePaymentModal(null)}>×</button>
+            </div>
+            <div className="space-y-4 px-5 py-5">
+              <label className="block text-sm font-semibold text-slate-700">
+                ประเภทการชำระเงิน <span className="text-red-500">*</span>
+                <select
+                  className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-100"
+                  value={historicalPaymentType}
+                  onChange={(e) => {
+                    setHistoricalPaymentType(e.target.value);
+                    if (e.target.value !== "โอน") setHistoricalBankAccountNo("");
+                  }}
+                >
+                  <option value="เครดิต">เครดิต</option>
+                  <option value="โอน">โอน</option>
+                  <option value="เช็ค">เช็ค</option>
+                  <option value="เงินสด">เงินสด</option>
+                </select>
+              </label>
+              {historicalPaymentType === "โอน" && (
+                <label className="block text-sm font-semibold text-slate-700">
+                  เลขบัญชีธนาคาร <span className="text-red-500">*</span>
+                  <input
+                    type="text"
+                    className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-100"
+                    value={historicalBankAccountNo}
+                    onChange={(e) => setHistoricalBankAccountNo(e.target.value)}
+                    placeholder="กรอกเลขบัญชีสำหรับการโอน"
+                  />
+                </label>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-3 rounded-b-2xl">
+              <button type="button" className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm text-slate-600 hover:bg-slate-100" onClick={() => setInvoicePaymentModal(null)}>
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={historicalPaymentType === "โอน" && !historicalBankAccountNo.trim()}
+                onClick={() => {
+                  if (historicalPaymentType === "โอน" && !historicalBankAccountNo.trim()) {
+                    showAlert?.("ข้อมูลไม่ครบ", "กรุณากรอกเลขบัญชีธนาคารก่อนสร้าง Invoice", "warning");
+                    return;
+                  }
+                  const payment = invoicePaymentModal;
+                  setInvoicePaymentModal(null);
+                  handleCreateHistoricalInvoice(payment);
+                }}
+              >
+                สร้าง Invoice Paid
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
 
       {/* ─── View Detail Modal — Payment Application Style (View-only) ─── */}
       {viewingPayment && (() => {

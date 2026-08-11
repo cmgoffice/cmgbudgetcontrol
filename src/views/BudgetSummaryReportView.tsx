@@ -55,7 +55,7 @@ const BudgetSummaryReportView = React.memo(() => {
           spentInvTotal,
         };
       });
-  }, [projects, budgets, prs, pos, invoices]);
+  }, [projects, budgets, prs, pos, invoices, payments]);
 
   const totals = useMemo(() => {
     const sum = (key: string) => rows.reduce((s, r) => s + (r[key] || 0), 0);

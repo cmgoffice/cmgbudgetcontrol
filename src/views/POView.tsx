@@ -57,6 +57,8 @@ import {
   getCanonicalLineAmount,
   validatePoPrLinkage,
 } from "../lib/poPrValidation";
+import { validatePoAgainstPaymentProgress } from "../lib/poPaymentValidation";
+import RelatedDocumentDetailModal from "../components/RelatedDocumentDetailModal";
 
 const getDefaultPoFormData = () => ({
   poNo: "",
@@ -159,6 +161,7 @@ const POView = React.memo(() => {
   const [expandedPoRows, setExpandedPoRows] = useState({});
   const [editingPoId, setEditingPoId] = useState(null);
   const [viewingPO, setViewingPO] = useState<any>(null);
+  const [viewingRelatedDocument, setViewingRelatedDocument] = useState<any>(null);
   const [poApproveFlightFromStatus, setPoApproveFlightFromStatus] = useState({});
   const [isPoRevisionModalOpen, setIsPoRevisionModalOpen] = useState(false);
 
@@ -1474,6 +1477,27 @@ const POView = React.memo(() => {
     "warning"
   );
 
+  const showPaymentProgressLockWarning = (items: any[]) => {
+    if (!editingPoId) return true;
+    const editingPo = pos.find((po: any) => po.id === editingPoId);
+    if (!editingPo) return true;
+
+    const result = validatePoAgainstPaymentProgress({
+      po: editingPo,
+      revisedItems: items || [],
+      discount: formData.discount,
+      payments,
+    });
+    if (result.valid) return true;
+
+    showAlert(
+      "แก้ไข PO ต่ำกว่ายอดสะสม Payment ไม่ได้",
+      result.errors.slice(0, 8).join("\n"),
+      "warning"
+    );
+    return false;
+  };
+
   const handleSavePODraft = async () => {
     if (poDraftInFlightRef.current || poSendInFlightRef.current) return;
     if (!formData.poType) {
@@ -1483,6 +1507,7 @@ const POView = React.memo(() => {
     const draftRouteResult = normalizeItemsToPrRoutes(formData.items || []);
     if (draftRouteResult.invalidItem) return showUntraceablePrItemWarning(draftRouteResult.invalidItem);
     if (!showInvalidPoPrLinkage(draftRouteResult.items || [])) return;
+    if (!showPaymentProgressLockWarning(draftRouteResult.items || [])) return;
 
     poDraftInFlightRef.current = true;
     setPoDraftInFlight(true);
@@ -1640,6 +1665,7 @@ const POView = React.memo(() => {
       const routeResult = normalizeItemsToPrRoutes(formData.items || []);
       if (routeResult.invalidItem) return showUntraceablePrItemWarning(routeResult.invalidItem);
       if (!showInvalidPoPrLinkage(routeResult.items || [])) return;
+      if (!showPaymentProgressLockWarning(routeResult.items || [])) return;
     if (!formData.poType) {
       return showAlert("ข้อมูลไม่ครบ", L.noType, "warning");
     }
@@ -3611,22 +3637,8 @@ const POView = React.memo(() => {
                 return true;
               });
             };
-            const getDocUrl = (doc: any) => (
-              doc?.pdfUrl ||
-              doc?.attachmentUrl ||
-              doc?.paySlipUrl ||
-              doc?.slipUrl ||
-              doc?.paymentAttachments?.find?.((att: any) => att?.url)?.url ||
-              doc?.attachments?.find?.((att: any) => att?.url)?.url ||
-              ""
-            );
-            const openRelatedDoc = (doc: any, label: string, docNo: string) => {
-              const url = getDocUrl(doc);
-              if (url) {
-                window.open(url, "_blank", "noopener,noreferrer");
-                return;
-              }
-              showAlert?.("ไม่พบไฟล์ให้เปิด", `${label} ${docNo || doc?.id || "-"} ยังไม่มี PDF / ไฟล์แนบให้เปิด`, "info");
+            const openRelatedDoc = (doc: any, groupKey: string, label: string, docNo: string) => {
+              setViewingRelatedDocument({ documentType: groupKey, document: doc, label, docNo });
             };
             const relatedPRs = dedupeDocs(poPrIds
               .map((prId: string) => prs.find((pr: any) => sameText(pr?.id, prId)))
@@ -3784,7 +3796,7 @@ const POView = React.memo(() => {
                                                 type="button"
                                                 onClick={(e) => {
                                                   e.stopPropagation();
-                                                  openRelatedDoc(doc, group.label, docNo);
+                                                  openRelatedDoc(doc, group.key, group.label, docNo);
                                                 }}
                                                 className={`inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-semibold leading-tight transition-colors ${relatedToneClass[group.tone]}`}
                                                 title={`คลิกเพื่อเปิด ${group.label} ${docNo}`}
@@ -4035,6 +4047,12 @@ const POView = React.memo(() => {
               </div>
             );
           })()}
+
+          <RelatedDocumentDetailModal
+            documentType={viewingRelatedDocument?.documentType}
+            document={viewingRelatedDocument?.document}
+            onClose={() => setViewingRelatedDocument(null)}
+          />
 
           {isPoRevisionModalOpen && (
             <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] p-4">
