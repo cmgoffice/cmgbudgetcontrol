@@ -52,6 +52,11 @@ import {
   buildRecordSummary,
 } from "../lib/systemLogDetails";
 import { VendorEvaluationModal } from "../components/VendorEvaluationModal";
+import {
+  findUniquePrByNo,
+  getCanonicalLineAmount,
+  validatePoPrLinkage,
+} from "../lib/poPrValidation";
 
 const getDefaultPoFormData = () => ({
   poNo: "",
@@ -689,6 +694,12 @@ const POView = React.memo(() => {
     return used;
   };
 
+  const getItemAmountForPoValidation = (item: any) => {
+    const amount = Number(item?.amount);
+    if (Number.isFinite(amount)) return amount;
+    return (Number(item?.quantity) || 0) * (Number(item?.price) || 0);
+  };
+
   // ยอดเงินจาก PO ที่อ้างอิง PR นี้ (ไม่นับ PO ที่ Rejected และไม่นับ PO ที่กำลังแก้)
   // รองรับ lockedPrAllocations — ถ้ากรณี "ไม่คืนยอด PR" จะมี field นี้เก็บยอดเดิมไว้ล็อก
   const getUsedAmountByPR = (prId, excludePoId) => {
@@ -721,6 +732,65 @@ const POView = React.memo(() => {
         });
       }
     });
+    return total;
+  };
+
+  // Resolve the PR item represented by a PO allocation. New allocations carry
+  // their own prItemIndex; legacy allocations can fall back to the PO item's
+  // index when they point to the same PR, or to item 0 for a one-item PR.
+  const getReferencedPrItemIndex = (prId, poItem: any, allocation: any = null) => {
+    const explicitIndex = Number(allocation?.prItemIndex);
+    if (Number.isInteger(explicitIndex) && explicitIndex >= 0) return explicitIndex;
+
+    const poItemIndex = Number(poItem?.prItemIndex);
+    if (poItem?.prId === prId && Number.isInteger(poItemIndex) && poItemIndex >= 0) {
+      return poItemIndex;
+    }
+
+    const pr = prs.find((candidate: any) => candidate.id === prId);
+    return pr?.items?.length === 1 ? 0 : null;
+  };
+
+  const getPrItemValidationLimit = (prId, itemIndex) => {
+    const pr = prs.find((candidate: any) => candidate.id === prId);
+    const prItem = pr?.items?.[itemIndex];
+    if (!prItem) return null;
+
+    const itemAmount = getItemAmountForPoValidation(prItem);
+    const prSubtotal = (pr.items || []).reduce(
+      (sum: number, item: any) => sum + getItemAmountForPoValidation(item),
+      0
+    );
+    const discount = Number(pr.discount) || 0;
+    const itemDiscount = prSubtotal > 0 ? discount * (itemAmount / prSubtotal) : 0;
+    return Math.max(0, itemAmount - itemDiscount);
+  };
+
+  const getUsedAmountByPRItem = (prId, itemIndex, excludePoId) => {
+    const relevantPOs = pos.filter(po => po.status !== "Rejected" && po.id !== excludePoId);
+    let total = 0;
+
+    relevantPOs.forEach(po => {
+      if (!Array.isArray(po.items)) return;
+
+      po.items.forEach((item: any) => {
+        if (Array.isArray(item.disPrAllocations) && item.disPrAllocations.length > 0) {
+          item.disPrAllocations.forEach((allocation: any) => {
+            if (allocation?.prId !== prId) return;
+            const referencedIndex = getReferencedPrItemIndex(prId, item, allocation);
+            if (referencedIndex === itemIndex) {
+              total += Number(allocation.amount) || 0;
+            }
+          });
+          return;
+        }
+
+        if (item.prId === prId && Number(item.prItemIndex) === Number(itemIndex)) {
+          total += getItemAmountForPoValidation(item);
+        }
+      });
+    });
+
     return total;
   };
 
@@ -1341,11 +1411,78 @@ const POView = React.memo(() => {
     };
   }, [formData]);
 
+  // Every new PO line must have a traceable PR item route. Budget fields are
+  // copied from the source PR item so a stale budgetId cannot move an amount
+  // to another budget.
+  const normalizeItemsToPrRoutes = (items: any[]) => {
+    const normalizedItems: any[] = [];
+    for (const item of items || []) {
+      let pr = item?.prId ? prs.find((candidate: any) => candidate.id === item.prId) : null;
+      let itemIndex = Number(item?.prItemIndex);
+
+      // A legacy free line can be auto-routed only when its PR has one item.
+      if ((!pr || !Number.isInteger(itemIndex) || itemIndex < 0 || !pr.items?.[itemIndex]) && item?.linkedPrNo) {
+        // PR No. is only a display key. Legacy data may contain duplicates,
+        // so never route an item through an ambiguous PR number.
+        const linkedPr = findUniquePrByNo(prs, selectedProjectId, item.linkedPrNo);
+        if (linkedPr?.items?.length === 1) {
+          pr = linkedPr;
+          itemIndex = 0;
+        }
+      }
+
+      if (!pr || !Number.isInteger(itemIndex) || itemIndex < 0 || !pr.items?.[itemIndex]) {
+        return { items: normalizedItems, invalidItem: item };
+      }
+
+      const prItem = pr.items[itemIndex];
+      normalizedItems.push({
+        ...item,
+        prId: pr.id,
+        prItemIndex: itemIndex,
+        amount: getCanonicalLineAmount(item),
+        costCode: prItem.costCode || pr.costCode || item.costCode || "",
+        budgetId: prItem.budgetId || pr.budgetId || item.budgetId || null,
+        subItemId: prItem.subItemId || prItem.budgetSubItemId || item.subItemId || null,
+        budgetSubItemId: prItem.budgetSubItemId || prItem.subItemId || item.budgetSubItemId || null,
+      });
+    }
+
+    return { items: normalizedItems, invalidItem: null };
+  };
+
+  const showInvalidPoPrLinkage = (items: any[], requireAllocations = false) => {
+    const result = validatePoPrLinkage({
+      projectId: selectedProjectId,
+      selectedPrIds: formData.selectedPrIds || [],
+      items,
+      prs,
+      requireAllocations,
+    });
+    if (result.valid) return true;
+    showAlert(
+      "PO อ้างอิง PR ไม่ถูกต้อง",
+      result.errors.slice(0, 6).join("\n"),
+      "warning"
+    );
+    return false;
+  };
+
+  const showUntraceablePrItemWarning = (item: any) => showAlert(
+    "รายการ PO อ้างอิง PR ไม่ครบ",
+    `รายการ "${item?.description || item?.materialNo || "ไม่ระบุชื่อรายการ"}" ต้องอ้างอิง PR รายการย่อยที่ชัดเจนก่อนเปิด PO`,
+    "warning"
+  );
+
   const handleSavePODraft = async () => {
     if (poDraftInFlightRef.current || poSendInFlightRef.current) return;
     if (!formData.poType) {
       return showAlert("ข้อมูลไม่ครบ", L.noType, "warning");
     }
+
+    const draftRouteResult = normalizeItemsToPrRoutes(formData.items || []);
+    if (draftRouteResult.invalidItem) return showUntraceablePrItemWarning(draftRouteResult.invalidItem);
+    if (!showInvalidPoPrLinkage(draftRouteResult.items || [])) return;
 
     poDraftInFlightRef.current = true;
     setPoDraftInFlight(true);
@@ -1381,7 +1518,7 @@ const POView = React.memo(() => {
       }
 
       const totals = calculateTotals();
-      const itemsDraft = (formData.items || []).map((it: any) => ({
+      const itemsDraft = (draftRouteResult.items || []).map((it: any) => ({
         ...it,
         disPrAllocations: Array.isArray(it.disPrAllocations) && it.disPrAllocations.length ? it.disPrAllocations : [],
       }));
@@ -1500,6 +1637,9 @@ const POView = React.memo(() => {
 
   const executeSavePO = async () => {
     if (poDraftInFlightRef.current || poSendInFlightRef.current) return;
+      const routeResult = normalizeItemsToPrRoutes(formData.items || []);
+      if (routeResult.invalidItem) return showUntraceablePrItemWarning(routeResult.invalidItem);
+      if (!showInvalidPoPrLinkage(routeResult.items || [])) return;
     if (!formData.poType) {
       return showAlert("ข้อมูลไม่ครบ", L.noType, "warning");
     }
@@ -1511,6 +1651,21 @@ const POView = React.memo(() => {
     poSendInFlightRef.current = true;
     setPoSendInFlight(true);
     try {
+
+      // Run the same amount guard before reserving a PO number. Reserving the
+      // number updates the Firestore counter, so an invalid PO must stop first.
+      const preflightTotals = calculateTotals();
+      const preflightSubtotalAfterDiscount = Math.max(
+        0,
+        preflightTotals.subtotal - (Number(formData.discount) || 0)
+      );
+      if (preflightSubtotalAfterDiscount > selectedPrsTotalAmount + 0.01) {
+        return showAlert(
+          "ยอดเกิน PR",
+          `มูลค่า / Sub Total (${formatCurrency(preflightSubtotalAfterDiscount)}) ต้องไม่เกินยอดคงเหลือของ PR ที่เลือก (${formatCurrency(selectedPrsTotalAmount)})`,
+          "warning"
+        );
+      }
 
       // Reserve PO number for new POs using counter-based system with conflict checking
       let resolvedPoNo = formData.poNo;
@@ -1577,14 +1732,62 @@ const POView = React.memo(() => {
       const subtotal = Number(totals.subtotal) || 0;
       const ratio = subtotal > 0 ? (subtotalAfterDiscount / subtotal) : 1;
       const prNoToId = new Map<string, string>();
-      disPrOptions.forEach(o => { if (o?.prNo && o?.prId) prNoToId.set(o.prNo, o.prId); });
-      const remainingByPrId = new Map<string, number>();
+      const ambiguousPrNos = new Set<string>();
+      disPrOptions.forEach(o => {
+        if (!o?.prNo || !o?.prId) return;
+        const prNoKey = String(o.prNo).trim().toLowerCase();
+        if (prNoToId.has(prNoKey) && prNoToId.get(prNoKey) !== o.prId) {
+          ambiguousPrNos.add(prNoKey);
+          return;
+        }
+        prNoToId.set(prNoKey, o.prId);
+      });
+      const resolveAllocationPrItemIndex = (item: any, candidatePr: any) => {
+        const sourceIndex = Number(item?.prItemIndex);
+        if (candidatePr?.id === item?.prId && Number.isInteger(sourceIndex) && sourceIndex >= 0) {
+          return sourceIndex;
+        }
+
+        const targetSubItemId = item?.budgetSubItemId || item?.subItemId || null;
+        if (targetSubItemId && Array.isArray(candidatePr?.items)) {
+          const subItemMatches = candidatePr.items
+            .map((candidateItem: any, index: number) => ({ candidateItem, index }))
+            .filter(({ candidateItem }: any) =>
+              candidateItem?.budgetSubItemId === targetSubItemId || candidateItem?.subItemId === targetSubItemId
+            );
+          if (subItemMatches.length === 1) return subItemMatches[0].index;
+        }
+
+        const description = String(item?.description || "").trim();
+        if (description && Array.isArray(candidatePr?.items)) {
+          const descriptionMatches = candidatePr.items
+            .map((candidateItem: any, index: number) => ({ candidateItem, index }))
+            .filter(({ candidateItem }: any) => String(candidateItem?.description || "").trim() === description);
+          if (descriptionMatches.length === 1) return descriptionMatches[0].index;
+        }
+
+        return candidatePr?.items?.length === 1 ? 0 : null;
+      };
+
+      const remainingByPrRef = new Map<string, number>();
       (formData.selectedPrIds || []).forEach((prId: string) => {
-        remainingByPrId.set(prId, Number(getPrRemainingAmount(prId)) || 0);
+        const selectedPr = prs.find((candidate: any) => candidate.id === prId);
+        if (Array.isArray(selectedPr?.items) && selectedPr.items.length > 0) {
+          selectedPr.items.forEach((_: any, itemIndex: number) => {
+            const itemLimit = getPrItemValidationLimit(prId, itemIndex);
+            const usedItemAmount = getUsedAmountByPRItem(prId, itemIndex, editingPoId);
+            remainingByPrRef.set(
+              `item:${prId}:${itemIndex}`,
+              Math.max(0, Number(itemLimit || 0) - usedItemAmount)
+            );
+          });
+        } else {
+          remainingByPrRef.set(`pr:${prId}`, Number(getPrRemainingAmount(prId)) || 0);
+        }
       });
 
       // effective amounts per item (after discount)
-      const itemsForAlloc = (formData.items || []).map((it: any) => ({
+      const itemsForAlloc = (routeResult.items || []).map((it: any) => ({
         ref: it,
         effAmount: Math.max(0, (Number(it.amount) || 0) * ratio),
       }));
@@ -1595,21 +1798,42 @@ const POView = React.memo(() => {
         itemsForAlloc[itemsForAlloc.length - 1].effAmount = Math.max(0, itemsForAlloc[itemsForAlloc.length - 1].effAmount + drift);
       }
 
-      const itemsWithAllocations = (formData.items || []).map((it: any) => ({ ...it, disPrAllocations: [] as any[] }));
+      const itemsWithAllocations = (routeResult.items || []).map((it: any) => ({ ...it, disPrAllocations: [] as any[] }));
       for (let idx = 0; idx < itemsForAlloc.length; idx++) {
         const it = itemsForAlloc[idx].ref;
         let need = Number(itemsForAlloc[idx].effAmount) || 0;
         const plan: string[] = Array.isArray(it.disPrPlan) ? it.disPrPlan : [];
         const allocs: any[] = [];
         for (const prNo of plan) {
-          const prId = prNoToId.get(prNo);
+          const prNoKey = String(prNo || "").trim().toLowerCase();
+          if (ambiguousPrNos.has(prNoKey)) {
+            return showAlert(
+              "ไม่สามารถจัดสรร PR ได้",
+              `PR No. ${prNo} ซ้ำในโครงการนี้ ระบบไม่สามารถระบุได้ว่าเป็น PR ใบใด กรุณาเลือก PR ใหม่หรือแก้เลข PR ให้ไม่ซ้ำก่อนบันทึก PO`,
+              "warning"
+            );
+          }
+          const prId = prNoToId.get(prNoKey);
           if (!prId) continue; // ถ้า PR ไม่อยู่ในรายการที่เลือก ให้ข้าม (จะไป fail ด้านล่างถ้ายัง need > 0)
-          const rem = Number(remainingByPrId.get(prId) || 0);
+          const candidatePr = prs.find((candidate: any) => candidate.id === prId);
+          const candidateItemIndex = candidatePr ? resolveAllocationPrItemIndex(it, candidatePr) : null;
+          const isFreeItem = !it?.prId || Number(it?.prItemIndex) < 0;
+          if (!isFreeItem && candidateItemIndex == null) continue;
+
+          const remainingKey = candidateItemIndex != null
+            ? `item:${prId}:${candidateItemIndex}`
+            : `pr:${prId}`;
+          const rem = Number(remainingByPrRef.get(remainingKey) || 0);
           if (rem <= 0) continue;
           const take = Math.min(need, rem);
           if (take > 0) {
-            allocs.push({ prId, prNo, amount: take });
-            remainingByPrId.set(prId, rem - take);
+            allocs.push({
+              prId,
+              prNo,
+              amount: take,
+              ...(candidateItemIndex != null ? { prItemIndex: candidateItemIndex } : {}),
+            });
+            remainingByPrRef.set(remainingKey, rem - take);
             need -= take;
           }
           if (need <= 0) break;
@@ -1625,6 +1849,90 @@ const POView = React.memo(() => {
         // write allocations back to itemsWithAllocations
         itemsWithAllocations[idx].disPrAllocations = allocs;
       }
+
+      if (!showInvalidPoPrLinkage(itemsWithAllocations, true)) return;
+
+      // Final read-only guard before any PO/PR write.
+      // The Budget summary uses PR/PO item amounts, while the older guard above
+      // uses the selected PR remaining balance. Re-check the exact allocations
+      // against each PR here so a new PO cannot increase an existing mismatch.
+      const newPoAllocByPr: Record<string, number> = {};
+      const newPoAllocByPrItem: Record<string, { prId: string; itemIndex: number; amount: number }> = {};
+      (itemsWithAllocations || []).forEach((item: any) => {
+        (item.disPrAllocations || []).forEach((allocation: any) => {
+          if (!allocation?.prId) return;
+          const allocationAmount = Number(allocation.amount) || 0;
+          newPoAllocByPr[allocation.prId] =
+            (newPoAllocByPr[allocation.prId] || 0) + allocationAmount;
+
+          const itemIndex = Number(allocation.prItemIndex);
+          if (Number.isInteger(itemIndex) && itemIndex >= 0) {
+            const key = `${allocation.prId}:${itemIndex}`;
+            if (!newPoAllocByPrItem[key]) {
+              newPoAllocByPrItem[key] = { prId: allocation.prId, itemIndex, amount: 0 };
+            }
+            newPoAllocByPrItem[key].amount += allocationAmount;
+          }
+        });
+      });
+
+      const prOverages = Object.entries(newPoAllocByPr)
+        .map(([prId, newAmount]) => {
+          const pr = prs.find((candidate: any) => candidate.id === prId);
+          if (!pr) return null;
+
+          const storedPrTotal = Number(pr.totalAmount);
+          const itemSubtotal = (pr.items || []).reduce(
+            (sum: number, item: any) => sum + getItemAmountForPoValidation(item),
+            0
+          );
+          const prLimit = storedPrTotal > 0
+            ? storedPrTotal
+            : Math.max(0, itemSubtotal - (Number(pr.discount) || 0));
+          if (prLimit <= 0) return null;
+
+          const existingUsed = getUsedAmountByPR(prId, editingPoId);
+          const totalAfterSave = existingUsed + (Number(newAmount) || 0);
+          if (totalAfterSave <= prLimit + 0.01) return null;
+
+          return {
+            prNo: pr.prNo || prId,
+            overage: totalAfterSave - prLimit,
+          };
+        })
+        .filter(Boolean);
+
+      const prItemOverages = Object.values(newPoAllocByPrItem)
+        .map(({ prId, itemIndex, amount: newAmount }) => {
+          const pr = prs.find((candidate: any) => candidate.id === prId);
+          const itemLimit = getPrItemValidationLimit(prId, itemIndex);
+          if (!pr || itemLimit == null) return null;
+
+          const existingUsed = getUsedAmountByPRItem(prId, itemIndex, editingPoId);
+          const totalAfterSave = existingUsed + (Number(newAmount) || 0);
+          if (totalAfterSave <= itemLimit + 0.01) return null;
+
+          return {
+            prNo: `${pr.prNo || prId} รายการที่ ${itemIndex + 1}`,
+            overage: totalAfterSave - itemLimit,
+          };
+        })
+        .filter(Boolean);
+
+      const allPrOverages = [...prOverages, ...prItemOverages];
+
+      if (allPrOverages.length > 0) {
+        const detail = allPrOverages
+          .slice(0, 5)
+          .map((item: any) => `${item.prNo}: เกิน ${formatCurrency(item.overage)}`)
+          .join(", ");
+        return showAlert(
+          "ยอด PO เกิน PR",
+          `ไม่สามารถบันทึก PO ได้ เนื่องจากยอดจัดสรรรวมเกินยอด PR (${detail})`,
+          "warning"
+        );
+      }
+
       const configuredFlowPayload = buildConfiguredFlowPayload(itemsWithAllocations);
 
       let attachmentList = [...poSavedAttachments];

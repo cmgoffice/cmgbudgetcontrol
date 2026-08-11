@@ -48,9 +48,12 @@ const PRView = React.memo(() => {
     let total = 0;
     for (const p of prs) {
       if (p.projectId !== projectId || p.status === "Rejected") continue;
+      // A Cost Code can contain multiple Budget documents (for example
+      // Head Office and Workshop). Once a PR has budgetId, Cost Code alone
+      // must never make it count against another Budget.
       const matchById = budgetId && p.budgetId === budgetId;
-      const matchByCode = costCode && p.costCode === costCode;
-      if ((matchById || matchByCode) && !seen.has(p.id)) {
+      const matchByCodeLegacy = !p.budgetId && costCode && p.costCode === costCode;
+      if ((matchById || matchByCodeLegacy) && !seen.has(p.id)) {
         seen.add(p.id);
         total += Number(p.totalAmount) || 0;
       }
@@ -231,6 +234,17 @@ const PRView = React.memo(() => {
       return;
     }
 
+    const hasPendingReturn = budgets.some((budget: any) =>
+      Array.isArray(budget?.budgetReturnNotifications) &&
+      budget.budgetReturnNotifications.some((notification: any) =>
+        notification?.prId === pr.id && (notification?.status || "pending") !== "accepted"
+      )
+    );
+    if (hasPendingReturn) {
+      showAlert("มีคำขอรอรับอยู่แล้ว", "PR นี้มีรายการคืน Budget ที่ยังไม่ได้รับยอด กรุณารอผลรายการเดิมก่อน", "info");
+      return;
+    }
+
     const info = getPrBudgetReturnInfo(pr, pos);
     if (info.returnAmount <= 0) {
       showAlert("ไม่มี Balance ให้คืน", "ยอด PR ปัจจุบันไม่มากกว่า PO Sub Total ที่ใช้ไปแล้ว", "info");
@@ -314,56 +328,83 @@ const PRView = React.memo(() => {
       poRefs: getLinkedPoRefsForPr(pos, latestPr.id),
     };
     const revisedItems = scalePrItemsToTotal(latestPr.items || [], revisedTotal);
-    const payload = {
-      items: revisedItems,
-      totalAmount: revisedTotal,
-      amount: revisedTotal,
-      status: nextStatus,
-      budgetReturnRevisions: [...history, revision],
-      budgetReturnRevNo: revision.revNo,
-      lastBudgetReturnAt: revision.at,
-      lastBudgetReturnAmount: requested,
-      lastBudgetReturnReason: reason,
-    };
-
-    const ok = await updateData("prs", latestPr.id, payload, { skipLog: true });
-    if (!ok) return;
-
     const budget = latestPr.budgetId
       ? budgets.find((b: any) => b.id === latestPr.budgetId)
       : budgets.find((b: any) => b.projectId === latestPr.projectId && b.code === latestPr.costCode);
-    if (budget?.id) {
-      const usedAmount = computeBudgetUsedAfterPrRevision(prs, latestPr, revisedTotal);
-      await updateData("budgets", budget.id, { usedAmount }, { skipLog: true });
-      const returnNotifications = Array.isArray(budget.budgetReturnNotifications) ? budget.budgetReturnNotifications : [];
-      const notification = {
-        id: `ret-${latestPr.id}-${revision.revNo}-${Date.now()}`,
-        status: "pending",
-        createdAt: revision.at,
-        createdBy: revision.by,
-        prId: latestPr.id,
-        prNo: latestPr.prNo || latestPr.id,
-        revNo: revision.revNo,
-        amount: requested,
-        reason,
-        subItemId: revision.subItemId || null,
-        oldPrTotal: latestInfo.currentTotal,
-        newPrTotal: revisedTotal,
-      };
-      await updateData("budgets", budget.id, { budgetReturnNotifications: [...returnNotifications, notification] }, { skipLog: true });
+    if (!budget?.id) {
+      showAlert("ไม่พบ Budget", "ไม่พบ Budget ที่ผูกกับ PR นี้ จึงยังไม่สามารถส่งคำขอคืนยอดได้", "warning");
+      return;
+    }
+
+    const notification = {
+      id: `ret-${latestPr.id}-${revision.revNo}-${Date.now()}`,
+      status: "pending",
+      applyOnAccept: true,
+      createdAt: revision.at,
+      createdBy: revision.by,
+      prId: latestPr.id,
+      prNo: latestPr.prNo || latestPr.id,
+      revNo: revision.revNo,
+      amount: requested,
+      reason,
+      subItemId: revision.subItemId || null,
+      oldPrTotal: latestInfo.currentTotal,
+      newPrTotal: revisedTotal,
+    };
+
+    // Keep PR and Budget unchanged until the Budget owner accepts the request.
+    // Store the complete intended revision on the PR so acceptance can apply it atomically.
+    const pendingBudgetReturn = {
+      ...revision,
+      requestId: notification.id,
+      newItems: revisedItems,
+      newStatus: nextStatus,
+    };
+
+    try {
+      await runTransaction(db, async (transaction) => {
+        const prRef = doc(db, "artifacts", appId, "public", "data", "prs", latestPr.id);
+        const budgetRef = doc(db, "artifacts", appId, "public", "data", "budgets", budget.id);
+        const prSnap = await transaction.get(prRef);
+        const budgetSnap = await transaction.get(budgetRef);
+        if (!prSnap.exists() || !budgetSnap.exists()) {
+          throw new Error("ไม่พบข้อมูล PR หรือ Budget ล่าสุด");
+        }
+
+        const currentPr = prSnap.data() || {};
+        const currentBudget = budgetSnap.data() || {};
+        if (currentPr.pendingBudgetReturn?.requestId) {
+          throw new Error("PR นี้มีคำขอคืน Budget ที่รอรับอยู่แล้ว");
+        }
+        const currentNotifications = Array.isArray(currentBudget.budgetReturnNotifications)
+          ? currentBudget.budgetReturnNotifications
+          : [];
+        if (currentNotifications.some((item: any) =>
+          item?.prId === latestPr.id && (item?.status || "pending") !== "accepted"
+        )) {
+          throw new Error("PR นี้มีรายการคืน Budget ที่รอรับอยู่แล้ว");
+        }
+
+        transaction.update(prRef, { pendingBudgetReturn });
+        transaction.update(budgetRef, {
+          budgetReturnNotifications: [...currentNotifications, notification],
+        });
+      });
+    } catch (error: any) {
+      showAlert("ส่งคำขอไม่สำเร็จ", error?.message || "ไม่สามารถบันทึกคำขอคืน Budget ได้", "error");
+      return;
     }
 
     await logAction?.(
-      "Rev PR Return Balance",
-      `Rev PR ${latestPr.prNo || latestPr.id}: คืน Budget ${formatCurrency(requested)} (${formatCurrency(latestInfo.currentTotal)} → ${formatCurrency(revisedTotal)}, PO Sub Total ${formatCurrency(latestInfo.poSubTotalUsed ?? latestInfo.poGrandTotalUsed)})`,
+      "Request PR Return Balance",
+      `ส่งคำขอคืน Budget จาก PR ${latestPr.prNo || latestPr.id}: ${formatCurrency(requested)} (${formatCurrency(latestInfo.currentTotal)} → ${formatCurrency(revisedTotal)}, PO Sub Total ${formatCurrency(latestInfo.poSubTotalUsed ?? latestInfo.poGrandTotalUsed)})`,
       latestPr.projectId
     );
-    setViewingPR((prev) => prev?.id === latestPr.id ? { ...prev, ...payload } : prev);
     setIsReturnBalanceModalOpen(false);
     setReturnBalanceContext(null);
     setReturnBalanceValue("");
     setReturnBalanceReason("");
-    showAlert("คืนยอดสำเร็จ", `คืน Budget จาก PR ${latestPr.prNo || latestPr.id} จำนวน ${formatCurrency(requested)} แล้ว (รอรับยอดใน Budget)`, "success");
+    showAlert("ส่งคำขอคืนยอดแล้ว", `ส่งคำขอคืน Budget จาก PR ${latestPr.prNo || latestPr.id} จำนวน ${formatCurrency(requested)} แล้ว รอผู้มีสิทธิ์กดรับยอดในหน้า Budget`, "success");
   }, [budgets, logAction, pos, prs, returnBalanceContext?.prId, returnBalanceReason, returnBalanceValue, showAlert, updateData, user?.email, userData, userRole]);
 
   const handleDeletePrBudgetReturnRevision = useCallback((pr, revision) => {
@@ -622,8 +663,16 @@ const PRView = React.memo(() => {
   const projectBudgets = budgets.filter(
     (b) => b.projectId === selectedProjectId
   );
+  const getCanonicalLineAmount = (item) => {
+    const quantity = Number(item?.quantity);
+    const price = Number(item?.price);
+    if (Number.isFinite(quantity) && Number.isFinite(price)) {
+      return quantity * price;
+    }
+    return Number(item?.amount) || 0;
+  };
   const calculateTotal = () =>
-    lineItems.reduce((sum, item) => sum + item.quantity * item.price, 0);
+    lineItems.reduce((sum, item) => sum + getCanonicalLineAmount(item), 0);
 
   const availableBudgets = useMemo(() => {
     const approved = budgets.filter(
@@ -642,8 +691,8 @@ const PRView = React.memo(() => {
             .filter((p) => {
               if (p.projectId !== selectedProjectId || p.status === "Rejected") return false;
               const matchById = b.id && p.budgetId === b.id;
-              const matchByCode = b.code && p.costCode === b.code;
-              if (!(matchById || matchByCode)) return false;
+              const matchByCodeLegacy = !p.budgetId && b.code && p.costCode === b.code;
+              if (!(matchById || matchByCodeLegacy)) return false;
               if (seen.has(p.id)) return false;
               seen.add(p.id);
               return true;
@@ -780,6 +829,20 @@ const PRView = React.memo(() => {
       );
     }
 
+    const normalizedResolvedPrNo = String(resolvedPrNo || "").trim().toLowerCase();
+    const duplicatePrNo = prs.find((pr) =>
+      pr.id !== editingPRId &&
+      pr.projectId === selectedProjectId &&
+      String(pr.prNo || "").trim().toLowerCase() === normalizedResolvedPrNo
+    );
+    if (duplicatePrNo) {
+      return showAlert(
+        "PR No. ซ้ำ",
+        `PR No. ${resolvedPrNo} มีอยู่แล้วในโครงการนี้ กรุณาตรวจสอบเลข PR ก่อนบันทึก`,
+        "error"
+      );
+    }
+
     const budgetItem = headerData.selectedBudgetId
       ? budgets.find((b) => b.id === headerData.selectedBudgetId && b.projectId === selectedProjectId)
       : budgets.find((b) => b.code === headerData.costCode && b.projectId === selectedProjectId);
@@ -805,6 +868,7 @@ const PRView = React.memo(() => {
         : null;
     const lineItemsForSave = lineItems.map((item) => ({
       ...item,
+      amount: getCanonicalLineAmount(item),
       budgetId: selectedBudgetIdForItems,
       subItemId: selectedSubItemIdForItems,
       budgetSubItemId: selectedSubItemIdForItems,
@@ -833,7 +897,9 @@ const PRView = React.memo(() => {
 
         // ตรวจสอบยอดคงเหลือของ sub-item (ไม่นับ PR ปัจจุบันที่กำลังแก้ไข)
         const subUsed = prs
-          .filter(p => p.projectId === selectedProjectId && p.costCode === budgetItem.code && p.status !== "Rejected" && p.id !== editingPRId)
+          .filter(p => p.projectId === selectedProjectId && p.status !== "Rejected" && p.id !== editingPRId && (
+            p.budgetId === budgetItem.id || (!p.budgetId && p.costCode === budgetItem.code)
+          ))
           .reduce((sum, p) => {
             const matchItems = (p.items || []).filter(i => {
               // Only match items that have proper sub-item IDs to avoid counting legacy records incorrectly
@@ -1223,6 +1289,20 @@ const PRView = React.memo(() => {
     ) {
       return showAlert("ข้อมูลไม่ครบ", "กรุณากรอกข้อมูลให้ครบถ้วน ทุกช่อง รวมถึงรายการสินค้าอย่างน้อย 1 รายการ", "warning");
     }
+    const normalizedContractPrNo = String(resolvedPrNo || "").trim().toLowerCase();
+    const duplicateContractPrNo = prs.find((pr) =>
+      pr.id !== editingPRId &&
+      pr.projectId === selectedProjectId &&
+      String(pr.prNo || "").trim().toLowerCase() === normalizedContractPrNo
+    );
+    if (duplicateContractPrNo) {
+      return showAlert(
+        "PR No. ซ้ำ",
+        `PR No. ${resolvedPrNo} มีอยู่แล้วในโครงการนี้ กรุณาตรวจสอบเลข PR ก่อนบันทึก`,
+        "error"
+      );
+    }
+
     const budgetItem = contractHeaderData.selectedBudgetId
       ? budgets.find((b) => b.id === contractHeaderData.selectedBudgetId && b.projectId === selectedProjectId)
       : budgets.find((b) => b.code === contractHeaderData.costCode && b.projectId === selectedProjectId);
@@ -1231,7 +1311,11 @@ const PRView = React.memo(() => {
     if (budgetItem.status !== "Approved")
       return showAlert("Budget ไม่ได้รับการ Approve", `Cost Code ${budgetItem.code} ยังไม่ได้รับการ Approve`, "error");
 
-    const contractTotal = contractLineItems.reduce((sum, item) => sum + (Number(item.quantity) || 0) * (Number(item.price) || 0), 0);
+    const normalizedContractLineItems = contractLineItems.map((item) => ({
+      ...item,
+      amount: getCanonicalLineAmount(item),
+    }));
+    const contractTotal = normalizedContractLineItems.reduce((sum, item) => sum + getCanonicalLineAmount(item), 0);
     const setProgress = (pct: number, step: string) => setSavePrProgress({ show: true, pct, step });
     setProgress(5, "เตรียมข้อมูล...");
 
@@ -1263,7 +1347,7 @@ const PRView = React.memo(() => {
         ? (contractHeaderData.selectedSubItemId || null)
         : null;
 
-    const contractLineItemsForSave = contractLineItems.map((item) => ({
+    const contractLineItemsForSave = normalizedContractLineItems.map((item) => ({
       ...item,
       budgetId: contractSelectedBudgetIdForItems,
       subItemId: contractSelectedSubItemIdForItems,
@@ -2301,7 +2385,7 @@ const PRView = React.memo(() => {
                           <td className="px-3 py-1.5 font-medium text-slate-700">{it.description}</td>
                           <td className="px-3 py-1.5 text-right text-slate-500">{it.quantity} {it.unit}</td>
                           <td className="px-3 py-1.5 text-right text-slate-500">{formatCurrency(it.price)}</td>
-                          <td className="px-3 py-1.5 text-right font-semibold text-slate-700">{formatCurrency(it.amount ?? (it.quantity * it.price))}</td>
+                          <td className="px-3 py-1.5 text-right font-semibold text-slate-700">{formatCurrency(getCanonicalLineAmount(it))}</td>
                           <td className="px-3 py-1.5 text-center text-slate-400">{it.requiredDate || "-"}</td>
                         </tr>
                       ))}

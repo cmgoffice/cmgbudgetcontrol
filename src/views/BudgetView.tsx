@@ -8,7 +8,7 @@ import {
   BarChart3, Zap, Building2, Wallet, ShoppingCart, FileInput, RefreshCw, UserCheck, History,
   Bell, CircleDot, AtSign, MapPinned, UserCircle, Square, CheckSquare, Flame, Mail, Settings, Send
 } from "lucide-react";
-import { doc, setDoc, updateDoc, deleteDoc, runTransaction } from "firebase/firestore";
+import { doc, setDoc, updateDoc, deleteDoc, deleteField, runTransaction } from "firebase/firestore";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
@@ -20,7 +20,7 @@ import {
 } from "../lib/constants";
 import { getResumeStatusForPR } from "../lib/prAllocation";
 import { uploadAttachment } from "../lib/uploadAttachment";
-import { sumSubItemAmounts } from "../lib/prBudgetReturn";
+import { scalePrItemsToTotal, sumSubItemAmounts } from "../lib/prBudgetReturn";
 import { isPaidInvoiceRecord, isPaidStatus, normalizeIdList } from "../lib/billingPayUtils";
 import { useProportionalTableLayout, chainTableResizeHandlers } from "../hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
@@ -138,6 +138,7 @@ const BudgetView = React.memo(() => {
     enabled: budgetCategory !== "OVERVIEW",
     driftKey: "description",
     handleColumnResize,
+    fitToContainer: false,
   });
 
   const dashBudgetLayout = useProportionalTableLayout({
@@ -337,11 +338,10 @@ const BudgetView = React.memo(() => {
     [projectPayments]
   );
   const getItemAmount = useCallback((item) => {
-    const amount = Number(item?.amount);
-    if (Number.isFinite(amount)) return amount;
-    const qty = Number(item?.quantity || 0);
-    const price = Number(item?.price || 0);
-    return qty * price;
+    const qty = Number(item?.quantity);
+    const price = Number(item?.price);
+    if (Number.isFinite(qty) && Number.isFinite(price)) return qty * price;
+    return Number(item?.amount) || 0;
   }, []);
   const sumSubItemAmounts = useCallback((subItems = []) => {
     return subItems.reduce((sum, sub) => {
@@ -1246,42 +1246,79 @@ const BudgetView = React.memo(() => {
 
     // Collect all sub-item IDs for this budget
     const subItemIds = hasSubItems ? new Set((budget.subItems || []).map((sub) => sub.id).filter(Boolean)) : null;
+    const hasSubItemReference = (item) => Boolean(item?.budgetSubItemId || item?.subItemId);
+    const matchesCurrentSubItem = (item) => Boolean(
+      (item?.budgetSubItemId && subItemIds?.has(item.budgetSubItemId)) ||
+      (item?.subItemId && subItemIds?.has(item.subItemId))
+    );
+    const getPrItemForAllocation = (item, allocation) => {
+      const allocationPrId = allocation?.prId || item?.prId;
+      const pr = projectPrById.get(allocationPrId);
+      if (!pr) return { pr: null, prItem: null };
+
+      const explicitIndex = allocation?.prItemIndex;
+      if (explicitIndex != null && pr.items?.[explicitIndex]) {
+        return { pr, prItem: pr.items[explicitIndex] };
+      }
+
+      // Existing allocation records usually do not have prItemIndex. When
+      // the allocation is for the PO item's own PR, use the PO item's index.
+      if (allocationPrId === item?.prId && item?.prItemIndex != null && pr.items?.[item.prItemIndex]) {
+        return { pr, prItem: pr.items[item.prItemIndex] };
+      }
+
+      // A PR with one item is unambiguous even in legacy allocation records.
+      if (Array.isArray(pr.items) && pr.items.length === 1) {
+        return { pr, prItem: pr.items[0] };
+      }
+
+      return { pr, prItem: null };
+    };
+    const allocationBelongsToBudget = (item, allocation) => {
+      const { pr, prItem } = getPrItemForAllocation(item, allocation);
+      if (!pr) return false;
+
+      if (hasSubItems) {
+        if (prItem) {
+          return matchesCurrentSubItem(prItem) ||
+            (prItem.budgetId && prItem.budgetId === budgetDocId && !hasSubItemReference(prItem));
+        }
+        return false;
+      }
+
+      if (prItem) {
+        if (prItem.budgetId && prItem.budgetId === budgetDocId) return true;
+        if (!hasDuplicateCostCode && prItem.costCode === budgetCode) return true;
+        return (prItem.description || "").trim() === budgetDesc;
+      }
+
+      return pr.budgetId === budgetDocId || (!hasDuplicateCostCode && pr.costCode === budgetCode);
+    };
 
     const itemBelongsToBudget = (item, parentDoc = null) => {
       // For budgets with sub-items, only match items that reference specific sub-items
       if (hasSubItems) {
-        if (item?.budgetId && item.budgetId === budgetDocId) return true;
         // Check if item has budgetSubItemId that matches one of our sub-items
-        if (item.budgetSubItemId && subItemIds?.has(item.budgetSubItemId)) return true;
-        if (item.subItemId && subItemIds?.has(item.subItemId)) return true;
+        if (matchesCurrentSubItem(item)) return true;
+
+        // A stale sub-item ID must not be accepted only because its old
+        // budgetId still points to this Budget document. Keep the budgetId
+        // fallback only for legacy records that have no sub-item reference.
+        if (item?.budgetId && item.budgetId === budgetDocId && !hasSubItemReference(item)) return true;
 
         // IMPORTANT: For PO items created from PR items, trace back to find the original sub-item ID
         if (item.prId != null && item.prItemIndex != null) {
           const pr = projectPrById.get(item.prId);
           const prItem = pr?.items?.[item.prItemIndex];
           if (prItem) {
-            if (prItem.budgetId && prItem.budgetId === budgetDocId) return true;
-            if (prItem.budgetSubItemId && subItemIds?.has(prItem.budgetSubItemId)) return true;
-            if (prItem.subItemId && subItemIds?.has(prItem.subItemId)) return true;
+            if (matchesCurrentSubItem(prItem)) return true;
+            if (prItem.budgetId && prItem.budgetId === budgetDocId && !hasSubItemReference(prItem)) return true;
           }
         }
 
         // Fallback for Dis PR allocations or legacy mixed items without direct sub-item fields
         if (Array.isArray(item.disPrAllocations) && item.disPrAllocations.length > 0) {
-          return item.disPrAllocations.some((alloc) => {
-            const pr = projectPrById.get(alloc?.prId);
-            if (!pr) return false;
-            if (pr.budgetId && pr.budgetId === budgetDocId) return true;
-            if (!hasDuplicateCostCode && pr.costCode === budgetCode) return true;
-            if (Array.isArray(pr.items)) {
-              return pr.items.some((prItem) =>
-                (prItem.budgetId && prItem.budgetId === budgetDocId) ||
-                (prItem.budgetSubItemId && subItemIds?.has(prItem.budgetSubItemId)) ||
-                (prItem.subItemId && subItemIds?.has(prItem.subItemId))
-              );
-            }
-            return false;
-          });
+          return item.disPrAllocations.some((alloc) => allocationBelongsToBudget(item, alloc));
         }
 
         // Don't count items that only match by costCode when budget has sub-items
@@ -1307,6 +1344,20 @@ const BudgetView = React.memo(() => {
       // Match by description for legacy items
       const iDesc = (item.description || "").trim();
       return iDesc === budgetDesc;
+    };
+
+    // PO lines can distribute one amount across multiple PRs/Budgets.
+    // Count only this Budget's allocation instead of the whole PO line.
+    const getBudgetItemAmount = (item, parentDoc = null) => {
+      if (Array.isArray(item?.disPrAllocations) && item.disPrAllocations.length > 0) {
+        return item.disPrAllocations.reduce((sum, allocation) => {
+          return allocationBelongsToBudget(item, allocation)
+            ? sum + (Number(allocation.amount) || 0)
+            : sum;
+        }, 0);
+      }
+
+      return itemBelongsToBudget(item, parentDoc) ? getItemAmount(item) : 0;
     };
 
     const relatedPRs = projectPrs.filter((pr) => {
@@ -1344,16 +1395,17 @@ const BudgetView = React.memo(() => {
       return false;
     });
 
-    const seenPrNos = new Set();
+    // PR document IDs are unique. Legacy data can contain duplicate PR numbers,
+    // so deduplicating by prNo incorrectly removes real PR amounts.
+    const seenPrIds = new Set();
     const prTotal = relatedPRs.reduce((sum, pr) => {
-      if (pr.prNo && seenPrNos.has(pr.prNo)) return sum;
-      if (pr.prNo) seenPrNos.add(pr.prNo);
+      if (pr.id && seenPrIds.has(pr.id)) return sum;
+      if (pr.id) seenPrIds.add(pr.id);
 
       let subtotal = 0;
       if (pr.items && pr.items.length > 0) {
         subtotal = pr.items.reduce((iSum, i) => {
-          if (!itemBelongsToBudget(i, pr)) return iSum;
-          return iSum + getItemAmount(i);
+          return iSum + getBudgetItemAmount(i, pr);
         }, 0);
       }
 
@@ -1373,16 +1425,19 @@ const BudgetView = React.memo(() => {
       return sum;
     }, 0);
 
-    const seenPoNosForPO = new Set();
+    // PO numbers are human-readable and can be duplicated in legacy data.
+    // The Firestore document ID is the unique record identity; deduplicating
+    // by poNo can silently remove a real PO from a Budget total.
+    const seenPoIdsForPO = new Set();
     const poTotal = relatedPOs.reduce((sum, po) => {
-      if (po.poNo && seenPoNosForPO.has(po.poNo)) return sum;
-      if (po.poNo) seenPoNosForPO.add(po.poNo);
+      const poIdentity = po.id || po.poNo;
+      if (poIdentity && seenPoIdsForPO.has(poIdentity)) return sum;
+      if (poIdentity) seenPoIdsForPO.add(poIdentity);
 
       let subtotal = 0;
       if (po.items && po.items.length > 0) {
         subtotal = po.items.reduce((iSum, i) => {
-          if (!itemBelongsToBudget(i)) return iSum;
-          return iSum + getItemAmount(i);
+          return iSum + getBudgetItemAmount(i);
         }, 0);
       }
 
@@ -1401,13 +1456,13 @@ const BudgetView = React.memo(() => {
       return sum;
     }, 0);
 
-    const seenPoNosForInvoice = new Set();
+    const seenPoIdsForInvoice = new Set();
     const invoiceTotal = relatedPOs.reduce((sum, po) => {
       if (po.status === "Rejected") return sum;
       
-      const poNo = po.poNo || "";
-      if (poNo && seenPoNosForInvoice.has(poNo)) return sum;
-      if (poNo) seenPoNosForInvoice.add(poNo);
+      const poIdentity = po.id || po.poNo || "";
+      if (poIdentity && seenPoIdsForInvoice.has(poIdentity)) return sum;
+      if (poIdentity) seenPoIdsForInvoice.add(poIdentity);
 
       const invAmt = invoiceAmountByPoRef.get(po.poNo) || 0;
       if (invAmt === 0) return sum;
@@ -1415,8 +1470,7 @@ const BudgetView = React.memo(() => {
       let subtotal = 0;
       if (po.items && po.items.length > 0) {
         subtotal = po.items.reduce((iSum, i) => {
-          if (!itemBelongsToBudget(i)) return iSum;
-          return iSum + getItemAmount(i);
+          return iSum + getBudgetItemAmount(i);
         }, 0);
       }
       
@@ -1477,7 +1531,18 @@ const BudgetView = React.memo(() => {
       }
     }, 0);
 
-    return { prTotal, poTotal, invoiceTotal: invoiceTotal + spTotal, relatedPRs, relatedPOs };
+    const poExcessAmount = Math.max(0, poTotal - prTotal);
+
+    return {
+      prTotal,
+      poTotal,
+      invoiceTotal: invoiceTotal + spTotal,
+      relatedPRs,
+      relatedPOs,
+      // Read-only audit flag. This intentionally does not modify Firestore.
+      poExceedsPr: poExcessAmount > 0.01,
+      poExcessAmount,
+    };
   }, [duplicateBudgetCodeSet, invoiceAmountByPoRef, projectPos, projectPrById, projectPrs, getItemAmount, spPaymentsForProject]);
 
   const budgetStatsById = useMemo(() => {
@@ -2000,6 +2065,8 @@ const BudgetView = React.memo(() => {
           prTotal: Number(stats.prTotal) || 0,
           poTotal: Number(stats.poTotal) || 0,
           invoiceTotal: Number(stats.invoiceTotal) || 0,
+          poExcessAmount: Number(stats.poExcessAmount) || 0,
+          poExceedsPr: Boolean(stats.poExceedsPr),
           balance,
         };
       });
@@ -2008,6 +2075,8 @@ const BudgetView = React.memo(() => {
       const totalPR = mainRows.reduce((sum, r) => sum + r.prTotal, 0);
       const totalPO = mainRows.reduce((sum, r) => sum + r.poTotal, 0);
       const totalInvoice = mainRows.reduce((sum, r) => sum + r.invoiceTotal, 0);
+      const poExcessAmount = Math.max(0, totalPO - totalPR);
+      const poExceedsPr = poExcessAmount > 0.01 || mainRows.some((r) => r.poExceedsPr);
       let categoryStatus = "No Budget";
       if (catBudgets.length > 0) {
         const hasDraft = catBudgets.some((b) => b.status === "Draft");
@@ -2031,6 +2100,8 @@ const BudgetView = React.memo(() => {
         invoice: totalInvoice,
         balance: catBalance,
         status: categoryStatus,
+        poExceedsPr,
+        poExcessAmount,
       };
     });
   };
@@ -2066,8 +2137,10 @@ const BudgetView = React.memo(() => {
       showAlert("ไม่มีสิทธิ์", "คุณไม่ได้รับสิทธิ์ส่งขออนุมัติงบประมาณ", "warning");
       return;
     }
+    const editingBudget = editingBudgetId
+      ? budgets.find((b) => b.id === editingBudgetId)
+      : null;
     if (editingBudgetId) {
-      const editingBudget = budgets.find((b) => b.id === editingBudgetId);
       const minAmount = getMinimumBudgetAmountForNonNegativeBalance(editingBudget);
       const nextAmount = Number(formData.amount) || 0;
       if (nextAmount < minAmount) {
@@ -2580,20 +2653,94 @@ const BudgetView = React.memo(() => {
           return;
         }
 
-        const payload: any = {};
         const acceptedBy = userData ? `${userData.firstName || ""} ${userData.lastName || ""}`.trim() : (userRole || "Unknown");
+        const acceptedAt = new Date().toISOString();
+        try {
+          await runTransaction(db, async (transaction) => {
+            const budgetRef = doc(db, "artifacts", appId, "public", "data", "budgets", latestBudget.id);
+            const budgetSnap = await transaction.get(budgetRef);
+            if (!budgetSnap.exists()) throw new Error("ไม่พบ Budget ล่าสุด");
 
-        // Removed: logic that mutates budget amount and subItems amount.
-        // PR amounts are already reduced, so balance naturally increases.
+            const currentBudget = budgetSnap.data() || {};
+            const currentNotifications = Array.isArray(currentBudget.budgetReturnNotifications)
+              ? currentBudget.budgetReturnNotifications
+              : [];
+            const currentNotification = currentNotifications.find((n: any) => n?.id === latestNotification.id);
+            if (!currentNotification || (currentNotification.status || "pending") === "accepted") {
+              throw new Error("รายการนี้ถูกรับยอดแล้วหรือไม่พบข้อมูลล่าสุด");
+            }
 
-        payload.budgetReturnNotifications = latestNotifications.map((n: any) =>
-          n?.id === latestNotification.id
-            ? { ...n, status: "accepted", acceptedAt: new Date().toISOString(), acceptedBy: acceptedBy || "Unknown" }
-            : n
-        );
+            const budgetPayload: any = {
+              budgetReturnNotifications: currentNotifications.map((n: any) =>
+                n?.id === currentNotification.id
+                  ? { ...n, status: "accepted", acceptedAt, acceptedBy: acceptedBy || "Unknown" }
+                  : n
+              ),
+            };
 
-        const ok = await updateData("budgets", latestBudget.id, payload, { skipLog: true });
-        if (!ok) return;
+            if (currentNotification.applyOnAccept) {
+              const prId = currentNotification.prId;
+              const prRef = doc(db, "artifacts", appId, "public", "data", "prs", prId);
+              const prSnap = await transaction.get(prRef);
+              if (!prSnap.exists()) throw new Error("ไม่พบ PR ล่าสุดสำหรับคำขอคืนยอดนี้");
+
+              const currentPr = prSnap.data() || {};
+              const pendingReturn = currentPr.pendingBudgetReturn;
+              if (!pendingReturn || pendingReturn.requestId !== currentNotification.id) {
+                throw new Error("คำขอคืนยอดนี้ไม่ตรงกับข้อมูล PR ล่าสุด");
+              }
+
+              const currentPrTotal = Number(currentPr.totalAmount ?? currentPr.amount ?? 0);
+              const oldPrTotal = Number(pendingReturn.oldTotalAmount ?? currentNotification.oldPrTotal ?? currentPrTotal);
+              if (Math.abs(currentPrTotal - oldPrTotal) > 0.01) {
+                throw new Error("PR ถูกแก้ไขระหว่างรอรับยอด กรุณาตรวจสอบรายการก่อนรับยอด");
+              }
+
+              const history = Array.isArray(currentPr.budgetReturnRevisions)
+                ? currentPr.budgetReturnRevisions
+                : [];
+              const {
+                requestId,
+                newItems,
+                newStatus,
+                ...revision
+              } = pendingReturn;
+              const revisedTotal = Number(pendingReturn.newTotalAmount ?? currentNotification.newPrTotal ?? 0);
+              const revisionToStore = {
+                ...revision,
+                revNo: history.length + 1,
+                acceptedAt,
+                acceptedBy: acceptedBy || "Unknown",
+              };
+              const appliedItems = Array.isArray(newItems)
+                ? newItems
+                : scalePrItemsToTotal(currentPr.items || [], revisedTotal);
+
+              transaction.update(prRef, {
+                items: appliedItems,
+                totalAmount: revisedTotal,
+                amount: revisedTotal,
+                status: newStatus || (revisedTotal <= 0 ? "Closed PR Auto" : currentPr.status || "Approved"),
+                budgetReturnRevisions: [...history, revisionToStore],
+                budgetReturnRevNo: revisionToStore.revNo,
+                lastBudgetReturnAt: revisionToStore.at,
+                lastBudgetReturnAmount: revisionToStore.returnedAmount,
+                lastBudgetReturnReason: revisionToStore.returnReason,
+                pendingBudgetReturn: deleteField(),
+              });
+
+              const currentUsedAmount = Number(currentBudget.usedAmount);
+              if (Number.isFinite(currentUsedAmount)) {
+                budgetPayload.usedAmount = Math.max(0, currentUsedAmount - Number(currentNotification.amount || 0));
+              }
+            }
+
+            transaction.update(budgetRef, budgetPayload);
+          });
+        } catch (error: any) {
+          showAlert("รับยอดไม่สำเร็จ", error?.message || "ไม่สามารถรับยอดคืน Budget ได้", "error");
+          return;
+        }
 
         await logAction?.(
           "Accept Budget Return",
@@ -3095,8 +3242,14 @@ const BudgetView = React.memo(() => {
                     <td className="py-2 px-4 text-right text-slate-500">
                       {formatCurrency(cat.pr)}
                     </td>
-                    <td className="py-2 px-4 text-right text-slate-500 border-r-0">
-                      {formatCurrency(cat.po)}
+                    <td
+                      className={`py-2 px-4 text-right border-r-0 ${cat.poExceedsPr ? "text-red-600 font-bold" : "text-slate-500"}`}
+                      title={cat.poExceedsPr ? `แจ้งเตือน: PO มากกว่า PR ${formatCurrency(cat.poExcessAmount)}` : undefined}
+                    >
+                      <span className="inline-flex items-center justify-end gap-1">
+                        {cat.poExceedsPr && <AlertCircle size={14} aria-label="PO มากกว่า PR" />}
+                        {formatCurrency(cat.po)}
+                      </span>
                     </td>
                   </tr>
                 ))}
@@ -3846,13 +3999,16 @@ const BudgetView = React.memo(() => {
               ref={budgetTableContainerRef}
               className="w-full min-w-0 max-w-full overflow-x-auto overscroll-x-contain"
             >
-              <table className="w-full min-w-[1120px] text-left text-xs text-slate-600 table-fixed md:min-w-0">
+              <table
+                className="w-full min-w-[1120px] text-left text-xs text-slate-600 table-fixed md:min-w-0"
+                style={{ width: "max-content", minWidth: "100%" }}
+              >
                 <thead className="bg-slate-200 text-slate-900 uppercase font-bold border-b text-sm">
                   <tr>
                     {budgetCategory !== "OVERVIEW" && isColumnVisible("budget", "checkbox") && (
                       <th
                         className="py-3 px-2 border-r text-center align-middle"
-                        style={{ width: budgetMainLayout.scaled.checkbox }}
+                        style={{ width: budgetMainLayout.scaled.checkbox, minWidth: budgetMainLayout.scaled.checkbox }}
                       >
                         <input
                           type="checkbox"
@@ -3869,7 +4025,7 @@ const BudgetView = React.memo(() => {
                     {isColumnVisible("budget", "code") && (
                       <th
                         className="py-3 px-4 border-r cursor-pointer hover:bg-slate-300 transition-colors"
-                        style={{ width: budgetMainLayout.scaled.code }}
+                        style={{ width: budgetMainLayout.scaled.code, minWidth: budgetMainLayout.scaled.code }}
                         onClick={() => requestSort("code")}
                       >
                         <div className="flex items-center justify-between">
@@ -3891,7 +4047,7 @@ const BudgetView = React.memo(() => {
                     {isColumnVisible("budget", "prTotal") && <ResizableTh tableId="budget" colKey="prTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.prTotal}>PR Total<span className="block mt-1 text-[15px] font-black text-slate-800 tracking-tight opacity-100 drop-shadow-sm">{formatCurrency(headerTotals.prTotal)}</span></ResizableTh>}
                     {isColumnVisible("budget", "poTotal") && <ResizableTh tableId="budget" colKey="poTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.poTotal}>PO Total<span className="block mt-1 text-[15px] font-black text-slate-800 tracking-tight opacity-100 drop-shadow-sm">{formatCurrency(headerTotals.poTotal)}</span></ResizableTh>}
                     {isColumnVisible("budget", "nowStatus") && <ResizableTh tableId="budget" colKey="nowStatus" className="py-3 px-4 text-center" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.nowStatus}>Now Status</ResizableTh>}
-                    {isColumnVisible("budget", "actions") && <th className="py-3 px-4 text-right" style={{ width: budgetMainLayout.scaled.actions }}>Actions</th>}
+                    {isColumnVisible("budget", "actions") && <th className="py-3 px-4 text-right" style={{ width: budgetMainLayout.scaled.actions, minWidth: budgetMainLayout.scaled.actions }}>Actions</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -4075,7 +4231,11 @@ const BudgetView = React.memo(() => {
                             </td>
                           )}
                           {isColumnVisible("budget", "poTotal") && (
-                            <td className="py-1 px-3 text-right text-slate-400">
+                            <td
+                              className={`py-1 px-3 text-right ${stats.poExceedsPr ? "text-red-600 font-bold" : "text-slate-400"}`}
+                              title={stats.poExceedsPr ? `แจ้งเตือน: PO มากกว่า PR ${formatCurrency(stats.poExcessAmount)}` : undefined}
+                            >
+                              {stats.poExceedsPr && <AlertCircle size={13} className="inline mr-1" aria-label="PO มากกว่า PR" />}
                               {formatCurrency(stats.poTotal)}
                             </td>
                           )}

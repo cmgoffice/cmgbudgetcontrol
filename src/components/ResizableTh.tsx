@@ -22,6 +22,7 @@ const ResizableTh = React.memo(({ tableId, colKey, isAdmin, onResize, currentWid
     const startX = e.clientX;
     const startW = thRef.current?.offsetWidth ?? currentWidth ?? 80;
     if (handleRef.current) handleRef.current.classList.add("is-resizing");
+    if (thRef.current) thRef.current.classList.add("is-column-resizing");
 
     const onMove = (ev: MouseEvent) => {
       const newW = Math.max(30, startW + ev.clientX - startX);
@@ -32,6 +33,7 @@ const ResizableTh = React.memo(({ tableId, colKey, isAdmin, onResize, currentWid
     };
     const onUp = (ev: MouseEvent) => {
       if (handleRef.current) handleRef.current.classList.remove("is-resizing");
+      if (thRef.current) thRef.current.classList.remove("is-column-resizing");
       const newW = Math.max(30, startW + ev.clientX - startX);
       onResize(tableId, colKey, newW);
       document.removeEventListener("mousemove", onMove);

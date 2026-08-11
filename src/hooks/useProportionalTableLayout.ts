@@ -38,6 +38,8 @@ type UseProportionalTableLayoutArgs = {
   enabled: boolean;
   driftKey: string;
   handleColumnResize: (tableId: string, colKey: string, width: number) => void;
+  /** Keep each column width independent instead of fitting all columns to the container. */
+  fitToContainer?: boolean;
 };
 
 export function useProportionalTableLayout({
@@ -48,6 +50,7 @@ export function useProportionalTableLayout({
   enabled,
   driftKey,
   handleColumnResize,
+  fitToContainer = true,
 }: UseProportionalTableLayoutArgs) {
   const [containerWidth, setContainerWidth] = useState(0);
 
@@ -75,8 +78,10 @@ export function useProportionalTableLayout({
 
   const scaled = useMemo(() => {
     const weights = mergeColumnWeights(defaultWeights, savedWidths);
-    return scaleWeightsToContainer(weights, containerWidth, driftKey);
-  }, [defaultWeights, savedWidths, containerWidth, driftKey]);
+    return fitToContainer
+      ? scaleWeightsToContainer(weights, containerWidth, driftKey)
+      : weights;
+  }, [defaultWeights, savedWidths, containerWidth, driftKey, fitToContainer]);
 
   const handleResize = useCallback(
     (tid: string, colKey: string, widthPx: number) => {
@@ -85,12 +90,18 @@ export function useProportionalTableLayout({
       let W = Math.floor(el?.getBoundingClientRect?.().width ?? 0);
       if (W <= 0) W = containerWidth;
       const weights = mergeColumnWeights(defaultWeights, savedWidths);
+
+      if (!fitToContainer) {
+        handleColumnResize(tableId, colKey, Math.max(30, Math.round(widthPx)));
+        return;
+      }
+
       const T = Object.values(weights).reduce((a, b) => a + b, 0);
       if (W <= 0) W = T;
       const newWeight = Math.max(30, Math.round((widthPx * T) / W));
       handleColumnResize(tableId, colKey, newWeight);
     },
-    [tableId, defaultWeights, savedWidths, containerWidth, containerRef, handleColumnResize]
+    [tableId, defaultWeights, savedWidths, containerWidth, containerRef, handleColumnResize, fitToContainer]
   );
 
   return { scaled, handleResize };

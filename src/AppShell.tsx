@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  collection, doc, onSnapshot, query, updateDoc, addDoc, deleteDoc,
+  collection, doc, onSnapshot, query, updateDoc, addDoc, deleteDoc, runTransaction,
   orderBy, limit, getDocs, where, deleteField,
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL, uploadBytesResumable } from "firebase/storage";
@@ -1509,6 +1509,17 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       return;
     }
 
+    const hasPendingReturn = budgets.some((budget: any) =>
+      Array.isArray(budget?.budgetReturnNotifications) &&
+      budget.budgetReturnNotifications.some((notification: any) =>
+        notification?.prId === pr.id && (notification?.status || "pending") !== "accepted"
+      )
+    );
+    if (hasPendingReturn) {
+      showAlert?.("มีคำขอรอรับอยู่แล้ว", "PR นี้มีรายการคืน Budget ที่ยังไม่ได้รับยอด กรุณารอผลรายการเดิมก่อน", "info");
+      return;
+    }
+
     const info = getPrBudgetReturnInfo(pr, pos);
     if (info.returnAmount <= 0) {
       showAlert?.("ไม่มี Balance ให้คืน", "ยอด PR ปัจจุบันไม่มากกว่า PO Sub Total ที่ใช้ไปแล้ว", "info");
@@ -1591,47 +1602,71 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       subItemId: latestPr.selectedSubItemId || latestPr.subItemId || latestPr.items?.[0]?.budgetSubItemId || latestPr.items?.[0]?.subItemId || null,
       poRefs: getLinkedPoRefsForPr(pos, latestPr.id),
     };
-    const payload = {
-      items: scalePrItemsToTotal(latestPr.items || [], revisedTotal),
-      totalAmount: revisedTotal,
-      amount: revisedTotal,
-      status: nextStatus,
-      budgetReturnRevisions: [...history, revision],
-      budgetReturnRevNo: revision.revNo,
-      lastBudgetReturnAt: revision.at,
-      lastBudgetReturnAmount: requested,
-      lastBudgetReturnReason: reason,
-    };
-
-    const ok = await updateData?.("prs", latestPr.id, payload, { skipLog: true });
-    if (!ok) return;
-
     const budget = latestPr.budgetId
       ? budgets.find((b: any) => b.id === latestPr.budgetId)
       : budgets.find((b: any) => b.projectId === latestPr.projectId && b.code === latestPr.costCode);
-    if (budget?.id) {
-      const usedAmount = computeBudgetUsedAfterPrRevision(prs, latestPr, revisedTotal);
-      await updateData?.("budgets", budget.id, { usedAmount }, { skipLog: true });
-      const returnNotifications = Array.isArray(budget.budgetReturnNotifications) ? budget.budgetReturnNotifications : [];
-      const notification = {
-        id: `ret-${latestPr.id}-${revision.revNo}-${Date.now()}`,
-        status: "pending",
-        createdAt: revision.at,
-        createdBy: revision.by,
-        prId: latestPr.id,
-        prNo: latestPr.prNo || latestPr.id,
-        revNo: revision.revNo,
-        amount: requested,
-        reason,
-        subItemId: revision.subItemId || null,
-        oldPrTotal: latestInfo.currentTotal,
-        newPrTotal: revisedTotal,
-      };
-      await updateData?.("budgets", budget.id, { budgetReturnNotifications: [...returnNotifications, notification] }, { skipLog: true });
+    if (!budget?.id) {
+      showAlert?.("ไม่พบ Budget", "ไม่พบ Budget ที่ผูกกับ PR นี้ จึงยังไม่สามารถส่งคำขอคืนยอดได้", "warning");
+      return;
+    }
+
+    const revisedItems = scalePrItemsToTotal(latestPr.items || [], revisedTotal);
+    const notification = {
+      id: `ret-${latestPr.id}-${revision.revNo}-${Date.now()}`,
+      status: "pending",
+      applyOnAccept: true,
+      createdAt: revision.at,
+      createdBy: revision.by,
+      prId: latestPr.id,
+      prNo: latestPr.prNo || latestPr.id,
+      revNo: revision.revNo,
+      amount: requested,
+      reason,
+      subItemId: revision.subItemId || null,
+      oldPrTotal: latestInfo.currentTotal,
+      newPrTotal: revisedTotal,
+    };
+    const pendingBudgetReturn = {
+      ...revision,
+      requestId: notification.id,
+      newItems: revisedItems,
+      newStatus: nextStatus,
+    };
+
+    try {
+      await runTransaction(db, async (transaction) => {
+        const prRef = doc(db, "artifacts", appId, "public", "data", "prs", latestPr.id);
+        const budgetRef = doc(db, "artifacts", appId, "public", "data", "budgets", budget.id);
+        const prSnap = await transaction.get(prRef);
+        const budgetSnap = await transaction.get(budgetRef);
+        if (!prSnap.exists() || !budgetSnap.exists()) {
+          throw new Error("ไม่พบข้อมูล PR หรือ Budget ล่าสุด");
+        }
+        const currentPr = prSnap.data() || {};
+        const currentBudget = budgetSnap.data() || {};
+        if (currentPr.pendingBudgetReturn?.requestId) {
+          throw new Error("PR นี้มีคำขอคืน Budget ที่รอรับอยู่แล้ว");
+        }
+        const currentNotifications = Array.isArray(currentBudget.budgetReturnNotifications)
+          ? currentBudget.budgetReturnNotifications
+          : [];
+        if (currentNotifications.some((item: any) =>
+          item?.prId === latestPr.id && (item?.status || "pending") !== "accepted"
+        )) {
+          throw new Error("PR นี้มีรายการคืน Budget ที่รอรับอยู่แล้ว");
+        }
+        transaction.update(prRef, { pendingBudgetReturn });
+        transaction.update(budgetRef, {
+          budgetReturnNotifications: [...currentNotifications, notification],
+        });
+      });
+    } catch (error: any) {
+      showAlert?.("ส่งคำขอไม่สำเร็จ", error?.message || "ไม่สามารถบันทึกคำขอคืน Budget ได้", "error");
+      return;
     }
 
     await logAction?.(
-      "Rev PR Return Balance",
+      "Request PR Return Balance",
       `Rev PR ${latestPr.prNo || latestPr.id}: คืน Budget ${formatCurrency(requested)} (${formatCurrency(latestInfo.currentTotal)} → ${formatCurrency(revisedTotal)}, PO Sub Total ${formatCurrency(latestInfo.poSubTotalUsed ?? latestInfo.poGrandTotalUsed)})`,
       latestPr.projectId
     );
@@ -1639,6 +1674,8 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     setReturnBalanceContext(null);
     setReturnBalanceValue("");
     setReturnBalanceReason("");
+    showAlert?.("ส่งคำขอคืนยอดแล้ว", `ส่งคำขอคืน Budget จาก PR ${latestPr.prNo || latestPr.id} จำนวน ${formatCurrency(requested)} แล้ว รอผู้มีสิทธิ์กดรับยอดในหน้า Budget`, "success");
+    return;
     showAlert?.("คืนยอดสำเร็จ", `คืน Budget จาก PR ${latestPr.prNo || latestPr.id} จำนวน ${formatCurrency(requested)} แล้ว (รอรับยอดใน Budget)`, "success");
   }, [budgets, logAction, pos, prs, returnBalanceContext?.prId, returnBalanceReason, returnBalanceValue, showAlert, updateData, user?.email, userData, userRole]);
 

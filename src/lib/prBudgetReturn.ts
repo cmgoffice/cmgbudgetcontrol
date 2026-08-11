@@ -99,9 +99,11 @@ export const computeBudgetUsedAfterPrRevision = (
 
   return prs.reduce((sum, pr) => {
     if (!pr || pr.projectId !== projectId || pr.status === "Rejected") return sum;
+    // Do not use Cost Code as a fallback once a PR has an explicit Budget.
+    // One Cost Code may intentionally have multiple Budgets.
     const matchById = budgetId && pr.budgetId === budgetId;
-    const matchByCode = costCode && pr.costCode === costCode;
-    if (!(matchById || matchByCode) || seen.has(pr.id)) return sum;
+    const matchByCodeLegacy = !pr.budgetId && costCode && pr.costCode === costCode;
+    if (!(matchById || matchByCodeLegacy) || seen.has(pr.id)) return sum;
     seen.add(pr.id);
     return sum + (pr.id === targetPr.id ? revisedTotal : Number(pr.totalAmount || pr.amount || 0));
   }, 0);
