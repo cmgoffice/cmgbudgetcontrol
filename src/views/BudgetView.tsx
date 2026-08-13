@@ -21,7 +21,7 @@ import {
 import { getResumeStatusForPR } from "../lib/prAllocation";
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { scalePrItemsToTotal, sumSubItemAmounts } from "../lib/prBudgetReturn";
-import { isPaidInvoiceRecord, isPaidStatus, normalizeIdList } from "../lib/billingPayUtils";
+import { isPaidStatus, isSpentInvoiceRecord } from "../lib/billingPayUtils";
 import { useProportionalTableLayout, chainTableResizeHandlers } from "../hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
@@ -281,17 +281,14 @@ const BudgetView = React.memo(() => {
       (payments || []).map((payment: any) => [String(payment.id), payment])
     );
 
-    const paidInvoiceIds = new Set();
-
     invoices.forEach((invoice: any) => {
       const belongsToProject = 
         invoice.projectId === selectedProjectId || 
         projectPoNos.has(invoice?.poRef) || 
         projectPoNos.has(invoice?.poNo);
 
-      if (belongsToProject && isPaidInvoiceRecord(invoice)) {
+      if (belongsToProject && isSpentInvoiceRecord(invoice)) {
         uniqueInvoices.set(invoice.id, invoice);
-        paidInvoiceIds.add(String(invoice.id));
       }
     });
 
@@ -320,32 +317,6 @@ const BudgetView = React.memo(() => {
         map.set(invoice.poRef, (map.get(invoice.poRef) || 0) + amount);
       } else if (invoice.poNo && projectPoNos.has(invoice.poNo)) {
         map.set(invoice.poNo, (map.get(invoice.poNo) || 0) + amount);
-      }
-    });
-
-    const projectPayments = payments.filter((p: any) => p.projectId === selectedProjectId);
-    const payDocs = projectPayments.filter((row: any) => isPaidStatus(row.status));
-
-    payDocs.forEach((row: any) => {
-      const linkedInvoiceIds = normalizeIdList(row.invoiceIds || []);
-      const hasLinkedPaidInvoice = linkedInvoiceIds.some((invoiceId) => paidInvoiceIds.has(invoiceId));
-      const hasInvoiceByPayment = Array.from(uniqueInvoices.values()).some((invoice: any) => (
-        invoice?.sourceType === "payment" && (
-          String(invoice?.paymentId || "") === String(row?.id || "") ||
-          String(invoice?.paymentNo || "") === String(row?.paymentNo || "")
-        )
-      ));
-      const hasInvoiceByPayNo = Array.from(uniqueInvoices.values()).some((invoice: any) => (
-        String(invoice?.payNo || "") === String(row?.docNo || "")
-      ));
-      
-      if (!hasLinkedPaidInvoice && !hasInvoiceByPayment && !hasInvoiceByPayNo) {
-        const amount = Number(row.amount) || 0;
-        if (row.poRef) {
-           map.set(row.poRef, (map.get(row.poRef) || 0) + amount);
-        } else if (row.poNo) {
-           map.set(row.poNo, (map.get(row.poNo) || 0) + amount);
-        }
       }
     });
 

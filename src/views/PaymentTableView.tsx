@@ -11,6 +11,13 @@ import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 import { Card, Badge, formatCurrency } from "../components/ui";
 import { resolvePaymentSignatureImage } from "../lib/paymentSignatureStamps";
 
+const BANK_ACCOUNT_OPTIONS = [
+  "KBANK-4971008992",
+  "SCB-6443017701",
+  "GSB-000001396654",
+  "GSB-020284909098",
+];
+
 const PaymentTableView = React.memo(() => {
   const {
     payments = [],
@@ -555,13 +562,18 @@ const PaymentTableView = React.memo(() => {
               {historicalPaymentType === "โอน" && (
                 <label className="block text-sm font-semibold text-slate-700">
                   เลขบัญชีธนาคาร <span className="text-red-500">*</span>
-                  <input
-                    type="text"
+                  <select
                     className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-100"
                     value={historicalBankAccountNo}
                     onChange={(e) => setHistoricalBankAccountNo(e.target.value)}
-                    placeholder="กรอกเลขบัญชีสำหรับการโอน"
-                  />
+                  >
+                    <option value="">เลือกบัญชีธนาคาร</option>
+                    {BANK_ACCOUNT_OPTIONS.map((account) => (
+                      <option key={account} value={account}>
+                        {account}
+                      </option>
+                    ))}
+                  </select>
                 </label>
               )}
             </div>

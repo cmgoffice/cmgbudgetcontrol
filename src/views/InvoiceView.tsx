@@ -45,6 +45,12 @@ const PO_TYPE_LABELS: Record<string, string> = {
 };
 
 const PAYMENT_TYPES = ["เครดิต", "โอน", "เช็ค", "เงินสด"];
+const BANK_ACCOUNT_OPTIONS = [
+  "KBANK-4971008992",
+  "SCB-6443017701",
+  "GSB-000001396654",
+  "GSB-020284909098",
+];
 
 // Alternating pastel group colors
 const GROUP_COLORS = [
@@ -114,9 +120,31 @@ const InvoiceView = React.memo(() => {
     logAction,
     loadVendors,
     user,
+    visibleProjects = [],
   } = useAppData();
   const { selectedProjectId } = useUI();
   const { userData } = useContext(AuthContext);
+
+  const projectById = useMemo(
+    () => new Map((projects || []).map((project: any) => [String(project.id), project])),
+    [projects]
+  );
+  const getProjectLabel = useCallback((projectId: any) => {
+    const project = projectById.get(String(projectId || ""));
+    if (!project) return String(projectId || "-");
+    return [project.jobNo, project.name].filter(Boolean).join(" - ") || project.id;
+  }, [projectById]);
+  const getInvoiceProjectId = useCallback((invoice: any) => {
+    const matchedPO = (pos || []).find((po: any) => (
+      String(po.id) === String(invoice?.poId || "") ||
+      String(po.poNo || "") === String(invoice?.poNo || invoice?.poRef || "")
+    ));
+    return invoice?.projectId || matchedPO?.projectId || "";
+  }, [pos]);
+  const visibleProjectIds = useMemo(
+    () => new Set((visibleProjects || []).map((project: any) => String(project.id))),
+    [visibleProjects]
+  );
 
   // โหลด vendors เมื่อเข้าหน้า Invoice (vendor ข้อมูลจาก PO ต้องใช้ vendors)
   React.useEffect(() => {
@@ -146,6 +174,7 @@ const InvoiceView = React.memo(() => {
   const [histSearch, setHistSearch] = useState("");
   const [histPaymentType, setHistPaymentType] = useState("");
   const [histStatus, setHistStatus] = useState("");
+  const [histProjectId, setHistProjectId] = useState("all");
 
   // Create Invoice Modal State
   const [isCreateInvoiceModalOpen, setIsCreateInvoiceModalOpen] = useState(false);
@@ -336,9 +365,16 @@ const InvoiceView = React.memo(() => {
   }, [invoiceEligibleReceives, pos, vendors]);
 
   const draftInvoices = useMemo(() => {
-     return invoices.filter((inv: any) => inv.projectId === selectedProjectId && inv.status === "Draft")
+     const uniqueInvoices = new Map<string, any>();
+     (invoices || []).forEach((invoice: any) => {
+       if (!invoice?.id) return;
+       uniqueInvoices.set(String(invoice.id), invoice);
+     });
+     return Array.from(uniqueInvoices.values()).filter((inv: any) => (
+       inv.status === "Draft" && visibleProjectIds.has(String(getInvoiceProjectId(inv)))
+     ))
          .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-  }, [invoices, selectedProjectId]);
+  }, [getInvoiceProjectId, invoices, visibleProjectIds]);
 
   const filteredDraftInvoices = useMemo(() => {
     return draftInvoices.filter((inv: any) => {
@@ -940,7 +976,7 @@ const InvoiceView = React.memo(() => {
     if (!viewingPO) return;
     const isTransferPayment = invoiceForm.paymentType === "โอน";
     const isPaymentInvoice = Boolean(viewingPO?.isPaymentSubcontract);
-    const existingInvoiceAttachments = isPaymentInvoice && isEditingInvoice
+    const existingInvoiceAttachments = isEditingInvoice
       ? (Array.isArray(editingInvoice?.invoiceAttachments) ? editingInvoice.invoiceAttachments : [])
       : [];
     if (!invoiceForm.invNo.trim())
@@ -978,14 +1014,14 @@ const InvoiceView = React.memo(() => {
       if (invoiceForm.settleRemaining && totalAmount <= 0) {
         return showAlert("ข้อมูลไม่ถูกต้อง", "ไม่พบยอดคงเหลือสำหรับจ่ายส่วนที่เหลือ", "warning");
       }
-      const uploadedInvoiceAttachments = isPaymentInvoice && invoiceAttachmentFiles.length > 0
+      const uploadedInvoiceAttachments = (isEditingInvoice || isPaymentInvoice) && invoiceAttachmentFiles.length > 0
         ? await Promise.all(
             invoiceAttachmentFiles.map(async (file) => {
               const result = await uploadAttachment(file, {
                 type: "invoice",
                 projectId: editingInvoice?.projectId || selectedProjectId,
                 docId: viewingPO.id,
-                subPath: "payment",
+                subPath: isPaymentInvoice ? "payment" : "invoice",
               });
               return {
                 ...result,
@@ -1045,12 +1081,14 @@ const InvoiceView = React.memo(() => {
         ),
         projectId: editingInvoice?.projectId || selectedProjectId,
         status: invoiceStatus,
+        ...((isEditingInvoice || isPaymentInvoice) ? {
+          invoiceAttachments,
+        } : {}),
         ...(isPaymentInvoice ? {
           sourceType: "payment",
           paymentId: viewingPO.id,
           paymentNo: viewingPO.paymentNo || viewingPO.poNo || "",
           paymentPeriodNo: viewingPO.periodNo || "",
-          invoiceAttachments,
         } : {}),
         createdBy:
           editingInvoice?.createdBy ||
@@ -1271,10 +1309,16 @@ const InvoiceView = React.memo(() => {
     }
   };
 
-  const projectInvoices = useMemo(
-    () => invoices.filter((inv) => inv.projectId === selectedProjectId),
-    [invoices, selectedProjectId]
-  );
+  const projectInvoices = useMemo(() => {
+    const uniqueInvoices = new Map<string, any>();
+    (invoices || []).forEach((invoice: any) => {
+      if (!invoice?.id) return;
+      uniqueInvoices.set(String(invoice.id), invoice);
+    });
+    return Array.from(uniqueInvoices.values()).filter((invoice: any) => (
+      visibleProjectIds.has(String(getInvoiceProjectId(invoice)))
+    ));
+  }, [getInvoiceProjectId, invoices, visibleProjectIds]);
 
   const canSettleDeposit = useCallback((invoice: any) => {
     return getInvoiceOutstandingDepositAmount(invoice) > 0;
@@ -1294,6 +1338,10 @@ const InvoiceView = React.memo(() => {
 
   const filteredHistoryInvoices = useMemo(() => {
     return historyInvoices.filter((inv) => {
+      if (histProjectId !== "all" && String(getInvoiceProjectId(inv)) !== String(histProjectId)) {
+        return false;
+      }
+
       // 1. Text search filter
       if (histSearch) {
         const q = histSearch.toLowerCase();
@@ -1317,7 +1365,7 @@ const InvoiceView = React.memo(() => {
 
       return true;
     });
-  }, [historyInvoices, histSearch, histPaymentType, histStatus, getInvoiceDisplayStatus]);
+  }, [getInvoiceDisplayStatus, getInvoiceProjectId, histPaymentType, histProjectId, histSearch, histStatus, historyInvoices]);
 
   // ─── Computed totals for invoice items ────────────────────────────────────
   const invoiceTotalAmount = useMemo(
@@ -1536,6 +1584,7 @@ const InvoiceView = React.memo(() => {
                         <tr>
                           <th className="py-1.5 px-3 text-center md:hidden">Actions</th>
                           <th className="py-1.5 px-3">PO No.</th>
+                          <th className="py-1.5 px-3">โครงการ</th>
                           <th className="py-1.5 px-3">Vendor</th>
                           <th className="py-1.5 px-3">วันที่ PO</th>
                           <th className="py-1.5 px-3">รายละเอียด</th>
@@ -1611,6 +1660,9 @@ const InvoiceView = React.memo(() => {
                                 <td className={`py-1.5 px-3 font-semibold ${c.poNo}`}>
                                   {draftInv.poNo || draftInv.poRef || po.poNo || "-"}
                                   <span className="ml-2 px-1.5 py-0.5 bg-slate-200 text-slate-600 text-[9px] rounded-md uppercase">Draft</span>
+                                </td>
+                                <td className="py-1.5 px-3 max-w-[180px] truncate" title={getProjectLabel(draftInv.projectId || po.projectId)}>
+                                  {getProjectLabel(draftInv.projectId || po.projectId)}
                                 </td>
                                 <td className="py-1.5 px-3" title={draftInv.vendorName || getPoVendorName(po)}>
                                   {draftInv.vendorName || getPoVendorName(po)}
@@ -1714,6 +1766,7 @@ const InvoiceView = React.memo(() => {
                   <th className="py-1.5 px-3 text-center md:hidden">Actions</th>
                   <th className="py-1.5 px-3">Invoice No.</th>
                   <th className="py-1.5 px-3">Ref. PO</th>
+                  <th className="py-1.5 px-3">โครงการ</th>
                   <th className="py-1.5 px-3">Vendor</th>
                   <th className="py-1.5 px-3">วันที่</th>
                   <th className="py-1.5 px-3">ประเภทการชำระเงิน</th>
@@ -1878,13 +1931,28 @@ const InvoiceView = React.memo(() => {
                 <option value="paid">จ่ายแล้ว (Paid)</option>
               </select>
 
-              {(histSearch || histPaymentType || histStatus) && (
+              <select
+                value={histProjectId}
+                onChange={(e) => setHistProjectId(e.target.value)}
+                className="px-2 py-1.5 text-xs border border-amber-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-400 w-44 cursor-pointer text-slate-600 font-medium"
+                aria-label="กรองตามโครงการ"
+              >
+                <option value="all">ทุกโครงการ</option>
+                {(visibleProjects || []).map((project: any) => (
+                  <option key={project.id} value={project.id}>
+                    {getProjectLabel(project.id)}
+                  </option>
+                ))}
+              </select>
+
+              {(histSearch || histPaymentType || histStatus || histProjectId !== "all") && (
                 <button
                   type="button"
                   onClick={() => {
                     setHistSearch("");
                     setHistPaymentType("");
                     setHistStatus("");
+                    setHistProjectId("all");
                   }}
                   className="text-slate-400 hover:text-red-500 transition-colors text-xs font-semibold flex items-center gap-0.5 ml-1"
                   title="ล้างตัวกรองทั้งหมด"
@@ -1908,6 +1976,7 @@ const InvoiceView = React.memo(() => {
                   <th className="py-1.5 px-3 text-center md:hidden">Actions</th>
                   <th className="py-1.5 px-3">Invoice No.</th>
                   <th className="py-1.5 px-3">Ref. PO</th>
+                  <th className="py-1.5 px-3">โครงการ</th>
                   <th className="py-1.5 px-3">Vendor</th>
                   <th className="py-1.5 px-3">วันที่</th>
                   <th className="py-1.5 px-3">ประเภทชำระ</th>
@@ -1920,7 +1989,7 @@ const InvoiceView = React.memo(() => {
                 {filteredHistoryInvoices.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={8}
+                      colSpan={10}
                       className="py-10 text-center text-slate-400"
                     >
                       <DollarSign
@@ -1973,6 +2042,9 @@ const InvoiceView = React.memo(() => {
                       </td>
                       <td className="py-1.5 px-3 font-medium text-violet-600">
                         {inv.poNo || inv.poRef || "-"}
+                      </td>
+                      <td className="py-1.5 px-3 max-w-[180px] truncate" title={getProjectLabel(getInvoiceProjectId(inv))}>
+                        {getProjectLabel(getInvoiceProjectId(inv))}
                       </td>
                       <td className="hidden py-1.5 px-3 md:table-cell">
                         {getVendorName(inv.vendorId, inv.vendorName)}
@@ -2042,6 +2114,7 @@ const InvoiceView = React.memo(() => {
               <tfoot className="border-t-2 border-amber-200">
                 <tr className="bg-amber-50">
                   <td className="py-2 px-3 md:hidden"></td>
+                  <td className="py-2 px-3"></td>
                   <td className="py-2 px-3"></td>
                   <td className="py-2 px-3"></td>
                   <td className="hidden py-2 px-3 md:table-cell"></td>
@@ -2225,11 +2298,9 @@ const InvoiceView = React.memo(() => {
                   {isTransferPayment && (
                     <div className="md:col-span-2">
                       <label className="flex items-center gap-1 text-xs font-semibold text-sky-700 mb-1.5">
-                        <CreditCard size={11} /> เลขบัญชี
+                        <CreditCard size={11} /> จากเลขบัญชี
                       </label>
-                      <input
-                        type="text"
-                        inputMode="numeric"
+                      <select
                         value={invoiceForm.bankAccountNo}
                         onChange={(e) =>
                           setInvoiceForm((f) => ({
@@ -2237,9 +2308,15 @@ const InvoiceView = React.memo(() => {
                             bankAccountNo: e.target.value,
                           }))
                         }
-                        placeholder="กรอกเลขบัญชีสำหรับการโอน"
                         className="w-full border border-sky-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-300 focus:border-sky-400 bg-white"
-                      />
+                      >
+                        <option value="">เลือกบัญชีธนาคาร</option>
+                        {BANK_ACCOUNT_OPTIONS.map((account) => (
+                          <option key={account} value={account}>
+                            {account}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   )}
                   <div className="md:col-span-3 rounded-xl border border-violet-100 bg-white/80 p-3">
@@ -2290,11 +2367,11 @@ const InvoiceView = React.memo(() => {
                   </div>
                   </div>
 
-                {viewingPO.isPaymentSubcontract && (
+                {(isEditingInvoice || viewingPO.isPaymentSubcontract) && (
                   <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
                     <label className="flex items-center gap-1 text-xs font-semibold text-emerald-800 mb-1.5">
-                      <Paperclip size={12} /> ไฟล์แนบ Invoice (จำเป็นสำหรับ Payment)
-                      <span className="text-red-500">*</span>
+                      <Paperclip size={12} /> เอกสารแนบ Invoice
+                      {viewingPO.isPaymentSubcontract && <span className="text-red-500">*</span>}
                     </label>
                     {Array.isArray(editingInvoice?.invoiceAttachments) && editingInvoice.invoiceAttachments.length > 0 && (
                       <div className="mb-2 space-y-1 text-[11px] text-emerald-700">
@@ -2308,6 +2385,7 @@ const InvoiceView = React.memo(() => {
                     <input
                       type="file"
                       multiple
+                      accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx"
                       onChange={(e) => setInvoiceAttachmentFiles(Array.from(e.target.files || []))}
                       className="block w-full text-xs text-slate-600 file:mr-2 file:rounded-lg file:border-0 file:bg-emerald-600 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-emerald-700"
                     />
@@ -2671,14 +2749,19 @@ const InvoiceView = React.memo(() => {
                     {createInvoiceForm.paymentType === "โอน" && (
                       <div>
                         <label className="block text-xs font-semibold text-slate-600 mb-1">เลขที่บัญชี (ถ้ามี)</label>
-                        <input
-                          type="text"
+                        <select
                           value={createInvoiceForm.bankAccountNo}
                           onChange={(e) => setCreateInvoiceForm({ ...createInvoiceForm, bankAccountNo: e.target.value })}
                           className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-violet-400 focus:border-violet-400"
-                          placeholder="เลขที่บัญชี/ชื่อธนาคาร"
                           disabled={saving}
-                        />
+                        >
+                          <option value="">เลือกบัญชีธนาคาร</option>
+                          {BANK_ACCOUNT_OPTIONS.map((account) => (
+                            <option key={account} value={account}>
+                              {account}
+                            </option>
+                          ))}
+                        </select>
                       </div>
                     )}
                   </div>

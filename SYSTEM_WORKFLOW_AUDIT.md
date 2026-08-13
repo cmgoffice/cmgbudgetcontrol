@@ -294,6 +294,8 @@ PO Approved
 
 Receive รองรับ partial receive โดยเขียน `po.statusNow = Partial Receive`; เมื่อรับครบจึงเปลี่ยน status เป็น `Received`.
 
+ใน flow ปกติ การกดบันทึก Receive จะสร้างเฉพาะเอกสารใน `receives` และยังไม่สร้าง Invoice อัตโนมัติ หลัง PO เป็น `Received` ผู้ใช้ต้องเข้าเมนู Invoice เพื่อเลือก Receive แล้วสร้าง Invoice เอง โดยสถานะ Invoice จะเป็น `Invcredit` เมื่อเลือกเครดิต, `paid` เมื่อเลือกเงินสด/โอน/เช็ค และ `Deposit` เมื่อเลือกมัดจำ.
+
 ### 7.2 Receive Auto
 
 เมื่อ GM approve PO ที่ `receiveType = Receive Auto`:
@@ -302,6 +304,7 @@ Receive รองรับ partial receive โดยเขียน `po.statusNo
 - ตั้ง `autoCreatedFromPoApproval = true`
 - เปลี่ยน PO เป็น `Received`
 - ผู้ใช้ไม่ต้องบันทึก Receive เอง
+- ไม่สร้าง Invoice จาก Receive Auto โดยอัตโนมัติ เว้นแต่ PO จะตั้งค่า Pay before Receive และ Invoice setup ไว้ด้วย
 
 ### 7.3 Pay Before Receive
 
@@ -328,6 +331,8 @@ Receive รองรับ partial receive โดยเขียน `po.statusNo
 
 Receive ไม่มี approval chain แยกแบบ PR/PO; ผู้มีสิทธิ์บันทึกจำนวนรับจริง, วันที่, หมายเหตุ และรูปถ่าย.
 
+Receive ปกติไม่ใช่ trigger สร้าง Invoice โดยตรง; เป็นขั้นตอนรับของก่อน แล้วจึงสร้าง Invoice จาก Receive ในเมนู Invoice. กรณีที่ Invoice/Receive ถูกสร้างอัตโนมัติจะเกิดจากการตั้งค่าใน PO approval flow ได้แก่ Pay before Receive และ Receive after Payment ไม่ใช่จากการบันทึก Receive ปกติ.
+
 ข้อมูล Receive สำคัญ:
 
 - `poId`, `poNo`, `prNo`, `projectId`
@@ -345,6 +350,15 @@ Invoice สร้างได้จาก:
 - PO ที่พร้อมรับ Invoice
 - Receive ที่เลือกมารวมเป็น Invoice
 - auto flow จาก PO approval
+
+เงื่อนไขรายการที่แสดงในหน้า Invoice:
+
+- PO ปกติที่แสดงเพื่อสร้าง Invoice ต้องมี `statusNow` (ถ้ามี) หรือ `status` เป็น `Received` หรือ `Wait Invoice` และต้องอยู่ในโครงการที่เลือก
+- `Received` ใช้สำหรับ flow ปกติที่รับของครบแล้ว ส่วน `Wait Invoice` ใช้สำหรับ Pay before Receive
+- Receive ที่แสดงในหน้าสร้าง Invoice จะกรองตามโครงการและตัด Receive ที่ถูกผูกอยู่ใน `receiveIds` ของ Invoice แล้วออก
+- Receive ไม่มีการกรองด้วยสถานะ Receive แยกต่างหาก เพราะเอกสาร Receive ไม่มี status workflow; จึงสามารถเลือก Receive บางส่วน (`Partial Receive`) ได้
+- ถ้า PO ยังเป็น `Partial Receive` หลังสร้าง Invoice ระบบจะยังไม่เปลี่ยนสถานะ PO ตามสถานะ Invoice
+- Payment Subcontractor ที่มีสถานะ `Wait Pay` และยังไม่มี Invoice จะแสดงเป็นรายการเสมือน PO เพื่อสร้าง Invoice
 
 สถานะที่ใช้จริง:
 

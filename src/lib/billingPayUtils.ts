@@ -1,5 +1,13 @@
 export const isPaidStatus = (value: any) => String(value || "").trim().toLowerCase() === "paid";
 
+export const isSpentInvoiceStatus = (value: any) => {
+  const status = String(value || "").trim().toLowerCase();
+  return status === "paid" || status === "invcredit";
+};
+
+export const isSpentInvoiceRecord = (invoice: any) =>
+  isSpentInvoiceStatus(invoice?.status) || isSpentInvoiceStatus(invoice?.statusNow);
+
 export const isPaidInvoiceRecord = (invoice: any) => {
   if (isPaidStatus(invoice?.status) || isPaidStatus(invoice?.statusNow)) return true;
   const paymentType = String(invoice?.paymentType || "").trim();
@@ -29,42 +37,13 @@ export const getProjectPayHistoryTotal = (projectId: string, invoices: any[], pa
         projectPoNos.has(invoice?.poRef) || 
         projectPoNos.has(invoice?.poNo);
 
-      return belongsToProject && isPaidInvoiceRecord(invoice);
+      return belongsToProject && isSpentInvoiceRecord(invoice);
     })
     .map((invoice: any) => ({
       invoiceId: invoice.id,
       amount: Number(invoice.amount) || (Number(invoice.invoiceQty || 0) * Number(invoice.price || 0)) || 0,
     }));
 
-  const projectPayments = payments.filter((p: any) => p.projectId === projectId);
-  const payDocs = projectPayments.filter((row: any) => isPaidStatus(row.status));
-  
-  const paidInvoiceIds = new Set(
-    paidInvoiceHistoryRows
-      .map((row: any) => String(row?.invoiceId || ""))
-      .filter(Boolean)
-  );
-
-  const orphanPayDocs = payDocs.filter((row: any) => {
-    const linkedInvoiceIds = normalizeIdList(row.invoiceIds || []);
-    const hasLinkedPaidInvoice = linkedInvoiceIds.some((invoiceId) => paidInvoiceIds.has(invoiceId));
-    const hasInvoiceByPayment = (invoices || []).some((invoice: any) => (
-      invoice?.sourceType === "payment" && (
-        String(invoice?.paymentId || "") === String(row?.id || "") ||
-        String(invoice?.paymentNo || "") === String(row?.paymentNo || "")
-      ) && isPaidInvoiceRecord(invoice)
-    ));
-    const hasInvoiceByPayNo = (invoices || []).some((invoice: any) => (
-      isPaidInvoiceRecord(invoice) &&
-      String(invoice?.payNo || "") === String(row?.docNo || "")
-    ));
-    return !hasLinkedPaidInvoice && !hasInvoiceByPayment && !hasInvoiceByPayNo;
-  }).map((row: any) => ({
-    amount: Number(row.amount) || 0,
-  }));
-
   const totalPaidInvoices = paidInvoiceHistoryRows.reduce((sum, row) => sum + row.amount, 0);
-  const totalOrphanPays = orphanPayDocs.reduce((sum, row) => sum + row.amount, 0);
-
-  return totalPaidInvoices + totalOrphanPays;
+  return totalPaidInvoices;
 };

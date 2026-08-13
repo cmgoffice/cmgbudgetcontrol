@@ -159,6 +159,22 @@ const getDocumentVendorKey = (record: any) =>
 const getVendorDisplayName = (record: any, fallbackKey = "") =>
   String(record?.vendorName || fallbackKey || "").trim();
 
+const getPoReferenceItems = (value: any) =>
+  Array.from(
+    new Set(
+      String(value || "")
+        .split(/[,;\n]+/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )
+  );
+
+const formatPoReferenceForTable = (value: any) => {
+  const references = getPoReferenceItems(value);
+  if (references.length <= 1) return references[0] || "-";
+  return `${references.length} รายการ`;
+};
+
 const normalizeIdList = (values: any[] = []) =>
   Array.from(new Set((values || []).map((value) => String(value)).filter(Boolean)));
 
@@ -192,6 +208,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
     receives = [],
     vendors = [],
     projects = [],
+    visibleProjects = [],
     prs = [],
     addData,
     updateData,
@@ -205,11 +222,28 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
   } = useAppData();
   const { selectedProjectId } = useUI();
 
+  // Billing/Pay are ledger views across all projects. The selected project is
+  // still used by the create/edit workflow, but must not limit the list view.
+  const projectById = useMemo(
+    () => new Map((projects || []).map((project: any) => [String(project.id), project])),
+    [projects]
+  );
+  const visibleProjectIds = useMemo(
+    () => new Set((visibleProjects || []).map((project: any) => String(project.id))),
+    [visibleProjects]
+  );
+  const getProjectLabel = useCallback((projectId: any) => {
+    const project = projectById.get(String(projectId || ""));
+    if (!project) return String(projectId || "-");
+    return [project.jobNo, project.name].filter(Boolean).join(" - ") || project.id;
+  }, [projectById]);
+
   const [rows, setRows] = useState([]);
   const [localInvoices, setLocalInvoices] = useState([]);
   const [billingRows, setBillingRows] = useState([]);
   const [payRows, setPayRows] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
+  const [projectFilterId, setProjectFilterId] = useState("all");
   const [saving, setSaving] = useState(false);
   const [editingRow, setEditingRow] = useState<any>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -614,15 +648,21 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
   }, [billingRows, invoices, isBillingMode, isPayMode]);
 
   const projectRows = useMemo(() => {
-    if (!selectedProjectId) return [];
-    return rows
-      .filter((row: any) => row.projectId === selectedProjectId)
+    const uniqueRows = new Map<string, any>();
+    rows.forEach((row: any) => {
+      if (!row?.id) return;
+      uniqueRows.set(String(row.id), row);
+    });
+    return Array.from(uniqueRows.values()).filter((row: any) => (
+      row?.projectId && visibleProjectIds.has(String(row.projectId))
+    ))
       .sort((a: any, b: any) => {
         const aTime = new Date(a.docDate || a.createdAt || 0).getTime();
         const bTime = new Date(b.docDate || b.createdAt || 0).getTime();
         return bTime - aTime;
       });
-  }, [rows, selectedProjectId]);
+  }, [rows, visibleProjectIds]);
+  const workflowProjectId = editingRow?.projectId || selectedProjectId;
 
   const currentBillingRows = useMemo(
     () => projectRows.filter((row: any) => !isBillingMode || (!isInpayStatus(row.status) && !isPaidStatus(row.status))),
@@ -640,25 +680,22 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
   );
 
   const paidInvoiceHistoryRows = useMemo(() => {
-    if (!selectedProjectId || !isPayMode) return [];
-    
-    const projectPoNos = new Set(
-      pos.filter((po: any) => po.projectId === selectedProjectId).map((po: any) => po.poNo).filter(Boolean)
+    if (!isPayMode) return [];
+
+    const poById = new Map((pos || []).map((po: any) => [String(po.id), po]));
+    const projectByPoNo = new Map(
+      (pos || []).filter((po: any) => po.poNo).map((po: any) => [String(po.poNo), po.projectId])
     );
 
     return invoices
       .filter((invoice: any) => {
         const invoiceProjectId =
           invoice?.projectId ||
-          pos.find((po: any) => String(po.id) === String(invoice?.poId || ""))?.projectId ||
+          poById.get(String(invoice?.poId || ""))?.projectId ||
+          projectByPoNo.get(String(invoice?.poRef || invoice?.poNo || "")) ||
           "";
-        
-        const belongsToProject = 
-          invoiceProjectId === selectedProjectId || 
-          projectPoNos.has(invoice?.poRef) || 
-          projectPoNos.has(invoice?.poNo);
 
-        return belongsToProject && isPaidInvoiceRecord(invoice);
+        return Boolean(invoiceProjectId) && visibleProjectIds.has(String(invoiceProjectId)) && isPaidInvoiceRecord(invoice);
       })
       .sort((a: any, b: any) => {
         const aTime = new Date(a.payDate || a.invDate || a.updatedAt || a.createdAt || 0).getTime();
@@ -685,6 +722,8 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
           poRef: invoice.poNo || invoice.poRef || invoice.billingNo || invoice.payNo || "-",
           vendorId: invoice.vendorId || "",
           vendorName: invoice.vendorName || "",
+          projectId: invoice.projectId || poById.get(String(invoice?.poId || ""))?.projectId || projectByPoNo.get(String(invoice?.poRef || invoice?.poNo || "")) || "",
+          projectName: getProjectLabel(invoice.projectId || poById.get(String(invoice?.poId || ""))?.projectId || projectByPoNo.get(String(invoice?.poRef || invoice?.poNo || ""))),
           docDate: invoice.payDate || invoice.invDate || invoice.updatedAt || invoice.createdAt || "",
           description: invoice.payNo
             ? `Invoice ${invoice.invNo || invoice.id} / Pay ${invoice.payNo}`
@@ -697,7 +736,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
           status: invoice.status || invoice.statusNow || "paid",
         };
       });
-  }, [invoices, isPayMode, pos, projectRows, selectedProjectId]);
+  }, [getProjectLabel, invoices, isPayMode, pos, projectRows, visibleProjectIds]);
 
   const payHistoryRows = useMemo(() => {
     if (!isPayMode) return [];
@@ -736,8 +775,11 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
 
   const filteredRows = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
-    if (!q) return visibleRows;
-    return visibleRows.filter((row: any) =>
+    return visibleRows.filter((row: any) => {
+      if (projectFilterId !== "all" && String(row.projectId || "") !== String(projectFilterId)) {
+        return false;
+      }
+      if (!q) return true;
       [
         row.docNo,
         row.poRef,
@@ -745,11 +787,13 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
         row.description,
         row.note,
         row.paymentType,
+        row.projectName,
+        row.projectId,
       ]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(q))
-    );
-  }, [searchTerm, visibleRows]);
+    });
+  }, [projectFilterId, searchTerm, visibleRows]);
 
   const totalAmount = useMemo(
     () => filteredRows.reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0),
@@ -775,10 +819,10 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
   );
 
   const billingInvoiceCandidates = useMemo(() => {
-    if (!selectedProjectId || !isBillingMode) return [];
+    if (!workflowProjectId || !isBillingMode) return [];
 
     const projectPoNos = new Set(
-      pos.filter((po: any) => po.projectId === selectedProjectId).map((po: any) => po.poNo).filter(Boolean)
+      pos.filter((po: any) => po.projectId === workflowProjectId).map((po: any) => po.poNo).filter(Boolean)
     );
 
     return invoices
@@ -789,7 +833,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
           pos.find((po: any) => String(po.id) === String(invoice?.poId || ""))?.projectId ||
           "";
         const belongsToProject = 
-          invoiceProjectId === selectedProjectId || 
+          invoiceProjectId === workflowProjectId || 
           projectPoNos.has(invoice?.poRef) || 
           projectPoNos.has(invoice?.poNo);
 
@@ -806,7 +850,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
         const bTime = new Date(b.invDate || b.createdAt || 0).getTime();
         return bTime - aTime;
       });
-  }, [billedInvoiceIds, invoices, isBillingMode, selectedBillingInvoiceIds, selectedProjectId, pos]);
+  }, [billedInvoiceIds, invoices, isBillingMode, selectedBillingInvoiceIds, workflowProjectId, pos]);
 
   const billingVendorOptions = useMemo(() => {
     const map = new Map<string, { id: string; name: string; count: number }>();
@@ -873,12 +917,12 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
   );
 
   const payBillingCandidates = useMemo(() => {
-    if (!selectedProjectId || !isPayMode) return [];
+    if (!workflowProjectId || !isPayMode) return [];
     return billingRows
       .filter((billing: any) => {
         const billingId = String(billing.id);
         return (
-          billing?.projectId === selectedProjectId &&
+          billing?.projectId === workflowProjectId &&
           (isInpayStatus(billing.status) || selectedPayBillingIds.has(billingId)) &&
           (!paidBillingIds.has(billingId) || selectedPayBillingIds.has(billingId))
         );
@@ -888,7 +932,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
         const bTime = new Date(b.docDate || b.createdAt || 0).getTime();
         return bTime - aTime;
       });
-  }, [billingRows, isPayMode, paidBillingIds, selectedPayBillingIds, selectedProjectId]);
+  }, [billingRows, isPayMode, paidBillingIds, selectedPayBillingIds, workflowProjectId]);
 
   const payVendorOptions = useMemo(() => {
     const map = new Map<string, { id: string; name: string; count: number }>();
@@ -2066,6 +2110,19 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
               className={`w-72 rounded-xl border bg-white py-2 pl-8 pr-3 text-sm focus:outline-none focus:ring-2 ${config.theme.filterBorder}`}
             />
           </div>
+          <select
+            value={projectFilterId}
+            onChange={(e) => setProjectFilterId(e.target.value)}
+            className={`rounded-xl border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 ${config.theme.filterBorder}`}
+            aria-label="กรองตามโครงการ"
+          >
+            <option value="all">ทุกโครงการ</option>
+            {(visibleProjects || []).map((project: any) => (
+              <option key={project.id} value={project.id}>
+                {getProjectLabel(project.id)}
+              </option>
+            ))}
+          </select>
           <div className="ml-auto text-right">
             <p className="text-[11px] text-slate-500">{filteredRows.length} รายการ</p>
             <p className="text-sm font-bold text-slate-800">{formatCurrency(totalAmount)}</p>
@@ -2074,11 +2131,28 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
       </Card>
 
       <Card className={`overflow-x-auto border ${config.theme.border}`}>
-        <table className="w-full min-w-[980px] text-left text-xs text-slate-600">
+        <table
+          className="w-full text-left text-xs text-slate-600"
+          style={{ minWidth: isBillingMode ? 1440 : 1315 }}
+        >
+          <colgroup>
+            <col style={{ width: 105 }} />
+            <col style={{ width: 200 }} />
+            <col style={{ width: 150 }} />
+            <col style={{ width: 170 }} />
+            <col style={{ width: 105 }} />
+            {isBillingMode && <col style={{ width: 125 }} />}
+            <col style={{ width: 180 }} />
+            <col style={{ width: 105 }} />
+            <col style={{ width: 130 }} />
+            <col style={{ width: 90 }} />
+            <col style={{ width: 85 }} />
+          </colgroup>
           <thead className={`bg-gradient-to-r ${config.theme.head} border-b ${config.theme.border} text-slate-600 uppercase font-semibold`}>
             <tr>
               <th className="px-3 py-2">{numberHeader}</th>
               <th className="px-3 py-2">{refHeader}</th>
+              <th className="px-3 py-2">โครงการ</th>
               <th className="px-3 py-2">Vendor</th>
               <th className="px-3 py-2">วันที่</th>
               {isBillingMode && <th className="px-3 py-2">วันครบกำหนดชำระ</th>}
@@ -2092,7 +2166,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
           <tbody className="divide-y divide-slate-100">
             {filteredRows.length === 0 ? (
               <tr>
-                <td colSpan={isBillingMode ? 10 : 9} className="px-3 py-12 text-center text-sm text-slate-400">
+                <td colSpan={isBillingMode ? 11 : 10} className="px-3 py-12 text-center text-sm text-slate-400">
                   {isBillingMode && activeBillingTab === "history"
                     ? "ยังไม่มีประวัติ Billing สำหรับโครงการนี้"
                     : isPayMode && activePayTab === "history"
@@ -2106,26 +2180,41 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
                   key={row.id}
                   className={`transition-colors ${idx % 2 === 0 ? "bg-white" : config.theme.altRow} ${config.theme.hoverRow}`}
                 >
-                  <td className={`px-3 py-2 font-semibold ${config.theme.number}`}>{row.docNo || "-"}</td>
-                  <td className="px-3 py-2 font-medium text-amber-600">{row.poRef || "-"}</td>
-                  <td className="px-3 py-2">{row.vendorName || "-"}</td>
+                  <td className={`px-3 py-2 font-semibold ${config.theme.number}`} title={row.docNo || "-"}>
+                    <span className="cell-text">{row.docNo || "-"}</span>
+                  </td>
+                  <td className="px-3 py-2 font-medium text-amber-600" title={row.poRef || "-"}>
+                    <span className="cell-text">
+                      {isBillingMode && activeBillingTab === "history"
+                        ? formatPoReferenceForTable(row.poRef)
+                        : row.poRef || "-"}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2" title={getProjectLabel(row.projectId)}>
+                    <span className="cell-text">{getProjectLabel(row.projectId)}</span>
+                  </td>
+                  <td className="px-3 py-2" title={row.vendorName || "-"}>
+                    <span className="cell-text">{row.vendorName || "-"}</span>
+                  </td>
                   <td className="px-3 py-2 whitespace-nowrap">{formatDate(row.docDate)}</td>
                   {isBillingMode && (
                     <td className="px-3 py-2 whitespace-nowrap">
                       {row.dueDate ? formatDate(row.dueDate) : "-"}
                     </td>
                   )}
-                  <td className="px-3 py-2 max-w-[260px] truncate" title={row.description || row.note || "-"}>
-                    {row.description || row.note || "-"}
+                  <td className="px-3 py-2" title={row.description || row.note || "-"}>
+                    <span className="cell-text">{row.description || row.note || "-"}</span>
                   </td>
-                  <td className="px-3 py-2">
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                  <td className="px-3 py-2 overflow-hidden">
+                    <span className="block max-w-full truncate rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600" title={row.paymentType || "-"}>
                       {row.paymentType || "-"}
                     </span>
                   </td>
                   <td className="px-3 py-2 text-right font-semibold">{formatCurrency(row.amount || 0)}</td>
                   <td className="px-3 py-2 text-center">
-                    <Badge status={row.status || "Draft"} />
+                    <span className="cell-text text-center">
+                      <Badge status={row.status || "Draft"} />
+                    </span>
                   </td>
                   <td className="px-3 py-2">
                     <div className="flex items-center justify-center gap-2">

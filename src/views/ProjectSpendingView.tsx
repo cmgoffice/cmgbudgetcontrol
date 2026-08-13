@@ -2,6 +2,7 @@
 import React, { useMemo } from "react";
 import { useAppData } from "../contexts/AppDataContext";
 import { COST_CATEGORIES } from "../lib/constants";
+import { getProjectPayHistoryTotal, isSpentInvoiceRecord } from "../lib/billingPayUtils";
 
 const fmt = (v: number) =>
   v === 0 ? "" : v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -18,7 +19,45 @@ const ROW_LABELS = [
 ];
 
 const ProjectSpendingView = React.memo(() => {
-  const { projects, budgets, prs, pos } = useAppData();
+  const { projects, budgets, prs, pos, invoices = [], payments = [] } = useAppData();
+
+  const invoiceSpentByProjectCode = useMemo(() => {
+    const result = new Map<string, Map<string, number>>();
+    const poById = new Map((pos || []).map((po) => [String(po.id), po]));
+    const poByNo = new Map((pos || []).filter((po) => po.poNo).map((po) => [String(po.poNo), po]));
+    const paymentById = new Map((payments || []).map((payment) => [String(payment.id), payment]));
+
+    const getInvoiceAmount = (invoice) =>
+      Number(invoice.amount) || (Number(invoice.invoiceQty || 0) * Number(invoice.price || 0)) || 0;
+
+    (invoices || []).forEach((invoice) => {
+      if (!isSpentInvoiceRecord(invoice)) return;
+
+      const payment = paymentById.get(String(invoice.paymentId || invoice.poId || ""));
+      const sourceRefs = [
+        invoice.sourcePoId,
+        invoice.sourcePoNo,
+        invoice.poId,
+        invoice.poRef,
+        invoice.poNo,
+        ...(Array.isArray(payment?.selectedPrIds) ? payment.selectedPrIds : []),
+        payment?.poRef,
+      ].filter(Boolean).map(String);
+      const sourcePos = Array.from(new Set(sourceRefs.map((ref) => poById.get(ref) || poByNo.get(ref)).filter(Boolean)));
+      if (sourcePos.length === 0) return;
+
+      const amountPerPo = getInvoiceAmount(invoice) / sourcePos.length;
+      sourcePos.forEach((po) => {
+        const code = po.costCode || po.items?.find((item) => item.costCode)?.costCode;
+        if (!code) return;
+        const projectMap = result.get(String(po.projectId)) || new Map<string, number>();
+        projectMap.set(String(code), (projectMap.get(String(code)) || 0) + amountPerPo);
+        result.set(String(po.projectId), projectMap);
+      });
+    });
+
+    return result;
+  }, [invoices, payments, pos]);
 
   const projectRows = useMemo(() => {
     return projects
@@ -44,9 +83,7 @@ const ProjectSpendingView = React.memo(() => {
 
           const prTotal = projPrs.reduce((s, r) => s + (Number(r.total) || 0), 0);
           const poTotal = projPos.reduce((s, o) => s + (Number(o.total) || 0), 0);
-          const spentInvTotal = projPos
-            .filter((o) => ["Received", "Approved", "Closed PO"].includes(o.status))
-            .reduce((s, o) => s + (Number(o.total) || 0), 0);
+          const spentInvTotal = invoiceSpentByProjectCode.get(String(proj.id))?.get(String(code)) || 0;
 
           const budgetBalance = budgetTotal - spentInvTotal;
           const balancePct = budgetTotal > 0 ? (budgetBalance / budgetTotal) * 100 : 0;
@@ -61,9 +98,7 @@ const ProjectSpendingView = React.memo(() => {
         const totalBudgetTotal = allBudgets.reduce((s, b) => s + (Number(b.amount) || 0), 0);
         const totalPrTotal = allPrs.reduce((s, r) => s + (Number(r.total) || 0), 0);
         const totalPoTotal = allPos.reduce((s, o) => s + (Number(o.total) || 0), 0);
-        const totalSpentInvTotal = allPos
-          .filter((o) => ["Received", "Approved", "Closed PO"].includes(o.status))
-          .reduce((s, o) => s + (Number(o.total) || 0), 0);
+        const totalSpentInvTotal = getProjectPayHistoryTotal(proj.id, invoices, payments, pos);
         const totalBudgetBalance = totalBudgetTotal - totalSpentInvTotal;
         const totalBalancePct = totalBudgetTotal > 0 ? (totalBudgetBalance / totalBudgetTotal) * 100 : 0;
 
@@ -82,7 +117,7 @@ const ProjectSpendingView = React.memo(() => {
           },
         };
       });
-  }, [projects, budgets, prs, pos]);
+  }, [projects, budgets, prs, pos, invoices, payments, invoiceSpentByProjectCode]);
 
   const grandTotal = useMemo(() => {
     const codeData: Record<string, any> = {};

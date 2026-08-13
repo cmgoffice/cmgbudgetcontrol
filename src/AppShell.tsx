@@ -551,7 +551,7 @@ const AppShell = () => {
               const selectableProjects = activeMenu === "projects" || activeMenu === "budget"
                 ? visibleProjects.filter((p) => p.status !== "Close")
                 : visibleProjects.filter((p) => (p.status || "Active") === "Active");
-              return moduleMenus && selectableProjects.length > 0;
+              return moduleMenus && !["invoice", "billing", "pay"].includes(activeMenu) && selectableProjects.length > 0;
             })() && (
               <div className={`${isCompactViewport ? "order-3 flex w-full overflow-x-auto overflow-y-visible no-scrollbar pt-1 pb-1" : "flex items-center gap-1.5 shrink-0"}`}>
                 <div className={`${isCompactViewport ? "flex min-w-max items-center gap-1.5" : "flex items-center gap-1.5 shrink-0"}`}>
