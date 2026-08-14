@@ -106,6 +106,14 @@ const VIEW_CONFIG = {
 const PAYMENT_TYPES = ["เครดิต", "โอน", "เช็ค", "เงินสด"];
 const BILLING_PAYMENT_TYPES = PAYMENT_TYPES.filter((item) => item !== "เครดิต");
 const PAY_PAYMENT_TYPES = ["เงินสด", "โอน", "เช็ค"];
+const PAY_BANK_ACCOUNT_OPTIONS = [
+  "KBANK-4971008992",
+  "SCB-6443017701",
+  "GSB-000001396654",
+  "GSB-020284909098",
+  "KBANK-0693143756",
+  "KBANK-0278183971",
+];
 
 const getDefaultForm = () => ({
   docNo: "",
@@ -115,7 +123,11 @@ const getDefaultForm = () => ({
   vendorName: "",
   poRef: "",
   paymentType: "เครดิต",
+  bankAccountNo: "",
   amount: "",
+  retentionAmount: "",
+  withholdingTaxAmount: "",
+  otherDeductionAmount: "",
   selectedInvoiceIds: [],
   selectedBillingIds: [],
   description: "",
@@ -155,6 +167,8 @@ const getBillingVendorKey = (billing: any) =>
 
 const getDocumentVendorKey = (record: any) =>
   String(record?.vendorId || record?.vendorName || "").trim();
+
+const normalizeProjectKey = (value: any) => String(value || "").trim();
 
 const getVendorDisplayName = (record: any, fallbackKey = "") =>
   String(record?.vendorName || fallbackKey || "").trim();
@@ -247,6 +261,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
   const [saving, setSaving] = useState(false);
   const [editingRow, setEditingRow] = useState<any>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [billingDetailRow, setBillingDetailRow] = useState<any>(null);
   const [formData, setFormData] = useState(getDefaultForm());
   const [activeBillingTab, setActiveBillingTab] = useState<"current" | "history">("current");
   const [activePayTab, setActivePayTab] = useState<"current" | "history">("current");
@@ -637,7 +652,11 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
         : isPayMode
           ? (PAY_PAYMENT_TYPES[0] || "")
           : "เครดิต"),
+      bankAccountNo: row.bankAccountNo || "",
       amount: row.amount != null ? String(row.amount) : "",
+      retentionAmount: row.retentionAmount != null ? String(row.retentionAmount) : "",
+      withholdingTaxAmount: row.withholdingTaxAmount != null ? String(row.withholdingTaxAmount) : "",
+      otherDeductionAmount: row.otherDeductionAmount != null ? String(row.otherDeductionAmount) : "",
       selectedInvoiceIds: Array.isArray(row.invoiceIds) ? row.invoiceIds : [],
       selectedBillingIds: Array.isArray(row.billingIds) ? row.billingIds : [],
       description: row.description || "",
@@ -917,22 +936,55 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
   );
 
   const payBillingCandidates = useMemo(() => {
-    if (!workflowProjectId || !isPayMode) return [];
-    return billingRows
+    if (!isPayMode) return [];
+    const workflowProjectKey = normalizeProjectKey(workflowProjectId);
+    const invoiceById = new Map((invoices || []).map((invoice: any) => [String(invoice.id), invoice]));
+    const poById = new Map((pos || []).map((po: any) => [String(po.id), po]));
+    const candidateRows = billingRows
       .filter((billing: any) => {
         const billingId = String(billing.id);
+        const linkedInvoices = (Array.isArray(billing.invoiceIds) ? billing.invoiceIds : [])
+          .map((invoiceId: any) => invoiceById.get(String(invoiceId)))
+          .filter(Boolean);
+        const billingProjectKeys = new Set(
+          [
+            billing.projectId,
+            ...linkedInvoices.map((invoice: any) => invoice.projectId),
+            ...linkedInvoices.map((invoice: any) => poById.get(String(invoice.poId || ""))?.projectId),
+          ]
+            .map(normalizeProjectKey)
+            .filter(Boolean)
+        );
+        const hasInpayInvoice = linkedInvoices.some((invoice: any) => isInpayStatus(invoice.status));
         return (
-          billing?.projectId === workflowProjectId &&
-          (isInpayStatus(billing.status) || selectedPayBillingIds.has(billingId)) &&
+          Array.from(billingProjectKeys).some((projectKey) => visibleProjectIds.has(projectKey)) &&
+          (isInpayStatus(billing.status) || isInpayStatus(billing.statusNow) || hasInpayInvoice || selectedPayBillingIds.has(billingId)) &&
           (!paidBillingIds.has(billingId) || selectedPayBillingIds.has(billingId))
         );
-      })
+      });
+    const projectScopedRows = workflowProjectKey
+      ? candidateRows.filter((billing: any) => {
+          const linkedInvoices = (Array.isArray(billing.invoiceIds) ? billing.invoiceIds : [])
+            .map((invoiceId: any) => invoiceById.get(String(invoiceId)))
+            .filter(Boolean);
+          const billingProjectKeys = [
+            billing.projectId,
+            ...linkedInvoices.map((invoice: any) => invoice.projectId),
+            ...linkedInvoices.map((invoice: any) => poById.get(String(invoice.poId || ""))?.projectId),
+          ].map(normalizeProjectKey).filter(Boolean);
+          return billingProjectKeys.includes(workflowProjectKey);
+        })
+      : [];
+
+    // The ledger list is cross-project. If the current project has no payable
+    // Billing, keep the Pay modal useful by showing other visible Inpay rows.
+    return (projectScopedRows.length > 0 ? projectScopedRows : candidateRows)
       .sort((a: any, b: any) => {
         const aTime = new Date(a.docDate || a.createdAt || 0).getTime();
         const bTime = new Date(b.docDate || b.createdAt || 0).getTime();
         return bTime - aTime;
       });
-  }, [billingRows, isPayMode, paidBillingIds, selectedPayBillingIds, workflowProjectId]);
+  }, [billingRows, invoices, isPayMode, paidBillingIds, pos, selectedPayBillingIds, visibleProjectIds, workflowProjectId]);
 
   const payVendorOptions = useMemo(() => {
     const map = new Map<string, { id: string; name: string; count: number }>();
@@ -983,6 +1035,20 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
     );
   }, [selectedPayBillings]);
 
+  const payDeductionTotals = useMemo(() => {
+    const retention = Math.max(0, Number(formData.retentionAmount || 0));
+    const withholdingTax = Math.max(0, Number(formData.withholdingTaxAmount || 0));
+    const other = Math.max(0, Number(formData.otherDeductionAmount || 0));
+    const total = retention + withholdingTax + other;
+    return {
+      retention,
+      withholdingTax,
+      other,
+      total,
+      net: Math.max(0, selectedPayTotals.afterVat - total),
+    };
+  }, [formData.otherDeductionAmount, formData.retentionAmount, formData.withholdingTaxAmount, selectedPayTotals.afterVat]);
+
   const handleVendorChange = useCallback((vendorId: string) => {
     const billingVendor = billingVendorOptions.find((item) => item.id === vendorId);
     const payVendor = payVendorOptions.find((item) => item.id === vendorId);
@@ -996,6 +1062,9 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
           : prev.vendorName,
       selectedInvoiceIds: isBillingMode ? [] : prev.selectedInvoiceIds,
       selectedBillingIds: isPayMode ? [] : prev.selectedBillingIds,
+      retentionAmount: isPayMode ? "" : prev.retentionAmount,
+      withholdingTaxAmount: isPayMode ? "" : prev.withholdingTaxAmount,
+      otherDeductionAmount: isPayMode ? "" : prev.otherDeductionAmount,
       poRef: isBillingMode || isPayMode ? "" : prev.poRef,
       amount: isBillingMode || isPayMode ? "" : prev.amount,
     }));
@@ -1095,6 +1164,14 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
       showAlert?.("ข้อมูลไม่ครบ", "กรุณากรอกจำนวนเงินให้มากกว่า 0", "warning");
       return;
     }
+    if (isPayMode && formData.paymentType === "โอน" && !String(formData.bankAccountNo || "").trim()) {
+      showAlert?.("ข้อมูลไม่ครบ", "กรุณาเลือกเลขบัญชีสำหรับการโอน", "warning");
+      return;
+    }
+    if (isPayMode && payDeductionTotals.total > selectedPayTotals.afterVat) {
+      showAlert?.("ข้อมูลไม่ถูกต้อง", "ยอดหักรวมต้องไม่มากกว่ายอดรวมหลัง VAT", "warning");
+      return;
+    }
 
     setSaving(true);
     try {
@@ -1128,6 +1205,22 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
             .map((billingId) => payBillingMap.get(billingId))
             .filter(Boolean)
         : [];
+      const payProjectIds = isPayMode
+        ? Array.from(new Set(
+            payBillings
+              .flatMap((billing: any) => [
+                billing.projectId,
+                ...(Array.isArray(billing.invoiceIds) ? billing.invoiceIds : [])
+                  .map((invoiceId: any) => invoices.find((invoice: any) => String(invoice.id) === String(invoiceId))?.projectId),
+              ])
+              .map(normalizeProjectKey)
+              .filter(Boolean)
+          ))
+        : [];
+      if (isPayMode && payProjectIds.length > 1) {
+        throw new Error("กรุณาเลือก Billing ของโครงการเดียวกันก่อนสร้าง Pay");
+      }
+      const payProjectId = payProjectIds[0] || selectedProjectId;
       const payAmountBeforeVat = isPayMode
         ? payBillings.reduce((sum: number, billing: any) => sum + Number(billing.amountBeforeVat ?? billing.amount ?? 0), 0)
         : billingAmountBeforeVat;
@@ -1144,6 +1237,11 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
             return sum + Number(billing.amountAfterVat ?? beforeVat + vat);
           }, 0)
         : billingAmountAfterVat;
+      const payRetentionAmount = isPayMode ? payDeductionTotals.retention : 0;
+      const payWithholdingTaxAmount = isPayMode ? payDeductionTotals.withholdingTax : 0;
+      const payOtherDeductionAmount = isPayMode ? payDeductionTotals.other : 0;
+      const payDeductionAmount = isPayMode ? payDeductionTotals.total : 0;
+      const payNetAmount = isPayMode ? Math.max(0, payAmountAfterVat - payDeductionAmount) : billingAmountBeforeVat;
       const payInvoiceIds = isPayMode
         ? Array.from(new Set(payBillings.flatMap((billing: any) => Array.isArray(billing.invoiceIds) ? billing.invoiceIds.map(String) : [])))
         : billingInvoiceIds;
@@ -1158,10 +1256,19 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
         vendorName: formData.vendorName || "",
         poRef: formData.poRef.trim(),
         paymentType: formData.paymentType,
-        amount: isPayMode ? payAmountAfterVat : billingAmountBeforeVat,
+        bankAccountNo: isPayMode && formData.paymentType === "โอน"
+          ? String(formData.bankAccountNo || "").trim()
+          : "",
+        amount: isPayMode ? payNetAmount : billingAmountBeforeVat,
         amountBeforeVat: isPayMode ? payAmountBeforeVat : billingAmountBeforeVat,
         vatAmount: isPayMode ? payVatAmount : billingVatAmount,
         amountAfterVat: isPayMode ? payAmountAfterVat : billingAmountAfterVat,
+        grossAmount: isPayMode ? payAmountAfterVat : billingAmountAfterVat,
+        retentionAmount: payRetentionAmount,
+        withholdingTaxAmount: payWithholdingTaxAmount,
+        otherDeductionAmount: payOtherDeductionAmount,
+        deductionAmount: payDeductionAmount,
+        netAmount: isPayMode ? payNetAmount : billingAmountBeforeVat,
         invoiceIds: isPayMode ? payInvoiceIds : billingInvoiceIds,
         invoiceRefs: isPayMode ? payInvoiceRefs : billingInvoices.map((invoice: any) => invoice.invNo || invoice.id).filter(Boolean),
         invoices: billingInvoices.map((invoice: any) => ({
@@ -1188,7 +1295,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
         description: formData.description.trim(),
         note: formData.note.trim(),
         status: isBillingMode ? "Inpay" : isPayMode ? "paid" : (formData.status || "Draft"),
-        projectId: editingRow?.projectId || selectedProjectId,
+        projectId: editingRow?.projectId || payProjectId,
         createdBy:
           editingRow?.createdBy ||
           `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim(),
@@ -1309,6 +1416,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
                     payNo: payload.docNo,
                     payDate: payload.docDate,
                     payPaymentType: payload.paymentType,
+                    payBankAccountNo: payload.bankAccountNo,
                     updatedAt: now,
                   }
                 : {
@@ -1316,6 +1424,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
                     payNo: null,
                     payDate: null,
                     payPaymentType: null,
+                    payBankAccountNo: null,
                     updatedAt: now,
                   };
               payInvoiceOverrides.set(invoiceId, patch);
@@ -1396,6 +1505,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
                   payNo: payload.docNo,
                   payDate: payload.docDate,
                   payPaymentType: payload.paymentType,
+                  payBankAccountNo: payload.bankAccountNo,
                   updatedAt: now,
                 },
                 { skipLog: true }
@@ -1478,8 +1588,10 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
     invoices,
     logAction,
     payBillingCandidates,
+    payDeductionTotals,
     rows,
     selectedProjectId,
+    selectedPayTotals,
     showAlert,
     syncPoStatusForInvoiceIds,
     syncPoStatusFromInvoiceOverrides,
@@ -1627,8 +1739,152 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
     );
   }, [appId, config.collectionName, config.saveLogLabel, config.title, db, deleteData, getNextPoStatusFromInvoices, getPayLinkedAutoReceives, invoices, isBillingMode, isPayMode, logAction, openConfirm, payRows, showAlert]);
 
+  const billingPoDetails = useMemo(() => {
+    if (!billingDetailRow) return [];
+
+    const invoiceById = new Map((invoices || []).map((invoice: any) => [String(invoice.id), invoice]));
+    const storedInvoices = Array.isArray(billingDetailRow.invoices) ? billingDetailRow.invoices : [];
+    const linkedInvoices = normalizeIdList(billingDetailRow.invoiceIds || [])
+      .map((invoiceId) => invoiceById.get(invoiceId))
+      .filter(Boolean);
+    const sourceInvoices = linkedInvoices.length > 0 ? linkedInvoices : storedInvoices;
+    const fallbackPoRefs = getPoReferenceItems(billingDetailRow.poRef);
+    const grouped = new Map<string, any>();
+
+    sourceInvoices.forEach((invoice: any, index: number) => {
+      const poNo = invoice?.poNo || invoice?.poRef || fallbackPoRefs[index] || "-";
+      const beforeVat = Number(invoice?.amountBeforeVat ?? getInvoiceAmountBeforeVat(invoice) ?? 0);
+      const afterVatValue = Number(invoice?.amountAfterVat);
+      const afterVat = Number.isFinite(afterVatValue) && afterVatValue > 0
+        ? afterVatValue
+        : beforeVat + beforeVat * VAT_RATE;
+      const key = String(poNo);
+      const current = grouped.get(key) || {
+        poNo,
+        invoiceRefs: [],
+        beforeVat: 0,
+        vat: 0,
+        afterVat: 0,
+      };
+
+      if (invoice?.invNo || invoice?.id) {
+        current.invoiceRefs.push(invoice.invNo || invoice.id);
+      }
+      current.beforeVat += beforeVat;
+      current.vat += Math.max(0, afterVat - beforeVat);
+      current.afterVat += afterVat;
+      grouped.set(key, current);
+    });
+
+    if (grouped.size === 0) {
+      fallbackPoRefs.forEach((poNo) => grouped.set(poNo, {
+        poNo,
+        invoiceRefs: [],
+        beforeVat: 0,
+        vat: 0,
+        afterVat: 0,
+      }));
+    }
+
+    return Array.from(grouped.values());
+  }, [billingDetailRow, invoices]);
+
+  const billingPoDetailTotals = useMemo(
+    () => billingPoDetails.reduce(
+      (totals: any, item: any) => ({
+        beforeVat: totals.beforeVat + Number(item.beforeVat || 0),
+        vat: totals.vat + Number(item.vat || 0),
+        afterVat: totals.afterVat + Number(item.afterVat || 0),
+      }),
+      { beforeVat: 0, vat: 0, afterVat: 0 }
+    ),
+    [billingPoDetails]
+  );
+
   const numberHeader = config.numberLabel;
   const refHeader = config.refLabel;
+  const billingPoDetailModalNode = (
+    <AnimatePresence>
+      {billingDetailRow && (
+        <motion.div
+          className="fixed inset-0 z-[10020] flex items-center justify-center bg-black/60 p-4 backdrop-blur-md"
+          initial="hidden"
+          animate="visible"
+          exit="exit"
+          variants={modalOverlayVariants}
+          transition={overlayTransition}
+          onClick={() => setBillingDetailRow(null)}
+        >
+          <motion.div
+            className="w-full max-w-3xl rounded-2xl bg-white shadow-2xl"
+            variants={modalContentVariants}
+            transition={modalTransition}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between rounded-t-2xl border-b border-emerald-100 bg-emerald-50 px-5 py-3">
+              <div>
+                <h3 className="text-lg font-bold text-emerald-800">รายละเอียด Ref. PO</h3>
+                <p className="text-xs text-slate-500">
+                  Billing No. {billingDetailRow.docNo || billingDetailRow.id || "-"}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBillingDetailRow(null)}
+                className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-white hover:text-slate-600"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="max-h-[65vh] overflow-auto p-5">
+              <table className="w-full min-w-[620px] text-left text-xs">
+                <thead className="sticky top-0 bg-emerald-50 text-slate-600">
+                  <tr>
+                    <th className="px-3 py-2">No. PO</th>
+                    <th className="px-3 py-2">Invoice</th>
+                    <th className="px-3 py-2 text-right">ก่อน VAT</th>
+                    <th className="px-3 py-2 text-right">VAT</th>
+                    <th className="px-3 py-2 text-right">รวม</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-emerald-50">
+                  {billingPoDetails.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-8 text-center text-slate-400">
+                        ไม่พบรายละเอียด Ref. PO
+                      </td>
+                    </tr>
+                  ) : (
+                    billingPoDetails.map((item: any) => (
+                      <tr key={item.poNo} className="hover:bg-emerald-50/40">
+                        <td className="px-3 py-2 font-semibold text-amber-700">{item.poNo}</td>
+                        <td className="px-3 py-2 text-slate-600">
+                          {item.invoiceRefs.length > 0 ? item.invoiceRefs.join(", ") : "-"}
+                        </td>
+                        <td className="px-3 py-2 text-right font-semibold">{formatCurrency(item.beforeVat)}</td>
+                        <td className="px-3 py-2 text-right font-semibold text-emerald-700">{formatCurrency(item.vat)}</td>
+                        <td className="px-3 py-2 text-right font-semibold text-slate-800">{formatCurrency(item.afterVat)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+                <tfoot className="border-t border-emerald-100 bg-emerald-50/60">
+                  <tr>
+                    <td colSpan={2} className="px-3 py-2 text-right font-bold text-slate-700">รวมทั้งหมด</td>
+                    <td className="px-3 py-2 text-right font-bold">{formatCurrency(billingPoDetailTotals.beforeVat)}</td>
+                    <td className="px-3 py-2 text-right font-bold text-emerald-700">{formatCurrency(billingPoDetailTotals.vat)}</td>
+                    <td className="px-3 py-2 text-right font-extrabold text-slate-900">{formatCurrency(billingPoDetailTotals.afterVat)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+
   const modalNode = (
     <AnimatePresence>
       {isModalOpen && (
@@ -1733,7 +1989,11 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
                   </label>
                   <select
                     value={formData.paymentType}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, paymentType: e.target.value }))}
+                    onChange={(e) => setFormData((prev) => ({
+                      ...prev,
+                      paymentType: e.target.value,
+                      bankAccountNo: e.target.value === "โอน" ? prev.bankAccountNo : "",
+                    }))}
                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                   >
                     {(isBillingMode ? BILLING_PAYMENT_TYPES : isPayMode ? PAY_PAYMENT_TYPES : PAYMENT_TYPES).map((item) => (
@@ -1743,6 +2003,25 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
                     ))}
                   </select>
                 </div>
+                {isPayMode && formData.paymentType === "โอน" && (
+                  <div>
+                    <label className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-700">
+                      <CreditCard size={12} /> เลขบัญชีธนาคาร
+                    </label>
+                    <select
+                      value={formData.bankAccountNo}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, bankAccountNo: e.target.value }))}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    >
+                      <option value="">เลือกบัญชีธนาคาร</option>
+                      {PAY_BANK_ACCOUNT_OPTIONS.map((account) => (
+                        <option key={account} value={account}>
+                          {account}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <div>
                   <label className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-700">
                     <FileText size={12} /> Vendor
@@ -1773,7 +2052,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
                 </div>
                 <div>
                   <label className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-slate-700">
-                    <Wallet size={12} /> {isBillingMode ? "ยอดก่อน VAT" : isPayMode ? "ยอดจ่ายหลัง VAT" : "จำนวนเงิน"}
+                    <Wallet size={12} /> {isBillingMode ? "ยอดก่อน VAT" : isPayMode ? "ยอดรวมหลัง VAT" : "จำนวนเงิน"}
                   </label>
                   <input
                     type="number"
@@ -1951,7 +2230,19 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
                                   />
                                 </td>
                                 <td className="px-3 py-2 font-semibold text-emerald-700">{billing.docNo || "-"}</td>
-                                <td className="px-3 py-2 text-amber-600">{billing.poRef || "-"}</td>
+                                <td className="px-3 py-2 text-amber-600" title={billing.poRef || "-"}>
+                                  {getPoReferenceItems(billing.poRef).length > 1 ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => setBillingDetailRow(billing)}
+                                      className="font-semibold text-amber-600 underline decoration-dotted underline-offset-2 hover:text-amber-800"
+                                    >
+                                      {getPoReferenceItems(billing.poRef).length} รายการ
+                                    </button>
+                                  ) : (
+                                    formatPoReferenceForTable(billing.poRef)
+                                  )}
+                                </td>
                                 <td className="px-3 py-2 whitespace-nowrap">{formatDate(billing.docDate)}</td>
                                 <td className="px-3 py-2 text-right font-semibold">{formatCurrency(beforeVat)}</td>
                                 <td className="px-3 py-2 text-right font-semibold text-emerald-700">{formatCurrency(vat)}</td>
@@ -1976,6 +2267,40 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
                     <div className="rounded-xl bg-white px-3 py-2 text-right shadow-sm">
                       <p className="text-[11px] font-semibold text-slate-500">รวมจ่าย</p>
                       <p className="text-base font-extrabold text-slate-900">{formatCurrency(selectedPayTotals.afterVat)}</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 rounded-xl border border-amber-100 bg-amber-50/50 p-3">
+                    <div className="mb-2 text-xs font-bold text-amber-800">รายการหักจากยอดจ่าย</div>
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                      {[
+                        ["retentionAmount", "เงินประกันผลงาน"],
+                        ["withholdingTaxAmount", "ภาษีเงินได้หัก ณ ที่จ่าย"],
+                        ["otherDeductionAmount", "หักอื่นๆ"],
+                      ].map(([field, label]) => (
+                        <label key={field} className="block text-xs font-semibold text-slate-700">
+                          {label} (บาท)
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={formData[field]}
+                            onChange={(e) => setFormData((prev) => ({ ...prev, [field]: e.target.value }))}
+                            placeholder="0.00"
+                            className="mt-1.5 w-full rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-200"
+                          />
+                        </label>
+                      ))}
+                    </div>
+                    <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+                      <div className="rounded-xl bg-white px-3 py-2 text-right shadow-sm">
+                        <p className="text-[11px] font-semibold text-slate-500">หักรวม</p>
+                        <p className="text-sm font-bold text-amber-700">{formatCurrency(payDeductionTotals.total)}</p>
+                      </div>
+                      <div className="rounded-xl bg-white px-3 py-2 text-right shadow-sm">
+                        <p className="text-[11px] font-semibold text-slate-500">ยอดจ่ายสุทธิ</p>
+                        <p className="text-base font-extrabold text-emerald-700">{formatCurrency(payDeductionTotals.net)}</p>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2248,6 +2573,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
       </Card>
 
       {typeof document !== "undefined" ? createPortal(modalNode, document.body) : null}
+      {typeof document !== "undefined" ? createPortal(billingPoDetailModalNode, document.body) : null}
     </div>
   );
 });

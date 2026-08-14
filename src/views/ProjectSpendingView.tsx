@@ -2,7 +2,12 @@
 import React, { useMemo } from "react";
 import { useAppData } from "../contexts/AppDataContext";
 import { COST_CATEGORIES } from "../lib/constants";
-import { getProjectPayHistoryTotal, isSpentInvoiceRecord } from "../lib/billingPayUtils";
+import {
+  getInvoiceAmount,
+  getInvoiceAmountForPo,
+  getProjectPayHistoryTotal,
+  isSpentInvoiceRecord,
+} from "../lib/billingPayUtils";
 
 const fmt = (v: number) =>
   v === 0 ? "" : v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -27,9 +32,6 @@ const ProjectSpendingView = React.memo(() => {
     const poByNo = new Map((pos || []).filter((po) => po.poNo).map((po) => [String(po.poNo), po]));
     const paymentById = new Map((payments || []).map((payment) => [String(payment.id), payment]));
 
-    const getInvoiceAmount = (invoice) =>
-      Number(invoice.amount) || (Number(invoice.invoiceQty || 0) * Number(invoice.price || 0)) || 0;
-
     (invoices || []).forEach((invoice) => {
       if (!isSpentInvoiceRecord(invoice)) return;
 
@@ -51,7 +53,10 @@ const ProjectSpendingView = React.memo(() => {
         const code = po.costCode || po.items?.find((item) => item.costCode)?.costCode;
         if (!code) return;
         const projectMap = result.get(String(po.projectId)) || new Map<string, number>();
-        projectMap.set(String(code), (projectMap.get(String(code)) || 0) + amountPerPo);
+        projectMap.set(
+          String(code),
+          (projectMap.get(String(code)) || 0) + getInvoiceAmountForPo({ amount: amountPerPo }, po)
+        );
         result.set(String(po.projectId), projectMap);
       });
     });

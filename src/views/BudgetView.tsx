@@ -21,7 +21,7 @@ import {
 import { getResumeStatusForPR } from "../lib/prAllocation";
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { scalePrItemsToTotal, sumSubItemAmounts } from "../lib/prBudgetReturn";
-import { isPaidStatus, isSpentInvoiceRecord } from "../lib/billingPayUtils";
+import { getInvoiceAmountForPo, isPaidStatus, isSpentInvoiceRecord } from "../lib/billingPayUtils";
 import { useProportionalTableLayout, chainTableResizeHandlers } from "../hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
@@ -1463,7 +1463,10 @@ const BudgetView = React.memo(() => {
       if (poIdentity && seenPoIdsForInvoice.has(poIdentity)) return sum;
       if (poIdentity) seenPoIdsForInvoice.add(poIdentity);
 
-      const invAmt = invoiceAmountByPoRef.get(po.poNo) || 0;
+      const invAmt = getInvoiceAmountForPo(
+        { amount: invoiceAmountByPoRef.get(po.poNo) || 0 },
+        po
+      );
       if (invAmt === 0) return sum;
 
       let subtotal = 0;

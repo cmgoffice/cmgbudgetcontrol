@@ -30,6 +30,7 @@ import {
   truncateLogText,
 } from "../lib/systemLogDetails";
 import { uploadAttachment } from "../lib/uploadAttachment";
+import { validateInvoiceAmountForPo } from "../lib/billingPayUtils";
 
 const PO_TYPE_LABELS: Record<string, string> = {
   CR: "CR — เครดิต",
@@ -274,6 +275,31 @@ const InvoiceView = React.memo(() => {
     const discount = Number(po?.discount || 0);
     return Math.max(0, subtotal - discount);
   }, []);
+
+  const validateInvoiceAmount = useCallback(
+    (po: any, candidateAmount: number, candidateStatus: string, excludedInvoiceId = "") => {
+      const result = validateInvoiceAmountForPo({
+        invoices,
+        po,
+        candidateAmount,
+        candidateStatus,
+        excludedInvoiceId,
+      });
+
+      if (!result.ok) {
+        showAlert(
+          "บันทึก Invoice ไม่ได้",
+          `ยอด Invoice สะสมจะเกินยอด PO ${formatCurrency(result.excessAmount)}\n` +
+            `PO คงเหลือให้วางบิล: ${formatCurrency(Math.max(0, result.poLimit - result.existingSpent))}`,
+          "warning"
+        );
+        return false;
+      }
+
+      return true;
+    },
+    [invoices, showAlert]
+  );
 
   // POs eligible for invoice entry for this project
   // - Normal flow: Received
@@ -1011,8 +1037,22 @@ const InvoiceView = React.memo(() => {
           : invoiceForm.isDeposit && Number(invoiceForm.depositAmount || 0) > 0
             ? Number(invoiceForm.depositAmount || 0)
             : calculatedAmount;
+      const invoiceStatus = getPoInvoiceStatus(
+        invoiceForm.paymentType,
+        !invoiceForm.settleRemaining && invoiceForm.isDeposit
+      );
       if (invoiceForm.settleRemaining && totalAmount <= 0) {
         return showAlert("ข้อมูลไม่ถูกต้อง", "ไม่พบยอดคงเหลือสำหรับจ่ายส่วนที่เหลือ", "warning");
+      }
+      if (
+        !validateInvoiceAmount(
+          viewingPO,
+          totalAmount,
+          invoiceStatus,
+          editingInvoice?.id || ""
+        )
+      ) {
+        return;
       }
       const uploadedInvoiceAttachments = (isEditingInvoice || isPaymentInvoice) && invoiceAttachmentFiles.length > 0
         ? await Promise.all(
@@ -1038,7 +1078,6 @@ const InvoiceView = React.memo(() => {
           ...invoiceAttachments.map((att) => ({ ...att, source: "Invoice" })),
         ].map((att) => [att.url || att.name, att])
       ).values());
-      const invoiceStatus = getPoInvoiceStatus(invoiceForm.paymentType, !invoiceForm.settleRemaining && invoiceForm.isDeposit);
       const invoicePayload = {
         invNo: invoiceForm.invNo.trim(),
         invDate: invoiceForm.invDate,
@@ -1217,6 +1256,7 @@ const InvoiceView = React.memo(() => {
       const invoiceStatus = isDraft ? "Draft" : getPoInvoiceStatus(createInvoiceForm.paymentType, createInvoiceForm.isDeposit);
 
       const now = new Date().toISOString();
+      const invoicePayloads: Array<{ po: any; payload: any }> = [];
 
       for (const [poId, receivesGroup] of Object.entries(groupedByPo)) {
         const po = pos.find((p: any) => p.id === poId);
@@ -1277,6 +1317,16 @@ const InvoiceView = React.memo(() => {
           createdBy: `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim(),
         };
 
+        invoicePayloads.push({ po, payload: invoicePayload });
+      }
+
+      if (!isDraft) {
+        for (const { po, payload } of invoicePayloads) {
+          if (!validateInvoiceAmount(po, payload.amount, invoiceStatus)) return;
+        }
+      }
+
+      for (const { po, payload: invoicePayload } of invoicePayloads) {
         const success = await addData("invoices", invoicePayload, null, { skipLog: true });
         if (success) {
            await logAction(
@@ -1973,6 +2023,7 @@ const InvoiceView = React.memo(() => {
             <table className="w-full min-w-[860px] text-left text-xs text-slate-600 md:min-w-0">
               <thead className="bg-gradient-to-r from-amber-50 to-orange-50 text-slate-600 uppercase font-semibold border-b border-amber-100">
                 <tr>
+                  <th className="py-1.5 px-3">วันที่สร้างรายการ</th>
                   <th className="py-1.5 px-3 text-center md:hidden">Actions</th>
                   <th className="py-1.5 px-3">Invoice No.</th>
                   <th className="py-1.5 px-3">Ref. PO</th>
@@ -1989,7 +2040,7 @@ const InvoiceView = React.memo(() => {
                 {filteredHistoryInvoices.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={10}
+                      colSpan={11}
                       className="py-10 text-center text-slate-400"
                     >
                       <DollarSign
@@ -2007,6 +2058,9 @@ const InvoiceView = React.memo(() => {
                         idx % 2 === 0 ? "bg-white" : "bg-amber-50/25"
                       } hover:bg-amber-50/60`}
                     >
+                      <td className="py-1.5 px-3 whitespace-nowrap">
+                        {formatDate(inv.createdAt || inv.invDate)}
+                      </td>
                       <td className="py-1.5 px-3 md:hidden">
                         <div className="flex items-center justify-center gap-1">
                           {canEditInvoiceHistory && (
@@ -2113,6 +2167,7 @@ const InvoiceView = React.memo(() => {
               </tbody>
               <tfoot className="border-t-2 border-amber-200">
                 <tr className="bg-amber-50">
+                  <td className="py-2 px-3"></td>
                   <td className="py-2 px-3 md:hidden"></td>
                   <td className="py-2 px-3"></td>
                   <td className="py-2 px-3"></td>

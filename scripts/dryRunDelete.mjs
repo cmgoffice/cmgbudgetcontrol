@@ -1,6 +1,8 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, getDocs } from 'firebase/firestore';
 import * as fs from 'fs';
+import * as path from 'path';
+import { fileURLToPath } from 'url';
 
 const app = initializeApp({
   apiKey: 'AIzaSyDOqRqNW06Lu5fIQ_2Whr02tg6sn8zltw8',
@@ -9,119 +11,153 @@ const app = initializeApp({
 });
 const db = getFirestore(app);
 const appId = 'cmg-budget-control-default';
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+
+const isSpentInvoice = (invoice) => {
+  const status = String(invoice?.status || invoice?.statusNow || '').trim().toLowerCase();
+  return status === 'paid' || status === 'invcredit';
+};
+
+const getAmount = (invoice) =>
+  Number(invoice?.amount) ||
+  (Number(invoice?.invoiceQty || 0) * Number(invoice?.price || 0)) ||
+  0;
+
+const getDateValue = (invoice) => {
+  const raw = invoice?.createdAt || invoice?.invDate || invoice?.date || 0;
+  const value = new Date(raw).getTime();
+  return Number.isFinite(value) ? value : 0;
+};
+
+const formatAmount = (amount) =>
+  Number(amount || 0).toLocaleString('th-TH', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 
 async function run() {
-  console.log("Fetching invoices...");
+  console.log('Fetching live invoices for dry run...');
   const invSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'invoices'));
+
+  // Firestore can return an empty local-cache snapshot while the network is
+  // unavailable. Never treat that as a clean database for a deletion dry run.
+  if (invSnap.metadata?.fromCache) {
+    throw new Error('Firestore returned cached/offline data. Dry run aborted; no live duplicate result is valid.');
+  }
+
   const invoices = [];
-  invSnap.forEach(doc => invoices.push({id: doc.id, ...doc.data()}));
+  invSnap.forEach((invoiceDoc) => invoices.push({ id: invoiceDoc.id, ...invoiceDoc.data() }));
+  if (invoices.length === 0) {
+    throw new Error('Live invoice collection is empty. Dry run aborted instead of assuming there are no duplicates.');
+  }
 
   const grouped = new Map();
-  invoices.forEach(inv => {
-     const poNo = inv.poNo || inv.poRef;
-     if (!poNo) return; 
-     
-     const amt = Number(inv.amount) || (Number(inv.invoiceQty||0)*Number(inv.price||0)) || 0;
-     const key = `${inv.projectId}_${poNo}_${amt}`;
-     
-     if (!grouped.has(key)) {
-         grouped.set(key, []);
-     }
-     grouped.get(key).push(inv);
+  invoices.forEach((invoice) => {
+    if (!isSpentInvoice(invoice)) return;
+    const poNo = invoice.poNo || invoice.poRef;
+    if (!poNo) return;
+
+    const amount = getAmount(invoice);
+    const key = `${invoice.projectId || ''}_${poNo}_${amount}`;
+    const group = grouped.get(key) || [];
+    group.push(invoice);
+    grouped.set(key, group);
   });
 
-  const duplicates = [];
-  grouped.forEach((invList, key) => {
-     if (invList.length > 1) {
-         duplicates.push({ key, invoices: invList });
-     }
-  });
-
-  const toBeDeleted = [];
-  const kept = [];
-
-  duplicates.forEach(dup => {
-      // Sort invoices by date descending (newest first)
-      const sortedInvs = dup.invoices.sort((a, b) => {
-          const dateA = new Date(a.date || a.createdAt || a.invoiceDate || 0).getTime();
-          const dateB = new Date(b.date || b.createdAt || b.invoiceDate || 0).getTime();
-          if (dateB !== dateA) {
-              return dateB - dateA; // latest first
-          }
-          // If dates are identical, use ID string comparison for deterministic sort
-          return b.id.localeCompare(a.id);
+  const duplicateGroups = Array.from(grouped.entries())
+    .filter(([, group]) => group.length > 1)
+    .map(([key, group]) => {
+      const sorted = [...group].sort((a, b) => {
+        const dateDiff = getDateValue(a) - getDateValue(b);
+        return dateDiff || String(a.id).localeCompare(String(b.id));
       });
-      
-      const [latest, ...rest] = sortedInvs;
-      kept.push(latest);
-      toBeDeleted.push(...rest);
+      const keep = sorted[0];
+      const candidates = sorted.slice(1);
+      return {
+        key,
+        projectId: keep.projectId || '',
+        poNo: keep.poNo || keep.poRef || '',
+        amount: getAmount(keep),
+        suggestedKeepId: keep.id,
+        candidateDeleteIds: candidates.map((invoice) => invoice.id),
+        invoices: sorted.map((invoice) => ({
+          id: invoice.id,
+          invNo: invoice.invNo || invoice.invoiceNo || invoice.docNo || '',
+          status: invoice.status || invoice.statusNow || '',
+          paymentType: invoice.paymentType || '',
+          amount: getAmount(invoice),
+          createdAt: invoice.createdAt || invoice.invDate || invoice.date || '',
+          receiveIds: Array.isArray(invoice.receiveIds) ? invoice.receiveIds : [],
+        })),
+      };
+    })
+    .sort((a, b) => `${a.projectId}_${a.poNo}`.localeCompare(`${b.projectId}_${b.poNo}`));
+
+  const candidateDeleteIds = duplicateGroups.flatMap((group) => group.candidateDeleteIds);
+  const reportLines = [
+    '=== Invoice Duplicate Dry Run ===',
+    `Generated: ${new Date().toISOString()}`,
+    `Live invoices scanned: ${invoices.length}`,
+    `Potential duplicate groups: ${duplicateGroups.length}`,
+    `Suggested candidates to archive/move: ${candidateDeleteIds.length}`,
+    '',
+  ];
+
+  duplicateGroups.forEach((group, index) => {
+    reportLines.push(`GROUP ${index + 1}`);
+    reportLines.push(`Project ID: ${group.projectId || '-'}`);
+    reportLines.push(`PO: ${group.poNo || '-'} | Amount: ${formatAmount(group.amount)}`);
+    reportLines.push(`Suggested KEEP: ${group.suggestedKeepId}`);
+    group.invoices.forEach((invoice) => {
+      const marker = invoice.id === group.suggestedKeepId ? 'KEEP ' : 'CHECK';
+      reportLines.push(
+        `  ${marker} | Invoice ID: ${invoice.id} | No: ${invoice.invNo || '-'} | ` +
+        `Status: ${invoice.status || '-'} | Amount: ${formatAmount(invoice.amount)} | ` +
+        `Created: ${invoice.createdAt || '-'} | Receive IDs: ${invoice.receiveIds.join(',') || '-'}`
+      );
+    });
+    reportLines.push('');
   });
 
-  console.log(`Found ${toBeDeleted.length} duplicate invoices to delete.`);
-  console.log(`Keeping ${kept.length} latest invoices.`);
-
-  // Save the full data of invoices to be deleted as a backup
-  fs.writeFileSync('deleted_invoices_backup.json', JSON.stringify(toBeDeleted, null, 2));
-  console.log("Saved full backup to 'deleted_invoices_backup.json'. This can be used for rollback.");
-  
-  // Write restore script
-  const restoreScript = `import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, setDoc } from 'firebase/firestore';
-import * as fs from 'fs';
-
-const app = initializeApp({
-  apiKey: 'AIzaSyDOqRqNW06Lu5fIQ_2Whr02tg6sn8zltw8',
-  authDomain: 'cmg-budget-control.firebaseapp.com',
-  projectId: 'cmg-budget-control',
-});
-const db = getFirestore(app);
-const appId = '${appId}';
-
-async function run() {
-  const data = JSON.parse(fs.readFileSync('deleted_invoices_backup.json', 'utf8'));
-  console.log(\`Restoring \${data.length} invoices...\`);
-  for (const inv of data) {
-     const id = inv.id;
-     const docData = { ...inv };
-     delete docData.id;
-     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'invoices', id), docData);
-     console.log('Restored', id);
+  if (duplicateGroups.length === 0) {
+    reportLines.push('No potential duplicate groups found.');
   }
-  console.log('Restore complete!');
-  process.exit(0);
-}
-run().catch(console.error);
-`;
-  fs.writeFileSync('restoreInvoices.mjs', restoreScript);
-  
-  // Write delete script
-  const deleteScript = `import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, deleteDoc } from 'firebase/firestore';
-import * as fs from 'fs';
 
-const app = initializeApp({
-  apiKey: 'AIzaSyDOqRqNW06Lu5fIQ_2Whr02tg6sn8zltw8',
-  authDomain: 'cmg-budget-control.firebaseapp.com',
-  projectId: 'cmg-budget-control',
+  const report = reportLines.join('\n');
+  console.log(report);
+
+  fs.writeFileSync(path.join(scriptDir, 'dry_run_duplicate_invoices_report.txt'), report + '\n');
+  fs.writeFileSync(
+    path.join(scriptDir, 'dry_run_invoice_groups.json'),
+    JSON.stringify({ generatedAt: new Date().toISOString(), groups: duplicateGroups }, null, 2)
+  );
+  fs.writeFileSync(
+    path.join(scriptDir, 'dry_run_delete_candidates.json'),
+    JSON.stringify({
+      generatedAt: new Date().toISOString(),
+      source: 'dryRunDelete.mjs',
+      candidateArchiveIds: candidateDeleteIds,
+      // Keep the legacy key so reviewed dry-run files remain compatible.
+      candidateDeleteIds,
+      groups: duplicateGroups.map((group) => ({
+        key: group.key,
+        projectId: group.projectId,
+        poNo: group.poNo,
+        amount: group.amount,
+        suggestedKeepId: group.suggestedKeepId,
+        candidateArchiveIds: group.candidateDeleteIds,
+        // Keep the legacy key so reviewed dry-run files remain compatible.
+        candidateDeleteIds: group.candidateDeleteIds,
+      })),
+    }, null, 2)
+  );
+
+  console.log(`Report saved: ${path.join(scriptDir, 'dry_run_duplicate_invoices_report.txt')}`);
+  console.log(`Review file saved: ${path.join(scriptDir, 'dry_run_delete_candidates.json')}`);
+  console.log('No invoice was deleted.');
+}
+
+run().catch((error) => {
+  console.error(`DRY RUN ABORTED: ${error?.message || error}`);
+  process.exitCode = 1;
 });
-const db = getFirestore(app);
-const appId = '${appId}';
-
-async function run() {
-  const data = JSON.parse(fs.readFileSync('deleted_invoices_backup.json', 'utf8'));
-  console.log(\`Deleting \${data.length} invoices...\`);
-  for (const inv of data) {
-     const id = inv.id;
-     await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'invoices', id));
-     console.log('Deleted', id);
-  }
-  console.log('Deletion complete!');
-  process.exit(0);
-}
-run().catch(console.error);
-`;
-  fs.writeFileSync('executeDelete.mjs', deleteScript);
-
-  process.exit(0);
-}
-run().catch(console.error);
