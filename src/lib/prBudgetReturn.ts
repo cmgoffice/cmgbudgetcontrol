@@ -1,3 +1,5 @@
+import { PO_DISCOUNT_ALLOCATION_VERSION } from "./poDiscount";
+
 export const isPoLinkedToPr = (po: any, prId: string) => {
   if (!po || !prId) return false;
   if (po.prRefId === prId) return true;
@@ -16,6 +18,17 @@ export const getPoGrandTotalUsedByPr = (pos: any[], prId: string) => {
   return pos.reduce((sum, po) => {
     if (!po || po.status === "Rejected") return sum;
     if (!isPoLinkedToPr(po, prId)) return sum;
+    if (po.discountAllocationVersion === PO_DISCOUNT_ALLOCATION_VERSION) {
+      const allocatedAmount = (po.items || []).reduce((itemSum: number, item: any) => {
+        if (Array.isArray(item?.disPrAllocations) && item.disPrAllocations.length > 0) {
+          return itemSum + item.disPrAllocations.reduce((allocationSum: number, allocation: any) => (
+            allocation?.prId === prId ? allocationSum + (Number(allocation.amount) || 0) : allocationSum
+          ), 0);
+        }
+        return itemSum + (item?.prId === prId ? (Number(item.amount) || 0) : 0);
+      }, 0);
+      return sum + Math.max(0, allocatedAmount);
+    }
     const subtotal = Array.isArray(po.items)
       ? po.items.reduce((s: number, item: any) => {
         const amount = Number(item?.amount);

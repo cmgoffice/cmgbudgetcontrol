@@ -27,6 +27,7 @@ import ResizableTh from "./components/ResizableTh";
 import { useProportionalTableLayout, chainTableResizeHandlers } from "./hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "./lib/tableLayoutDefaults";
 import { MODULE_ACCESS, MODULE_FUNCTIONS, PURCHASE_TYPES } from "./lib/constants";
+import { getPoItemsGrossSubtotal } from "./lib/poDiscount";
 import { AuthContext } from "./auth/AuthContext";
 import { useAppData } from "./contexts/AppDataContext";
 import { useUI } from "./contexts/UIContext";
@@ -2648,9 +2649,11 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
           cyan: "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100 hover:text-cyan-800",
         };
         const vendor = po.vendorName ? { name: po.vendorName } : vendorById.get(po.vendorId);
-        const subtotal = (po.items || []).reduce((sum: number, item: any) => (
-          sum + (Number(item.quantity || item.qty || 0) * Number(item.price || item.unitPrice || 0))
-        ), 0);
+        const subtotal = getPoItemsGrossSubtotal(po);
+        const discount = Math.min(subtotal, Math.max(0, Number(po.discount) || 0));
+        const discountPrNo = po.discountPrNo || po.discountAllocation?.prNo || "";
+        const subtotalAfterDiscount = Math.max(0, subtotal - discount);
+        const grandTotal = po.grandTotal ?? po.amount ?? subtotalAfterDiscount;
         const pdfUrl = po.pdfUrl || "";
         const pdfUrlWithCacheBuster = pdfUrl ? `${pdfUrl}${pdfUrl.includes("?") ? "&" : "?"}t=${Date.now()}` : "";
 
@@ -2785,8 +2788,24 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                     </tbody>
                     <tfoot className="bg-slate-50 border-t border-slate-200">
                       <tr>
-                        <td colSpan={4} className="px-3 py-2 text-right font-bold text-slate-600">รวม</td>
-                        <td className="px-3 py-2 text-right font-bold text-red-700">{formatCurrency(po.grandTotal ?? po.amount ?? subtotal)}</td>
+                        <td colSpan={4} className="px-3 py-2 text-right font-bold text-slate-600">Sub Total:</td>
+                        <td className="px-3 py-2 text-right font-bold text-slate-700">{formatCurrency(subtotal)}</td>
+                      </tr>
+                      {discount > 0 && (
+                        <tr className="bg-red-50">
+                          <td colSpan={4} className="px-3 py-1.5 text-right font-semibold text-red-700">
+                            ส่วนลด{discountPrNo ? ` (PR ${discountPrNo})` : ""}:
+                          </td>
+                          <td className="px-3 py-1.5 text-right font-semibold text-red-700">-{formatCurrency(discount)}</td>
+                        </tr>
+                      )}
+                      <tr>
+                        <td colSpan={4} className="px-3 py-1.5 text-right font-semibold text-slate-600">ยอดหลังหักส่วนลด:</td>
+                        <td className="px-3 py-1.5 text-right font-semibold text-slate-700">{formatCurrency(subtotalAfterDiscount)}</td>
+                      </tr>
+                      <tr>
+                        <td colSpan={4} className="px-3 py-1.5 text-right text-slate-500">Grand Total (inc. VAT):</td>
+                        <td className="px-3 py-1.5 text-right font-bold text-red-700">{formatCurrency(grandTotal)}</td>
                       </tr>
                     </tfoot>
                   </table>

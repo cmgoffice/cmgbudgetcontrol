@@ -11,7 +11,6 @@ export const TABLE_LAYOUT_DEFAULTS: Record<string, Record<string, number>> = {
     balance: 120,
     prTotal: 104,
     poTotal: 104,
-    nowStatus: 220,
     actions: 160,
   },
   "dash-budget": {

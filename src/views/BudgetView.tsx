@@ -22,6 +22,7 @@ import { getResumeStatusForPR } from "../lib/prAllocation";
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { scalePrItemsToTotal, sumSubItemAmounts } from "../lib/prBudgetReturn";
 import { getInvoiceAmountForPo, isPaidStatus, isSpentInvoiceRecord } from "../lib/billingPayUtils";
+import { PO_DISCOUNT_ALLOCATION_VERSION } from "../lib/poDiscount";
 import { useProportionalTableLayout, chainTableResizeHandlers } from "../hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
@@ -1441,11 +1442,15 @@ const BudgetView = React.memo(() => {
       }
 
       if (subtotal > 0) {
-        const poSubtotal = po.items.reduce((s, i) => s + getItemAmount(i), 0);
-        const itemRatio = poSubtotal > 0 ? subtotal / poSubtotal : 0;
-        const discount = Number(po.discount || 0);
-        const proportionalDiscount = discount * itemRatio;
-        const poAmount = Math.max(0, subtotal - proportionalDiscount);
+        const poAmount = po.discountAllocationVersion === PO_DISCOUNT_ALLOCATION_VERSION
+          ? subtotal
+          : (() => {
+              const poSubtotal = po.items.reduce((s, i) => s + getItemAmount(i), 0);
+              const itemRatio = poSubtotal > 0 ? subtotal / poSubtotal : 0;
+              const discount = Number(po.discount || 0);
+              const proportionalDiscount = discount * itemRatio;
+              return Math.max(0, subtotal - proportionalDiscount);
+            })();
         return sum + poAmount;
       }
       
@@ -4048,7 +4053,6 @@ const BudgetView = React.memo(() => {
                     {isColumnVisible("budget", "balance") && <ResizableTh tableId="budget" colKey="balance" className="py-3 px-4 text-right text-green-800 font-bold border-r" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.balance}>Balance<span className="block mt-1 text-[15px] font-black text-green-700 tracking-tight opacity-100 drop-shadow-sm">{formatCurrency(headerTotals.balance)}</span></ResizableTh>}
                     {isColumnVisible("budget", "prTotal") && <ResizableTh tableId="budget" colKey="prTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.prTotal}>PR Total<span className="block mt-1 text-[15px] font-black text-slate-800 tracking-tight opacity-100 drop-shadow-sm">{formatCurrency(headerTotals.prTotal)}</span></ResizableTh>}
                     {isColumnVisible("budget", "poTotal") && <ResizableTh tableId="budget" colKey="poTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.poTotal}>PO Total<span className="block mt-1 text-[15px] font-black text-slate-800 tracking-tight opacity-100 drop-shadow-sm">{formatCurrency(headerTotals.poTotal)}</span></ResizableTh>}
-                    {isColumnVisible("budget", "nowStatus") && <ResizableTh tableId="budget" colKey="nowStatus" className="py-3 px-4 text-center" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.nowStatus}>Now Status</ResizableTh>}
                     {isColumnVisible("budget", "actions") && <th className="py-3 px-4 text-right" style={{ width: budgetMainLayout.scaled.actions, minWidth: budgetMainLayout.scaled.actions }}>Actions</th>}
                   </tr>
                 </thead>
@@ -4239,11 +4243,6 @@ const BudgetView = React.memo(() => {
                             >
                               {stats.poExceedsPr && <AlertCircle size={13} className="inline mr-1" aria-label="PO มากกว่า PR" />}
                               {formatCurrency(stats.poTotal)}
-                            </td>
-                          )}
-                          {isColumnVisible("budget", "nowStatus") && (
-                            <td className="py-1 px-3 min-w-0 overflow-hidden">
-                              {/* ตาม requirement: Main row ไม่ต้องแสดง NOW STATUS */}
                             </td>
                           )}
                           {isColumnVisible("budget", "actions") && <td className="py-1 px-3 text-right">
@@ -4441,10 +4440,6 @@ const BudgetView = React.memo(() => {
                                   </td>
                                 )}
                                 {(() => { const cnt = [isColumnVisible("budget", "prTotal"), isColumnVisible("budget", "poTotal")].filter(Boolean).length; return cnt > 0 ? <td colSpan={cnt} className="border-b border-slate-100"></td> : null; })()}
-                                {isColumnVisible("budget", "nowStatus") && <td className="py-0.5 px-3 text-center min-w-0 border-b border-slate-100">{renderNowStatusBadges((() => {
-                                  const latest = pickLatestNowStatus(getNowStatus(b, stats, "SUB_ITEM", sub.id));
-                                  return latest ? [latest] : [];
-                                })())}</td>}
                                 {isColumnVisible("budget", "actions") && <td className="py-0.5 px-3 text-right border-b border-slate-100">
                                   <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                     {(sub.status === "Rejected" && canEditSubItem && (userRole === "PM" || userRole === "CM" || userRole === "MD" || userRole === "Administrator")) && (

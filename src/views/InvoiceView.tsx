@@ -31,6 +31,10 @@ import {
 } from "../lib/systemLogDetails";
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { validateInvoiceAmountForPo } from "../lib/billingPayUtils";
+import {
+  PO_DISCOUNT_ALLOCATION_VERSION,
+  appendPaymentDiscountAdjustment,
+} from "../lib/poDiscount";
 
 const PO_TYPE_LABELS: Record<string, string> = {
   CR: "CR — เครดิต",
@@ -288,9 +292,13 @@ const InvoiceView = React.memo(() => {
 
       if (!result.ok) {
         showAlert(
-          "บันทึก Invoice ไม่ได้",
-          `ยอด Invoice สะสมจะเกินยอด PO ${formatCurrency(result.excessAmount)}\n` +
-            `PO คงเหลือให้วางบิล: ${formatCurrency(Math.max(0, result.poLimit - result.existingSpent))}`,
+          "เปิด Invoice ไม่ได้",
+          `วงเงิน PO สำหรับสร้าง Invoice: ${formatCurrency(result.poLimit)}\n` +
+            `สร้าง Invoice ไปแล้ว: ${formatCurrency(result.existingSpent)}\n` +
+            `Invoice ที่กำลังสร้าง: ${formatCurrency(result.candidateSpent)}\n` +
+            `ยอดคงเหลือก่อนสร้างรายการนี้: ${formatCurrency(Math.max(0, result.poLimit - result.existingSpent))}\n` +
+            `ยอดคงเหลือหลังสร้างรายการนี้: ${formatCurrency(result.poLimit - result.projectedSpent)} (ติดลบ)\n` +
+            `ยอดเกินวงเงิน PO: ${formatCurrency(result.excessAmount)}`,
           "warning"
         );
         return false;
@@ -681,8 +689,9 @@ const InvoiceView = React.memo(() => {
       description:
         payment.description ||
         `Payment งวด ${payment.periodNo || ""} - ${payment.paymentNo || payment.id || ""}`,
-      items: Array.isArray(payment.items)
-        ? payment.items.map((it: any, idx: number) => {
+       items: appendPaymentDiscountAdjustment(
+         Array.isArray(payment.items)
+           ? payment.items.map((it: any, idx: number) => {
             const paymentQty = Number(it.thisPeriodQty ?? it.quantity);
             const paymentAmount = Number(it.thisPeriodAmount ?? it.amount ?? 0) || 0;
             const unitPrice = Number(
@@ -700,8 +709,11 @@ const InvoiceView = React.memo(() => {
               price: unitPrice,
               amount: paymentAmount,
             };
-          })
-        : [],
+             })
+           : [],
+         payment.discountAllocationVersion === PO_DISCOUNT_ALLOCATION_VERSION ? (Number(payment.thisPeriodDiscount) || 0) : 0,
+         payment.discountPrNo || "",
+       ),
     }),
     []
   );
@@ -740,8 +752,8 @@ const InvoiceView = React.memo(() => {
         payment.contractorId || payment.vendorId || "",
         payment.contractorName || payment.vendorName || ""
       );
-      const invoiceItems = Array.isArray(payment.items)
-        ? payment.items.map((item: any, idx: number) => ({
+       const invoiceItemsGross = Array.isArray(payment.items)
+         ? payment.items.map((item: any, idx: number) => ({
             poItemIndex: idx,
             materialNo: item.materialNo || "",
             description: item.description || "งานจ้างเหมา/ค่าแรง",
@@ -750,8 +762,13 @@ const InvoiceView = React.memo(() => {
             invoiceQty: 1,
             price: Number(item.thisPeriodAmount) || 0,
             amount: Number(item.thisPeriodAmount) || 0,
-          }))
-        : [];
+           }))
+         : [];
+       const invoiceItems = appendPaymentDiscountAdjustment(
+         invoiceItemsGross,
+         payment.discountAllocationVersion === PO_DISCOUNT_ALLOCATION_VERSION ? (Number(payment.thisPeriodDiscount) || 0) : 0,
+         payment.discountPrNo || "",
+       );
       const invoicePayload = {
         invNo: "",
         invDate: new Date().toISOString().split("T")[0],
@@ -776,12 +793,16 @@ const InvoiceView = React.memo(() => {
         paymentId: payment.id,
         paymentNo: payment.paymentNo || payment.id,
         paymentPeriodNo: payment.periodNo || "",
-        paymentPeriodSnapshot: {
-          paymentNo: payment.paymentNo || payment.id,
-          periodNo: payment.periodNo || "",
-          billingCycle: payment.billingCycle || "",
-          amount: Number(payment.amount) || 0,
-          items: Array.isArray(payment.items) ? payment.items : [],
+         paymentPeriodSnapshot: {
+           paymentNo: payment.paymentNo || payment.id,
+           periodNo: payment.periodNo || "",
+           billingCycle: payment.billingCycle || "",
+           amount: Number(payment.amount) || 0,
+           grossPeriodAmount: Number(payment.grossPeriodAmount) || 0,
+           thisPeriodDiscount: payment.discountAllocationVersion === PO_DISCOUNT_ALLOCATION_VERSION ? (Number(payment.thisPeriodDiscount) || 0) : 0,
+           discountPrId: payment.discountPrId || null,
+           discountPrNo: payment.discountPrNo || null,
+           items: Array.isArray(payment.items) ? payment.items : [],
           statusBeforeInvoice: payment.status,
         },
         invoiceAttachments: [],

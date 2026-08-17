@@ -58,6 +58,10 @@ import {
   validatePoPrLinkage,
 } from "../lib/poPrValidation";
 import { validatePoAgainstPaymentProgress } from "../lib/poPaymentValidation";
+import {
+  PO_DISCOUNT_ALLOCATION_VERSION,
+  applyDiscountToPrAllocations,
+} from "../lib/poDiscount";
 import RelatedDocumentDetailModal from "../components/RelatedDocumentDetailModal";
 
 const getDefaultPoFormData = () => ({
@@ -74,6 +78,8 @@ const getDefaultPoFormData = () => ({
   reason: "",
   note: "",
   discount: 0,
+  discountPrId: "",
+  discountPrNo: "",
   location: "",
   payBeforeReceiveChecked: false,
   payBeforeReceiveInvoiceSetup: null,
@@ -856,6 +862,17 @@ const POView = React.memo(() => {
     });
   }, [prs, selectedProjectId, pos, editingPoId, editingPoLinkedPrIds]);
 
+  const resolveDiscountTarget = (prIds: string[], currentTargetId = "") => {
+    const targetId = prIds.length === 1
+      ? prIds[0]
+      : (currentTargetId && prIds.includes(currentTargetId) ? currentTargetId : "");
+    const targetPr = prs.find((pr: any) => pr.id === targetId);
+    return {
+      discountPrId: targetId,
+      discountPrNo: targetPr?.prNo || "",
+    };
+  };
+
   // Handle toggling a PR selection
   const handlePrToggle = (prId) => {
     const currentIds = formData.selectedPrIds;
@@ -864,10 +881,12 @@ const POView = React.memo(() => {
     if (!pr) return;
     if (currentIds.includes(prId)) {
       // Deselect: Remove PR and its items
+      const nextIds = currentIds.filter(id => id !== prId);
       setFormData(prev => ({
         ...prev,
-        selectedPrIds: currentIds.filter(id => id !== prId),
-        items: prev.items.filter(item => item.prId !== prId)
+        selectedPrIds: nextIds,
+        items: prev.items.filter(item => item.prId !== prId),
+        ...resolveDiscountTarget(nextIds, prev.discountPrId),
       }));
     } else {
       // Enforce "CostCode lock": after first selection, only allow same costCode
@@ -876,9 +895,11 @@ const POView = React.memo(() => {
         return;
       }
       // Select: Add PR
+      const nextIds = [...currentIds, prId];
       setFormData(prev => ({
         ...prev,
-        selectedPrIds: [...currentIds, prId]
+        selectedPrIds: nextIds,
+        ...resolveDiscountTarget(nextIds, prev.discountPrId),
       }));
     }
   };
@@ -1454,6 +1475,46 @@ const POView = React.memo(() => {
     return { items: normalizedItems, invalidItem: null };
   };
 
+  const getDiscountSelection = () => {
+    const discount = Math.max(0, Number(formData.discount) || 0);
+    const existingPo = editingPoId ? pos.find((po: any) => po.id === editingPoId) : null;
+    const targetedMode = !editingPoId ||
+      existingPo?.discountAllocationVersion === PO_DISCOUNT_ALLOCATION_VERSION ||
+      Boolean(formData.discountPrId);
+    if (!targetedMode || discount <= 0) {
+      return { valid: true, targetedMode, discount, prId: formData.discountPrId || "", prNo: formData.discountPrNo || "" };
+    }
+
+    const prId = formData.discountPrId || (formData.selectedPrIds.length === 1 ? formData.selectedPrIds[0] : "");
+    const targetPr = prs.find((pr: any) => pr.id === prId);
+    if (!prId || !targetPr || !formData.selectedPrIds.includes(prId)) {
+      return {
+        valid: false,
+        targetedMode,
+        discount,
+        prId: "",
+        prNo: "",
+        error: formData.selectedPrIds.length > 1
+          ? "กรุณาเลือก PR ที่จะใช้ส่วนลดก่อนบันทึก PO"
+          : "ไม่พบ PR สำหรับใช้ส่วนลด",
+      };
+    }
+    return { valid: true, targetedMode, discount, prId, prNo: targetPr.prNo || "" };
+  };
+
+  const getDiscountPayload = (existingPo: any = null) => {
+    const selection = getDiscountSelection();
+    const shouldPersist = !existingPo ||
+      existingPo.discountAllocationVersion === PO_DISCOUNT_ALLOCATION_VERSION ||
+      Boolean(selection.prId);
+    if (!shouldPersist) return {};
+    return {
+      discountAllocationVersion: PO_DISCOUNT_ALLOCATION_VERSION,
+      discountPrId: selection.prId || null,
+      discountPrNo: selection.prNo || null,
+    };
+  };
+
   const showInvalidPoPrLinkage = (items: any[], requireAllocations = false) => {
     const result = validatePoPrLinkage({
       projectId: selectedProjectId,
@@ -1502,6 +1563,10 @@ const POView = React.memo(() => {
     if (poDraftInFlightRef.current || poSendInFlightRef.current) return;
     if (!formData.poType) {
       return showAlert("ข้อมูลไม่ครบ", L.noType, "warning");
+    }
+    const discountSelection = getDiscountSelection();
+    if (!discountSelection.valid) {
+      return showAlert("ข้อมูลส่วนลดไม่ครบ", discountSelection.error, "warning");
     }
 
     const draftRouteResult = normalizeItemsToPrRoutes(formData.items || []);
@@ -1573,7 +1638,8 @@ const POView = React.memo(() => {
         items: itemsDraft,
         amount: totals.total,
         grandTotal: totals.total,
-        discount: formData.discount || 0,
+         discount: formData.discount || 0,
+         ...getDiscountPayload(editingPo),
         reason: formData.reason || "",
         ...(manualVatOverride != null && !isNaN(manualVatOverride) ? { manualVat: manualVatOverride } : {}),
         status: "Draft",
@@ -1662,6 +1728,10 @@ const POView = React.memo(() => {
 
   const executeSavePO = async () => {
     if (poDraftInFlightRef.current || poSendInFlightRef.current) return;
+      const discountSelection = getDiscountSelection();
+      if (!discountSelection.valid) {
+        return showAlert("ข้อมูลส่วนลดไม่ครบ", discountSelection.error, "warning");
+      }
       const routeResult = normalizeItemsToPrRoutes(formData.items || []);
       if (routeResult.invalidItem) return showUntraceablePrItemWarning(routeResult.invalidItem);
       if (!showInvalidPoPrLinkage(routeResult.items || [])) return;
@@ -1753,10 +1823,17 @@ const POView = React.memo(() => {
         return showAlert("ข้อมูลไม่ครบ", L.noDisPr, "warning");
       }
 
-      // Allocation: ตัดยอด PR ตามลำดับที่ผู้ใช้เลือกใน Dis PR
-      // - ใช้ยอดหลังส่วนลด (กระจาย discount ตามสัดส่วนของแต่ละบรรทัด)
+      // Allocation: ตัดยอด PR ตามลำดับที่ผู้ใช้เลือกใน Dis PR.
+      // New targeted-discount POs allocate gross line amounts first, then
+      // deduct the header discount from the selected PR only. Legacy POs keep
+      // the historical proportional path because old data is not migrated.
       const subtotal = Number(totals.subtotal) || 0;
       const ratio = subtotal > 0 ? (subtotalAfterDiscount / subtotal) : 1;
+      const useTargetedDiscountAllocation = Boolean(
+        discountSelection.targetedMode &&
+        discountSelection.discount > 0 &&
+        discountSelection.prId
+      );
       const prNoToId = new Map<string, string>();
       const ambiguousPrNos = new Set<string>();
       disPrOptions.forEach(o => {
@@ -1812,19 +1889,24 @@ const POView = React.memo(() => {
         }
       });
 
-      // effective amounts per item (after discount)
+      // Effective amount per item. New targeted records reserve gross PR
+      // capacity and apply the discount to the chosen PR after routing.
       const itemsForAlloc = (routeResult.items || []).map((it: any) => ({
         ref: it,
-        effAmount: Math.max(0, (Number(it.amount) || 0) * ratio),
+        effAmount: useTargetedDiscountAllocation
+          ? Math.max(0, Number(it.amount) || 0)
+          : Math.max(0, (Number(it.amount) || 0) * ratio),
       }));
-      // adjust last for rounding drift to make sum = subtotalAfterDiscount
+      // Preserve the legacy rounding behavior only for legacy proportional
+      // allocation. Targeted allocations are adjusted after discounting.
       const effSum = itemsForAlloc.reduce((s: number, x: any) => s + x.effAmount, 0);
-      if (itemsForAlloc.length > 0) {
+      if (!useTargetedDiscountAllocation && itemsForAlloc.length > 0) {
         const drift = subtotalAfterDiscount - effSum;
         itemsForAlloc[itemsForAlloc.length - 1].effAmount = Math.max(0, itemsForAlloc[itemsForAlloc.length - 1].effAmount + drift);
       }
 
       const itemsWithAllocations = (routeResult.items || []).map((it: any) => ({ ...it, disPrAllocations: [] as any[] }));
+      let targetDiscountCapacityUsed = 0;
       for (let idx = 0; idx < itemsForAlloc.length; idx++) {
         const it = itemsForAlloc[idx].ref;
         let need = Number(itemsForAlloc[idx].effAmount) || 0;
@@ -1850,8 +1932,19 @@ const POView = React.memo(() => {
             ? `item:${prId}:${candidateItemIndex}`
             : `pr:${prId}`;
           const rem = Number(remainingByPrRef.get(remainingKey) || 0);
-          if (rem <= 0) continue;
-          const take = Math.min(need, rem);
+          const normalTake = Math.min(need, Math.max(0, rem));
+          let take = normalTake;
+          if (
+            useTargetedDiscountAllocation &&
+            prId === discountSelection.prId &&
+            need > normalTake
+          ) {
+            const extraCapacity = Math.max(0, discountSelection.discount - targetDiscountCapacityUsed);
+            const discountedTake = Math.min(need - normalTake, extraCapacity);
+            take += discountedTake;
+            targetDiscountCapacityUsed += discountedTake;
+          }
+          if (take <= 0) continue;
           if (take > 0) {
             allocs.push({
               prId,
@@ -1859,7 +1952,7 @@ const POView = React.memo(() => {
               amount: take,
               ...(candidateItemIndex != null ? { prItemIndex: candidateItemIndex } : {}),
             });
-            remainingByPrRef.set(remainingKey, rem - take);
+            remainingByPrRef.set(remainingKey, Math.max(0, rem - normalTake));
             need -= take;
           }
           if (need <= 0) break;
@@ -1874,6 +1967,22 @@ const POView = React.memo(() => {
         }
         // write allocations back to itemsWithAllocations
         itemsWithAllocations[idx].disPrAllocations = allocs;
+      }
+
+      if (useTargetedDiscountAllocation) {
+        const discounted = applyDiscountToPrAllocations(
+          itemsWithAllocations,
+          discountSelection.prId,
+          discountSelection.discount,
+        );
+        if (discounted.remainingAmount > 0.01) {
+          return showAlert(
+            "ส่วนลดใช้กับ PR ไม่ได้",
+            `PR ${discountSelection.prNo || discountSelection.prId} มียอดที่จัดสรรไม่พอสำหรับส่วนลด ${formatCurrency(discounted.remainingAmount)} กรุณาเลือก PR อื่นหรือเพิ่มรายการของ PR นี้ใน PO`,
+            "warning"
+          );
+        }
+        itemsWithAllocations.splice(0, itemsWithAllocations.length, ...discounted.items);
       }
 
       if (!showInvalidPoPrLinkage(itemsWithAllocations, true)) return;
@@ -2052,10 +2161,11 @@ const POView = React.memo(() => {
         requiredDate: formData.requiredDate,
         vatType: formData.vatType,
         items: itemsWithAllocations,
-        amount: totals.total,
-        grandTotal: totals.total,
-        discount: formData.discount || 0,
-        reason: formData.reason || "",
+         amount: totals.total,
+         grandTotal: totals.total,
+         discount: formData.discount || 0,
+         ...getDiscountPayload(existingPoForCreator),
+         reason: formData.reason || "",
         ...(manualVatOverride != null && !isNaN(manualVatOverride) ? { manualVat: manualVatOverride } : {}),
         ...(pdfUrl ? { pdfUrl, pdfPath: `generated/pos/${(selectedProjectId || "unknown")}/${resolvedPoNo.replace(/[^a-zA-Z0-9\-_]/g, "_")}.pdf` } : {}),
         attachments: attachmentList,
@@ -3284,10 +3394,12 @@ const POView = React.memo(() => {
                                         vatType: po.vatType || "ex-vat",
                                         selectedPrIds: Array.isArray(po.selectedPrIds) && po.selectedPrIds.length > 0 ? po.selectedPrIds : prIdsFromItems,
                                         items: (po.items || []).map((it, idx) => ((it.prId == null || it.prId === "") && !it.id) ? { ...it, id: `free-${idx}-${Date.now()}` } : it),
-                                        reason: po.reason || "",
-                                        note: po.note || "",
-                                        discount: po.discount ?? 0,
-                                        location: po.location || "",
+                                         reason: po.reason || "",
+                                         note: po.note || "",
+                                         discount: po.discount ?? 0,
+                                         discountPrId: po.discountPrId || "",
+                                         discountPrNo: po.discountPrNo || "",
+                                         location: po.location || "",
                                         payBeforeReceiveChecked: !!po.payBeforeReceiveChecked,
                                         payBeforeReceiveInvoiceSetup: po.payBeforeReceiveInvoiceSetup || null,
                                         receivedAfterPaymentChecked: !!po.receivedAfterPaymentChecked,
@@ -3484,10 +3596,12 @@ const POView = React.memo(() => {
                                       vatType: po.vatType || "ex-vat",
                                       selectedPrIds: Array.isArray(po.selectedPrIds) && po.selectedPrIds.length > 0 ? po.selectedPrIds : prIdsFromItems,
                                       items: (po.items || []).map((it, idx) => ((it.prId == null || it.prId === "") && !it.id) ? { ...it, id: `free-${idx}-${Date.now()}` } : it),
-                                      reason: po.reason || "",
-                                      note: po.note || "",
-                                      discount: po.discount ?? 0,
-                                      location: po.location || "",
+                                       reason: po.reason || "",
+                                       note: po.note || "",
+                                       discount: po.discount ?? 0,
+                                       discountPrId: po.discountPrId || "",
+                                       discountPrNo: po.discountPrNo || "",
+                                       location: po.location || "",
                                       payBeforeReceiveChecked: !!po.payBeforeReceiveChecked,
                                       payBeforeReceiveInvoiceSetup: po.payBeforeReceiveInvoiceSetup || null,
                                       receivedAfterPaymentChecked: !!po.receivedAfterPaymentChecked,
@@ -3622,7 +3736,17 @@ const POView = React.memo(() => {
               ? { id: viewingPO.vendorId, name: viewingPO.vendorName, code: viewingPO.vendorCode, type: viewingPO.vendorType }
               : vendors.find((v: any) => v.id === viewingPO.vendorId);
             const poPrIds = getPoRefPrIds(viewingPO);
-            const subtotal = (viewingPO.items || []).reduce((s: number, i: any) => s + Number(i.quantity) * Number(i.price), 0);
+             const subtotal = (viewingPO.items || []).reduce((s: number, i: any) => {
+               const quantity = Number(i.quantity ?? i.qty ?? 0);
+               const price = Number(i.price ?? i.unitPrice ?? 0);
+               const lineAmount = Number.isFinite(quantity * price) && (quantity !== 0 || price !== 0)
+                 ? quantity * price
+                 : Number(i.amount) || 0;
+               return s + lineAmount;
+             }, 0);
+             const discount = Math.min(subtotal, Math.max(0, Number(viewingPO.discount) || 0));
+             const discountPrNo = viewingPO.discountPrNo || viewingPO.discountAllocation?.prNo || "";
+             const subtotalAfterDiscount = Math.max(0, subtotal - discount);
             const normalizeText = (value: any) => String(value || "").trim();
             const sameText = (a: any, b: any) => normalizeText(a) !== "" && normalizeText(a) === normalizeText(b);
             const poId = normalizeText(viewingPO.id);
@@ -3984,15 +4108,27 @@ const POView = React.memo(() => {
                             </tr>
                           ))}
                         </tbody>
-                        <tfoot className="bg-slate-800">
-                          <tr>
-                            <td colSpan={4} className="px-3 py-2 text-right text-xs font-bold text-white">Sub Total:</td>
-                            <td className="px-3 py-2 text-right text-sm font-bold text-white">{formatCurrency(subtotal)}</td>
-                          </tr>
-                          <tr>
-                            <td colSpan={4} className="px-3 py-1.5 text-right text-xs text-slate-300">Grand Total (inc. VAT):</td>
-                            <td className="px-3 py-1.5 text-right text-xs font-semibold text-slate-200">{formatCurrency(viewingPO.amount)}</td>
-                          </tr>
+                         <tfoot className="bg-slate-800">
+                           <tr>
+                             <td colSpan={4} className="px-3 py-2 text-right text-xs font-bold text-white">Sub Total:</td>
+                             <td className="px-3 py-2 text-right text-sm font-bold text-white">{formatCurrency(subtotal)}</td>
+                           </tr>
+                           {discount > 0 && (
+                             <tr className="bg-red-950/40">
+                               <td colSpan={4} className="px-3 py-1.5 text-right text-xs font-semibold text-red-200">
+                                 ส่วนลด{discountPrNo ? ` (PR ${discountPrNo})` : ""}:
+                               </td>
+                               <td className="px-3 py-1.5 text-right text-xs font-semibold text-red-200">-{formatCurrency(discount)}</td>
+                             </tr>
+                           )}
+                           <tr>
+                             <td colSpan={4} className="px-3 py-1.5 text-right text-xs font-semibold text-slate-300">ยอดหลังหักส่วนลด:</td>
+                             <td className="px-3 py-1.5 text-right text-xs font-semibold text-white">{formatCurrency(subtotalAfterDiscount)}</td>
+                           </tr>
+                           <tr>
+                             <td colSpan={4} className="px-3 py-1.5 text-right text-xs text-slate-300">Grand Total (inc. VAT):</td>
+                             <td className="px-3 py-1.5 text-right text-xs font-semibold text-slate-200">{formatCurrency(viewingPO.amount ?? viewingPO.grandTotal ?? subtotalAfterDiscount)}</td>
+                           </tr>
                         </tfoot>
                       </table>
                     </div>
@@ -5086,21 +5222,51 @@ const POView = React.memo(() => {
                         </label>
                         <div className="w-px h-3 bg-slate-300 mx-1 hidden sm:block" />
                         <label className="flex items-center gap-1 text-[11px] text-slate-600 cursor-pointer">
-                          <input type="checkbox" checked={discountEnabled} onChange={e => { const checked = e.target.checked; setDiscountEnabled(checked); if (!checked) setFormData({ ...formData, discount: 0 }); }} className="rounded text-red-600 w-3 h-3" />
+                          <input type="checkbox" checked={discountEnabled} onChange={e => { const checked = e.target.checked; setDiscountEnabled(checked); if (!checked) setFormData({ ...formData, discount: 0, discountPrId: "", discountPrNo: "" }); }} className="rounded text-red-600 w-3 h-3" />
                           <span>ส่วนลด</span>
                         </label>
                         {discountEnabled && (
                           <input type="text" className="w-20 border border-slate-200 rounded px-1.5 py-0.5 text-[11px] text-right focus:border-red-400 focus:ring-1 focus:ring-red-100 outline-none" placeholder="0.00" value={formData.discount ? String(formData.discount) : ""} onChange={e => { const v = e.target.value.replace(/,/g, ""); const n = parseFloat(v); setFormData({ ...formData, discount: isNaN(n) ? 0 : Math.max(0, n) }); }} />
-                        )}
+                         )}
                         {selectedPrsTotalAmount > 0 && (
                           <div className="ml-auto flex flex-col items-end leading-tight w-full sm:w-auto mt-2 sm:mt-0">
                             <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">คงเหลือ PR</span>
                             <span className="text-xl font-bold text-blue-600 tabular-nums">{formatCurrency(selectedPrsTotalAmount)}</span>
                           </div>
                         )}
-                      </div>
+                       </div>
 
-                      <div className="px-4 py-3">
+                       {discountEnabled && Number(formData.discount) > 0 && formData.selectedPrIds.length > 0 && (
+                         <div className="px-4 py-2 border-b border-slate-100 bg-red-50/40 flex flex-col sm:flex-row sm:items-center gap-2 text-[11px]">
+                           <span className="font-semibold text-red-800">PR ที่ใช้ส่วนลด</span>
+                           {formData.selectedPrIds.length === 1 ? (
+                             <span className="inline-flex items-center px-2 py-1 rounded-md bg-white border border-red-200 text-red-700 font-semibold">
+                               {formData.discountPrNo || prs.find((pr: any) => pr.id === formData.selectedPrIds[0])?.prNo || "-"}
+                             </span>
+                           ) : (
+                             <select
+                               value={formData.discountPrId || ""}
+                               onChange={(e) => {
+                                 const target = prs.find((pr: any) => pr.id === e.target.value);
+                                 setFormData({
+                                   ...formData,
+                                   discountPrId: e.target.value,
+                                   discountPrNo: target?.prNo || "",
+                                 });
+                               }}
+                               className="min-w-[14rem] border border-red-200 rounded-md px-2 py-1 bg-white text-red-800 focus:outline-none focus:ring-1 focus:ring-red-300"
+                             >
+                               <option value="">เลือก PR ที่รับส่วนลด...</option>
+                               {formData.selectedPrIds.map((prId: string) => {
+                                 const pr = prs.find((candidate: any) => candidate.id === prId);
+                                 return pr ? <option key={pr.id} value={pr.id}>{pr.prNo || pr.id}</option> : null;
+                               })}
+                             </select>
+                           )}
+                         </div>
+                       )}
+
+                       <div className="px-4 py-3">
                         <div className="text-[11px]">
                           <div className="flex justify-between py-0.5"><span className="text-slate-500">รวมราคา / Amount</span><span className="font-medium text-slate-700 tabular-nums">{formatCurrency(calculateTotals().subtotal)}</span></div>
                           <div className="flex justify-between py-0.5"><span className="text-slate-500">ส่วนลด / Discount</span><span className="text-slate-600 tabular-nums">-{formatCurrency(formData.discount || 0)}</span></div>
@@ -5614,6 +5780,7 @@ const POView = React.memo(() => {
                           ...prev,
                           selectedPrIds: tempSelectedPrIds,
                           items: prev.items.filter(item => !removedPrIds.includes(item.prId)),
+                          ...resolveDiscountTarget(tempSelectedPrIds, prev.discountPrId),
                         }));
                         setIsPrSelectModalOpen(false);
                       }}

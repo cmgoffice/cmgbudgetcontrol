@@ -3,6 +3,12 @@ import { PDFDocument, StandardFonts, rgb, PDFName, PDFString } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 import { getDownloadURL, ref, uploadBytes, uploadBytesResumable, getBytes, deleteObject } from "firebase/storage";
 import { storage, FORM_TEMPLATE_PATHS } from "./firebase";
+import {
+  PO_DISCOUNT_ALLOCATION_VERSION,
+  getPaymentDiscountAmount,
+  getPaymentGrossPeriodAmount,
+  getPaymentNetPeriodAmount,
+} from "./poDiscount";
 
 const nf2 = new Intl.NumberFormat("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const nf0 = new Intl.NumberFormat("th-TH", { maximumFractionDigits: 0 });
@@ -759,6 +765,12 @@ export async function generatePaymentPdfBytes(
     thisPeriodAmount: Number(it.thisPeriodAmount) || 0,
     thisPeriodPct: Number(it.thisPeriodPct) || 0,
   }));
+  const paymentDiscountEnabled = payment.discountAllocationVersion === PO_DISCOUNT_ALLOCATION_VERSION;
+  const paymentDiscount = paymentDiscountEnabled ? getPaymentDiscountAmount(payment) : 0;
+  const paymentGrossPeriodAmount = getPaymentGrossPeriodAmount(payment);
+  const paymentNetPeriodAmount = paymentDiscountEnabled
+    ? getPaymentNetPeriodAmount(payment)
+    : paymentGrossPeriodAmount;
 
   const poNos = (payment.selectedPrIds || [])
     .map((id: string) => {
@@ -894,6 +906,8 @@ export async function generatePaymentPdfBytes(
       setTextIfExists(form, ["grandpercentprev", "grandperc"], safePct(totalPrevAmount, totalContractAmount), pageCustomFont);
       setTextIfExists(form, ["grandcurr"], fmtMoney(totalThisAmount), pageCustomFont);
       setTextIfExists(form, ["grandpercentcurr", "grandper"], safePct(totalThisAmount, totalContractAmount), pageCustomFont);
+      setTextIfExists(form, ["granddiscount", "payment_discount", "period_discount"], fmtMoney(paymentDiscount), pageCustomFont);
+      setTextIfExists(form, ["grandnetcurr", "netcurr", "net_period_amount"], fmtMoney(paymentNetPeriodAmount), pageCustomFont);
 
       try { form.flatten(); } catch (_) {}
 
@@ -938,6 +952,11 @@ export async function generatePaymentPdfBytes(
         `${String(i + 1).padEnd(4)} ${String(it.description).substring(0, 28).padEnd(30)} ${String(it.unit).padEnd(8)} ${fmtQty(it.contractQty).padEnd(12)} ${fmtMoney(it.contractPrice).padEnd(12)} ${fmtMoney(it.contractAmount)}`
       ),
       `${"-".repeat(80)}`,
+      `ยอดงวดก่อนส่วนลด: ${fmtMoney(paymentGrossPeriodAmount)}`,
+      ...(paymentDiscountEnabled ? [
+        `ส่วนลด${payment.discountPrNo ? ` (PR ${payment.discountPrNo})` : ""}: -${fmtMoney(paymentDiscount)}`,
+        `ยอดสุทธิงวดนี้: ${fmtMoney(paymentNetPeriodAmount)}`,
+      ] : []),
       ``,
       `* หมายเหตุ: ไม่พบ Template PDF กรุณาอัปโหลด Payment Form ในหน้า Admin → แบบฟอร์ม PDF`,
     ];

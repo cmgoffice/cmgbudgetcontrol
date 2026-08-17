@@ -23,6 +23,21 @@ import {
 } from "../lib/paymentSignatureStamps";
 import { getUserIdentity } from "../lib/poSignatureStamps";
 import {
+  PO_DISCOUNT_ALLOCATION_VERSION,
+  calculateNetPeriodAmount,
+  calculatePeriodDiscount,
+  appendPaymentDiscountAdjustment,
+  getPaymentAccumulatedGrossAmount,
+  getPaymentContractGrossAmount,
+  getPaymentDiscountAmount,
+  getPaymentGrossPeriodAmount,
+  getPaymentNetPeriodAmount,
+  getPoDiscountAmount,
+  getPoDiscountRate,
+  getPoItemsGrossSubtotal,
+  getPoDiscountTarget,
+} from "../lib/poDiscount";
+import {
   buildDeleteLogDetails,
   buildRecordSummary,
   formatLogCurrency,
@@ -551,46 +566,77 @@ const PaymentView = React.memo(() => {
     });
     setSavingActiveQty(true);
     try {
-      const totalAmt = updatedItems.reduce((s: number, it: any) => s + (Number(it.thisPeriodAmount) || 0), 0);
-      const now = new Date().toISOString();
-      const normalizedContractTitle = typeof p.contractTitle === "string" ? p.contractTitle.trim() : "";
-      const extraFields: Record<string, any> = {
-        billingCycle: periodBillingCycle,
-        contractTitle: normalizedContractTitle,
-      };
+       const totalAmt = updatedItems.reduce((s: number, it: any) => s + (Number(it.thisPeriodAmount) || 0), 0);
+       const paymentDiscountEnabled = p.discountAllocationVersion === PO_DISCOUNT_ALLOCATION_VERSION;
+       const poGrossAmount = Number(p.poGrossAmount) || getPaymentContractGrossAmount(p);
+       const poDiscountAmount = paymentDiscountEnabled ? (Number(p.poDiscountAmount) || 0) : 0;
+       const previousDiscountAmount = paymentDiscountEnabled ? (Number(p.prevAccumDiscount) || 0) : 0;
+       const cumulativeGrossAmount = updatedItems.reduce(
+         (s: number, it: any) => s + (Number(it.prevAccumAmount) || 0) + (Number(it.thisPeriodAmount) || 0),
+         0
+       );
+       const contractGrossAmount = updatedItems.reduce(
+         (s: number, it: any) => s + (Number(it.contractQty) || 0) * (Number(it.contractPrice) || 0),
+         0
+       );
+       const thisPeriodDiscount = paymentDiscountEnabled
+         ? calculatePeriodDiscount({
+             grossPeriodAmount: totalAmt,
+             poGrossAmount,
+             poDiscountAmount,
+             previousDiscountAmount,
+             cumulativeGrossAmount,
+             contractGrossAmount,
+           })
+         : 0;
+       const netPeriodAmount = paymentDiscountEnabled
+         ? calculateNetPeriodAmount(totalAmt, thisPeriodDiscount)
+         : totalAmt;
+        const now = new Date().toISOString();
+        const normalizedContractTitle = typeof p.contractTitle === "string" ? p.contractTitle.trim() : "";
+        const extraFields: Record<string, any> = {
+          billingCycle: periodBillingCycle,
+          contractTitle: normalizedContractTitle,
+          ...(paymentDiscountEnabled ? {
+            grossPeriodAmount: totalAmt,
+            thisPeriodDiscount,
+            netPeriodAmount,
+            discountAppliedAmount: previousDiscountAmount + thisPeriodDiscount,
+          } : {}),
+        };
 
-      if (finalize) {
-        extraFields.status = "งวดงาน Pending CM";
-        const preparedBy = getUserIdentity(userData, user);
-        extraFields.periodPreparedBy = preparedBy.name || userData?.name || user?.email || "";
-        extraFields.periodPreparedByUid = preparedBy.uid || null;
-        extraFields.periodPreparedByEmail = preparedBy.email || null;
-        extraFields.periodPreparedAt = now;
-        Object.assign(extraFields, buildPaymentSignatureUserFields("Signature1", userData, user));
-        Object.assign(extraFields, clearPaymentSignatureUserFields(["Signature2", "Signature3"]));
-        // reset previous period approvals when re-submitting
-        extraFields.periodCheckedBy = null;
-        extraFields.periodCheckedByUid = null;
-        extraFields.periodCheckedByEmail = null;
-        extraFields.periodCheckedAt = null;
-        extraFields.periodApprovedBy = null;
-        extraFields.periodApprovedByUid = null;
-        extraFields.periodApprovedByEmail = null;
-        extraFields.periodApprovedAt = null;
-      }
-      await updateData("payments", p.id, { items: updatedItems, amount: totalAmt, ...extraFields }, { skipLog: true });
-      await logAction(
-        finalize ? "Submit งวดงาน" : "Save Draft งวดงาน",
-        `${finalize ? "บันทึกงวดงาน" : "บันทึก Draft งวดงาน"} | ${getPaymentLogSummary(p, { items: updatedItems, amount: totalAmt, ...extraFields })} | ยอดงวดนี้: ${formatLogCurrency(totalAmt) || "฿0"}`,
-        selectedProjectId
-      );
-      setActiveQtyEdits({});
-      setPeriodBillingCycle("");
-      setIsQtyEditMode(false);
-      setViewingPayment((prev: any) => {
-        if (!prev) return prev;
-        return { ...prev, items: updatedItems, amount: totalAmt, ...extraFields };
-      });
+        if (finalize) {
+          extraFields.status = "งวดงาน Pending CM";
+          const preparedBy = getUserIdentity(userData, user);
+          extraFields.periodPreparedBy = preparedBy.name || userData?.name || user?.email || "";
+          extraFields.periodPreparedByUid = preparedBy.uid || null;
+          extraFields.periodPreparedByEmail = preparedBy.email || null;
+          extraFields.periodPreparedAt = now;
+          Object.assign(extraFields, buildPaymentSignatureUserFields("Signature1", userData, user));
+          Object.assign(extraFields, clearPaymentSignatureUserFields(["Signature2", "Signature3"]));
+          // reset previous period approvals when re-submitting
+          extraFields.periodCheckedBy = null;
+          extraFields.periodCheckedByUid = null;
+          extraFields.periodCheckedByEmail = null;
+          extraFields.periodCheckedAt = null;
+          extraFields.periodApprovedBy = null;
+          extraFields.periodApprovedByUid = null;
+          extraFields.periodApprovedByEmail = null;
+          extraFields.periodApprovedAt = null;
+        }
+        await updateData("payments", p.id, { items: updatedItems, amount: netPeriodAmount, ...extraFields }, { skipLog: true });
+        await logAction(
+          finalize ? "Submit งวดงาน" : "Save Draft งวดงาน",
+          `${finalize ? "บันทึกงวดงาน" : "บันทึก Draft งวดงาน"} | ${getPaymentLogSummary(p, { items: updatedItems, amount: netPeriodAmount, ...extraFields })} | ยอดก่อนหัก: ${formatLogCurrency(totalAmt) || "฿0"} | ส่วนลด: ${formatLogCurrency(thisPeriodDiscount) || "฿0"} | ยอดสุทธิ: ${formatLogCurrency(netPeriodAmount) || "฿0"}`,
+          selectedProjectId
+        );
+        setActiveQtyEdits({});
+        setPeriodBillingCycle("");
+        setIsQtyEditMode(false);
+        setViewingPayment((prev: any) => {
+          if (!prev) return prev;
+          return { ...prev, items: updatedItems, amount: netPeriodAmount, ...extraFields };
+        });
     } catch (_) { }
     finally { setSavingActiveQty(false); }
   };
@@ -714,8 +760,8 @@ const PaymentView = React.memo(() => {
         if (!hasInvoice) {
           const paymentVendor = (vendors || []).find((vendor: any) => String(vendor.id) === String(p.contractorId || p.vendorId || ""));
           const paymentVendorName = p.contractorName || p.vendorName || paymentVendor?.name || "";
-          const invoiceItems = Array.isArray(p.items)
-            ? p.items.map((item: any, idx: number) => ({
+           const invoiceItemsGross = Array.isArray(p.items)
+             ? p.items.map((item: any, idx: number) => ({
                 poItemIndex: idx,
                 materialNo: item.materialNo || "",
                 description: item.description || "งานจ้างเหมา/ค่าแรง",
@@ -723,9 +769,14 @@ const PaymentView = React.memo(() => {
                 quantity: 1,
                 invoiceQty: 1,
                 price: Number(item.thisPeriodAmount) || 0,
-                amount: Number(item.thisPeriodAmount) || 0,
-              }))
-            : [];
+                 amount: Number(item.thisPeriodAmount) || 0,
+               }))
+             : [];
+           const invoiceItems = appendPaymentDiscountAdjustment(
+             invoiceItemsGross,
+             p.discountAllocationVersion === PO_DISCOUNT_ALLOCATION_VERSION ? (Number(p.thisPeriodDiscount) || 0) : 0,
+             p.discountPrNo || "",
+           );
           await addData("invoices", {
             invNo: "",
             invDate: new Date().toISOString().split("T")[0],
@@ -750,12 +801,16 @@ const PaymentView = React.memo(() => {
             paymentId: p.id,
             paymentNo: p.paymentNo || p.id,
             paymentPeriodNo: p.periodNo || "",
-            paymentPeriodSnapshot: {
-              paymentNo: p.paymentNo || p.id,
-              periodNo: p.periodNo || "",
-              billingCycle: p.billingCycle || "",
-              amount: Number(p.amount) || 0,
-              items: Array.isArray(p.items) ? p.items : [],
+             paymentPeriodSnapshot: {
+               paymentNo: p.paymentNo || p.id,
+               periodNo: p.periodNo || "",
+               billingCycle: p.billingCycle || "",
+               amount: Number(p.amount) || 0,
+               grossPeriodAmount: Number(p.grossPeriodAmount) || getPaymentGrossPeriodAmount(p),
+               thisPeriodDiscount: p.discountAllocationVersion === PO_DISCOUNT_ALLOCATION_VERSION ? (Number(p.thisPeriodDiscount) || 0) : 0,
+               discountPrId: p.discountPrId || null,
+               discountPrNo: p.discountPrNo || null,
+               items: Array.isArray(p.items) ? p.items : [],
               statusBeforeInvoice: p.status,
             },
             invoiceAttachments: [],
@@ -1045,6 +1100,7 @@ const PaymentView = React.memo(() => {
     try {
       const creator = getUserIdentity(userData, user);
       const currentItems = p.items || [];
+      const paymentDiscountEnabled = p.discountAllocationVersion === PO_DISCOUNT_ALLOCATION_VERSION;
 
       // Carry over accumulated quantities and reset thisPeriod
       const nextItems = currentItems.map((it: any) => ({
@@ -1071,6 +1127,19 @@ const PaymentView = React.memo(() => {
         selectedPrIds: p.selectedPrIds || [],
         items: nextItems,
         amount: 0,
+        ...(paymentDiscountEnabled ? {
+          discountAllocationVersion: PO_DISCOUNT_ALLOCATION_VERSION,
+          poGrossAmount: Number(p.poGrossAmount) || getPaymentContractGrossAmount(p),
+          poDiscountAmount: Number(p.poDiscountAmount) || 0,
+          discountPrId: p.discountPrId || null,
+          discountPrNo: p.discountPrNo || null,
+          discountRate: Number(p.discountRate) || 0,
+          prevAccumDiscount: (Number(p.prevAccumDiscount) || 0) + (Number(p.thisPeriodDiscount) || 0),
+          thisPeriodDiscount: 0,
+          discountAppliedAmount: (Number(p.prevAccumDiscount) || 0) + (Number(p.thisPeriodDiscount) || 0),
+          grossPeriodAmount: 0,
+          netPeriodAmount: 0,
+        } : {}),
         projectId: selectedProjectId,
         status: "Active",
         createdAt: new Date().toISOString(),
@@ -1172,6 +1241,10 @@ const PaymentView = React.memo(() => {
     }
     setActioning(true);
     try {
+      const discountEnabledForPayment = po.discountAllocationVersion === PO_DISCOUNT_ALLOCATION_VERSION;
+      const poGrossAmount = getPoItemsGrossSubtotal(po);
+      const poDiscountAmount = discountEnabledForPayment ? getPoDiscountAmount(po) : 0;
+      const discountTarget = discountEnabledForPayment ? getPoDiscountTarget(po) : { prId: null, prNo: "" };
       const items = (po.items || []).map((item: any, idx: number) => ({
         prId: po.id,
         prItemIndex: idx,
@@ -1220,6 +1293,19 @@ const PaymentView = React.memo(() => {
         selectedPrIds: [po.id],
         items,
         amount: 0,
+        ...(discountEnabledForPayment ? {
+          discountAllocationVersion: PO_DISCOUNT_ALLOCATION_VERSION,
+          poGrossAmount,
+          poDiscountAmount,
+          discountPrId: discountTarget.prId,
+          discountPrNo: discountTarget.prNo || null,
+          discountRate: getPoDiscountRate(po),
+          prevAccumDiscount: 0,
+          thisPeriodDiscount: 0,
+          discountAppliedAmount: 0,
+          grossPeriodAmount: 0,
+          netPeriodAmount: 0,
+        } : {}),
         projectId: selectedProjectId,
         status: 'Active',
         createdAt: new Date().toISOString(),
@@ -1554,8 +1640,8 @@ const PaymentView = React.memo(() => {
                     {isColumnVisible("payment", "periodAmount") && (
                       <td className="py-2 px-3 text-right font-semibold text-orange-700">
                         {formatCurrency((p.items || []).length > 0
-                          ? (p.items || []).reduce((s: number, it: any) => s + (Number(it.thisPeriodAmount) || 0), 0)
-                          : (Number(p.amount) || 0))}
+                           ? getPaymentNetPeriodAmount(p)
+                           : (Number(p.amount) || 0))}
                       </td>
                     )}
                     {isColumnVisible("payment", "progress") && (
@@ -1721,9 +1807,38 @@ const PaymentView = React.memo(() => {
           const k = `${it.prId}_${it.prItemIndex}`;
           const ed = activeQtyEdits[k];
           return s + (ed?.thisPeriodAmount !== undefined ? Number(ed.thisPeriodAmount) : (Number(it.thisPeriodAmount) || 0));
-        }, 0);
-        const thisPeriodPctTotal = contractGrandTotal > 0 ? ((thisPeriodGrandTotal / contractGrandTotal) * 100) : 0;
-        const totalPeriodCount = allPeriods.length + 1;
+         }, 0);
+         const thisPeriodPctTotal = contractGrandTotal > 0 ? ((thisPeriodGrandTotal / contractGrandTotal) * 100) : 0;
+         const paymentDiscountEnabled = vp.discountAllocationVersion === PO_DISCOUNT_ALLOCATION_VERSION;
+         const displayPoGrossAmount = Number(vp.poGrossAmount) || getPaymentContractGrossAmount(vp);
+         const displayPoDiscountAmount = paymentDiscountEnabled ? (Number(vp.poDiscountAmount) || 0) : 0;
+         const displayPreviousDiscount = isViewingOldPeriod
+           ? (Number(activePeriod?.prevAccumDiscount) || 0)
+           : (Number(vp.prevAccumDiscount) || 0);
+         const displayCumulativeGross = isViewingOldPeriod
+           ? getPaymentAccumulatedGrossAmount({ ...vp, ...activePeriod })
+           : vpItems.reduce((s: number, it: any) => {
+               const k = `${it.prId}_${it.prItemIndex}`;
+               const ed = activeQtyEdits[k];
+               const current = ed?.thisPeriodAmount !== undefined ? Number(ed.thisPeriodAmount) : (Number(it.thisPeriodAmount) || 0);
+               return s + (Number(it.prevAccumAmount) || 0) + current;
+             }, 0);
+         const displayDiscount = paymentDiscountEnabled
+           ? (isViewingOldPeriod
+               ? (Number(activePeriod?.thisPeriodDiscount) || 0)
+               : calculatePeriodDiscount({
+                   grossPeriodAmount: thisPeriodGrandTotal,
+                   poGrossAmount: displayPoGrossAmount,
+                   poDiscountAmount: displayPoDiscountAmount,
+                   previousDiscountAmount: displayPreviousDiscount,
+                   cumulativeGrossAmount: displayCumulativeGross,
+                   contractGrossAmount: contractGrandTotal,
+                 }))
+           : 0;
+         const displayNetPeriodAmount = paymentDiscountEnabled
+           ? calculateNetPeriodAmount(thisPeriodGrandTotal, displayDiscount)
+           : thisPeriodGrandTotal;
+         const totalPeriodCount = allPeriods.length + 1;
 
         return (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[10010] p-4">
@@ -1787,10 +1902,18 @@ const PaymentView = React.memo(() => {
                             placeholder="กรอกชื่อสัญญา"
                             className="w-full max-w-[28rem] border border-orange-400 bg-orange-50 text-orange-800 rounded px-2 py-1 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-orange-400"
                           />
-                        ) : (
+                       ) : (
                           <span className="font-medium text-slate-700">{vp.contractTitle || "-"}</span>
                         )}
                       </div>
+                      {paymentDiscountEnabled && (
+                        <div className="flex">
+                          <span className="w-52 text-slate-500 font-semibold shrink-0">ส่วนลด / DISCOUNT :</span>
+                          <span className="font-medium text-red-700">
+                            {formatCurrency(displayDiscount)}{vp.discountPrNo ? ` (PR ${vp.discountPrNo})` : ""}
+                          </span>
+                        </div>
+                      )}
                     </div>
                     {/* Right */}
                     <div className="space-y-1.5">
@@ -2106,6 +2229,17 @@ const PaymentView = React.memo(() => {
                               <td className="border border-slate-600 px-2 py-2 text-right font-mono text-[10px] text-green-300">{thisPeriodPctTotal.toFixed(2)}%</td>
                               <td className="border border-slate-600 px-2 py-2" />
                             </tr>
+                            {paymentDiscountEnabled && (
+                              <tr className="bg-red-50 text-[11px]">
+                                <td colSpan={16} className="border border-red-200 px-4 py-2">
+                                  <div className="flex flex-wrap justify-end gap-x-8 gap-y-1 font-mono">
+                                    <span className="text-slate-600">ยอดงวดก่อนส่วนลด: <b>{formatCurrency(thisPeriodGrandTotal)}</b></span>
+                                    <span className="text-red-700">ส่วนลด{vp.discountPrNo ? ` (PR ${vp.discountPrNo})` : ""}: <b>-{formatCurrency(displayDiscount)}</b></span>
+                                    <span className="text-emerald-700">ยอดสุทธิงวดนี้: <b>{formatCurrency(displayNetPeriodAmount)}</b></span>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
                           </tfoot>
                         )}
                       </table>
