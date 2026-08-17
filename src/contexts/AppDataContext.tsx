@@ -652,6 +652,13 @@ export const AppDataProvider = ({
   }), [prs, roles]);
 
   const pendingPOsGlobal = useMemo(() => pos.filter((po) => {
+    // A PO whose displayed workflow status is already paid/settled must not
+    // remain in the close-PO task list, even if an old Pending Close PO value
+    // is still stored in the legacy `status` field.
+    const displayedStatus = String(po.statusNow || "");
+    if (po.status === "Pending Close PO" && ["paid", "Paid", "Deposit", "Invcredit", "Inpay"].includes(displayedStatus)) {
+      return false;
+    }
     if (roles.includes("Administrator") && (
       po.status?.startsWith("Pending") ||
       po.status === PO_REVISION_PENDING_PCM ||

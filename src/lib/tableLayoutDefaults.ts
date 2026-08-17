@@ -82,7 +82,7 @@ export const TABLE_LAYOUT_DEFAULTS: Record<string, Record<string, number>> = {
     orderQty: 96,
     price: 112,
     total: 96,
-    disPr: 100,
+    disPr: 88,
   },
   "select-pr": {
     checkbox: 48,

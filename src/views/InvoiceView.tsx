@@ -1,7 +1,18 @@
 // @ts-nocheck
 import React, { useState, useMemo, useCallback, useContext, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { collection, doc, getDocs, query, where, writeBatch } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  getDocs,
+  getCountFromServer,
+  limit,
+  orderBy,
+  query,
+  startAfter,
+  where,
+  writeBatch,
+} from "firebase/firestore";
 import {
   ChevronDown, ChevronRight, FileText, Eye, X, Search, Trash2,
   DollarSign, Calendar, CreditCard, Package, Check, AlertCircle, Pencil, Paperclip,
@@ -56,6 +67,9 @@ const BANK_ACCOUNT_OPTIONS = [
   "GSB-000001396654",
   "GSB-020284909098",
 ];
+
+const HISTORY_PAGE_SIZE_OPTIONS = [50, 100, 150, 200];
+const HISTORY_INVOICE_STATUSES = ["Deposit", "Inpay", "Invcredit", "paid", "Paid", "Pending PM", "Approved"];
 
 // Alternating pastel group colors
 const GROUP_COLORS = [
@@ -180,6 +194,14 @@ const InvoiceView = React.memo(() => {
   const [histPaymentType, setHistPaymentType] = useState("");
   const [histStatus, setHistStatus] = useState("");
   const [histProjectId, setHistProjectId] = useState("all");
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyPageSize, setHistoryPageSize] = useState(50);
+  const [historyInvoicesPage, setHistoryInvoicesPage] = useState<any[]>([]);
+  const [historyTotalCount, setHistoryTotalCount] = useState(0);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyLoadError, setHistoryLoadError] = useState("");
+  const historyRequestIdRef = useRef(0);
+  const historyPageCursorsRef = useRef<Record<number, any>>({});
 
   // Create Invoice Modal State
   const [isCreateInvoiceModalOpen, setIsCreateInvoiceModalOpen] = useState(false);
@@ -1380,35 +1402,118 @@ const InvoiceView = React.memo(() => {
     }
   };
 
-  const projectInvoices = useMemo(() => {
-    const uniqueInvoices = new Map<string, any>();
-    (invoices || []).forEach((invoice: any) => {
-      if (!invoice?.id) return;
-      uniqueInvoices.set(String(invoice.id), invoice);
-    });
-    return Array.from(uniqueInvoices.values()).filter((invoice: any) => (
-      visibleProjectIds.has(String(getInvoiceProjectId(invoice)))
-    ));
-  }, [getInvoiceProjectId, invoices, visibleProjectIds]);
-
   const canSettleDeposit = useCallback((invoice: any) => {
     return getInvoiceOutstandingDepositAmount(invoice) > 0;
   }, []);
 
-  const historyInvoices = useMemo(
-    () =>
-      [...projectInvoices].filter(inv => inv.status !== "Draft").sort((a: any, b: any) => {
-        const aTime = new Date(a.invDate || a.createdAt || 0).getTime();
-        const bTime = new Date(b.invDate || b.createdAt || 0).getTime();
-        return bTime - aTime;
-      }),
-    [projectInvoices]
-  );
-
   const pendingInvoices = useMemo(() => [], []);
 
+  const historyPageCount = Math.max(1, Math.ceil(historyTotalCount / historyPageSize));
+
+  const loadHistoryPage = useCallback(async () => {
+    const requestId = ++historyRequestIdRef.current;
+    const visibleIds = Array.from(visibleProjectIds);
+
+    if (visibleIds.length === 0 || (histProjectId !== "all" && !visibleProjectIds.has(String(histProjectId)))) {
+      setHistoryInvoicesPage([]);
+      setHistoryTotalCount(0);
+      setHistoryLoading(false);
+      return;
+    }
+
+    setHistoryLoading(true);
+    setHistoryLoadError("");
+
+    try {
+      const invoicesRef = collection(db, "artifacts", appId, "public", "data", "invoices");
+      const filters: any[] = [
+        where("status", histStatus ? "==" : "in", histStatus || HISTORY_INVOICE_STATUSES),
+      ];
+
+      // A project filter is safe to push down when one project is selected.
+      // When "all projects" is selected, the visible-project check below keeps
+      // legacy records (which may not have a projectId) behaving as before.
+      if (histProjectId !== "all") {
+        filters.push(where("projectId", "==", String(histProjectId)));
+      }
+      if (histPaymentType) filters.push(where("paymentType", "==", histPaymentType));
+
+      const countQuery = query(invoicesRef, ...filters);
+      const pageCursor = historyPageCursorsRef.current[historyPage];
+      const pageQueryParts: any[] = [
+        invoicesRef,
+        ...filters,
+        orderBy("invDate", "desc"),
+      ];
+      if (pageCursor) pageQueryParts.push(startAfter(pageCursor));
+      pageQueryParts.push(limit(historyPageSize));
+      const pageQuery = query(...pageQueryParts);
+
+      const [countSnapshot, pageSnapshot] = await Promise.all([
+        getCountFromServer(countQuery),
+        getDocs(pageQuery),
+      ]);
+
+      if (requestId !== historyRequestIdRef.current) return;
+
+      const pageRows = pageSnapshot.docs
+        .map((entry: any) => ({ id: entry.id, ...entry.data() }))
+        .filter((invoice: any) => invoice.status !== "Draft")
+        .filter((invoice: any) => visibleProjectIds.has(String(getInvoiceProjectId(invoice))));
+
+      if (pageSnapshot.docs.length > 0) {
+        historyPageCursorsRef.current[historyPage + 1] = pageSnapshot.docs[pageSnapshot.docs.length - 1];
+      }
+      setHistoryTotalCount(Number(countSnapshot.data().count || 0));
+      setHistoryInvoicesPage(pageRows);
+    } catch (error: any) {
+      if (requestId !== historyRequestIdRef.current) return;
+      console.error("Error loading paginated invoice history:", error);
+
+      // If Firestore has not built the required composite index yet, keep the
+      // history usable by falling back to the already-synced invoice cache.
+      // The normal path above still reads only the requested page.
+      const localHistoryInvoices = Array.from(
+        new Map((invoices || []).filter((invoice: any) => invoice?.id).map((invoice: any) => [String(invoice.id), invoice])).values()
+      )
+        .filter((invoice: any) => invoice.status !== "Draft")
+        .filter((invoice: any) => visibleProjectIds.has(String(getInvoiceProjectId(invoice))))
+        .filter((invoice: any) => histProjectId === "all" || String(getInvoiceProjectId(invoice)) === String(histProjectId))
+        .filter((invoice: any) => !histPaymentType || invoice.paymentType === histPaymentType)
+        .filter((invoice: any) => !histStatus || getInvoiceDisplayStatus(invoice).toLowerCase() === String(histStatus).toLowerCase())
+        .filter((invoice: any) => {
+          if (!histSearch) return true;
+          const search = histSearch.toLowerCase();
+          return [invoice.invNo, invoice.poNo || invoice.poRef, invoice.vendorName]
+            .some((value: any) => String(value || "").toLowerCase().includes(search));
+        })
+        .sort((a: any, b: any) => {
+          const aTime = new Date(a.invDate || a.createdAt || 0).getTime();
+          const bTime = new Date(b.invDate || b.createdAt || 0).getTime();
+          return bTime - aTime;
+        });
+
+      const localStart = (historyPage - 1) * historyPageSize;
+      setHistoryTotalCount(localHistoryInvoices.length);
+      setHistoryInvoicesPage(localHistoryInvoices.slice(localStart, localStart + historyPageSize));
+      setHistoryLoadError("");
+    } finally {
+      if (requestId === historyRequestIdRef.current) setHistoryLoading(false);
+    }
+  }, [appId, db, getInvoiceDisplayStatus, getInvoiceProjectId, histPaymentType, histProjectId, histSearch, histStatus, historyPage, historyPageSize, invoices, visibleProjectIds]);
+
+  useEffect(() => {
+    historyPageCursorsRef.current = {};
+    setHistoryPage(1);
+  }, [histPaymentType, histProjectId, histSearch, histStatus]);
+
+  useEffect(() => {
+    if (activeTab !== "history") return;
+    loadHistoryPage();
+  }, [activeTab, invoices, loadHistoryPage]);
+
   const filteredHistoryInvoices = useMemo(() => {
-    return historyInvoices.filter((inv) => {
+    return historyInvoicesPage.filter((inv) => {
       if (histProjectId !== "all" && String(getInvoiceProjectId(inv)) !== String(histProjectId)) {
         return false;
       }
@@ -1436,7 +1541,7 @@ const InvoiceView = React.memo(() => {
 
       return true;
     });
-  }, [getInvoiceDisplayStatus, getInvoiceProjectId, histPaymentType, histProjectId, histSearch, histStatus, historyInvoices]);
+  }, [getInvoiceDisplayStatus, getInvoiceProjectId, histPaymentType, histProjectId, histSearch, histStatus, historyInvoicesPage]);
 
   // ─── Computed totals for invoice items ────────────────────────────────────
   const invoiceTotalAmount = useMemo(
@@ -1532,7 +1637,7 @@ const InvoiceView = React.memo(() => {
                     : "bg-amber-50 text-amber-400"
                 }`}
               >
-                {historyInvoices.length}
+                {historyLoading ? "…" : historyTotalCount}
               </span>
             </button>
           </div>
@@ -2034,7 +2139,7 @@ const InvoiceView = React.memo(() => {
               )}
 
               <span className="ml-auto text-[11px] text-amber-400">
-                {filteredHistoryInvoices.length} รายการ
+                {filteredHistoryInvoices.length} รายการในหน้านี้ · ทั้งหมด {historyTotalCount} รายการ
               </span>
             </div>
           </Card>
@@ -2058,7 +2163,13 @@ const InvoiceView = React.memo(() => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-amber-50">
-                {filteredHistoryInvoices.length === 0 ? (
+                {historyLoading ? (
+                  <tr>
+                    <td colSpan={11} className="py-10 text-center text-slate-400">
+                      กำลังโหลดประวัติ Invoice...
+                    </td>
+                  </tr>
+                ) : filteredHistoryInvoices.length === 0 ? (
                   <tr>
                     <td
                       colSpan={11}
@@ -2194,7 +2305,7 @@ const InvoiceView = React.memo(() => {
                   <td className="py-2 px-3"></td>
                   <td className="py-2 px-3"></td>
                   <td className="hidden py-2 px-3 md:table-cell"></td>
-                  <td colSpan={2} className="py-2 px-3 text-right text-xs font-semibold text-amber-700">ยอดรวมทั้งหมด:</td>
+                  <td colSpan={2} className="py-2 px-3 text-right text-xs font-semibold text-amber-700">ยอดรวมหน้านี้:</td>
                   <td className="py-2 px-3 text-right text-sm font-bold text-amber-900">
                     {formatCurrency(historyInvoicesTotals.grand)}
                   </td>
@@ -2204,6 +2315,62 @@ const InvoiceView = React.memo(() => {
               </tfoot>
             </table>
           </Card>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-100 bg-white px-3 py-2 text-xs text-slate-500">
+            <div className="flex items-center gap-2">
+              <span>แสดงหน้าที่ {historyPage} จาก {historyPageCount}</span>
+              <label className="flex items-center gap-1">
+                <span>รายการต่อหน้า</span>
+                <select
+                  value={historyPageSize}
+                  onChange={(event) => {
+                    historyPageCursorsRef.current = {};
+                    setHistoryPageSize(Number(event.target.value));
+                    setHistoryPage(1);
+                  }}
+                  className="rounded-lg border border-amber-200 bg-white px-2 py-1 text-xs font-semibold text-slate-600 focus:outline-none focus:ring-2 focus:ring-amber-200"
+                  aria-label="จำนวน Invoice ต่อหน้า"
+                >
+                  {HISTORY_PAGE_SIZE_OPTIONS.map((size) => (
+                    <option key={size} value={size}>{size}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setHistoryPage((page) => Math.max(1, page - 1))}
+                disabled={historyLoading || historyPage <= 1}
+                className="rounded-lg border border-amber-200 px-2.5 py-1 font-semibold text-amber-700 transition-colors hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                ก่อนหน้า
+              </button>
+              <span className="min-w-[72px] text-center font-semibold text-slate-600">
+                {historyPage} / {historyPageCount}
+              </span>
+              <button
+                type="button"
+                onClick={() => setHistoryPage((page) => Math.min(historyPageCount, page + 1))}
+                disabled={historyLoading || historyPage >= historyPageCount}
+                className="rounded-lg border border-amber-200 px-2.5 py-1 font-semibold text-amber-700 transition-colors hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                ถัดไป
+              </button>
+            </div>
+          </div>
+          {historyLoadError && (
+            <div className="flex items-center justify-between gap-2 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600">
+              <span>{historyLoadError}</span>
+              <button
+                type="button"
+                onClick={loadHistoryPage}
+                className="font-semibold underline underline-offset-2"
+              >
+                ลองใหม่
+              </button>
+            </div>
+          )}
         </div>
       )}
 

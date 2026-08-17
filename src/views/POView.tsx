@@ -105,6 +105,31 @@ const createReceiveSetupDraft = (items = [], vendorName = "", existingSetup = nu
   items: syncReceiveSetupItems(items, existingSetup?.items || []),
 });
 
+// Keep numeric form values unformatted internally, but show thousands separators
+// while the user is typing in the Create PO item table.
+const normalizeNumericInput = (value: string) => {
+  const raw = String(value ?? "").replace(/,/g, "").replace(/[^\d.-]/g, "");
+  const sign = raw.startsWith("-") ? "-" : "";
+  const unsigned = raw.replace(/-/g, "");
+  const [integer = "", ...decimalParts] = unsigned.split(".");
+  const decimal = decimalParts.join("");
+  return `${sign}${integer}${decimalParts.length > 0 ? `.${decimal}` : ""}`;
+};
+
+const formatNumericInput = (value: unknown) => {
+  const raw = String(value ?? "");
+  if (!raw) return "";
+  if ((["-", ".", "-."]).includes(raw)) return raw;
+
+  const normalized = normalizeNumericInput(raw);
+  if (!normalized || (["-", ".", "-."]).includes(normalized)) return normalized;
+  const sign = normalized.startsWith("-") ? "-" : "";
+  const unsigned = normalized.replace(/^-/, "");
+  const [integer = "0", decimal] = unsigned.split(".");
+  const formattedInteger = Number(integer || 0).toLocaleString("en-US");
+  return `${sign}${formattedInteger}${decimal !== undefined ? `.${decimal}` : ""}`;
+};
+
 const POView = React.memo(() => {
   const L = {
     docName: "PO",
@@ -400,6 +425,7 @@ const POView = React.memo(() => {
     enabled: isModalOpen && formData.selectedPrIds.length > 0,
     driftKey: "description",
     handleColumnResize,
+    fitToContainer: false,
   });
 
   const selectPrLayout = useProportionalTableLayout({
@@ -962,6 +988,24 @@ const POView = React.memo(() => {
     });
     return items;
   }, [formData.selectedPrIds, approvedPRs, pos, budgets, editingPoId]);
+
+  const selectItemsNumericMinWidths = useMemo(() => {
+    const formItems = formData.items || [];
+    const valuesFor = (key: "quantity" | "price") => [
+      ...availableItems.map((item: any) => item[key === "quantity" ? "orderQty" : "price"]),
+      ...formItems.map((item: any) => item[key]),
+    ];
+    const widthFor = (values: unknown[], base: number) => Math.max(
+      base,
+      ...values.map((value) => formatNumericInput(value).length * 8 + 32)
+    );
+    const totalValues = formItems.map((item: any) => formatCurrency(Number(item.quantity) * Number(item.price)));
+    return {
+      orderQty: widthFor(valuesFor("quantity"), 96),
+      price: widthFor(valuesFor("price"), 112),
+      total: Math.max(96, ...totalValues.map((value) => value.length * 7 + 28)),
+    };
+  }, [availableItems, formData.items]);
 
 
   // ยอดคงเหลือของแต่ละ PR (ยอด PR - ยอดที่ PO ใช้ไปแล้ว)
@@ -4841,8 +4885,11 @@ const POView = React.memo(() => {
                       </div>
 
                       <div className="p-4 overflow-hidden w-full min-w-0">
-                        <div ref={selectItemsTableRef} className="w-full min-w-0">
-                          <table className="w-full text-left text-xs rounded-xl border border-slate-200 table-fixed">
+                        <div ref={selectItemsTableRef} className="w-full min-w-0 overflow-x-auto pb-1">
+                          <table
+                            className="text-left text-xs rounded-xl border border-slate-200 table-fixed"
+                            style={{ width: "max-content", minWidth: "100%" }}
+                          >
                             <thead className="bg-slate-100 font-semibold text-slate-800 border-b border-slate-200">
                               <tr>
                                 <th className="p-2.5 text-center" style={{ width: selectItemsLayout.scaled.pick }}>เลือก</th>
@@ -4851,10 +4898,10 @@ const POView = React.memo(() => {
                                 <ResizableTh tableId="select-items" colKey="materialNo" className="p-2.5" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={selectItemsLayout.scaled.materialNo}>Material No.</ResizableTh>
                                 <ResizableTh tableId="select-items" colKey="description" className="p-2.5" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={selectItemsLayout.scaled.description}>รายการ</ResizableTh>
                                 <ResizableTh tableId="select-items" colKey="unit" className="p-2.5" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={selectItemsLayout.scaled.unit}>หน่วย</ResizableTh>
-                                <ResizableTh tableId="select-items" colKey="orderQty" className="p-2.5" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={selectItemsLayout.scaled.orderQty}>สั่งซื้อ (QTY)</ResizableTh>
-                                <ResizableTh tableId="select-items" colKey="price" className="p-2.5" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={selectItemsLayout.scaled.price}>ราคา/หน่วย</ResizableTh>
-                                <ResizableTh tableId="select-items" colKey="total" className="p-2.5 text-right" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={selectItemsLayout.scaled.total}>รวม</ResizableTh>
-                                <th className="p-2.5" style={{ width: selectItemsLayout.scaled.disPr }}>Dis PR</th>
+                                <ResizableTh tableId="select-items" colKey="orderQty" className="p-2.5" style={{ minWidth: selectItemsNumericMinWidths.orderQty }} isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={selectItemsLayout.scaled.orderQty}>สั่งซื้อ (QTY)</ResizableTh>
+                                <ResizableTh tableId="select-items" colKey="price" className="p-2.5" style={{ minWidth: selectItemsNumericMinWidths.price }} isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={selectItemsLayout.scaled.price}>ราคา/หน่วย</ResizableTh>
+                                <ResizableTh tableId="select-items" colKey="total" className="p-2.5 text-right" style={{ minWidth: selectItemsNumericMinWidths.total }} isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={selectItemsLayout.scaled.total}>รวม</ResizableTh>
+                                <th className="p-2" style={{ width: selectItemsLayout.scaled.disPr, minWidth: selectItemsLayout.scaled.disPr }}>Dis PR</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-200 bg-white">
@@ -4914,29 +4961,31 @@ const POView = React.memo(() => {
                                       />
                                     </td>
                                     {/* สั่งซื้อ (QTY) — editable */}
-                                    <td className="p-2.5">
+                                    <td className="p-2.5" style={{ minWidth: selectItemsNumericMinWidths.orderQty }}>
                                       <input
-                                        type="number"
+                                        type="text"
+                                        inputMode="decimal"
                                         className={`${inputCls} text-right`}
                                         disabled={!isSelected}
-                                        value={selectedData.quantity}
-                                        onChange={(e) => handleItemChange(item.prId, item.prItemIndex, "quantity", e.target.value)}
+                                        value={formatNumericInput(selectedData.quantity)}
+                                        onChange={(e) => handleItemChange(item.prId, item.prItemIndex, "quantity", normalizeNumericInput(e.target.value))}
                                       />
                                     </td>
                                     {/* ราคา/หน่วย — editable */}
-                                    <td className="p-2.5">
+                                    <td className="p-2.5" style={{ minWidth: selectItemsNumericMinWidths.price }}>
                                       <input
-                                        type="number"
+                                        type="text"
+                                        inputMode="decimal"
                                         className={`${inputCls} text-right`}
                                         disabled={!isSelected}
-                                        value={selectedData.price}
-                                        onChange={(e) => handleItemChange(item.prId, item.prItemIndex, "price", e.target.value)}
+                                        value={formatNumericInput(selectedData.price)}
+                                        onChange={(e) => handleItemChange(item.prId, item.prItemIndex, "price", normalizeNumericInput(e.target.value))}
                                       />
                                     </td>
-                                    <td className="p-2.5 text-right font-bold text-slate-800 whitespace-nowrap">
+                                    <td className="p-2.5 text-right font-bold text-slate-800 whitespace-nowrap" style={{ minWidth: selectItemsNumericMinWidths.total }}>
                                       {formatCurrency(Number(selectedData.quantity) * Number(selectedData.price))}
                                     </td>
-                                    <td className="p-2.5">
+                                    <td className="p-2" style={{ width: selectItemsLayout.scaled.disPr, minWidth: selectItemsLayout.scaled.disPr }}>
                                       {(() => {
                                         const plan: string[] = Array.isArray(selectedData.disPrPlan) ? selectedData.disPrPlan : [];
                                         const key = getDisPrKeyForItem(item.prId, item.prItemIndex);
@@ -4948,7 +4997,7 @@ const POView = React.memo(() => {
                                               type="button"
                                               disabled={!isSelected}
                                               onClick={(e) => toggleDisPrPick(key, (e.currentTarget as any)?.getBoundingClientRect?.() || null)}
-                                              className={`w-full min-w-[120px] text-left rounded-lg px-2 py-1.5 text-xs bg-white ${borderCls} border disabled:bg-slate-50 disabled:text-slate-400`}
+                                              className={`w-full min-w-0 text-left rounded-lg px-1.5 py-1 text-xs bg-white ${borderCls} border disabled:bg-slate-50 disabled:text-slate-400`}
                                               title="เลือก PR ที่จะตัดยอด (เรียงตามลำดับที่เลือก)"
                                             >
                                               {plan.length === 0 ? (
@@ -4956,7 +5005,7 @@ const POView = React.memo(() => {
                                               ) : (
                                                 <span className="flex flex-wrap gap-1">
                                                   {plan.map((p) => (
-                                                    <span key={p} className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 text-[10px] font-semibold">
+                                                    <span key={p} className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 text-[9px] font-semibold whitespace-nowrap">
                                                       {p}
                                                     </span>
                                                   ))}
@@ -5026,16 +5075,16 @@ const POView = React.memo(() => {
                                     <td className="p-2.5">
                                       <input type="text" className={`${inputCls} w-16`} placeholder="หน่วย" value={freeItem.unit || ""} onChange={e => handleFreeItemChange(freeItem.id, "unit", e.target.value)} />
                                     </td>
-                                    <td className="p-2.5">
-                                      <input type="number" className={`${inputCls} text-right`} value={freeItem.quantity} onChange={e => handleFreeItemChange(freeItem.id, "quantity", e.target.value)} />
+                                    <td className="p-2.5" style={{ minWidth: selectItemsNumericMinWidths.orderQty }}>
+                                      <input type="text" inputMode="decimal" className={`${inputCls} text-right`} value={formatNumericInput(freeItem.quantity)} onChange={e => handleFreeItemChange(freeItem.id, "quantity", normalizeNumericInput(e.target.value))} />
                                     </td>
-                                    <td className="p-2.5">
-                                      <input type="number" className={`${inputCls} text-right`} value={freeItem.price} onChange={e => handleFreeItemChange(freeItem.id, "price", e.target.value)} />
+                                    <td className="p-2.5" style={{ minWidth: selectItemsNumericMinWidths.price }}>
+                                      <input type="text" inputMode="decimal" className={`${inputCls} text-right`} value={formatNumericInput(freeItem.price)} onChange={e => handleFreeItemChange(freeItem.id, "price", normalizeNumericInput(e.target.value))} />
                                     </td>
-                                    <td className="p-2.5 text-right font-bold text-slate-800 whitespace-nowrap">
+                                    <td className="p-2.5 text-right font-bold text-slate-800 whitespace-nowrap" style={{ minWidth: selectItemsNumericMinWidths.total }}>
                                       {formatCurrency(Number(freeItem.quantity) * Number(freeItem.price))}
                                     </td>
-                                    <td className="p-2.5">
+                                    <td className="p-2" style={{ width: selectItemsLayout.scaled.disPr, minWidth: selectItemsLayout.scaled.disPr }}>
                                       {(() => {
                                         const plan: string[] = Array.isArray(freeItem.disPrPlan) ? freeItem.disPrPlan : [];
                                         const key = getDisPrKeyForFree(freeItem.id);
@@ -5046,7 +5095,7 @@ const POView = React.memo(() => {
                                             <button
                                               type="button"
                                               onClick={(e) => toggleDisPrPick(key, (e.currentTarget as any)?.getBoundingClientRect?.() || null)}
-                                              className={`w-full min-w-[120px] text-left rounded-lg px-2 py-1.5 text-xs bg-white ${borderCls} border`}
+                                              className={`w-full min-w-0 text-left rounded-lg px-1.5 py-1 text-xs bg-white ${borderCls} border`}
                                               title="เลือก PR ที่จะตัดยอด (เรียงตามลำดับที่เลือก)"
                                             >
                                               {plan.length === 0 ? (
@@ -5054,7 +5103,7 @@ const POView = React.memo(() => {
                                               ) : (
                                                 <span className="flex flex-wrap gap-1">
                                                   {plan.map((p) => (
-                                                    <span key={p} className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 text-[10px] font-semibold">
+                                                    <span key={p} className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 text-[9px] font-semibold whitespace-nowrap">
                                                       {p}
                                                     </span>
                                                   ))}

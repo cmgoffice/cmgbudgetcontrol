@@ -26,7 +26,14 @@ import { Card, Button, InputGroup, Badge, formatCurrency } from "./components/ui
 import ResizableTh from "./components/ResizableTh";
 import { useProportionalTableLayout, chainTableResizeHandlers } from "./hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "./lib/tableLayoutDefaults";
-import { MODULE_ACCESS, MODULE_FUNCTIONS, PURCHASE_TYPES } from "./lib/constants";
+import {
+  MODULE_ACCESS,
+  MODULE_FUNCTIONS,
+  PURCHASE_TYPES,
+  PO_REVISION_PENDING_PCM,
+  PO_REVISION_PENDING_GM,
+  PR_PENDING_ACTIVE,
+} from "./lib/constants";
 import { getPoItemsGrossSubtotal } from "./lib/poDiscount";
 import { AuthContext } from "./auth/AuthContext";
 import { useAppData } from "./contexts/AppDataContext";
@@ -213,6 +220,12 @@ const AppShell = () => {
   const sidebarDense = isCompactViewport;
   const shouldShowSidebar = !isFullScreenModalOpen;
   const moduleMenus = ["budget", "pr", "po", "payment-subcontract", "invoice", "billing", "pay", "receive"].includes(activeMenu);
+  const selectedProjectPending = pendingByProject?.find((item: any) => item.projectId === selectedProjectId);
+  const tabPendingCounts = {
+    pr: selectedProjectPending?.prs || 0,
+    po: selectedProjectPending?.pos || 0,
+    payment: selectedProjectPending?.payments || 0,
+  };
 
   return (
     <div className="app-shell-root relative flex overflow-hidden bg-slate-100 font-sans">
@@ -771,7 +784,14 @@ const AppShell = () => {
                           : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                           }`}
                       >
-                        <span className="flex items-center gap-2"><FileText size={16} /> ระบบ PR</span>
+                        <span className="flex items-center gap-2">
+                          <FileText size={16} /> ระบบ PR
+                          {tabPendingCounts.pr > 0 && (
+                            <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] leading-none text-white shadow-sm" title="รายการรอ action">
+                              {tabPendingCounts.pr > 99 ? "99+" : tabPendingCounts.pr}
+                            </span>
+                          )}
+                        </span>
                       </button>
                       <button
                         type="button"
@@ -781,7 +801,14 @@ const AppShell = () => {
                           : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                           }`}
                       >
-                        <span className="flex items-center gap-2"><FileSpreadsheet size={16} /> Log PR</span>
+                        <span className="flex items-center gap-2">
+                          <FileSpreadsheet size={16} /> Log PR
+                          {tabPendingCounts.pr > 0 && (
+                            <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] leading-none text-white shadow-sm" title="รายการรอ action">
+                              {tabPendingCounts.pr > 99 ? "99+" : tabPendingCounts.pr}
+                            </span>
+                          )}
+                        </span>
                       </button>
                     </div>
                     {prTab === "system" && <PRView />}
@@ -818,7 +845,14 @@ const AppShell = () => {
                           : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                           }`}
                       >
-                        <span className="flex items-center gap-2"><ShoppingCart size={16} /> ระบบ PO</span>
+                        <span className="flex items-center gap-2">
+                          <ShoppingCart size={16} /> ระบบ PO
+                          {tabPendingCounts.po > 0 && (
+                            <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] leading-none text-white shadow-sm" title="รายการรอ action">
+                              {tabPendingCounts.po > 99 ? "99+" : tabPendingCounts.po}
+                            </span>
+                          )}
+                        </span>
                       </button>
                       <button
                         type="button"
@@ -828,7 +862,14 @@ const AppShell = () => {
                           : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                           }`}
                       >
-                        <span className="flex items-center gap-2"><FileSpreadsheet size={16} /> Log PO</span>
+                        <span className="flex items-center gap-2">
+                          <FileSpreadsheet size={16} /> Log PO
+                          {tabPendingCounts.po > 0 && (
+                            <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] leading-none text-white shadow-sm" title="รายการรอ action">
+                              {tabPendingCounts.po > 99 ? "99+" : tabPendingCounts.po}
+                            </span>
+                          )}
+                        </span>
                       </button>
                     </div>
                     {poTab === "system" && <POView />}
@@ -865,7 +906,14 @@ const AppShell = () => {
                           : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                           }`}
                       >
-                        <span className="flex items-center gap-2"><CreditCard size={16} />Payment Subcontractor</span>
+                        <span className="flex items-center gap-2">
+                          <CreditCard size={16} />Payment Subcontractor
+                          {tabPendingCounts.payment > 0 && (
+                            <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] leading-none text-white shadow-sm" title="รายการรอ action">
+                              {tabPendingCounts.payment > 99 ? "99+" : tabPendingCounts.payment}
+                            </span>
+                          )}
+                        </span>
                       </button>
                       <button
                         type="button"
@@ -875,7 +923,14 @@ const AppShell = () => {
                           : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                           }`}
                       >
-                        <span className="flex items-center gap-2"><FileSpreadsheet size={16} />Log Payment</span>
+                        <span className="flex items-center gap-2">
+                          <FileSpreadsheet size={16} />Log Payment
+                          {tabPendingCounts.payment > 0 && (
+                            <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] leading-none text-white shadow-sm" title="รายการรอ action">
+                              {tabPendingCounts.payment > 99 ? "99+" : tabPendingCounts.payment}
+                            </span>
+                          )}
+                        </span>
                       </button>
                     </div>
                     {paymentSubTab === "system" && <PaymentView />}
@@ -1097,7 +1152,23 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   openConfirm?: (title: string, message: string, onConfirm: () => void | Promise<void>, variant?: string) => void;
   selectedProjectId?: string | null;
 }) => {
-  const { canUseFunction, userRoles = [], userData, user, logAction, isColumnVisible, invoices = [], receives = [], payments = [], pays = [] } = useAppData();
+  const {
+    canUseFunction,
+    userRoles = [],
+    userData,
+    user,
+    logAction,
+    isColumnVisible,
+    invoices = [],
+    receives = [],
+    payments = [],
+    pays = [],
+    pendingPRsGlobal = [],
+    pendingPOsGlobal = [],
+    handlePRAction,
+    handlePOAction,
+    handlePORevisionAllow,
+  } = useAppData();
   const PAGE_SIZE = 50;
   const ALL_TYPE_TAB_KEY = "__all__";
   const tableModule = mode === "pr" ? "pr-table" : "po-table";
@@ -1115,6 +1186,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   const [emailModal, setEmailModal] = React.useState<{ doc: any; kind: "pr" | "po" } | null>(null);
   const [emailTo, setEmailTo] = React.useState("");
   const [pdfLoadingId, setPdfLoadingId] = React.useState<string | null>(null);
+  const [pendingActionId, setPendingActionId] = React.useState<string | null>(null);
   const [pdfPreviewUrl, setPdfPreviewUrl] = React.useState<string | null>(null);
   const [viewingPO, setViewingPO] = React.useState<any>(null);
   const [isReturnBalanceModalOpen, setIsReturnBalanceModalOpen] = React.useState(false);
@@ -1154,6 +1226,121 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   };
 
   const isPR = mode === "pr";
+  const getRowStatus = React.useCallback((row: any) => {
+    if (isPR) return row?.status || "Draft";
+    return row?.statusNow || row?.status || "Draft";
+  }, [isPR]);
+  const getPendingTaskStatus = React.useCallback((row: any) => {
+    if (isPR) return getRowStatus(row);
+    const workflowStatus = String(row?.status || "");
+    const workflowStatuses = [
+      "Pending PCM",
+      "Pending GM",
+      PO_REVISION_PENDING_PCM,
+      PO_REVISION_PENDING_GM,
+      "Pending Close PO",
+      "Closed PO",
+    ];
+    return workflowStatuses.includes(workflowStatus) ? workflowStatus : getRowStatus(row);
+  }, [getRowStatus, isPR]);
+  const isPaidLikePo = React.useCallback((row: any) => {
+    if (isPR) return false;
+    return ["paid", "Paid", "Deposit", "Invcredit", "Inpay"].includes(String(getRowStatus(row)));
+  }, [getRowStatus, isPR]);
+  const pendingRows = isPR ? pendingPRsGlobal : pendingPOsGlobal;
+  const pendingRowIds = React.useMemo(
+    () => new Set((pendingRows || []).map((row: any) => String(row?.id || ""))),
+    [pendingRows]
+  );
+  const isNotificationRow = React.useCallback(
+    (row: any) => Boolean(row?.id && pendingRowIds.has(String(row.id))),
+    [pendingRowIds]
+  );
+  const isActionTaskRow = React.useCallback(
+    (row: any) => {
+      if (!isPR && isPaidLikePo(row)) return false;
+      return Boolean(
+        isNotificationRow(row) ||
+        (!isPR && row?.status === "Closed PO" && userRoles.includes("Administrator"))
+      );
+    },
+    [isNotificationRow, isPaidLikePo, isPR, userRoles]
+  );
+
+  const getPendingActionLabel = React.useCallback((row: any) => {
+    const status = getPendingTaskStatus(row);
+    if (isPR) {
+      if (status === "Pending CM") return "CM Approve";
+      if (status === "Pending PM") return "PM Approve";
+      if (status === "Pending GM") return "GM Approve";
+      if (status === "Pending MD") return "MD Approve";
+      if (status === PR_PENDING_ACTIVE) return "Approve Active PR";
+      if (status === "Pending Close") return "ยืนยันปิด PR";
+      if (status === "Edit Budget") return "Edit Budget PR";
+    } else {
+      if (status === "Pending PCM") return "PCM Approve";
+      if (status === "Pending GM") return "GM Approve";
+      if (status === PO_REVISION_PENDING_PCM) return "อนุญาตแก้ไข PO";
+      if (status === PO_REVISION_PENDING_GM) return "อนุญาตแก้ไข PO";
+      if (status === "Pending Close PO") return "ยืนยันปิด PO";
+      if (status === "Closed PO" && userRoles.includes("Administrator")) return "Active PO";
+    }
+    if (status.startsWith("Pending ")) return `Approve ${status.replace(/^Pending\s+/, "")}`;
+    return isPR ? "เปิด PR" : "เปิด PO";
+  }, [getPendingTaskStatus, isPR, userRoles]);
+
+  const handlePendingTask = React.useCallback(async (row: any) => {
+    if (!row?.id || pendingActionId) return;
+    const status = getPendingTaskStatus(row);
+    setPendingActionId(String(row.id));
+    try {
+      if (isPR) {
+        if (["Pending CM", "Pending PM", "Pending GM", "Pending MD"].includes(status)) {
+          await handlePRAction?.(row.id, "approve");
+        } else if (status === PR_PENDING_ACTIVE) {
+          const { status: resume, usedAmount, totalAmount } = getResumeStatusForPR(row, pos);
+          await updateData?.("prs", row.id, {
+            status: resume,
+            preCloseStatus: null,
+            activeRequestedAt: null,
+          }, { skipLog: true });
+          await logAction?.(
+            "Approved Active PR",
+            `อนุมัติ Active PR ${row.prNo || row.id} → ${resume} (PO linked ${formatCurrency(usedAmount)} / PR ${formatCurrency(totalAmount)})`,
+            row.projectId
+          );
+        } else if (status === "Pending Close") {
+          await updateData?.("prs", row.id, { status: "Closed PR", preCloseStatus: row.preCloseStatus || row.status }, { skipLog: true });
+          await logAction?.("Approve", `Confirm Close PR ${row.prNo || row.id}: ${row.status} → Closed PR`, row.projectId);
+        } else {
+          showAlert?.(getPendingActionLabel(row), "กรุณาดำเนินการต่อในหน้า PR หลัก", "info");
+        }
+      } else if (["Pending PCM", "Pending GM"].includes(status)) {
+        await handlePOAction?.(row.id, "approve");
+      } else if ([PO_REVISION_PENDING_PCM, PO_REVISION_PENDING_GM].includes(status)) {
+        await handlePORevisionAllow?.(row.id);
+      } else if (status === "Pending Close PO") {
+        await updateData?.("pos", row.id, { status: "Closed PO" }, { skipLog: true });
+        await logAction?.("Approve", `Confirm Close PO ${row.poNo || row.id}: ${row.status} → Closed PO`, row.projectId);
+      } else if (status === "Closed PO" && userRoles.includes("Administrator")) {
+        openConfirm?.(
+          "Active PO",
+          `การคืนสถานะ PO ${row.poNo || row.id} จะเปลี่ยนสถานะกลับเป็น Approved และลบ Invoice/Receive ที่ผูกไว้ ต้องการดำเนินการต่อหรือไม่?`,
+          async () => handleActivePO(row),
+          "danger",
+          {
+            requireText: "Confirm",
+            requireTextLabel: "พิมพ์ Confirm เพื่อยืนยันการ Active PO",
+            requireTextPlaceholder: "Confirm",
+          }
+        );
+      } else {
+        showAlert?.(getPendingActionLabel(row), "กรุณาดำเนินการต่อในหน้า PO หลัก", "info");
+      }
+    } finally {
+      setPendingActionId(null);
+    }
+  }, [getPendingTaskStatus, handlePOAction, handlePORevisionAllow, handlePRAction, isPR, logAction, openConfirm, pendingActionId, pos, showAlert, updateData, userRoles]);
   const canViewPrBalance = isPR && canUseFunction("pr-table", "viewBalance");
   const canReturnPrBalance = isPR && canUseFunction("pr-table", "returnBalance");
 
@@ -1753,12 +1940,9 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   };
 
   const rows = isPR ? prs : pos;
-  const getRowStatus = React.useCallback((row: any) => {
-    if (isPR) return row?.status || "Draft";
-    return row?.statusNow || row?.status || "Draft";
-  }, [isPR]);
 
-  const filtered = React.useMemo(() => rows.filter((r: any) => {
+  const filtered = React.useMemo(() => {
+    const matchedRows = rows.filter((r: any) => {
     const noField = isPR ? r.prNo : r.poNo;
     const rowStatus = getRowStatus(r);
     const lowerSearch = (searchTerm || "").toLowerCase();
@@ -1812,8 +1996,14 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       rowStatus === filterStatus ||
       (!isPR && (r.status === filterStatus || r.statusNow === filterStatus));
     const matchProject = filterProject === "all" || r.projectId === filterProject;
-    return matchSearch && matchStatus && matchProject;
-  }), [filterProject, filterStatus, getPoLinkedPrMeta, getRowStatus, isPR, pos, projectById, rows, searchTerm, vendorById]);
+      return matchSearch && matchStatus && matchProject;
+    });
+
+    // ให้รายการที่ผู้ใช้ต้องดำเนินการขึ้นก่อนเสมอ ก่อนแบ่งหน้าและแบ่งแท็บ Type
+    return matchedRows.sort((a: any, b: any) =>
+      Number(isNotificationRow(b)) - Number(isNotificationRow(a))
+    );
+  }, [filterProject, filterStatus, getPoLinkedPrMeta, getRowStatus, isNotificationRow, isPR, pos, projectById, rows, searchTerm, vendorById]);
 
   const getShortTypeLabel = React.useCallback((typeValue: any) => {
     const raw = String(typeValue || "").trim();
@@ -1823,20 +2013,22 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   }, []);
 
   const typeTabs = React.useMemo(() => {
-    const groups = new Map<string, { key: string; label: string; rows: any[] }>();
+    const groups = new Map<string, { key: string; label: string; rows: any[]; notificationCount: number }>();
     filtered.forEach((row: any) => {
       const rawType = isPR ? row.purchaseType : row.poType;
       const key = String(rawType || "ไม่ระบุ Type");
       if (!groups.has(key)) {
-        groups.set(key, { key, label: getShortTypeLabel(rawType), rows: [] });
+        groups.set(key, { key, label: getShortTypeLabel(rawType), rows: [], notificationCount: 0 });
       }
-      groups.get(key)!.rows.push(row);
+      const group = groups.get(key)!;
+      group.rows.push(row);
+      if (isNotificationRow(row)) group.notificationCount += 1;
     });
     const tabs = Array.from(groups.values()).sort((a, b) =>
       a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: "base" })
     );
-    return [...tabs, { key: ALL_TYPE_TAB_KEY, label: "All", rows: filtered }];
-  }, [ALL_TYPE_TAB_KEY, filtered, getShortTypeLabel, isPR]);
+    return [...tabs, { key: ALL_TYPE_TAB_KEY, label: "All", rows: filtered, notificationCount: filtered.filter(isNotificationRow).length }];
+  }, [ALL_TYPE_TAB_KEY, filtered, getShortTypeLabel, isNotificationRow, isPR]);
 
   React.useEffect(() => {
     if (typeTabs.length === 0) {
@@ -1982,6 +2174,11 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                   <span className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] ${active ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"}`}>
                     {tab.rows.length}
                   </span>
+                  {tab.notificationCount > 0 && (
+                    <span className="ml-1 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] leading-none text-white shadow-sm" title="รายการรอ action">
+                      {tab.notificationCount > 99 ? "99+" : tab.notificationCount}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -2088,7 +2285,19 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                   return (
                     <tr key={r.id} className={`hover:bg-blue-50/40 transition-colors cursor-pointer ${isEven ? "bg-white" : "bg-slate-50/40"}`} onClick={() => { if (!isPR) setViewingPO(r); }}>
                       {isColumnVisible(tblId, "action") && <td className="px-2 py-0.5 md:hidden" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-start gap-1">
+                        {isActionTaskRow(r) && (
+                          <button
+                            type="button"
+                            disabled={pendingActionId === String(r.id)}
+                            className="inline-flex items-center gap-1 rounded-md bg-red-600 px-2 py-1 text-[10px] font-bold text-white shadow-sm transition-colors hover:bg-red-700 disabled:cursor-wait disabled:opacity-60 animate-pulse"
+                            title={getPendingActionLabel(r)}
+                            onClick={() => handlePendingTask(r)}
+                          >
+                            <Flame size={12} />
+                            {pendingActionId === String(r.id) ? "กำลังดำเนินการ..." : getPendingActionLabel(r)}
+                          </button>
+                        )}
+                        <div className={isActionTaskRow(r) ? "hidden" : "flex items-center justify-start gap-1"}>
                           {canUseFunction(tableModule, "email") && (
                             <button type="button" disabled={pdfLoadingId === r.id} className="p-1 rounded hover:bg-slate-200 text-slate-600 hover:text-slate-800 disabled:opacity-40" title="ส่งไฟล์ PDF ทางเมล" onClick={() => { setEmailModal({ doc: r, kind: isPR ? "pr" : "po" }); setEmailTo(""); }}>
                               <Mail size={13} />
@@ -2105,7 +2314,14 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                           )}
                         </div>
                       </td>}
-                      {isColumnVisible(tblId, "rowNum") && <td className="px-2 py-0.5 text-slate-400 font-mono">{pageStart + idx + 1}</td>}
+                      {isColumnVisible(tblId, "rowNum") && (
+                        <td className="px-2 py-0.5 text-slate-400 font-mono">
+                          <span className="inline-flex items-center gap-1.5" title={isNotificationRow(r) ? "มีรายการรอ action" : undefined}>
+                            {isNotificationRow(r) && <span className="h-2 w-2 shrink-0 rounded-full bg-red-500 shadow-sm" aria-label="มีรายการรอ action" />}
+                            {pageStart + idx + 1}
+                          </span>
+                        </td>
+                      )}
                       {isColumnVisible(tblId, "no") && (
                         <td className="px-2 py-0.5 font-bold text-slate-800 whitespace-nowrap">
                           <div className="flex items-center gap-1">
@@ -2204,7 +2420,19 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                         </td>
                       )}
                       {isColumnVisible(tblId, "action") && <td className="px-2 py-0.5" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-center gap-1">
+                        {isActionTaskRow(r) && (
+                          <button
+                            type="button"
+                            disabled={pendingActionId === String(r.id)}
+                            className="mx-auto inline-flex items-center gap-1 rounded-md bg-red-600 px-2.5 py-1 text-[10px] font-bold text-white shadow-sm transition-colors hover:bg-red-700 disabled:cursor-wait disabled:opacity-60 animate-pulse"
+                            title={getPendingActionLabel(r)}
+                            onClick={() => handlePendingTask(r)}
+                          >
+                            <Flame size={12} />
+                            {pendingActionId === String(r.id) ? "กำลังดำเนินการ..." : getPendingActionLabel(r)}
+                          </button>
+                        )}
+                        <div className={isActionTaskRow(r) ? "hidden" : "flex items-center justify-center gap-1"}>
                           {canUseFunction(tableModule, "email") && (
                             <button type="button" disabled={pdfLoadingId === r.id} className="p-1 rounded hover:bg-slate-200 text-slate-600 hover:text-slate-800 disabled:opacity-40" title="ส่งไฟล์ PDF ทางเมล" onClick={() => { setEmailModal({ doc: r, kind: isPR ? "pr" : "po" }); setEmailTo(""); }}>
                               <Mail size={13} />
@@ -2281,7 +2509,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                               </button>
                             );
                           })()}
-                          {canUseFunction(tableModule, "requestClosePO") && !isPR && r.status !== "Closed PO" && r.status !== "Pending Close PO" && r.status !== "Received" && (
+                          {canUseFunction(tableModule, "requestClosePO") && !isPR && !isPaidLikePo(r) && r.status !== "Closed PO" && r.status !== "Pending Close PO" && r.status !== "Received" && (
                             <button type="button" className="p-1.5 rounded hover:bg-amber-100 text-amber-700" title="ขอปิด PO (รอ PCM ยืนยัน)" onClick={() => openConfirm?.("ขอปิด PO", "เมื่อ PCM ยืนยันแล้ว สถานะจะเป็น Closed PO", async () => {
                               await updateData?.("pos", r.id, { status: "Pending Close PO", closeRequestedAt: new Date().toISOString() }, { skipLog: true });
                               await logAction?.("Submit", `Request Close PO ${r.poNo || r.id}: ${r.status} → Pending Close PO`, r.projectId);
