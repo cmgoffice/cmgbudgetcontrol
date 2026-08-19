@@ -341,7 +341,7 @@ const PRView = React.memo(() => {
       return showAlert("กรุณาระบุเหตุผล", "กรุณากรอกเหตุผลการคืน Budget จาก PR", "warning");
     }
 
-    const revisedTotalRaw = Math.max(0, latestInfo.currentTotal - requested);
+    const revisedTotalRaw = Math.max(0, latestInfo.currentTotal - requested - Number(latestInfo.procurementSavingAmount || 0));
     const revisedTotal = Math.round(revisedTotalRaw * 100) / 100;
     const nextStatus = revisedTotal <= 0 ? "Closed PR Auto" : (latestPr.status || "Approved");
     const history = Array.isArray(latestPr.budgetReturnRevisions) ? latestPr.budgetReturnRevisions : [];
@@ -356,6 +356,7 @@ const PRView = React.memo(() => {
       oldItems: Array.isArray(latestPr.items) ? latestPr.items : [],
       poGrandTotalUsed: latestInfo.poSubTotalUsed ?? latestInfo.poGrandTotalUsed,
       returnedAmount: requested,
+      procurementSavingAmount: Number(latestInfo.procurementSavingAmount || 0),
       returnReason: reason,
       budgetId: latestPr.budgetId || null,
       costCode: latestPr.costCode || null,

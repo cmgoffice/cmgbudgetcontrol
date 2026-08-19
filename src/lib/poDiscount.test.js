@@ -2,6 +2,7 @@ import {
   applyDiscountToPrAllocations,
   calculateNetPeriodAmount,
   calculatePeriodDiscount,
+  getPaymentDiscountSyncPatch,
   getPoAmountExVat,
 } from "./poDiscount";
 
@@ -58,6 +59,60 @@ test("never returns more discount than the PO discount", () => {
     poDiscountAmount: 50,
     previousDiscountAmount: 50,
   })).toBe(0);
+});
+
+test("removes a stale Payment discount when the latest PO discount is removed", () => {
+  const payment = {
+    items: [{ contractQty: 1, contractPrice: 1000, prevAccumAmount: 0, thisPeriodAmount: 200 }],
+    discountAllocationVersion: 1,
+    poDiscountAmount: 100,
+    thisPeriodDiscount: 20,
+    netPeriodAmount: 180,
+    amount: 180,
+  };
+  const po = {
+    discountAllocationVersion: 1,
+    discount: 0,
+    items: [{ quantity: 1, price: 1000, amount: 1000 }],
+  };
+
+  expect(getPaymentDiscountSyncPatch(payment, po)).toMatchObject({
+    discountAllocationVersion: null,
+    poDiscountAmount: 0,
+    discountPrId: null,
+    discountPrNo: null,
+    discountRate: 0,
+    thisPeriodDiscount: 0,
+    netPeriodAmount: 200,
+    discountAppliedAmount: 0,
+    amount: 200,
+  });
+});
+
+test("recalculates the current Payment period from the latest PO discount", () => {
+  const payment = {
+    items: [{ contractQty: 1, contractPrice: 1000, prevAccumAmount: 0, thisPeriodAmount: 200 }],
+    discountAllocationVersion: 1,
+    poDiscountAmount: 100,
+    thisPeriodDiscount: 20,
+  };
+  const po = {
+    discountAllocationVersion: 1,
+    discount: 50,
+    discountPrId: "pr-1",
+    discountPrNo: "PR-001",
+    items: [{ quantity: 1, price: 1000, amount: 1000 }],
+  };
+
+  expect(getPaymentDiscountSyncPatch(payment, po)).toMatchObject({
+    discountAllocationVersion: 1,
+    poDiscountAmount: 50,
+    discountPrId: "pr-1",
+    discountPrNo: "PR-001",
+    thisPeriodDiscount: 10,
+    netPeriodAmount: 190,
+    amount: 190,
+  });
 });
 
 test("applies the header discount only to the selected PR allocation", () => {

@@ -98,6 +98,7 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
     { key: "download",label: "Download PDF" },
     { key: "delete",  label: "ลบ PO" },
     { key: "viewBalance", label: "ดูคอลัมน์ Payment & Receive / Balance PO" },
+    { key: "returnBudget", label: "คืน Balance PO เข้า Budget" },
     { key: "requestClosePO", label: "ขอปิด PO" },
   ],
   vendor: [
@@ -255,6 +256,7 @@ export function mergeFunctionPermissionsWithDefaults(
     },
     "po-table": {
       viewBalance: ["PCM", "GM", "MD"],
+      returnBudget: ["PCM", "GM", "MD"],
       requestClosePO: ["Procurement"],
     },
     "payment-subcontract": {

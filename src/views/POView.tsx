@@ -15,6 +15,7 @@ import { useUI } from "../contexts/UIContext";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "../components/ui";
 import ResizableTh from "../components/ResizableTh";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
+import PoRevisionHistory from "../components/PoRevisionHistory";
 import { useProportionalTableLayout, chainTableResizeHandlers } from "../hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 import MaterialAutoComplete from "../components/MaterialAutoComplete";
@@ -63,7 +64,8 @@ import {
   applyDiscountToPrAllocations,
   getPoAmountExVat,
 } from "../lib/poDiscount";
-import { getPoPaymentAndReceiveBalanceInfo } from "../lib/poPaymentBalance";
+import { getPoNumberVariants, getPoPaymentAndReceiveBalanceInfo } from "../lib/poPaymentBalance";
+import { getPreviousGeneratedPdfPath, removePreviousGeneratedPdf, uploadRevisionPdf } from "../lib/pdfReplacement";
 import RelatedDocumentDetailModal from "../components/RelatedDocumentDetailModal";
 
 const getDefaultPoFormData = () => ({
@@ -199,6 +201,67 @@ const POView = React.memo(() => {
   const [viewingRelatedDocument, setViewingRelatedDocument] = useState<any>(null);
   const [poApproveFlightFromStatus, setPoApproveFlightFromStatus] = useState({});
   const [isPoRevisionModalOpen, setIsPoRevisionModalOpen] = useState(false);
+  const poRevisionPdfInFlightRef = useRef(new Set<string>());
+
+  const refreshPoRevisionPdf = useCallback(async (po: any) => {
+    const revisionNo = Number(po?.poBudgetReturnRevNo || po?.poBudgetReturnRevisions?.length || 0);
+    if (!po?.id || revisionNo <= 0 || Number(po?.poPdfRevisionNo || 0) >= revisionNo) return;
+    if (poRevisionPdfInFlightRef.current.has(String(po.id))) return;
+    poRevisionPdfInFlightRef.current.add(String(po.id));
+    try {
+      const project = projects.find((item: any) => item.id === po.projectId) || null;
+      const vendor = vendors.find((item: any) => item.id === po.vendorId) || null;
+      const poData = {
+        ...po,
+        pcmdate: po.pcmApprovedAt ? new Date(po.pcmApprovedAt).toLocaleDateString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric" }) : "",
+        gmdate: po.gmApprovedAt ? new Date(po.gmApprovedAt).toLocaleDateString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric" }) : "",
+      };
+      let bytes = await generatePOPdfBytes(poData, { vendor, project });
+      try {
+        bytes = await stampPoSignaturesToPdf(bytes, poData, {
+          currentUserData: userData,
+          requireApprovedSignatures: true,
+          logPrefix: "[PO Rev PDF]",
+        });
+      } catch (signatureError) {
+        console.warn("[PO Rev PDF] signature stamp skipped:", signatureError);
+      }
+      const previousPath = getPreviousGeneratedPdfPath(po, "po");
+      const uploaded = await uploadRevisionPdf({
+        bytes,
+        kind: "po",
+        projectId: po.projectId || "unknown",
+        docNo: po.poNo || po.id,
+        revisionNo,
+      });
+      try {
+        const ok = await updateData("pos", po.id, {
+          pdfUrl: uploaded.url,
+          pdfPath: uploaded.path,
+          pdfUpdatedAt: new Date().toISOString(),
+          poPdfRevisionNo: revisionNo,
+        });
+        if (ok === false) throw new Error("บันทึกลิงก์ PDF ของ PO ไม่สำเร็จ");
+      } catch (saveError) {
+        await deleteGeneratedPdf(uploaded.path);
+        throw saveError;
+      }
+      await removePreviousGeneratedPdf(previousPath, uploaded.path);
+      setViewingPO((current: any) => current?.id === po.id
+        ? { ...current, pdfUrl: uploaded.url, pdfPath: uploaded.path, pdfUpdatedAt: new Date().toISOString(), poPdfRevisionNo: revisionNo }
+        : current);
+    } catch (error: any) {
+      console.warn("[PO Rev PDF] refresh failed:", error);
+      showAlert?.("อัปเดต PDF PO ไม่สำเร็จ", error?.message || "ไม่สามารถสร้าง PDF ฉบับ Rev ได้", "warning");
+    } finally {
+      poRevisionPdfInFlightRef.current.delete(String(po.id));
+    }
+  }, [projects, showAlert, updateData, userData, vendors]);
+
+  const openPoDetail = useCallback((po: any) => {
+    setViewingPO(po);
+    void refreshPoRevisionPdf(po);
+  }, [refreshPoRevisionPdf]);
 
   // Prevent double-click on "บันทึกดราฟ" / "ส่งขออนุมัติ" (avoid duplicate PO/PR records)
   const poDraftInFlightRef = useRef(false);
@@ -2891,7 +2954,7 @@ const POView = React.memo(() => {
       case "amount": return Number(amountExVat || 0);
       case "paymentReceive": return Number(paymentBalance?.usedAmount || 0);
       case "balance": return Number(paymentBalance?.balanceAmount || 0);
-      case "status": return String(po.status || "");
+      case "status": return String(po.statusNow || po.status || "");
       default: return "";
     }
   }, []);
@@ -2979,7 +3042,6 @@ const POView = React.memo(() => {
         return (
           po.projectId === selectedProjectId &&
           !hiddenSystemStatuses.includes(currentStatus) &&
-          !hiddenSystemStatuses.includes(po.status) &&
           !pendingActionStatuses.includes(po.status)
         );
       })
@@ -3093,7 +3155,7 @@ const POView = React.memo(() => {
             </>
           )}
           {canUseFunction("po", "edit") && (po.status === "Rejected" || po.status === "Draft") && (userRoles.includes("Procurement") || userRoles.includes("Administrator")) && (
-            <Button variant="secondary" size="sm" className="px-2 py-0.5 text-[10px]" onClick={() => setViewingPO(po)}>
+            <Button variant="secondary" size="sm" className="px-2 py-0.5 text-[10px]" onClick={() => openPoDetail(po)}>
               View
             </Button>
           )}
@@ -3384,7 +3446,7 @@ const POView = React.memo(() => {
                           <React.Fragment key={po.id}>
                             <tr
                               className="hover:bg-amber-50 cursor-pointer transition-colors border-b odd:bg-white even:bg-amber-50/25"
-                              onClick={() => setViewingPO(po)}
+                              onClick={() => openPoDetail(po)}
                             >
                               {renderMobilePoActions(po)}
                               {isColumnVisible("po", "poNo") && <td className="py-2 px-3 font-medium text-blue-700" title={po.poNo}><span className="cell-text">{po.poNo}</span></td>}
@@ -3410,7 +3472,7 @@ const POView = React.memo(() => {
                               {renderPoPaymentBalanceCells(paymentBalance)}
                               {isColumnVisible("po", "status") && <td className="py-2 px-3 text-center">
                                 <div className="flex flex-col items-center">
-                                  <Badge status={po.status} />
+                                  <Badge status={po.statusNow || po.status} />
                                   {po.jobCompleted && (
                                     <span className="text-[9px] text-teal-700 mt-0.5 font-semibold max-w-[130px] truncate" title={`จบงานโดย ${po.jobCompletedBy || "-"}`}>
                                       จบงาน · {po.jobCompletedBy || "-"}
@@ -3593,7 +3655,7 @@ const POView = React.memo(() => {
                         <React.Fragment key={po.id}>
                           <tr
                             className="hover:bg-blue-50 cursor-pointer transition-colors border-b odd:bg-white even:bg-slate-50"
-                            onClick={() => setViewingPO(po)}
+                            onClick={() => openPoDetail(po)}
                           >
                             {renderMobilePoActions(po)}
                             {isColumnVisible("po", "poNo") && <td className="py-2 px-3 font-medium text-blue-700" title={po.poNo}><span className="cell-text">{po.poNo}</span></td>}
@@ -3619,7 +3681,7 @@ const POView = React.memo(() => {
                             {renderPoPaymentBalanceCells(paymentBalance)}
                             {isColumnVisible("po", "status") && <td className="py-2 px-3 text-center">
                               <div className="flex flex-col items-center">
-                                <Badge status={po.status} />
+                                <Badge status={po.statusNow || po.status} />
                                 {po.jobCompleted && (
                                   <span className="text-[9px] text-teal-700 mt-0.5 font-semibold max-w-[130px] truncate" title={`จบงานโดย ${po.jobCompletedBy || "-"}`}>
                                     จบงาน · {po.jobCompletedBy || "-"}
@@ -3845,6 +3907,7 @@ const POView = React.memo(() => {
             const sameText = (a: any, b: any) => normalizeText(a) !== "" && normalizeText(a) === normalizeText(b);
             const poId = normalizeText(viewingPO.id);
             const poNo = normalizeText(viewingPO.poNo);
+            const poNumbers = getPoNumberVariants(viewingPO);
             const dedupeDocs = (items: any[]) => {
               const seen = new Set<string>();
               return (items || []).filter((item: any) => {
@@ -3863,20 +3926,20 @@ const POView = React.memo(() => {
               .filter(Boolean));
             const relatedPayments = dedupeDocs((payments || []).filter((payment: any) => (
               sameText(payment?.poId, poId) ||
-              sameText(payment?.poNo, poNo) ||
+              poNumbers.some((number) => sameText(payment?.poNo, number)) ||
               (Array.isArray(payment?.selectedPrIds) && payment.selectedPrIds.some((id: any) => sameText(id, poId))) ||
               (Array.isArray(payment?.items) && payment.items.some((item: any) => sameText(item?.poId, poId) || sameText(item?.prId, poId))) ||
-              (poNo && normalizeText(payment?.paymentNo).startsWith(poNo))
+              poNumbers.some((number) => normalizeText(payment?.paymentNo).startsWith(`${number}-`))
             )));
             const relatedReceives = dedupeDocs((receives || []).filter((receive: any) => (
               sameText(receive?.poId, poId) ||
-              sameText(receive?.poNo, poNo) ||
-              sameText(receive?.poRef, poNo)
+              poNumbers.some((number) => sameText(receive?.poNo, number)) ||
+              poNumbers.some((number) => sameText(receive?.poRef, number))
             )));
             const relatedInvoices = dedupeDocs((invoices || []).filter((invoice: any) => (
               sameText(invoice?.poId, poId) ||
-              sameText(invoice?.poNo, poNo) ||
-              sameText(invoice?.poRef, poNo)
+              poNumbers.some((number) => sameText(invoice?.poNo, number)) ||
+              poNumbers.some((number) => sameText(invoice?.poRef, number))
             )));
             const relatedInvoiceIds = new Set(relatedInvoices.map((invoice: any) => normalizeText(invoice?.id)).filter(Boolean));
             const relatedInvoiceNos = new Set(relatedInvoices.flatMap((invoice: any) => [invoice?.invNo, invoice?.id].map(normalizeText)).filter(Boolean));
@@ -3893,7 +3956,7 @@ const POView = React.memo(() => {
               relatedInvoicePayNos.has(normalizeText(pay?.docNo || pay?.payNo)) ||
               (Array.isArray(pay?.invoiceIds) && pay.invoiceIds.some((id: any) => relatedInvoiceIds.has(normalizeText(id)))) ||
               (Array.isArray(pay?.invoiceRefs) && pay.invoiceRefs.some((ref: any) => relatedInvoiceNos.has(normalizeText(ref)))) ||
-              (Array.isArray(pay?.invoices) && pay.invoices.some((invoice: any) => sameText(invoice?.poNo, poNo) || relatedInvoiceIds.has(normalizeText(invoice?.id))))
+              (Array.isArray(pay?.invoices) && pay.invoices.some((invoice: any) => poNumbers.some((number) => sameText(invoice?.poNo, number)) || relatedInvoiceIds.has(normalizeText(invoice?.id))))
             ));
             const relatedPayFromInvoices = relatedInvoices
               .filter((invoice: any) => isPaidInvoiceForPay(invoice))
@@ -3933,7 +3996,7 @@ const POView = React.memo(() => {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Badge status={viewingPO.status} />
+                      <Badge status={viewingPO.statusNow || viewingPO.status} />
                       {viewingPO.jobCompleted && (
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 border border-teal-300">
                           จบงาน
@@ -4254,9 +4317,11 @@ const POView = React.memo(() => {
                               <td colSpan={5} className="px-3 py-1.5 text-right text-xs text-slate-300">Grand Total (inc. VAT):</td>
                               <td className="px-3 py-1.5 text-right text-xs font-semibold text-slate-200">{formatCurrency(viewingPO.amount ?? viewingPO.grandTotal ?? subtotalAfterDiscount)}</td>
                             </tr>
-                        </tfoot>
-                      </table>
-                    </div>
+                         </tfoot>
+                       </table>
+                     </div>
+
+                    <PoRevisionHistory po={viewingPO} />
 
 
                     {viewingPO.jobCompleted && (

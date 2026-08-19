@@ -9,7 +9,7 @@ import {
   Clock, Package, Tag, ClipboardList, CheckSquare, Square,
   Paperclip, Mail, Flame, MapPinned, CircleDot, Zap, Building2, MapPin,
   DollarSign, Calendar, PlusCircle, ChevronRight, ChevronLeft, ChevronUp, Play, BarChart3, Menu,
-  FileSpreadsheet, Download, Upload, CreditCard, BookOpen
+  FileSpreadsheet, Download, Upload, CreditCard, BookOpen, MoreHorizontal
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -35,7 +35,9 @@ import {
   PR_PENDING_ACTIVE,
 } from "./lib/constants";
 import { getPoAmountExVat, getPoItemsGrossSubtotal } from "./lib/poDiscount";
-import { getPoPaymentAndReceiveBalanceInfo } from "./lib/poPaymentBalance";
+import { getPoNumberVariants, getPoPaymentAndReceiveBalanceInfo } from "./lib/poPaymentBalance";
+import { buildPoBudgetReturnPlan, enqueuePoBudgetReturnJob } from "./lib/poBudgetReturn";
+import { getPreviousGeneratedPdfPath, removePreviousGeneratedPdf, uploadRevisionPdf } from "./lib/pdfReplacement";
 import { AuthContext } from "./auth/AuthContext";
 import { useAppData } from "./contexts/AppDataContext";
 import { useUI } from "./contexts/UIContext";
@@ -56,6 +58,7 @@ import BudgetSummaryReportView from "./views/BudgetSummaryReportView";
 import ProjectSpendingView from "./views/ProjectSpendingView";
 import UserManualView from "./views/UserManualView";
 import ColumnVisibilityToggle from "./components/ColumnVisibilityToggle";
+import PoRevisionHistory from "./components/PoRevisionHistory";
 
 /** รูปโปรไฟล์ — ถ้าโหลดไม่สำเร็จ (ลิงก์หมดอายุ/ถูกบล็อก) จะแสดง fallback แทนไอคอนรูปพัง */
 const ProfileAvatar = ({ src, className, fallback }) => {
@@ -68,6 +71,156 @@ const ProfileAvatar = ({ src, className, fallback }) => {
       className={className}
       onError={() => setFailed(true)}
     />
+  );
+};
+
+// Process คืนยอด PO ที่ไม่มี worker ทำต่อจะถูกถือว่าค้างหลัง 10 นาที
+// เพื่อให้ผู้มีสิทธิ์กด Retry ได้ โดยไม่ปลดล็อก Process ที่กำลังทำงานอยู่จริงทันที
+const PO_BUDGET_RETURN_RETRY_AFTER_MS = 10 * 60 * 1000;
+const isStalePoBudgetReturnProcess = (po: any) => {
+  const timestamp = po?.budgetReturnProcessUpdatedAt
+    || po?.budgetReturnProcessRetryAt
+    || po?.budgetReturnProcessRequestedAt
+    || po?.updatedAt;
+  if (!timestamp) return true;
+  const time = new Date(timestamp).getTime();
+  return !Number.isFinite(time) || (Date.now() - time) >= PO_BUDGET_RETURN_RETRY_AFTER_MS;
+};
+
+/** เมนู Action แบบจุดไข่ปลา — ใช้ Portal เพื่อไม่ให้ตารางที่เลื่อนแนวนอนตัดเมนูทิ้ง */
+const TableActionMenu = ({
+  children,
+  hasPendingAction = false,
+  pendingActionLabel = "",
+  pendingActionLoading = false,
+  pendingActionIsActive = false,
+  onPendingAction,
+}) => {
+  const triggerRef = useRef(null);
+  const menuRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState(null);
+
+  const updateMenuPosition = useCallback(() => {
+    const rect = triggerRef.current?.getBoundingClientRect?.();
+    if (!rect || typeof window === "undefined") return;
+
+    const menuWidth = Math.min(280, Math.max(220, window.innerWidth - 16));
+    const estimatedMenuHeight = 360;
+    const shouldOpenAbove = rect.bottom + estimatedMenuHeight > window.innerHeight && rect.top > estimatedMenuHeight;
+    const left = Math.max(8, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 8));
+    const top = shouldOpenAbove
+      ? Math.max(8, rect.top - estimatedMenuHeight - 6)
+      : Math.min(rect.bottom + 6, Math.max(8, window.innerHeight - estimatedMenuHeight - 8));
+
+    setMenuPosition({ top, left, width: menuWidth });
+  }, []);
+
+  useEffect(() => {
+    if (!open) return undefined;
+
+    updateMenuPosition();
+    const handlePointerDown = (event) => {
+      if (triggerRef.current?.contains(event.target) || menuRef.current?.contains(event.target)) return;
+      setOpen(false);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    const handleViewportChange = () => updateMenuPosition();
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("scroll", handleViewportChange, true);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
+    };
+  }, [open, updateMenuPosition]);
+
+  const menuNode = open && menuPosition && typeof document !== "undefined" ? (
+    <div
+      ref={menuRef}
+      role="menu"
+      aria-label="Action menu"
+      className="fixed z-[10040] max-h-[min(70vh,28rem)] overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-2xl ring-1 ring-black/5"
+      style={{ top: menuPosition.top, left: menuPosition.left, width: menuPosition.width }}
+      onClick={(event) => {
+        if (event.target.closest?.("button:not(:disabled)")) setOpen(false);
+      }}
+    >
+      <div className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-400">Action</div>
+      {hasPendingAction && (
+        <button
+          type="button"
+          role="menuitem"
+          disabled={pendingActionLoading}
+          className={`mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-bold transition-colors disabled:cursor-wait disabled:opacity-60 ${pendingActionIsActive
+            ? "text-teal-700 hover:bg-teal-50"
+            : "bg-red-50 text-red-700 hover:bg-red-100"
+            }`}
+          onClick={() => onPendingAction?.()}
+        >
+          {pendingActionIsActive ? <CheckCircle size={14} /> : <Flame size={13} />}
+          <span>{pendingActionLoading ? "กำลังดำเนินการ..." : pendingActionLabel}</span>
+        </button>
+      )}
+      {hasPendingAction && <div className="my-1 border-t border-slate-100" />}
+      {children}
+    </div>
+  ) : null;
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label="เปิดเมนู Action"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={`relative inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1 ${hasPendingAction
+          ? "border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
+          : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700"
+          }`}
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen((value) => !value);
+        }}
+      >
+        <MoreHorizontal size={18} strokeWidth={2.5} />
+        {hasPendingAction && <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-red-500" aria-label="มีรายการรอ action" />}
+      </button>
+      {menuNode && ReactDOM.createPortal(menuNode, document.body)}
+    </>
+  );
+};
+
+const ActionMenuItem = ({ icon, children, onClick, disabled = false, tone = "default", title }) => {
+  const toneClass = tone === "danger"
+    ? "text-red-600 hover:bg-red-50"
+    : tone === "warning"
+      ? "text-amber-700 hover:bg-amber-50"
+      : tone === "success"
+        ? "text-emerald-700 hover:bg-emerald-50"
+        : tone === "teal"
+          ? "text-teal-700 hover:bg-teal-50"
+          : "text-slate-700 hover:bg-slate-100";
+
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      title={title}
+      disabled={disabled}
+      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors disabled:cursor-wait disabled:opacity-40 ${toneClass}`}
+      onClick={onClick}
+    >
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center">{icon}</span>
+      <span className="min-w-0 truncate">{children}</span>
+    </button>
   );
 };
 
@@ -1269,6 +1422,10 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     },
     [isNotificationRow, isPaidLikePo, isPR, userRoles]
   );
+  const isActivePoTaskRow = React.useCallback(
+    (row: any) => !isPR && getPendingTaskStatus(row) === "Closed PO" && userRoles.includes("Administrator"),
+    [getPendingTaskStatus, isPR, userRoles]
+  );
 
   const getPendingActionLabel = React.useCallback((row: any) => {
     const status = getPendingTaskStatus(row);
@@ -1347,12 +1504,141 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   const canViewPrBalance = isPR && canUseFunction("pr-table", "viewBalance");
   const canReturnPrBalance = isPR && canUseFunction("pr-table", "returnBalance");
   const canViewPoBalance = !isPR && canUseFunction("po-table", "viewBalance");
+  const canStartPoBudgetReturn = !isPR && canUseFunction("po-table", "returnBudget");
   const poUsageSourcesReady = paymentsReady && receivesReady;
   const poPaymentBalanceById = React.useMemo(() => {
     const next = new Map<string, any>();
     (pos || []).forEach((po: any) => next.set(String(po.id), getPoPaymentAndReceiveBalanceInfo(po, payments, receives)));
     return next;
   }, [payments, pos, receives]);
+
+  const handleStartPoBudgetReturn = React.useCallback((po: any) => {
+    if (!po?.id || isPR || !canStartPoBudgetReturn) return;
+    if (String(po?.poType || "").toUpperCase() !== "SP") {
+      showAlert?.("ไม่รองรับ PO ประเภทนี้", "ฟังก์ชัน Rev PO และคืนยอดรองรับเฉพาะ PO Type SP", "info");
+      return;
+    }
+    const paymentBalance = poPaymentBalanceById.get(String(po.id)) || getPoPaymentAndReceiveBalanceInfo(po, payments, []);
+    const plan = buildPoBudgetReturnPlan({ po, payments, prs });
+    const processStatus = String(po?.budgetReturnProcessStatus || "");
+    const activeProcess = ["Queued", "Running", "Waiting Budget Approval"].includes(processStatus);
+
+    if (activeProcess) {
+      showAlert?.("กำลังดำเนินการ", `PO ${po.poNo || po.id} มี Process คืน Budget อยู่แล้ว (${processStatus})`, "info");
+      return;
+    }
+    if (String(paymentBalance?.usageSource || "") !== "payment" || !plan.latestPayment) {
+      showAlert?.("ยังไม่มี Payment", "ฟังก์ชันนี้รองรับเฉพาะ PO ที่มี Payment เท่านั้น", "warning");
+      return;
+    }
+    if (!po.jobCompleted) {
+      showAlert?.("ยังไม่จบงาน", "ต้องกดจบงาน Payment ก่อนเริ่มคืนยอด", "warning");
+      return;
+    }
+    if (po.status !== "Closed PO") {
+      showAlert?.("PO ยังไม่ปิดงาน", "ต้องเป็นสถานะ Closed PO ก่อนเริ่มคืนยอด", "warning");
+      return;
+    }
+    if (plan.paymentComplete || plan.returnableAmount <= 0) {
+      showAlert?.("ไม่มี Balance ให้คืน", "Payment ใช้ครบ 100% แล้ว จึงไม่ต้อง Rev หรือคืน Budget", "info");
+      return;
+    }
+
+    const prSummary = plan.linkedPrs
+      .map((row: any) => `${row.prNo}: คืน ${formatCurrency(row.returnableAmount)} → Rev PR ${formatCurrency(row.newPrTotal)}`)
+      .join("\n");
+    const message = [
+      `PO: ${plan.poNo}`,
+      `Payment งวดล่าสุด: ${plan.latestPaymentNo || "-"}`,
+      `ยอด PO ปัจจุบัน: ${formatCurrency(plan.poNetAmount)}`,
+      `ยอด Payment ใช้จริง: ${formatCurrency(plan.actualUsed)}`,
+      `Rev PO เป็น: ${formatCurrency(plan.revisedPoNetAmount)}`,
+      `ยอดคืน PR/Budget: ${formatCurrency(plan.returnableAmount)}`,
+      `ส่วนลดจัดซื้อ (ไม่คืน): ${formatCurrency(plan.procurementSaving)}`,
+      prSummary ? `\nรายละเอียด PR:\n${prSummary}` : "",
+      "\nระบบจะบันทึก Snapshot ก่อน Rev และส่งยอดคืนเข้าโฟลว์ Balance PR เดิมเพื่อรอผู้มีสิทธิ์รับยอดใน Budget",
+    ].filter(Boolean).join("\n");
+
+    openConfirm?.(
+      "เริ่มคืน Balance PO เข้า Budget",
+      message,
+      async () => {
+        try {
+          await enqueuePoBudgetReturnJob({
+            db,
+            appId,
+            po,
+            plan,
+            actor: { name: userData?.displayName || userData?.name || userRole, uid: user?.uid, email: user?.email },
+          });
+          await logAction?.(
+            "Start PO Budget Return",
+            `เริ่มคืน Balance PO ${plan.poNo}: Payment ${formatCurrency(plan.actualUsed)} / Rev PO ${formatCurrency(plan.revisedPoNetAmount)} / คืน Budget ${formatCurrency(plan.returnableAmount)} / ส่วนลดไม่คืน ${formatCurrency(plan.procurementSaving)}`,
+            po.projectId
+          );
+          showAlert?.("ส่ง Process แล้ว", `PO ${plan.poNo} ถูกส่งเข้ากระบวนการคืนยอดหลังบ้านแล้ว`, "success");
+        } catch (error: any) {
+          showAlert?.("เริ่ม Process ไม่สำเร็จ", error?.message || "ไม่สามารถสร้าง Process คืน Budget ได้", "error");
+        }
+      },
+      "warning"
+    );
+  }, [canStartPoBudgetReturn, db, isPR, logAction, openConfirm, payments, poPaymentBalanceById, poUsageSourcesReady, prs, showAlert, user, userData, userRole]);
+
+  const handleRetryPoBudgetReturn = React.useCallback(async (po: any) => {
+    const jobId = String(po?.budgetReturnProcessId || "");
+    if (!jobId || !po?.id) {
+      showAlert?.("ไม่พบ Process", "ไม่พบรหัส Process คืนยอดของ PO นี้", "warning");
+      return;
+    }
+    const now = new Date().toISOString();
+    try {
+      await runTransaction(db, async (transaction) => {
+        const jobRef = doc(db, "artifacts", appId, "public", "data", "poBudgetReturnJobs", jobId);
+        const poRef = doc(db, "artifacts", appId, "public", "data", "pos", po.id);
+        const jobSnap = await transaction.get(jobRef);
+        const poSnap = await transaction.get(poRef);
+        if (!jobSnap.exists() || !poSnap.exists()) throw new Error("ไม่พบข้อมูล Process หรือ PO ล่าสุด");
+        const job = jobSnap.data() || {};
+        const jobStatus = String(job.status || "");
+        const stale = isStalePoBudgetReturnProcess({
+          ...poSnap.data(),
+          budgetReturnProcessUpdatedAt: job.updatedAt || poSnap.data()?.budgetReturnProcessUpdatedAt,
+          budgetReturnProcessRetryAt: job.retryAt || poSnap.data()?.budgetReturnProcessRetryAt,
+          budgetReturnProcessRequestedAt: job.requestedAt || poSnap.data()?.budgetReturnProcessRequestedAt,
+        });
+        if (["Waiting Budget Approval", "Completed", "Completed No Return"].includes(jobStatus)) {
+          throw new Error(`Process อยู่สถานะ ${job.status} ไม่สามารถ Retry ได้`);
+        }
+        if (jobStatus === "Running" && !stale) {
+          throw new Error("Process กำลังทำงานอยู่ ยังไม่สามารถ Retry ได้ (หากค้างเกิน 10 นาทีจึง Retry ได้)");
+        }
+        if (!["Queued", "Running", "Failed"].includes(jobStatus)) {
+          throw new Error(`Process อยู่สถานะ ${job.status || "ไม่ทราบสถานะ"} ไม่สามารถ Retry ได้`);
+        }
+        transaction.update(jobRef, {
+          status: "Queued",
+          currentStep: "Queued",
+          retryNonce: Date.now(),
+          error: null,
+          retryAt: now,
+          retryBy: userData?.displayName || userData?.name || user?.email || userRole || "Unknown",
+          updatedAt: now,
+        });
+        transaction.update(poRef, {
+          budgetReturnProcessStatus: "Queued",
+          budgetReturnProcessStep: "Queued",
+          budgetReturnProcessUpdatedAt: now,
+          budgetReturnProcessRetryAt: now,
+          budgetReturnProcessError: null,
+          updatedAt: now,
+        });
+      });
+      showAlert?.("ส่ง Retry แล้ว", `ส่ง Process PO ${po.poNo || po.id} กลับเข้า Queue แล้ว`, "success");
+    } catch (error: any) {
+      showAlert?.("Retry ไม่สำเร็จ", error?.message || "ไม่สามารถส่ง Process กลับเข้า Queue ได้", "error");
+    }
+  }, [db, showAlert, user, userData, userRole]);
 
   const handleRecreatePO = React.useCallback((po: any) => {
     if (!po?.id) {
@@ -1422,7 +1708,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
           gmdate,
           reason: po.reason || "",
         };
-        const pdfPath = `generated/pos/${safeProjId}/${safePONo}.pdf`;
+        const previousPdfPath = getPreviousGeneratedPdfPath(po, "po");
         completeUnit("เตรียมข้อมูล PO เสร็จ");
 
         setRunningProgress(completedUnits, "กำลังสร้าง PDF จากแบบฟอร์ม...");
@@ -1446,7 +1732,13 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
         setRunningProgress(completedUnits, "อัปโหลด PDF ใหม่ 0%...");
         const uploadBaseUnits = completedUnits;
-        const updatedPdfUrl = await uploadGeneratedPdf(bytes, pdfPath, {
+        const revisionNo = po.poBudgetReturnRevNo || po.poBudgetReturnRevisions?.length || "manual";
+        const uploadedRevision = await uploadRevisionPdf({
+          bytes,
+          kind: "po",
+          projectId: safeProjId,
+          docNo: safePONo,
+          revisionNo,
           onProgress: ({ bytesTransferred, totalBytes, pct }) => {
             const ratio = totalBytes > 0 ? bytesTransferred / totalBytes : Math.max(0, Math.min(100, pct || 0)) / 100;
             const uploadPct = Math.max(0, Math.min(100, pct || Math.round(ratio * 100)));
@@ -1456,16 +1748,41 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
             );
           },
         });
+        const updatedPdfUrl = uploadedRevision.url;
+        const updatedPdfPath = uploadedRevision.path;
         completedUnits = uploadBaseUnits + 1;
         setRunningProgress(completedUnits, "อัปโหลด PDF สำเร็จ");
 
         setRunningProgress(completedUnits, "บันทึกลิงก์ PDF ในระบบ...");
         if (!updateData) throw new Error("ไม่พบฟังก์ชันบันทึกข้อมูล PO");
-        const updated = await updateData("pos", poId, {
-          pdfUrl: updatedPdfUrl,
-          pdfUpdatedAt: new Date().toISOString(),
-        });
-        if (updated === false) throw new Error("บันทึกลิงก์ PDF ในระบบไม่สำเร็จ");
+        let updated: any;
+        try {
+          updated = await updateData("pos", poId, {
+            pdfUrl: updatedPdfUrl,
+            pdfPath: updatedPdfPath,
+            pdfUpdatedAt: new Date().toISOString(),
+            ...(po.poBudgetReturnRevNo || po.poBudgetReturnRevisions?.length
+              ? { poPdfRevisionNo: Number(po.poBudgetReturnRevNo || po.poBudgetReturnRevisions?.length || 0) }
+              : {}),
+          });
+          if (updated === false) throw new Error("บันทึกลิงก์ PDF ในระบบไม่สำเร็จ");
+        } catch (saveError) {
+          // ไม่ทิ้งไฟล์ revision ใหม่ หากบันทึกลิงก์ใน Firestore ไม่สำเร็จ
+          await deleteGeneratedPdf(updatedPdfPath);
+          throw saveError;
+        }
+        await removePreviousGeneratedPdf(previousPdfPath, updatedPdfPath);
+        setViewingPO((current: any) => current?.id === poId
+          ? {
+              ...current,
+              pdfUrl: updatedPdfUrl,
+              pdfPath: updatedPdfPath,
+              pdfUpdatedAt: new Date().toISOString(),
+              ...(po.poBudgetReturnRevNo || po.poBudgetReturnRevisions?.length
+                ? { poPdfRevisionNo: Number(po.poBudgetReturnRevNo || po.poBudgetReturnRevisions?.length || 0) }
+                : {}),
+            }
+          : current);
         completeUnit("บันทึกลิงก์ PDF เสร็จ");
 
         setRunningProgress(completedUnits, "บันทึก System Log...");
@@ -1775,7 +2092,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       return;
     }
 
-    const revisedTotalRaw = Math.max(0, latestInfo.currentTotal - requested);
+    const revisedTotalRaw = Math.max(0, latestInfo.currentTotal - requested - Number(latestInfo.procurementSavingAmount || 0));
     const revisedTotal = Math.round(revisedTotalRaw * 100) / 100;
     const nextStatus = revisedTotal <= 0 ? "Closed PR Auto" : (latestPr.status || "Approved");
     const history = Array.isArray(latestPr.budgetReturnRevisions)
@@ -1794,6 +2111,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       oldItems: Array.isArray(latestPr.items) ? latestPr.items : [],
       poGrandTotalUsed: latestInfo.poSubTotalUsed ?? latestInfo.poGrandTotalUsed,
       returnedAmount: requested,
+      procurementSavingAmount: Number(latestInfo.procurementSavingAmount || 0),
       returnReason: reason,
       budgetId: latestPr.budgetId || null,
       costCode: latestPr.costCode || null,
@@ -1881,6 +2199,28 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     ? ["Approved", "PO Issued", "Edit Budget", "Pending Close", "Closed PR", "Closed PR Auto", "Pending Active PR", "Pending MD", "Pending GM", "Pending PM", "Pending CM", "Rejected"]
     : ["Approved", "Pending PCM", "Pending GM", "PO Edit Pending PCM", "PO Edit Pending GM", "Rejected", "paid", "Deposit", "Invcredit", "Inpay", "Paid", "Partial", "Partial Receive", "Draft", "Pending Close PO", "Wait Invoice", "Received", "Closed PO"];
 
+  const handleDeletePoFromLog = React.useCallback((po: any) => {
+    openConfirm?.("ยืนยันการลบ", `คุณต้องการลบ PO ${po.poNo || po.id} ใช่หรือไม่?`, async () => {
+      const prIds = po.items
+        ? [...new Set(po.items.map((item: any) => item.prId).filter(Boolean))]
+        : (po.prRefId ? [po.prRefId] : []);
+      if (po.pdfUrl) {
+        const safePONo = (po.poNo || po.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
+        const safeProjId = po.projectId || "unknown";
+        await deleteGeneratedPdf(`generated/pos/${safeProjId}/${safePONo}.pdf`);
+      }
+      const deleted = await deleteData?.("pos", po.id);
+      if (deleted && prIds.length > 0) {
+        for (const prId of prIds) {
+          const stillUsedByOtherPO = pos.some((item: any) => item.id !== po.id && item.items?.some((item: any) => item.prId === prId));
+          if (!stillUsedByOtherPO) {
+            await updateData?.("prs", prId, { status: "Approved" });
+          }
+        }
+      }
+    }, "danger");
+  }, [deleteData, openConfirm, pos, updateData]);
+
   const handlePRDownloadPDF = (pr: any) => {
     const docId = pr.id || pr.prNo || "pr";
     setPdfLoadingId(docId);
@@ -1949,7 +2289,253 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     showAlert?.("เตรียมอีเมลแล้ว", "เปิดหน้าส่งเมลให้แล้ว และคัดลอกลิงก์ PDF เรียบร้อย", "success");
   };
 
+  const renderActionMenuItems = (r: any) => {
+    const actionTask = isActionTaskRow(r);
+
+    return (
+      <>
+        {!actionTask && canUseFunction(tableModule, "email") && (
+          <ActionMenuItem
+            icon={<Mail size={14} />}
+            disabled={pdfLoadingId === r.id}
+            onClick={() => { setEmailModal({ doc: r, kind: isPR ? "pr" : "po" }); setEmailTo(""); }}
+          >
+            ส่งไฟล์ PDF ทางเมล
+          </ActionMenuItem>
+        )}
+        {!actionTask && canUseFunction(tableModule, "download") && (
+          <ActionMenuItem
+            icon={pdfLoadingId === r.id
+              ? <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" strokeOpacity=".25" /><path d="M12 2a10 10 0 0 1 10 10" /></svg>
+              : <Download size={14} />}
+            disabled={pdfLoadingId === r.id}
+            onClick={() => isPR ? handlePRDownloadPDF(r) : handlePODownloadPDF(r)}
+          >
+            ดาวน์โหลด PDF
+          </ActionMenuItem>
+        )}
+        {!actionTask && canUseFunction(tableModule, "requestClosePR") && isPR && r.status !== "Closed PR" && r.status !== "Closed PR Auto" && r.status !== "Pending Close" && r.status !== "Pending Active PR" && (
+          <ActionMenuItem
+            icon={<XCircle size={14} />}
+            tone="warning"
+            onClick={() => openConfirm?.("ขอปิด PR", "เมื่อ PCM ยืนยันแล้ว สถานะจะเป็น Closed PR", async () => {
+              await updateData?.("prs", r.id, { status: "Pending Close", preCloseStatus: r.status, closeRequestedAt: new Date().toISOString() }, { skipLog: true });
+              await logAction?.("Submit", `Request Close PR ${r.prNo || r.id}: ${r.status} → Pending Close`, r.projectId);
+              showAlert?.("ส่งคำขอแล้ว", "รอ PCM ยืนยันการปิด PR", "info");
+            })}
+          >
+            ขอปิด PR
+          </ActionMenuItem>
+        )}
+        {!actionTask && canUseFunction("pr", "closePR") && isPR && r.status === "Pending Close" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
+          <ActionMenuItem
+            icon={<CheckCircle size={14} />}
+            tone="success"
+            onClick={() => openConfirm?.("ยืนยันปิด PR", "สถานะจะเปลี่ยนเป็น Closed PR", async () => {
+              await updateData?.("prs", r.id, { status: "Closed PR", preCloseStatus: r.preCloseStatus || r.status }, { skipLog: true });
+              await logAction?.("Approve", `Confirm Close PR ${r.prNo || r.id}: ${r.status} → Closed PR`, r.projectId);
+              showAlert?.("สำเร็จ", "ปิด PR เรียบร้อย", "success");
+            })}
+          >
+            ยืนยันปิด PR
+          </ActionMenuItem>
+        )}
+        {!actionTask && canUseFunction(tableModule, "requestActivePR") && isPR && (r.status === "Closed PR" || r.status === "Closed PR Auto") && (userRoles.includes("Procurement") || userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
+          <ActionMenuItem
+            icon={<CheckCircle size={14} />}
+            tone="teal"
+            onClick={() => openConfirm?.("ขอ Active PR", "ส่งคำขอให้ PCM อนุมัติ Active PR คืน", async () => {
+              await updateData?.("prs", r.id, { status: "Pending Active PR", activeRequestedAt: new Date().toISOString() }, { skipLog: true });
+              logAction?.("Request Active PR", `ขอ Active PR ${r.prNo || r.id}`, r.projectId);
+              showAlert?.("ส่งคำขอแล้ว", "รอ PCM อนุมัติ Active PR", "info");
+            })}
+          >
+            ขอ Active PR คืน
+          </ActionMenuItem>
+        )}
+        {!actionTask && canUseFunction(tableModule, "approveActivePR") && isPR && r.status === "Pending Active PR" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
+          <ActionMenuItem
+            icon={<CheckCircle size={14} />}
+            tone="success"
+            onClick={() => openConfirm?.("อนุมัติ Active PR", "PR จะกลับไปสถานะก่อนถูกปิด", async () => {
+              const { status: resume, usedAmount, totalAmount } = getResumeStatusForPR(r, pos);
+              await updateData?.("prs", r.id, { status: resume, preCloseStatus: null, activeRequestedAt: null }, { skipLog: true });
+              logAction?.(
+                "Approved Active PR",
+                `อนุมัติ Active PR ${r.prNo || r.id} → ${resume} (PO linked ${formatCurrency(usedAmount)} / PR ${formatCurrency(totalAmount)})`,
+                r.projectId
+              );
+              const returnedAmount = Math.max(0, totalAmount - usedAmount);
+              showAlert?.(
+                "สำเร็จ",
+                `PR กลับสถานะ ${resume} แล้ว ยอดคงเหลือที่เปิดใช้ได้ ${formatCurrency(returnedAmount)}${usedAmount > 0 ? ` (ยังมี PO ผูกอยู่ ${formatCurrency(usedAmount)})` : ""}`,
+                "success"
+              );
+            })}
+          >
+            อนุมัติ Active PR
+          </ActionMenuItem>
+        )}
+        {!actionTask && canReturnPrBalance && isPR && (() => {
+          const info = getPrBudgetReturnInfo(r, pos);
+          if (info.returnAmount <= 0) return null;
+          return (
+            <ActionMenuItem
+              icon={<Wallet size={14} />}
+              tone="success"
+              title={`คืน Balance PR กลับ Budget (${formatCurrency(info.returnAmount)})`}
+              onClick={() => handleReturnPrBalanceToBudget(r)}
+            >
+              คืน Balance PR กลับ Budget ({formatCurrency(info.returnAmount)})
+            </ActionMenuItem>
+          );
+        })()}
+        {/* PO Budget Return ต้องแสดงได้แม้แถว Closed PO จะมี Action Task (เช่น Administrator เห็น Active PO) */}
+        {canStartPoBudgetReturn && !isPR && String(r?.poType || "").toUpperCase() === "SP" && (() => {
+          const poPlan = buildPoBudgetReturnPlan({ po: r, payments, prs });
+          const processStatus = String(r?.budgetReturnProcessStatus || "");
+          if (["Queued", "Running", "Waiting Budget Approval", "Failed"].includes(processStatus)) {
+            const canRetry = processStatus === "Queued"
+              || processStatus === "Failed"
+              || (processStatus === "Running" && isStalePoBudgetReturnProcess(r));
+            if (canRetry) {
+              return (
+                <ActionMenuItem
+                  icon={<RefreshCw size={14} />}
+                  tone="warning"
+                  title={processStatus === "Running" ? "Process ค้างเกิน 10 นาที — Retry Process คืนยอด PO" : "Retry Process คืนยอด PO"}
+                  onClick={() => handleRetryPoBudgetReturn(r)}
+                >
+                  {processStatus === "Running" ? "Retry (Process ค้าง)" : "Retry Rev PO และคืนยอด"}
+                </ActionMenuItem>
+              );
+            }
+            return (
+              <div className="mx-1 my-1 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] font-bold text-amber-800" role="status">
+                <Wallet size={13} />
+                {processStatus === "Waiting Budget Approval"
+                  ? "รอรับยอดคืน Budget"
+                  : processStatus === "Queued"
+                    ? "รอ Worker เริ่มทำงาน"
+                    : "กำลังคืนยอด Budget"}
+              </div>
+            );
+          }
+          if (!r?.jobCompleted || r?.status !== "Closed PO" || poPlan.paymentComplete || poPlan.returnableAmount <= 0) return null;
+          return (
+            <ActionMenuItem
+              icon={<Wallet size={14} />}
+              tone="success"
+              title={`Rev PO และคืน Balance PO เข้า Budget (${formatCurrency(poPlan.returnableAmount)})`}
+              onClick={() => handleStartPoBudgetReturn(r)}
+            >
+              Rev PO และคืน Balance PO เข้า Budget ({formatCurrency(poPlan.returnableAmount)})
+            </ActionMenuItem>
+          );
+        })()}
+        {!actionTask && canUseFunction(tableModule, "requestClosePO") && !isPR && !isPaidLikePo(r) && r.status !== "Closed PO" && r.status !== "Pending Close PO" && r.status !== "Received" && (
+          <ActionMenuItem
+            icon={<XCircle size={14} />}
+            tone="warning"
+            onClick={() => openConfirm?.("ขอปิด PO", "เมื่อ PCM ยืนยันแล้ว สถานะจะเป็น Closed PO", async () => {
+              await updateData?.("pos", r.id, { status: "Pending Close PO", closeRequestedAt: new Date().toISOString() }, { skipLog: true });
+              await logAction?.("Submit", `Request Close PO ${r.poNo || r.id}: ${r.status} → Pending Close PO`, r.projectId);
+              showAlert?.("ส่งคำขอแล้ว", "รอ PCM ยืนยันการปิด PO", "info");
+            })}
+          >
+            ขอปิด PO
+          </ActionMenuItem>
+        )}
+        {!actionTask && canUseFunction("po", "closePO") && !isPR && r.status === "Pending Close PO" && (userRole === "PCM" || userRole === "Administrator") && (
+          <ActionMenuItem
+            icon={<CheckCircle size={14} />}
+            tone="success"
+            onClick={() => openConfirm?.("ยืนยันปิด PO", "สถานะจะเปลี่ยนเป็น Closed PO", async () => {
+              await updateData?.("pos", r.id, { status: "Closed PO" }, { skipLog: true });
+              await logAction?.("Approve", `Confirm Close PO ${r.poNo || r.id}: ${r.status} → Closed PO`, r.projectId);
+              showAlert?.("สำเร็จ", "ปิด PO เรียบร้อย", "success");
+            })}
+          >
+            ยืนยันปิด PO
+          </ActionMenuItem>
+        )}
+        {!actionTask && !isPR && userRoles.includes("Administrator") && r.status === "Closed PO" && (
+          <ActionMenuItem
+            icon={<CheckCircle size={14} />}
+            tone="teal"
+            title="Active PO"
+            onClick={() => {
+              const relatedInvoices = getRelatedInvoicesForPo(r);
+              const relatedReceives = getRelatedReceivesForPo(r);
+              openConfirm?.(
+                "Active PO",
+                `การคืนสถานะ PO ${r.poNo || r.id} จะเปลี่ยนสถานะกลับเป็น Approved\n\nระบบจะลบข้อมูลต่อไปนี้ถาวร:\n- Invoice ที่ผูกกับ PO นี้ ${relatedInvoices.length} รายการ\n- Receive ที่ผูกกับ PO นี้ ${relatedReceives.length} รายการ\n- PDF ของ Receive ที่อยู่ใน Firebase Storage\n\nหากต้องการดำเนินการต่อ ให้พิมพ์ Confirm`,
+                async () => {
+                  await handleActivePO(r);
+                },
+                "danger",
+                {
+                  requireText: "Confirm",
+                  requireTextLabel: "พิมพ์ Confirm เพื่อยืนยันการคืนสถานะ PO",
+                  requireTextPlaceholder: "Confirm",
+                }
+              );
+            }}
+          >
+            Active PO
+          </ActionMenuItem>
+        )}
+        {!actionTask && !isPR && (userRoles.some((role: string) => role.toUpperCase() === "ADMINISTRATOR") || userRole?.toUpperCase() === "ADMINISTRATOR") && (
+          <ActionMenuItem
+            icon={<RefreshCw size={14} className={recreatePoInFlightId === r.id ? "animate-spin" : ""} />}
+            disabled={Boolean(recreatePoInFlightId)}
+            onClick={() => handleRecreatePO(r)}
+          >
+            {recreatePoInFlightId === r.id ? "กำลัง Recreate PO..." : "Recreate PO"}
+          </ActionMenuItem>
+        )}
+        {canUseFunction(tableModule, "delete") && !isPR && (
+          <ActionMenuItem
+            icon={<Trash2 size={14} />}
+            tone="danger"
+            onClick={() => handleDeletePoFromLog(r)}
+          >
+            ลบ PO
+          </ActionMenuItem>
+        )}
+      </>
+    );
+  };
+
+  const renderActionCell = (r: any, className: string) => {
+    if (!isColumnVisible(tblId, "action")) return null;
+    return (
+      <td className={`px-2 py-0.5 ${className}`} onClick={(event) => event.stopPropagation()}>
+        <TableActionMenu
+          hasPendingAction={isActionTaskRow(r)}
+          pendingActionLabel={getPendingActionLabel(r)}
+          pendingActionLoading={pendingActionId === String(r.id)}
+          pendingActionIsActive={isActivePoTaskRow(r)}
+          onPendingAction={() => handlePendingTask(r)}
+        >
+          {renderActionMenuItems(r)}
+        </TableActionMenu>
+      </td>
+    );
+  };
+
   const rows = isPR ? prs : pos;
+
+  const openPoDetail = React.useCallback((row: any) => {
+    if (isPR) return;
+    setViewingPO(row);
+    const revisionNo = Number(row?.poBudgetReturnRevNo || row?.poBudgetReturnRevisions?.length || 0);
+    const pdfRevisionNo = Number(row?.poPdfRevisionNo || 0);
+    if (revisionNo > 0 && revisionNo > pdfRevisionNo) {
+      // เปิดดูได้ทันที และสร้าง PDF ฉบับ Rev ใหม่แบบ unique path จากนั้นค่อยลบไฟล์เดิม
+      handleRecreatePO(row);
+    }
+  }, [handleRecreatePO, isPR]);
 
   const filtered = React.useMemo(() => {
     const matchedRows = rows.filter((r: any) => {
@@ -2256,7 +2842,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                 {canViewPoBalance && isColumnVisible("po-table", "balance") && <ResizableTh tableId="po-table" colKey="balance" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.balance}>Balance PO</ResizableTh>}
                 {isColumnVisible(tblId, "status") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="status" className="px-2 py-0.5 font-semibold text-center" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.status}>สถานะ</ResizableTh>}
                 {isPR && isColumnVisible("pr-table", "poRef") && <ResizableTh tableId="pr-table" colKey="poRef" className="px-2 py-0.5 font-semibold text-center" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.poRef}>Ref PO</ResizableTh>}
-                {isColumnVisible(tblId, "action") && <th className="px-2 py-0.5 font-semibold text-center" style={{ width: prPoScaled.action }}>Action</th>}
+                {isColumnVisible(tblId, "action") && <th className="hidden px-2 py-0.5 font-semibold text-center md:table-cell" style={{ width: prPoScaled.action }}>Action</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -2301,37 +2887,8 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                     : null;
 
                   return (
-                    <tr key={r.id} className={`hover:bg-blue-50/40 transition-colors cursor-pointer ${isEven ? "bg-white" : "bg-slate-50/40"}`} onClick={() => { if (!isPR) setViewingPO(r); }}>
-                      {isColumnVisible(tblId, "action") && <td className="px-2 py-0.5 md:hidden" onClick={e => e.stopPropagation()}>
-                        {isActionTaskRow(r) && (
-                          <button
-                            type="button"
-                            disabled={pendingActionId === String(r.id)}
-                            className="inline-flex items-center gap-1 rounded-md bg-red-600 px-2 py-1 text-[10px] font-bold text-white shadow-sm transition-colors hover:bg-red-700 disabled:cursor-wait disabled:opacity-60 animate-pulse"
-                            title={getPendingActionLabel(r)}
-                            onClick={() => handlePendingTask(r)}
-                          >
-                            <Flame size={12} />
-                            {pendingActionId === String(r.id) ? "กำลังดำเนินการ..." : getPendingActionLabel(r)}
-                          </button>
-                        )}
-                        <div className={isActionTaskRow(r) ? "hidden" : "flex items-center justify-start gap-1"}>
-                          {canUseFunction(tableModule, "email") && (
-                            <button type="button" disabled={pdfLoadingId === r.id} className="p-1 rounded hover:bg-slate-200 text-slate-600 hover:text-slate-800 disabled:opacity-40" title="ส่งไฟล์ PDF ทางเมล" onClick={() => { setEmailModal({ doc: r, kind: isPR ? "pr" : "po" }); setEmailTo(""); }}>
-                              <Mail size={13} />
-                            </button>
-                          )}
-                          {canUseFunction(tableModule, "download") && (
-                            <button type="button" disabled={pdfLoadingId === r.id} className="p-1 rounded hover:bg-slate-200 text-slate-600 hover:text-slate-800 disabled:opacity-40" title="Download PDF" onClick={() => isPR ? handlePRDownloadPDF(r) : handlePODownloadPDF(r)}>
-                              {pdfLoadingId === r.id ? (
-                                <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" strokeOpacity=".25" /><path d="M12 2a10 10 0 0 1 10 10" /></svg>
-                              ) : (
-                                <Download size={13} />
-                              )}
-                            </button>
-                          )}
-                        </div>
-                      </td>}
+                    <tr key={r.id} className={`hover:bg-blue-50/40 transition-colors cursor-pointer ${isEven ? "bg-white" : "bg-slate-50/40"}`} onClick={() => openPoDetail(r)}>
+                      {renderActionCell(r, "md:hidden")}
                       {isColumnVisible(tblId, "rowNum") && (
                         <td className="px-2 py-0.5 text-slate-400 font-mono">
                           <span className="inline-flex items-center gap-1.5" title={isNotificationRow(r) ? "มีรายการรอ action" : undefined}>
@@ -2460,6 +3017,11 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                               จบงาน · {r.jobCompletedBy || "-"}
                             </div>
                           )}
+                          {!isPR && String(r?.poType || "").toUpperCase() === "SP" && r.budgetReturnProcessStatus && (
+                            <div className="mt-0.5 text-[9px] font-semibold text-amber-700">
+                              คืน Budget · {r.budgetReturnProcessStatus === "Waiting Budget Approval" ? "รอรับยอด" : r.budgetReturnProcessStatus}
+                            </div>
+                          )}
                         </td>
                       )}
                       {isPR && isColumnVisible("pr-table", "poRef") && (
@@ -2467,17 +3029,27 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                           {poRefNos || "-"}
                         </td>
                       )}
-                      {isColumnVisible(tblId, "action") && <td className="px-2 py-0.5" onClick={e => e.stopPropagation()}>
+                      {renderActionCell(r, "hidden md:table-cell")}
+                      {false && isColumnVisible(tblId, "action") && <td className="px-2 py-0.5" onClick={e => e.stopPropagation()}>
                         {isActionTaskRow(r) && (
                           <button
                             type="button"
                             disabled={pendingActionId === String(r.id)}
-                            className="mx-auto inline-flex items-center gap-1 rounded-md bg-red-600 px-2.5 py-1 text-[10px] font-bold text-white shadow-sm transition-colors hover:bg-red-700 disabled:cursor-wait disabled:opacity-60 animate-pulse"
+                            className={isActivePoTaskRow(r)
+                              ? "mx-auto inline-flex items-center justify-center rounded p-1.5 text-teal-700 transition-colors hover:bg-teal-100 disabled:cursor-wait disabled:opacity-60"
+                              : "mx-auto inline-flex items-center gap-1 rounded-md bg-red-600 px-2.5 py-1 text-[10px] font-bold text-white shadow-sm transition-colors hover:bg-red-700 disabled:cursor-wait disabled:opacity-60 animate-pulse"}
                             title={getPendingActionLabel(r)}
+                            aria-label={getPendingActionLabel(r)}
                             onClick={() => handlePendingTask(r)}
                           >
-                            <Flame size={12} />
-                            {pendingActionId === String(r.id) ? "กำลังดำเนินการ..." : getPendingActionLabel(r)}
+                            {isActivePoTaskRow(r) ? (
+                              <CheckCircle size={14} className={pendingActionId === String(r.id) ? "animate-pulse" : ""} />
+                            ) : (
+                              <>
+                                <Flame size={12} />
+                                {pendingActionId === String(r.id) ? "กำลังดำเนินการ..." : getPendingActionLabel(r)}
+                              </>
+                            )}
                           </button>
                         )}
                         <div className={isActionTaskRow(r) ? "hidden" : "flex items-center justify-center gap-1"}>
@@ -2557,6 +3129,36 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                               </button>
                             );
                           })()}
+                          {canStartPoBudgetReturn && !isPR && String(r?.poType || "").toUpperCase() === "SP" && (() => {
+                            const poPlan = buildPoBudgetReturnPlan({ po: r, payments, prs });
+                            const processStatus = String(r?.budgetReturnProcessStatus || "");
+                            if (["Queued", "Running", "Waiting Budget Approval", "Failed"].includes(processStatus)) {
+                              const canRetry = processStatus === "Queued"
+                                || processStatus === "Failed"
+                                || (processStatus === "Running" && isStalePoBudgetReturnProcess(r));
+                              return (
+                                <button
+                                  type="button"
+                                  className={`inline-flex items-center rounded border px-1.5 py-1 text-[9px] font-bold ${canRetry ? "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100" : "cursor-default border-slate-200 bg-slate-50 text-slate-500"}`}
+                                  title={`คืน Budget: ${processStatus}${canRetry ? " (กดเพื่อ Retry)" : ""}`}
+                                  onClick={() => canRetry && handleRetryPoBudgetReturn(r)}
+                                >
+                                  {processStatus === "Waiting Budget Approval" ? "รอรับยอด" : processStatus === "Failed" ? "Retry" : processStatus === "Queued" ? "กด Retry" : canRetry ? "Retry (ค้าง)" : "กำลังคืนยอด"}
+                                </button>
+                              );
+                            }
+                            if (!r?.jobCompleted || r?.status !== "Closed PO" || poPlan.paymentComplete || poPlan.returnableAmount <= 0) return null;
+                            return (
+                              <button
+                                type="button"
+                                className="p-1.5 rounded hover:bg-emerald-100 text-emerald-700"
+                                title={`คืน Balance PO เข้า Budget (${formatCurrency(poPlan.returnableAmount)})`}
+                                onClick={() => handleStartPoBudgetReturn(r)}
+                              >
+                                <Wallet size={14} />
+                              </button>
+                            );
+                          })()}
                           {canUseFunction(tableModule, "requestClosePO") && !isPR && !isPaidLikePo(r) && r.status !== "Closed PO" && r.status !== "Pending Close PO" && r.status !== "Received" && (
                             <button type="button" className="p-1.5 rounded hover:bg-amber-100 text-amber-700" title="ขอปิด PO (รอ PCM ยืนยัน)" onClick={() => openConfirm?.("ขอปิด PO", "เมื่อ PCM ยืนยันแล้ว สถานะจะเป็น Closed PO", async () => {
                               await updateData?.("pos", r.id, { status: "Pending Close PO", closeRequestedAt: new Date().toISOString() }, { skipLog: true });
@@ -2620,30 +3222,22 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                               type="button"
                               className="p-1.5 rounded hover:bg-red-100 text-red-600"
                               title="ลบ PO"
-                              onClick={() => openConfirm?.("ยืนยันการลบ", `คุณต้องการลบ PO ${r.poNo || r.id} ใช่หรือไม่?`, async () => {
-                                const prIds = r.items
-                                  ? [...new Set(r.items.map((i: any) => i.prId).filter(Boolean))]
-                                  : (r.prRefId ? [r.prRefId] : []);
-                                if (r.pdfUrl) {
-                                  const safePONo = (r.poNo || r.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
-                                  const safeProjId = r.projectId || "unknown";
-                                  await deleteGeneratedPdf(`generated/pos/${safeProjId}/${safePONo}.pdf`);
-                                }
-                                const deleted = await deleteData?.("pos", r.id);
-                                if (deleted && prIds.length > 0) {
-                                  for (const prId of prIds) {
-                                    const stillUsedByOtherPO = pos.some((p: any) => p.id !== r.id && p.items?.some((i: any) => i.prId === prId));
-                                    if (!stillUsedByOtherPO) {
-                                      await updateData?.("prs", prId, { status: "Approved" });
-                                    }
-                                  }
-                                }
-                              }, "danger")}
+                              onClick={() => handleDeletePoFromLog(r)}
                             >
                               <Trash2 size={14} />
                             </button>
                           )}
                         </div>
+                        {isActionTaskRow(r) && canUseFunction(tableModule, "delete") && !isPR && (
+                          <button
+                            type="button"
+                            className="p-1.5 rounded hover:bg-red-100 text-red-600"
+                            title="ลบ PO"
+                            onClick={() => handleDeletePoFromLog(r)}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
                       </td>}
                     </tr>
                   );
@@ -2837,6 +3431,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
         const sameText = (a: any, b: any) => normalizeText(a) !== "" && normalizeText(a) === normalizeText(b);
         const poId = normalizeText(po.id);
         const poNo = normalizeText(po.poNo);
+        const poNumbers = getPoNumberVariants(po);
         const dedupeDocs = (items: any[]) => {
           const seen = new Set<string>();
           return (items || []).filter((item: any) => {
@@ -2875,20 +3470,20 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
         const relatedPRs = dedupeDocs(poPrIds.map((prId: string) => prById.get(prId)).filter(Boolean));
         const relatedPayments = dedupeDocs((payments || []).filter((payment: any) => (
           sameText(payment?.poId, poId) ||
-          sameText(payment?.poNo, poNo) ||
+          poNumbers.some((number) => sameText(payment?.poNo, number)) ||
           (Array.isArray(payment?.selectedPrIds) && payment.selectedPrIds.some((id: any) => sameText(id, poId))) ||
           (Array.isArray(payment?.items) && payment.items.some((item: any) => sameText(item?.poId, poId) || sameText(item?.prId, poId))) ||
-          (poNo && normalizeText(payment?.paymentNo).startsWith(poNo))
+          poNumbers.some((number) => normalizeText(payment?.paymentNo).startsWith(`${number}-`))
         )));
         const relatedReceives = dedupeDocs((receives || []).filter((receive: any) => (
           sameText(receive?.poId, poId) ||
-          sameText(receive?.poNo, poNo) ||
-          sameText(receive?.poRef, poNo)
+          poNumbers.some((number) => sameText(receive?.poNo, number)) ||
+          poNumbers.some((number) => sameText(receive?.poRef, number))
         )));
         const relatedInvoices = dedupeDocs((invoices || []).filter((invoice: any) => (
           sameText(invoice?.poId, poId) ||
-          sameText(invoice?.poNo, poNo) ||
-          sameText(invoice?.poRef, poNo)
+          poNumbers.some((number) => sameText(invoice?.poNo, number)) ||
+          poNumbers.some((number) => sameText(invoice?.poRef, number))
         )));
         const relatedInvoiceIds = new Set(relatedInvoices.map((invoice: any) => normalizeText(invoice?.id)).filter(Boolean));
         const relatedInvoiceNos = new Set(relatedInvoices.flatMap((invoice: any) => [invoice?.invNo, invoice?.id].map(normalizeText)).filter(Boolean));
@@ -2905,7 +3500,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
           relatedInvoicePayNos.has(normalizeText(pay?.docNo || pay?.payNo)) ||
           (Array.isArray(pay?.invoiceIds) && pay.invoiceIds.some((id: any) => relatedInvoiceIds.has(normalizeText(id)))) ||
           (Array.isArray(pay?.invoiceRefs) && pay.invoiceRefs.some((ref: any) => relatedInvoiceNos.has(normalizeText(ref)))) ||
-          (Array.isArray(pay?.invoices) && pay.invoices.some((invoice: any) => sameText(invoice?.poNo, poNo) || relatedInvoiceIds.has(normalizeText(invoice?.id))))
+              (Array.isArray(pay?.invoices) && pay.invoices.some((invoice: any) => poNumbers.some((number) => sameText(invoice?.poNo, number)) || relatedInvoiceIds.has(normalizeText(invoice?.id))))
         ));
         const relatedPayFromInvoices = relatedInvoices
           .filter((invoice: any) => isPaidInvoiceForPay(invoice))
@@ -3092,6 +3687,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                     </tfoot>
                   </table>
                 </div>
+                <PoRevisionHistory po={po} />
               </div>
 
               <div className="px-6 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0 rounded-b-2xl">

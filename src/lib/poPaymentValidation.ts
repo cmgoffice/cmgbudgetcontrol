@@ -1,3 +1,5 @@
+import { getPoNumberVariants } from "./poPaymentBalance";
+
 const asNumber = (value: any) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -7,21 +9,21 @@ const normalizeText = (value: any) => String(value || "").trim();
 
 const isPaymentLinkedToPo = (payment: any, po: any) => {
   const poId = normalizeText(po?.id);
-  const poNo = normalizeText(po?.poNo);
+  const poNumbers = getPoNumberVariants(po);
+  const poNo = poNumbers[0] || "";
   if (!poId && !poNo) return false;
 
   if (normalizeText(payment?.poId) === poId && poId) return true;
-  if (normalizeText(payment?.poNo) === poNo && poNo) return true;
+  if (poNumbers.some((number) => normalizeText(payment?.poNo) === number)) return true;
   if (normalizeText(payment?.poRef) === poId && poId) return true;
-  if (normalizeText(payment?.poRef) === poNo && poNo) return true;
+  if (poNumbers.some((number) => normalizeText(payment?.poRef) === number)) return true;
 
   if (Array.isArray(payment?.selectedPrIds) && poId) {
     if (payment.selectedPrIds.some((id: any) => normalizeText(id) === poId)) return true;
   }
 
-  return Array.isArray(payment?.items) && poId
-    ? payment.items.some((item: any) => normalizeText(item?.poId) === poId || normalizeText(item?.prId) === poId)
-    : false;
+  if (Array.isArray(payment?.items) && poId && payment.items.some((item: any) => normalizeText(item?.poId) === poId || normalizeText(item?.prId) === poId)) return true;
+  return poNumbers.some((number) => normalizeText(payment?.paymentNo).startsWith(`${number}-`));
 };
 
 export type PoPaymentItemLock = {

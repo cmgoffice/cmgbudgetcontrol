@@ -24,20 +24,33 @@ export const getPaymentPeriodNo = (payment: any): number => {
   return Number.isFinite(suffix) && suffix > 0 ? suffix : 0;
 };
 
+/**
+ * A revised PO keeps its original number as the identity and displays
+ * `_R.{n}` on the current document number. Payment/Receive records created
+ * before the revision still carry the original number, so all variants must
+ * remain searchable.
+ */
+export const getPoNumberVariants = (po: any): string[] => {
+  const current = String(po?.poNo || "").trim();
+  const original = String(po?.originalPoNo || "").trim();
+  const base = current.replace(/_R\.\d+$/i, "");
+  return Array.from(new Set([current, original, base].filter(Boolean)));
+};
+
 export const isPaymentLinkedToPo = (payment: any, po: any): boolean => {
   if (!payment || !po?.id) return false;
   const poId = String(po.id);
-  const poNo = String(po.poNo || "");
+  const poNumbers = getPoNumberVariants(po);
   const same = (value: any, target: string) => Boolean(target) && String(value || "") === target;
 
   if (Array.isArray(payment.selectedPrIds) && payment.selectedPrIds.some((id: any) => same(id, poId))) return true;
   if (same(payment.sourcePoId, poId) || same(payment.poId, poId) || same(payment.poRef, poId)) return true;
-  if (same(payment.sourcePoNo, poNo) || same(payment.poNo, poNo) || same(payment.poRef, poNo)) return true;
+  if ([payment.sourcePoNo, payment.poNo, payment.poRef].some((value: any) => poNumbers.some((number) => same(value, number)))) return true;
   if (Array.isArray(payment.items) && payment.items.some((item: any) => (
     same(item?.poId, poId) || same(item?.prId, poId)
   ))) return true;
 
-  return Boolean(poNo && String(payment.paymentNo || "").startsWith(`${poNo}-`));
+  return poNumbers.some((number) => String(payment.paymentNo || "").startsWith(`${number}-`));
 };
 
 const getPaymentSortTime = (payment: any) => {
@@ -74,7 +87,8 @@ export const getPaymentAccumulatedNetAmount = (payment: any) => {
 export const isReceiveLinkedToPo = (receive: any, po: any): boolean => {
   if (!receive || !po?.id) return false;
   if (String(receive.poId || "") === String(po.id)) return true;
-  return Boolean(po.poNo && String(receive.poNo || receive.poRef || "") === String(po.poNo));
+  const receiveNo = String(receive.poNo || receive.poRef || "");
+  return getPoNumberVariants(po).some((number) => receiveNo === number);
 };
 
 export const getPoReceiveUsedAmount = (po: any, receives: any[]) => {

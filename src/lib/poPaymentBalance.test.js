@@ -1,5 +1,6 @@
 import {
   getLatestPaymentForPo,
+  getPoNumberVariants,
   getPoPaymentAndReceiveBalanceInfo,
   getPoPaymentBalanceInfo,
 } from "./poPaymentBalance";
@@ -106,4 +107,12 @@ test("exposes the job completion marker from the latest Payment period", () => {
 
   expect(result.jobCompleted).toBe(true);
   expect(result.jobCompletedBy).toBe("PM Test");
+});
+
+test("keeps pre-Rev Payment links after PO number gets a revision suffix", () => {
+  const revisedPo = { ...po, poNo: "PO-SP-001_R.1", originalPoNo: "PO-SP-001" };
+  expect(getPoNumberVariants(revisedPo)).toEqual(["PO-SP-001_R.1", "PO-SP-001"]);
+  const result = getPoPaymentBalanceInfo(revisedPo, [period(1, 0, 60000)]);
+  expect(result.paymentUsedAmount).toBe(60000);
+  expect(result.latestPaymentNo).toBe("PO-SP-001-001");
 });

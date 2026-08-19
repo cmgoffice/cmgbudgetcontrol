@@ -8,7 +8,7 @@ import {
   BarChart3, Zap, Building2, Wallet, ShoppingCart, FileInput, RefreshCw, UserCheck, History,
   Bell, CircleDot, AtSign, MapPinned, UserCircle, Square, CheckSquare, Flame, Mail, Settings, Send
 } from "lucide-react";
-import { doc, setDoc, updateDoc, deleteDoc, deleteField, runTransaction } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc, deleteDoc, deleteField, runTransaction } from "firebase/firestore";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
@@ -24,6 +24,9 @@ import { scalePrItemsToTotal, sumSubItemAmounts } from "../lib/prBudgetReturn";
 import { getInvoiceAmountForPo, isPaidStatus, isSpentInvoiceRecord } from "../lib/billingPayUtils";
 import { getPoAmountExVat, PO_DISCOUNT_ALLOCATION_VERSION } from "../lib/poDiscount";
 import { canDirectEditApprovedMainBudget } from "../lib/budgetEditPolicy";
+import { generatePRPdfBytes, generatePOPdfBytes, deleteGeneratedPdf } from "../lib/pdfForms";
+import { stampPoSignaturesToPdf } from "../lib/poSignatureStamps";
+import { getPreviousGeneratedPdfPath, removePreviousGeneratedPdf, uploadRevisionPdf } from "../lib/pdfReplacement";
 import { useProportionalTableLayout, chainTableResizeHandlers } from "../hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
@@ -33,7 +36,7 @@ import {
 } from "../lib/systemLogDetails";
 
 const BudgetView = React.memo(() => {
-  const { budgets, projects, prs, pos, invoices, receives, payments = [], addData, updateData, deleteData,
+  const { budgets, projects, prs, pos, vendors = [], invoices, receives, payments = [], addData, updateData, deleteData,
     showAlert, openConfirm, logAction, userRole, userRoles, userData, columnWidths, handleColumnResize,
     visibleProjects, handlePRAction, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,
     db, appId, canUseFunction, isColumnVisible } = useAppData();
@@ -2700,6 +2703,79 @@ const BudgetView = React.memo(() => {
     return raw.length > 120 ? `${raw.slice(0, 117)}…` : raw;
   };
 
+  const replacePrPdfAfterRevision = useCallback(async (pr: any, revisionNo: any) => {
+    if (!pr?.id) return;
+    const project = projects.find((item: any) => item.id === pr.projectId) || null;
+    const previousPath = getPreviousGeneratedPdfPath(pr, "pr");
+    const bytes = await generatePRPdfBytes(pr, {
+      projectName: project?.name || "",
+      budgetDesc: "",
+    });
+    const uploaded = await uploadRevisionPdf({
+      bytes,
+      kind: "pr",
+      projectId: pr.projectId || "unknown",
+      docNo: pr.prNo || pr.id,
+      revisionNo,
+    });
+    try {
+      const updated = await updateData("prs", pr.id, {
+        pdfUrl: uploaded.url,
+        pdfPath: uploaded.path,
+        pdfUpdatedAt: new Date().toISOString(),
+        pdfRevisionNo: Number(revisionNo || 0),
+      });
+      if (updated === false) throw new Error("บันทึกลิงก์ PDF ของ PR ไม่สำเร็จ");
+    } catch (error) {
+      await deleteGeneratedPdf(uploaded.path);
+      throw error;
+    }
+    await removePreviousGeneratedPdf(previousPath, uploaded.path);
+  }, [projects, updateData]);
+
+  const replacePoPdfAfterRevision = useCallback(async (po: any, revisionNo: any) => {
+    if (!po?.id) return;
+    const project = projects.find((item: any) => item.id === po.projectId) || null;
+    const vendor = vendors.find((item: any) => item.id === po.vendorId) || null;
+    const poData = {
+      ...po,
+      pcmdate: po.pcmApprovedAt ? new Date(po.pcmApprovedAt).toLocaleDateString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric" }) : "",
+      gmdate: po.gmApprovedAt ? new Date(po.gmApprovedAt).toLocaleDateString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric" }) : "",
+    };
+    let bytes = await generatePOPdfBytes(poData, { vendor, project });
+    try {
+      bytes = await stampPoSignaturesToPdf(bytes, poData, {
+        currentUserData: userData,
+        requireApprovedSignatures: true,
+        logPrefix: "[PO Rev PDF]",
+      });
+    } catch (signatureError) {
+      // ยอด Rev ต้องถูกบันทึกแม้ลายเซ็นบาง slot จะอ่านไม่ได้
+      console.warn("[PO Rev PDF] signature stamp skipped:", signatureError);
+    }
+    const previousPath = getPreviousGeneratedPdfPath(po, "po");
+    const uploaded = await uploadRevisionPdf({
+      bytes,
+      kind: "po",
+      projectId: po.projectId || "unknown",
+      docNo: po.poNo || po.id,
+      revisionNo,
+    });
+    try {
+      const updated = await updateData("pos", po.id, {
+        pdfUrl: uploaded.url,
+        pdfPath: uploaded.path,
+        pdfUpdatedAt: new Date().toISOString(),
+        poPdfRevisionNo: Number(revisionNo || 0),
+      });
+      if (updated === false) throw new Error("บันทึกลิงก์ PDF ของ PO ไม่สำเร็จ");
+    } catch (error) {
+      await deleteGeneratedPdf(uploaded.path);
+      throw error;
+    }
+    await removePreviousGeneratedPdf(previousPath, uploaded.path);
+  }, [projects, updateData, userData, vendors]);
+
   const handleAcceptBudgetReturnNotification = useCallback((budget, notification) => {
     if (!budget?.id || !notification?.id) return;
     const sub = budget?.subItems?.find((s) => s.id === notification.subItemId);
@@ -2726,6 +2802,10 @@ const BudgetView = React.memo(() => {
 
         const acceptedBy = userData ? `${userData.firstName || ""} ${userData.lastName || ""}`.trim() : (userRole || "Unknown");
         const acceptedAt = new Date().toISOString();
+        let acceptedPrForPdf: any = null;
+        let acceptedPrRevisionNo = 0;
+        const acceptedPoId = String(latestNotification.poId || latestNotification.poRefId || "");
+        let pdfWarnings: string[] = [];
         try {
           await runTransaction(db, async (transaction) => {
             const budgetRef = doc(db, "artifacts", appId, "public", "data", "budgets", latestBudget.id);
@@ -2754,6 +2834,20 @@ const BudgetView = React.memo(() => {
               const prRef = doc(db, "artifacts", appId, "public", "data", "prs", prId);
               const prSnap = await transaction.get(prRef);
               if (!prSnap.exists()) throw new Error("ไม่พบ PR ล่าสุดสำหรับคำขอคืนยอดนี้");
+
+              const processJobId = currentNotification.poBudgetReturnJobId || null;
+              const processJobRef = processJobId
+                ? doc(db, "artifacts", appId, "public", "data", "poBudgetReturnJobs", processJobId)
+                : null;
+              const processPoId = currentNotification.poId || currentNotification.poRefId || null;
+              const processPoRef = processJobId && processPoId
+                ? doc(db, "artifacts", appId, "public", "data", "pos", processPoId)
+                : null;
+              const processJobSnap = processJobRef ? await transaction.get(processJobRef) : null;
+              const processPoSnap = processPoRef ? await transaction.get(processPoRef) : null;
+              if (processJobId && processJobRef && !processJobSnap?.exists()) {
+                throw new Error("ไม่พบ Process คืนยอด PO ล่าสุด");
+              }
 
               const currentPr = prSnap.data() || {};
               const pendingReturn = currentPr.pendingBudgetReturn;
@@ -2787,6 +2881,17 @@ const BudgetView = React.memo(() => {
                 ? newItems
                 : scalePrItemsToTotal(currentPr.items || [], revisedTotal);
 
+              // ใช้ snapshot หลัง Rev นี้สร้าง PDF ใหม่หลัง transaction สำเร็จ
+              acceptedPrForPdf = {
+                ...currentPr,
+                id: prId,
+                items: appliedItems,
+                totalAmount: revisedTotal,
+                amount: revisedTotal,
+                pendingBudgetReturn: null,
+              };
+              acceptedPrRevisionNo = Number(revisionToStore.revNo || 0);
+
               transaction.update(prRef, {
                 items: appliedItems,
                 totalAmount: revisedTotal,
@@ -2800,6 +2905,35 @@ const BudgetView = React.memo(() => {
                 pendingBudgetReturn: deleteField(),
               });
 
+              if (processJobId && processJobRef && processJobSnap?.exists()) {
+                const currentJob = processJobSnap.data() || {};
+                const linkedPrIds = Array.isArray(currentJob.linkedPrs)
+                  ? currentJob.linkedPrs.map((row: any) => String(row?.prId || "")).filter(Boolean)
+                  : [];
+                const acceptedPrIds = [...new Set([
+                  ...(Array.isArray(currentJob.acceptedPrIds) ? currentJob.acceptedPrIds.map((id: any) => String(id)) : []),
+                  String(prId),
+                ])];
+                const processComplete = linkedPrIds.length === 0 || linkedPrIds.every((id: string) => acceptedPrIds.includes(id));
+                transaction.update(processJobRef, {
+                  acceptedPrIds,
+                  acceptedLastAt: acceptedAt,
+                  acceptedLastBy: acceptedBy || "Unknown",
+                  status: processComplete ? "Completed" : "Waiting Budget Approval",
+                  currentStep: processComplete ? "FINALIZE" : "WAITING_BUDGET_APPROVAL",
+                  ...(processComplete ? { completedAt: acceptedAt } : {}),
+                  updatedAt: acceptedAt,
+                });
+                if (processPoRef && processPoSnap?.exists()) {
+                  transaction.update(processPoRef, {
+                    budgetReturnProcessStatus: processComplete ? "Completed" : "Waiting Budget Approval",
+                    budgetReturnProcessStep: processComplete ? "FINALIZE" : "WAITING_BUDGET_APPROVAL",
+                    ...(processComplete ? { budgetReturnProcessCompletedAt: acceptedAt, budgetReturnProcessCompletedBy: acceptedBy || "Unknown" } : {}),
+                    updatedAt: acceptedAt,
+                  });
+                }
+              }
+
               const currentUsedAmount = Number(currentBudget.usedAmount);
               if (Number.isFinite(currentUsedAmount)) {
                 budgetPayload.usedAmount = Math.max(0, currentUsedAmount - Number(currentNotification.amount || 0));
@@ -2808,6 +2942,31 @@ const BudgetView = React.memo(() => {
 
             transaction.update(budgetRef, budgetPayload);
           });
+
+          // สร้าง PDF ใหม่ที่ path ใหม่ก่อน เปลี่ยน URL ใน Firestore แล้วจึงลบไฟล์เดิม
+          if (acceptedPrForPdf) {
+            try {
+              await replacePrPdfAfterRevision(acceptedPrForPdf, acceptedPrRevisionNo);
+            } catch (pdfError: any) {
+              console.warn("[PR Rev PDF] update failed:", pdfError);
+              pdfWarnings.push(`PR PDF: ${pdfError?.message || "สร้าง/เปลี่ยนไฟล์ไม่สำเร็จ"}`);
+            }
+          }
+          if (acceptedPoId && latestNotification.poBudgetReturnJobId) {
+            try {
+              const poSnap = await getDoc(doc(db, "artifacts", appId, "public", "data", "pos", acceptedPoId));
+              if (poSnap.exists()) {
+                const latestPo = { id: poSnap.id, ...poSnap.data() };
+                const poRevisionNo = Number(latestPo.poBudgetReturnRevNo || latestPo.poBudgetReturnRevisions?.length || 0);
+                if (poRevisionNo > 0 && Number(latestPo.poPdfRevisionNo || 0) < poRevisionNo) {
+                  await replacePoPdfAfterRevision(latestPo, poRevisionNo);
+                }
+              }
+            } catch (pdfError: any) {
+              console.warn("[PO Rev PDF] update failed:", pdfError);
+              pdfWarnings.push(`PO PDF: ${pdfError?.message || "สร้าง/เปลี่ยนไฟล์ไม่สำเร็จ"}`);
+            }
+          }
         } catch (error: any) {
           showAlert("รับยอดไม่สำเร็จ", error?.message || "ไม่สามารถรับยอดคืน Budget ได้", "error");
           return;
@@ -2818,7 +2977,11 @@ const BudgetView = React.memo(() => {
           `รับยอดคืน Budget ${latestBudget.code} จาก PR ${latestNotification.prNo || latestNotification.prId}: ${formatCurrency(amount)} | เหตุผล: ${reason}`,
           latestBudget.projectId || selectedProjectId
         );
-        showAlert("รับยอดสำเร็จ", `รับยอดคืน ${formatCurrency(amount)} เข้างบประมาณเรียบร้อย`, "success");
+        showAlert(
+          pdfWarnings.length > 0 ? "รับยอดสำเร็จ แต่ PDF ต้องตรวจสอบ" : "รับยอดสำเร็จ",
+          `รับยอดคืน ${formatCurrency(amount)} เข้างบประมาณเรียบร้อย${pdfWarnings.length > 0 ? `\n${pdfWarnings.join("\n")}` : ""}`,
+          pdfWarnings.length > 0 ? "warning" : "success"
+        );
       },
       "warning"
     );

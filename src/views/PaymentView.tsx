@@ -37,6 +37,8 @@ import {
   getPoItemsGrossSubtotal,
   getPoDiscountTarget,
 } from "../lib/poDiscount";
+import { getPaymentPoSyncPatch } from "../lib/paymentPoSync";
+import { buildPoBudgetReturnPlan, enqueuePoBudgetReturnJob } from "../lib/poBudgetReturn";
 import {
   buildDeleteLogDetails,
   buildRecordSummary,
@@ -152,7 +154,7 @@ const PaymentView = React.memo(() => {
   const {
     prs, pos, payments = [], invoices = [], vendors, projects, addData, updateData, deleteData, loadVendors,
     showAlert, openConfirm, logAction, userData, user, userRoles, canUseFunction, functionPermissions,
-    isColumnVisible, columnWidths, handleColumnResize,
+    isColumnVisible, columnWidths, handleColumnResize, db, appId,
   } = useAppData();
   const myRoles: string[] = userRoles || [];
 
@@ -218,6 +220,24 @@ const PaymentView = React.memo(() => {
 
   // ─── Period Navigation ─────────────────────────────────────────────────────
   const [viewPeriodIdx, setViewPeriodIdx] = useState(-1);
+
+  const findPaymentPo = React.useCallback((payment: any) => {
+    const linkedIds = new Set((payment?.selectedPrIds || []).map((id: any) => String(id)));
+    const directRef = String(payment?.sourcePoId || payment?.poId || payment?.poRef || "");
+    return (pos || []).find((po: any) => (
+      linkedIds.has(String(po.id)) ||
+      (directRef && (directRef === String(po.id) || directRef === String(po.poNo || "")))
+    )) || null;
+  }, [pos]);
+
+  const withLatestPo = React.useCallback((payment: any) => {
+    const linkedPo = findPaymentPo(payment);
+    return linkedPo ? { ...payment, ...getPaymentPoSyncPatch(payment, linkedPo) } : payment;
+  }, [findPaymentPo]);
+
+  React.useEffect(() => {
+    setViewingPayment((current: any) => current ? withLatestPo(current) : current);
+  }, [withLatestPo]);
 
   React.useEffect(() => {
     if (!viewingPayment) {
@@ -598,12 +618,16 @@ const PaymentView = React.memo(() => {
         const extraFields: Record<string, any> = {
           billingCycle: periodBillingCycle,
           contractTitle: normalizedContractTitle,
-          ...(paymentDiscountEnabled ? {
-            grossPeriodAmount: totalAmt,
-            thisPeriodDiscount,
-            netPeriodAmount,
-            discountAppliedAmount: previousDiscountAmount + thisPeriodDiscount,
-          } : {}),
+          discountAllocationVersion: paymentDiscountEnabled ? PO_DISCOUNT_ALLOCATION_VERSION : null,
+          poGrossAmount,
+          poDiscountAmount: paymentDiscountEnabled ? poDiscountAmount : 0,
+          discountPrId: paymentDiscountEnabled ? (p.discountPrId || null) : null,
+          discountPrNo: paymentDiscountEnabled ? (p.discountPrNo || null) : null,
+          discountRate: paymentDiscountEnabled ? (Number(p.discountRate) || 0) : 0,
+          grossPeriodAmount: totalAmt,
+          thisPeriodDiscount,
+          netPeriodAmount,
+          discountAppliedAmount: paymentDiscountEnabled ? previousDiscountAmount + thisPeriodDiscount : 0,
         };
 
         if (finalize) {
@@ -744,6 +768,7 @@ const PaymentView = React.memo(() => {
       const emailField = isCheckStep ? "periodCheckedByEmail" : "periodApprovedByEmail";
       const signatureFields = buildPaymentSignatureUserFields(isCheckStep ? "Signature2" : "Signature3", userData, user);
       await updateData("payments", p.id, {
+        ...getPaymentPoSyncPatch(p, findPaymentPo(p)),
         status: nextStatus,
         [sigField]: approver.name || userData?.name || user?.email || "",
         [uidField]: approver.uid || null,
@@ -1017,10 +1042,23 @@ const PaymentView = React.memo(() => {
         jobCompletedByEmail: completedBy.email || null,
       }, { skipLog: true });
       const selectedPrIds = evalModalPayment.selectedPrIds || [];
+      let queuedReturnCount = 0;
+      let queueReturnError = "";
+      const planningPayments = [
+        ...(payments || []).filter((payment: any) => payment.id !== evalModalPayment.id),
+        {
+          ...evalModalPayment,
+          status: "Paid",
+          jobStatus: "จบงาน",
+          jobCompleted: true,
+          jobCompletedAt: completedAt,
+          jobCompletedBy: completedByName,
+        },
+      ];
       for (const poId of selectedPrIds) {
         const po = (pos || []).find((x: any) => x.id === poId);
         if (po) {
-          await updateData("pos", poId, {
+          const poUpdateOk = await updateData("pos", poId, {
             status: "Closed PO",
             statusNow: "Closed PO",
             jobStatus: "จบงาน",
@@ -1033,6 +1071,38 @@ const PaymentView = React.memo(() => {
             jobCompletedPaymentNo: evalModalPayment.paymentNo || "",
             jobCompletedPeriodNo: evalModalPayment.periodNo || null,
           }, { skipLog: true });
+          if (!poUpdateOk) {
+            queueReturnError = `อัปเดตสถานะ PO ${po.poNo || poId} ไม่สำเร็จ`;
+            continue;
+          }
+
+          // Rev PO/คืนยอดจาก Payment ใช้เฉพาะ PO ประเภท SP เท่านั้น
+          if (String(po.poType || "").toUpperCase() !== "SP") continue;
+
+          // Completing Payment is the trigger for the durable PO return job.
+          // The worker will skip this PO when the latest Payment is already
+          // 100% complete; partial usage is queued for PO/PR Rev and Budget
+          // return without keeping the browser open.
+          try {
+            const plan = buildPoBudgetReturnPlan({
+              po: { ...po, status: "Closed PO", jobCompleted: true },
+              payments: planningPayments,
+              prs,
+            });
+            if (!plan.paymentComplete && plan.returnableAmount > 0) {
+              const result = await enqueuePoBudgetReturnJob({
+                db,
+                appId,
+                po: { ...po, status: "Closed PO", jobCompleted: true },
+                plan,
+                actor: { name: completedByName, uid: completedBy.uid, email: completedBy.email },
+              });
+              if (result?.queued) queuedReturnCount += 1;
+            }
+          } catch (queueError: any) {
+            queueReturnError = queueError?.message || String(queueError);
+            console.error("[PO Budget Return] enqueue failed:", queueError);
+          }
         }
       }
       await logAction(
@@ -1040,6 +1110,15 @@ const PaymentView = React.memo(() => {
         `จบงานและประเมินผู้รับเหมา | ${getPaymentLogSummary(evalModalPayment, { status: "Paid" })} | ผู้จบงาน: ${completedByName || "-"} | คะแนนรวม: ${Number(totalScore || 0).toLocaleString("th-TH")}/5`,
         selectedProjectId
       );
+      if (queuedReturnCount > 0) {
+        showAlert(
+          "จบงานแล้วและส่ง Rev PO แล้ว",
+          `ส่ง Process Rev PO/คืนยอดหลังบ้าน ${queuedReturnCount} รายการแล้ว ระบบจะทำงานต่อแม้ปิดเว็บไซต์${queueReturnError ? `\nหมายเหตุ: ${queueReturnError}` : ""}`,
+          queueReturnError ? "warning" : "success"
+        );
+      } else if (queueReturnError) {
+        showAlert("จบงานแล้ว แต่ส่ง Rev PO ไม่สำเร็จ", queueReturnError, "warning");
+      }
       setEvalModalPayment(null);
       setViewingPayment(null);
       setEvalForm({
@@ -1228,8 +1307,10 @@ const PaymentView = React.memo(() => {
 
   // ─── Filtered payments for current project ───────────────────────────────────
   const projectPayments = useMemo(() => {
-    return (payments || []).filter((p: any) => p.projectId === selectedProjectId && p.status !== "Paid");
-  }, [payments, selectedProjectId]);
+    return (payments || [])
+      .filter((p: any) => p.projectId === selectedProjectId && p.status !== "Paid")
+      .map(withLatestPo);
+  }, [payments, selectedProjectId, withLatestPo]);
 
   // ─── PO SP/DC ที่ Approved แต่ยังไม่มี Payment document (Auto Draft) ────────
   const linkedPoIds = useMemo(() => {
@@ -1837,9 +1918,10 @@ const PaymentView = React.memo(() => {
           return s + (ed?.thisPeriodAmount !== undefined ? Number(ed.thisPeriodAmount) : (Number(it.thisPeriodAmount) || 0));
          }, 0);
          const thisPeriodPctTotal = contractGrandTotal > 0 ? ((thisPeriodGrandTotal / contractGrandTotal) * 100) : 0;
-         const paymentDiscountEnabled = vp.discountAllocationVersion === PO_DISCOUNT_ALLOCATION_VERSION;
-         const displayPoGrossAmount = Number(vp.poGrossAmount) || getPaymentContractGrossAmount(vp);
-         const displayPoDiscountAmount = paymentDiscountEnabled ? (Number(vp.poDiscountAmount) || 0) : 0;
+         const discountSource = isViewingOldPeriod ? activePeriod : vp;
+         const paymentDiscountEnabled = discountSource?.discountAllocationVersion === PO_DISCOUNT_ALLOCATION_VERSION;
+         const displayPoGrossAmount = Number(discountSource?.poGrossAmount) || getPaymentContractGrossAmount(vp);
+         const displayPoDiscountAmount = paymentDiscountEnabled ? (Number(discountSource?.poDiscountAmount) || 0) : 0;
          const displayPreviousDiscount = isViewingOldPeriod
            ? (Number(activePeriod?.prevAccumDiscount) || 0)
            : (Number(vp.prevAccumDiscount) || 0);
@@ -1938,7 +2020,7 @@ const PaymentView = React.memo(() => {
                         <div className="flex">
                           <span className="w-52 text-slate-500 font-semibold shrink-0">ส่วนลด / DISCOUNT :</span>
                           <span className="font-medium text-red-700">
-                            {formatCurrency(displayDiscount)}{vp.discountPrNo ? ` (PR ${vp.discountPrNo})` : ""}
+                            {formatCurrency(displayDiscount)}{discountSource?.discountPrNo ? ` (PR ${discountSource.discountPrNo})` : ""}
                           </span>
                         </div>
                       )}
@@ -2271,7 +2353,7 @@ const PaymentView = React.memo(() => {
                                 <td colSpan={16} className="border border-red-200 px-4 py-2">
                                   <div className="flex flex-wrap justify-end gap-x-8 gap-y-1 font-mono">
                                     <span className="text-slate-600">ยอดงวดก่อนส่วนลด: <b>{formatCurrency(thisPeriodGrandTotal)}</b></span>
-                                    <span className="text-red-700">ส่วนลด{vp.discountPrNo ? ` (PR ${vp.discountPrNo})` : ""}: <b>-{formatCurrency(displayDiscount)}</b></span>
+                                    <span className="text-red-700">ส่วนลด{discountSource?.discountPrNo ? ` (PR ${discountSource.discountPrNo})` : ""}: <b>-{formatCurrency(displayDiscount)}</b></span>
                                     <span className="text-emerald-700">ยอดสุทธิงวดนี้: <b>{formatCurrency(displayNetPeriodAmount)}</b></span>
                                   </div>
                                 </td>

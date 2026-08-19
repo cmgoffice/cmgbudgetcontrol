@@ -117,6 +117,54 @@ export const getPaymentNetPeriodAmount = (payment: any) => {
   return calculateNetPeriodAmount(gross, getPaymentDiscountAmount(payment));
 };
 
+/**
+ * Payment keeps a snapshot of the PO discount so completed periods remain
+ * auditable. For the current period, however, the latest PO is authoritative.
+ * This patch is intentionally derived at read/save time so a discount that is
+ * added, changed, or removed after Payment activation is reflected immediately.
+ */
+export const getPaymentDiscountSyncPatch = (payment: any, po: any) => {
+  if (!po) return {};
+
+  const poGrossAmount = getPoItemsGrossSubtotal(po);
+  const poDiscountAmount = getPoDiscountAmount(po);
+  const discountEnabled =
+    po?.discountAllocationVersion === PO_DISCOUNT_ALLOCATION_VERSION &&
+    poDiscountAmount > 0;
+  const grossPeriodAmount = getPaymentGrossPeriodAmount(payment);
+  const previousDiscountAmount = discountEnabled
+    ? Math.max(0, asNumber(payment?.prevAccumDiscount))
+    : 0;
+  const thisPeriodDiscount = discountEnabled
+    ? calculatePeriodDiscount({
+        grossPeriodAmount,
+        poGrossAmount,
+        poDiscountAmount,
+        previousDiscountAmount,
+        cumulativeGrossAmount: getPaymentAccumulatedGrossAmount(payment),
+        contractGrossAmount: getPaymentContractGrossAmount(payment),
+      })
+    : 0;
+  const netPeriodAmount = calculateNetPeriodAmount(grossPeriodAmount, thisPeriodDiscount);
+  const discountTarget = discountEnabled ? getPoDiscountTarget(po) : { prId: null, prNo: "" };
+
+  return {
+    discountAllocationVersion: discountEnabled ? PO_DISCOUNT_ALLOCATION_VERSION : null,
+    poGrossAmount,
+    poDiscountAmount: discountEnabled ? poDiscountAmount : 0,
+    discountPrId: discountTarget.prId,
+    discountPrNo: discountTarget.prNo || null,
+    discountRate: discountEnabled ? getPoDiscountRate(po) : 0,
+    grossPeriodAmount,
+    thisPeriodDiscount,
+    netPeriodAmount,
+    discountAppliedAmount: discountEnabled
+      ? roundCurrency(previousDiscountAmount + thisPeriodDiscount)
+      : 0,
+    ...(Array.isArray(payment?.items) ? { amount: netPeriodAmount } : {}),
+  };
+};
+
 export const appendPaymentDiscountAdjustment = (
   items: any[],
   discountAmount: number,
