@@ -1,6 +1,7 @@
 # CMG Budget Control — System & Workflow Audit
 
 วันที่ตรวจสอบ: 11 สิงหาคม 2026  
+อัปเดตโฟลว์ PR → PO ล่าสุด: 19 สิงหาคม 2026
 ขอบเขต: ตรวจจาก source code ใน `src/`, configuration ที่อยู่ใน repository และ flow ที่เชื่อมโยงกันระหว่างโมดูล โดยยังไม่ได้ทดสอบกับข้อมูล production หรือ Firebase Rules จริง
 
 ## 1. สรุปผู้บริหาร
@@ -233,9 +234,44 @@ PO เลือกเฉพาะ PR ที่อยู่ในสถานะ 
 - ดึง item จาก PR เป็น PO item
 - คำนวณ used quantity/remaining quantity จาก PO อื่น
 - เก็บ `prId`, `prNo`, `budgetId`, `subItemId` ใน PO item
-- รองรับ `disPrAllocations` สำหรับการตัดยอดจากหลาย PR ตามรายการ
+- รองรับ `disPrAllocations` สำหรับการตัดยอดจากหลาย PR และหลายรายการภายใน PR เดียวกัน
 - เก็บ `selectedPrIds` เป็น reference หลักระดับเอกสาร
-- ตรวจไม่ให้ยอด/จำนวนเปิด PO ซ้ำเกิน PR
+- ตรวจไม่ให้ยอดจัดสรรรวมของแต่ละ PR เกินยอด PR ที่เหลืออยู่
+
+#### 6.1.1 การจัดสรรยอดข้ามรายการภายใน PR
+
+รายการ PO ที่เลือกจาก PR จะเริ่มตัดยอดจากรายการ PR ต้นทางของตัวเองก่อน หากยอดรายการนั้นไม่พอ ระบบจะไล่ใช้ยอดคงเหลือจากรายการอื่นที่ไม่ได้เลือกใน PR ใบเดียวกันตามลำดับ โดยไม่จำเป็นต้องเลือกทุกบรรทัดของ PR มาเป็นรายการ PO:
+
+```mermaid
+flowchart LR
+  POI[PO item จำนวน/ยอดที่ต้องการ] --> OWN[ยอดคงเหลือของ PR item ต้นทาง]
+  OWN -->|ไม่พอ| OTHER[ยอดคงเหลือ PR items อื่นใน PR เดียวกัน]
+  OTHER -->|ยังไม่พอ| LIMIT{ยอดรวม PR ยังเหลือหรือไม่}
+  LIMIT -->|ใช่| ALLOC[สร้างหลาย disPrAllocations]
+  LIMIT -->|ไม่ใช่| BLOCK[หยุดและแจ้งยอด PR ไม่พอ]
+  ALLOC --> TOTAL[ตรวจยอดจัดสรรรวมไม่เกินยอด PR]
+```
+
+เพดานการตรวจสอบเป็นระดับ PR ไม่ใช่ระดับรายการย่อย ดังนั้นรายการใดรายการหนึ่งอาจใช้เกินยอดเดิมของตัวเองได้ หากรายการอื่นใน PR ยังมี balance เพียงพอ แต่ยอดจัดสรรรวมของ PR ต้องไม่เกินยอด PR หลังหักยอดที่ PO อื่นใช้ไปแล้ว รวมถึงไม่เกินยอดหลังหักส่วนลดตามกติกาของ PO.
+
+ตัวอย่าง: หากรายการ PO ต้องการ `10,240` บาท แต่รายการ PR ต้นทางเหลือ `6,720` บาท ระบบสามารถจัดสรร `6,720` จากรายการต้นทาง และอีก `3,520` จาก PR item อื่นใน PR เดียวกันได้ หากยอดรวม PR ยังเหลืออย่างน้อย `10,240` บาท.
+
+#### 6.1.2 ข้อมูล Allocation และการตรวจสอบย้อนหลัง
+
+ทุกยอดที่แบ่งจะถูกเก็บแยกเป็น allocation โดยมีข้อมูลสำคัญดังนี้:
+
+- ฝั่งต้นทาง: `prId`, `prNo`, `prItemIndex`, `prItemDescription`, `prItemMaterialNo`, `amount`
+- ฝั่งปลายทาง: `poItemIndex`, `poItemDescription`, `poItemMaterialNo`
+
+ข้อมูลนี้ทำให้ตรวจสอบได้ว่า:
+
+1. PR item รายการใดถูกนำยอดไปใช้
+2. ถูกนำไปให้ PO รายการที่เท่าไรและชื่อรายการอะไร
+3. ใช้ยอดไปเท่าไร และถูกแบ่งไปหลาย PO item หรือหลาย PO หรือไม่
+
+รายละเอียด PO จะแสดงรายการ PR ต้นทางของแต่ละ PO item ส่วนรายละเอียด PR จะแสดง PO เลขที่, ลำดับรายการ PO และยอดที่ใช้ของแต่ละ PR item. ข้อมูล allocation รุ่นเดิมที่ไม่มี metadata ใหม่ยังอ่านได้ด้วย fallback จาก `prId`/`prItemIndex` เดิม.
+
+Budget summary จะใช้ `prItemIndex` ของ allocation เพื่อผูกยอดกลับไปยัง Budget/Sub-item ของ PR item ต้นทาง ไม่ใช่ใช้ Budget ของ PO item ปลายทางเพียงอย่างเดียว.
 
 เมื่อบันทึก draft จะได้ `Draft`; เมื่อ submit/บันทึก PO จริงจะได้ `Pending PCM` และสร้าง PDF.
 
@@ -521,17 +557,20 @@ Active
 5. Contract PR DL: CM → PM → MD → Approved
 6. PR reject → edit → resubmit และ `usedAmount` ต้องคำนวณใหม่
 7. สร้าง PO จากหลาย PR cost code ต่างกันต้องถูก block
-8. เปิด PO ซ้ำจนเกิน quantity/amount PR ต้องถูก block
-9. PO: PCM → GM → Approved
-10. PO Receive Auto: GM approve แล้วต้องมี Receive เดียวและครบจำนวน
-11. PO Pay Before Receive: Invoice → Billing/Pay → Receive หลังจ่าย
-12. ลบ Pay ต้อง rollback Invoice/Billing/auto Receive/PO status ให้ครบ
-13. Partial Receive ต้องเป็น `Partial Receive` และรับเพิ่มจนเป็น `Received`
-14. Payment Subcontractor: contract approval และ period approval แยกกันถูกต้อง
-15. Payment ครบ 100% ต้องปิด PO ที่เชื่อมอยู่
-16. ผู้ใช้ต่าง project ต้องอ่าน/เขียน project อื่นไม่ได้ทั้ง UI และ direct Firestore
-17. ยิง approve ซ้ำจากสอง tab ต้องไม่ข้ามสถานะหรือสร้าง Invoice/Receive ซ้ำ
-18. PDF/Storage upload ล้มเหลวกลาง approval ต้องไม่ทิ้งข้อมูลค้างผิดสถานะ
+8. PO item ใช้ยอดจาก PR item อื่นใน PR เดียวกันได้ แต่ยอดจัดสรรรวมต้องไม่เกินยอด PR
+9. PO item เดียวถูกแบ่งจากหลาย PR item แล้ว `disPrAllocations` ต้องเก็บ source/target ครบ
+10. เปิด PO ซ้ำจนเกินยอดรวม PR ต้องถูก block
+11. เปิดดู PR แล้วตรวจพบ PO เลขที่, ลำดับ PO item และยอดที่ใช้ของแต่ละ PR item ได้
+12. PO: PCM → GM → Approved
+13. PO Receive Auto: GM approve แล้วต้องมี Receive เดียวและครบจำนวน
+14. PO Pay Before Receive: Invoice → Billing/Pay → Receive หลังจ่าย
+15. ลบ Pay ต้อง rollback Invoice/Billing/auto Receive/PO status ให้ครบ
+16. Partial Receive ต้องเป็น `Partial Receive` และรับเพิ่มจนเป็น `Received`
+17. Payment Subcontractor: contract approval และ period approval แยกกันถูกต้อง
+18. Payment ครบ 100% ต้องปิด PO ที่เชื่อมอยู่
+19. ผู้ใช้ต่าง project ต้องอ่าน/เขียน project อื่นไม่ได้ทั้ง UI และ direct Firestore
+20. ยิง approve ซ้ำจากสอง tab ต้องไม่ข้ามสถานะหรือสร้าง Invoice/Receive ซ้ำ
+21. PDF/Storage upload ล้มเหลวกลาง approval ต้องไม่ทิ้งข้อมูลค้างผิดสถานะ
 
 ## 13. ข้อเสนอแนะลำดับการแก้ไข
 

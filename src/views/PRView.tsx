@@ -79,7 +79,10 @@ const PRView = React.memo(() => {
       const associatedPO = pos.find(po => {
         if (po.prRefId === pr.id) return true;
         if (po.items && Array.isArray(po.items)) {
-          return po.items.some(item => item.prId === pr.id);
+          return po.items.some(item => (
+            item.prId === pr.id ||
+            (Array.isArray(item.disPrAllocations) && item.disPrAllocations.some((allocation: any) => allocation?.prId === pr.id))
+          ));
         }
         return false;
       });
@@ -107,6 +110,38 @@ const PRView = React.memo(() => {
     } else {
       showAlert("ไม่พบเอกสาร", `ไม่พบ PDF สำหรับเอกสาร ${docNo}`, "warning");
     }
+  };
+
+  // รายการ PO ที่ใช้ยอดของ PR item นี้ รวมถึงกรณีที่ยอดถูกแบ่งมาจาก
+  // รายการ PR อื่นในใบเดียวกันผ่าน disPrAllocations
+  const getPrItemPoAllocations = (prId, itemIndex) => {
+    const rows = [];
+    (pos || []).forEach((po: any) => {
+      if (!po || po.status === "Rejected" || !Array.isArray(po.items)) return;
+      po.items.forEach((poItem: any, poItemIndex: number) => {
+        const allocations = Array.isArray(poItem?.disPrAllocations) && poItem.disPrAllocations.length > 0
+          ? poItem.disPrAllocations.filter((allocation: any) => (
+            allocation?.prId === prId && Number(allocation?.prItemIndex) === Number(itemIndex)
+          ))
+          : (poItem?.prId === prId && Number(poItem?.prItemIndex) === Number(itemIndex)
+            ? [{ amount: poItem.amount, poItemIndex: poItemIndex }]
+            : []);
+
+        allocations.forEach((allocation: any) => {
+          rows.push({
+            poNo: po.poNo || po.id,
+            poStatus: po.status || "-",
+            poItemIndex: Number.isInteger(Number(allocation?.poItemIndex))
+              ? Number(allocation.poItemIndex)
+              : poItemIndex,
+            poItemDescription: allocation?.poItemDescription || poItem.description || "-",
+            poItemMaterialNo: allocation?.poItemMaterialNo || poItem.materialNo || "",
+            amount: Number(allocation?.amount) || 0,
+          });
+        });
+      });
+    });
+    return rows;
   };
   const { selectedProjectId,
     isFullScreenModalOpen, setIsFullScreenModalOpen,
@@ -2376,23 +2411,43 @@ const PRView = React.memo(() => {
                         <th className="px-3 py-2 text-right">ราคา/หน่วย</th>
                         <th className="px-3 py-2 text-right">รวม</th>
                         <th className="px-3 py-2 text-center">วันที่ใช้</th>
+                        <th className="px-3 py-2">PO ที่นำไปใช้</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {(prLive.items || []).map((it, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50">
-                          <td className="px-3 py-1.5 text-center text-slate-400">{idx + 1}</td>
-                          <td className="px-3 py-1.5 font-medium text-slate-700">{it.description}</td>
-                          <td className="px-3 py-1.5 text-right text-slate-500">{it.quantity} {it.unit}</td>
-                          <td className="px-3 py-1.5 text-right text-slate-500">{formatCurrency(it.price)}</td>
-                          <td className="px-3 py-1.5 text-right font-semibold text-slate-700">{formatCurrency(getCanonicalLineAmount(it))}</td>
-                          <td className="px-3 py-1.5 text-center text-slate-400">{it.requiredDate || "-"}</td>
-                        </tr>
+                        (() => {
+                          const poAllocations = getPrItemPoAllocations(prLive.id, idx);
+                          return (
+                            <tr key={idx} className="hover:bg-slate-50">
+                              <td className="px-3 py-1.5 text-center text-slate-400">{idx + 1}</td>
+                              <td className="px-3 py-1.5 font-medium text-slate-700">{it.description}</td>
+                              <td className="px-3 py-1.5 text-right text-slate-500">{it.quantity} {it.unit}</td>
+                              <td className="px-3 py-1.5 text-right text-slate-500">{formatCurrency(it.price)}</td>
+                              <td className="px-3 py-1.5 text-right font-semibold text-slate-700">{formatCurrency(getCanonicalLineAmount(it))}</td>
+                              <td className="px-3 py-1.5 text-center text-slate-400">{it.requiredDate || "-"}</td>
+                              <td className="px-3 py-1.5 text-[10px] text-slate-600">
+                                {poAllocations.length === 0 ? (
+                                  <span className="text-slate-400">ยังไม่มี PO</span>
+                                ) : (
+                                  <div className="space-y-0.5">
+                                    {poAllocations.map((allocation: any, allocationIdx: number) => (
+                                      <div key={`${allocation.poNo}-${allocation.poItemIndex}-${allocationIdx}`}>
+                                        <span className="font-semibold text-blue-700">{allocation.poNo}</span>
+                                        <span className="text-slate-500"> · รายการที่ {allocation.poItemIndex + 1} · {allocation.poItemDescription} · {formatCurrency(allocation.amount)}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })()
                       ))}
                     </tbody>
                     <tfoot className="bg-slate-800">
                       <tr>
-                        <td colSpan={4} className="px-3 py-2 text-right text-xs font-bold text-white">ยอดรวมทั้งสิ้น:</td>
+                        <td colSpan={5} className="px-3 py-2 text-right text-xs font-bold text-white">ยอดรวมทั้งสิ้น:</td>
                         <td className="px-3 py-2 text-right text-sm font-bold text-white">{formatCurrency(prLive.totalAmount || prLive.amount)}</td>
                         <td />
                       </tr>

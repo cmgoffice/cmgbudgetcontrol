@@ -384,19 +384,40 @@ const InvoiceView = React.memo(() => {
 
   const invoicedReceiveIds = useMemo(() => {
     const ids = new Set<string>();
+    const normalizeId = (value: any) => String(value || "").trim();
+    const normalizeStatus = (value: any) => String(value || "").trim().toLowerCase();
+
     invoices.forEach((inv: any) => {
-      if (Array.isArray(inv.receiveIds)) {
-        inv.receiveIds.forEach((id: string) => ids.add(id));
-      } else if (inv.poId) {
-        // Fallback for legacy invoices: assume receives before the invoice are covered.
+      const linkedReceiveIds = Array.isArray(inv.receiveIds)
+        ? inv.receiveIds.map(normalizeId).filter(Boolean)
+        : [];
+
+      linkedReceiveIds.forEach((id: string) => ids.add(id));
+
+      // Legacy/auto-created invoices may not have receiveIds. Once an invoice
+      // exists for that PO (anything except Draft), hide all receives for the
+      // PO because there is no reliable receive-level link to use.
+      const invoiceStatus = normalizeStatus(inv.status || inv.statusNow);
+      if (linkedReceiveIds.length === 0 && inv.poId && invoiceStatus !== "draft") {
+        receives
+          .filter((receive: any) => normalizeId(receive.poId) === normalizeId(inv.poId))
+          .forEach((receive: any) => ids.add(normalizeId(receive.id)));
       }
     });
+
     pos.forEach((po: any) => {
-      const status = String(po.status || "");
-      if (["Invcredit", "Inpay", "paid", "Deposit"].includes(status)) {
-        const hasNewStyleInvoice = invoices.some((i: any) => i.poId === po.id && Array.isArray(i.receiveIds));
-        if (!hasNewStyleInvoice) {
-          receives.filter((r: any) => r.poId === po.id).forEach((r: any) => ids.add(r.id));
+      const status = normalizeStatus(po.statusNow || po.status);
+      if (["invcredit", "inpay", "paid", "deposit"].includes(status)) {
+        const hasLinkedReceiveInvoice = invoices.some((i: any) => (
+          normalizeId(i.poId) === normalizeId(po.id) &&
+          Array.isArray(i.receiveIds) &&
+          i.receiveIds.length > 0
+        ));
+
+        if (!hasLinkedReceiveInvoice) {
+          receives
+            .filter((receive: any) => normalizeId(receive.poId) === normalizeId(po.id))
+            .forEach((receive: any) => ids.add(normalizeId(receive.id)));
         }
       }
     });
@@ -404,13 +425,13 @@ const InvoiceView = React.memo(() => {
   }, [invoices, pos, receives]);
 
   const invoiceEligibleReceives = useMemo(() => {
-    return projectReceives.filter((r: any) => !invoicedReceiveIds.has(r.id));
+    return projectReceives.filter((r: any) => !invoicedReceiveIds.has(String(r.id || "").trim()));
   }, [projectReceives, invoicedReceiveIds]);
 
   const createInvoiceVendors = useMemo(() => {
     const vendorIds = new Set<string>();
     invoiceEligibleReceives.forEach((r: any) => {
-      const po = pos.find((p: any) => p.id === r.poId);
+      const po = pos.find((p: any) => String(p.id || "") === String(r.poId || ""));
       if (po?.vendorId) vendorIds.add(po.vendorId);
       else if (r.vendorId) vendorIds.add(r.vendorId);
     });

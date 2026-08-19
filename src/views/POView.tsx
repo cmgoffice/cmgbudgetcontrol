@@ -294,6 +294,7 @@ const POView = React.memo(() => {
   const [vatEditOpen, setVatEditOpen] = useState(false);
   const [vatEditValue, setVatEditValue] = useState("");
   const [discountEnabled, setDiscountEnabled] = useState(false);
+  const [discountInput, setDiscountInput] = useState("");
   const [poPendingFiles, setPoPendingFiles] = useState<File[]>([]);
   const [poSavedAttachments, setPoSavedAttachments] = useState<{ url: string; name: string }[]>([]);
   const [userNameByUid, setUserNameByUid] = useState<Record<string, string>>({});
@@ -1745,6 +1746,7 @@ const POView = React.memo(() => {
         setVatEditOpen(false);
         setVatEditValue("");
         setDiscountEnabled(false);
+        setDiscountInput("");
       }
     } finally {
       poDraftInFlightRef.current = false;
@@ -1917,7 +1919,9 @@ const POView = React.memo(() => {
       };
 
       const remainingByPrRef = new Map<string, number>();
+      const remainingByPrTotal = new Map<string, number>();
       (formData.selectedPrIds || []).forEach((prId: string) => {
+        remainingByPrTotal.set(prId, Number(getPrRemainingAmount(prId)) || 0);
         const selectedPr = prs.find((candidate: any) => candidate.id === prId);
         if (Array.isArray(selectedPr?.items) && selectedPr.items.length > 0) {
           selectedPr.items.forEach((_: any, itemIndex: number) => {
@@ -1968,35 +1972,63 @@ const POView = React.memo(() => {
           const prId = prNoToId.get(prNoKey);
           if (!prId) continue; // ถ้า PR ไม่อยู่ในรายการที่เลือก ให้ข้าม (จะไป fail ด้านล่างถ้ายัง need > 0)
           const candidatePr = prs.find((candidate: any) => candidate.id === prId);
-          const candidateItemIndex = candidatePr ? resolveAllocationPrItemIndex(it, candidatePr) : null;
           const isFreeItem = !it?.prId || Number(it?.prItemIndex) < 0;
-          if (!isFreeItem && candidateItemIndex == null) continue;
 
-          const remainingKey = candidateItemIndex != null
-            ? `item:${prId}:${candidateItemIndex}`
-            : `pr:${prId}`;
-          const rem = Number(remainingByPrRef.get(remainingKey) || 0);
-          const normalTake = Math.min(need, Math.max(0, rem));
-          let take = normalTake;
-          if (
-            useTargetedDiscountAllocation &&
-            prId === discountSelection.prId &&
-            need > normalTake
-          ) {
-            const extraCapacity = Math.max(0, discountSelection.discount - targetDiscountCapacityUsed);
-            const discountedTake = Math.min(need - normalTake, extraCapacity);
-            take += discountedTake;
-            targetDiscountCapacityUsed += discountedTake;
-          }
-          if (take <= 0) continue;
-          if (take > 0) {
+          // A PO line normally starts with its own PR item, but any unused
+          // item in the same PR may cover the remainder. This keeps the PR
+          // total as the hard limit while preserving the exact source item
+          // for audit and budget reporting.
+          const preferredItemIndex = candidatePr && !isFreeItem
+            ? resolveAllocationPrItemIndex(it, candidatePr)
+            : null;
+          const candidateItemIndexes = Array.isArray(candidatePr?.items)
+            ? [
+              ...(preferredItemIndex != null ? [preferredItemIndex] : []),
+              ...candidatePr.items.map((_: any, itemIndex: number) => itemIndex),
+            ].filter((itemIndex: number, itemPos: number, indexes: number[]) => indexes.indexOf(itemIndex) === itemPos)
+            : [null];
+
+          for (const candidateItemIndex of candidateItemIndexes) {
+            if (need <= 0) break;
+            const remainingPrTotal = Number(remainingByPrTotal.get(prId) || 0);
+            if (remainingPrTotal <= 0) break;
+
+            const remainingKey = candidateItemIndex != null
+              ? `item:${prId}:${candidateItemIndex}`
+              : `pr:${prId}`;
+            const rem = Number(remainingByPrRef.get(remainingKey) || 0);
+            const normalTake = Math.min(need, Math.max(0, rem), remainingPrTotal);
+            let take = normalTake;
+            if (
+              useTargetedDiscountAllocation &&
+              prId === discountSelection.prId &&
+              need > normalTake
+            ) {
+              const extraCapacity = Math.max(0, discountSelection.discount - targetDiscountCapacityUsed);
+              const discountedTake = Math.min(need - normalTake, extraCapacity);
+              take += discountedTake;
+              targetDiscountCapacityUsed += discountedTake;
+            }
+            if (take <= 0) continue;
+
+            const sourcePrItem = candidateItemIndex != null ? candidatePr?.items?.[candidateItemIndex] : null;
             allocs.push({
               prId,
               prNo,
               amount: take,
-              ...(candidateItemIndex != null ? { prItemIndex: candidateItemIndex } : {}),
+              ...(candidateItemIndex != null ? {
+                prItemIndex: candidateItemIndex,
+                prItemDescription: sourcePrItem?.description || "",
+                prItemMaterialNo: sourcePrItem?.materialNo || "",
+              } : {}),
+              // Snapshot the PO destination so a PR item can be traced back
+              // to the exact PO line even when the PO is viewed later.
+              poItemIndex: idx,
+              poItemDescription: it.description || "",
+              poItemMaterialNo: it.materialNo || "",
             });
             remainingByPrRef.set(remainingKey, Math.max(0, rem - normalTake));
+            remainingByPrTotal.set(prId, Math.max(0, remainingPrTotal - normalTake));
             need -= take;
           }
           if (need <= 0) break;
@@ -2005,7 +2037,7 @@ const POView = React.memo(() => {
           const itemLabel = it.description || it.materialNo || "(ไม่ระบุรายการ)";
           return showAlert(
             "ยอด PR ไม่เพียงพอ",
-            `รายการ "${itemLabel}" ต้องการตัดยอด ${formatCurrency(itemsForAlloc[idx].effAmount)} แต่ PR ที่เลือกใน Dis PR มียอดคงเหลือไม่พอ (ขาด ${formatCurrency(need)}).\n\nกรุณาเพิ่ม PR ในข้อ 2 หรือเลือก Dis PR เพิ่ม`,
+            `รายการ "${itemLabel}" ต้องการตัดยอด ${formatCurrency(itemsForAlloc[idx].effAmount)} แต่ยอดคงเหลือรวมของ PR ที่เลือกใน Dis PR ไม่พอ (ขาด ${formatCurrency(need)}).\n\nกรุณาเพิ่ม PR ในข้อ 2 หรือเลือก Dis PR เพิ่ม`,
             "warning"
           );
         }
@@ -2036,22 +2068,12 @@ const POView = React.memo(() => {
       // uses the selected PR remaining balance. Re-check the exact allocations
       // against each PR here so a new PO cannot increase an existing mismatch.
       const newPoAllocByPr: Record<string, number> = {};
-      const newPoAllocByPrItem: Record<string, { prId: string; itemIndex: number; amount: number }> = {};
       (itemsWithAllocations || []).forEach((item: any) => {
         (item.disPrAllocations || []).forEach((allocation: any) => {
           if (!allocation?.prId) return;
           const allocationAmount = Number(allocation.amount) || 0;
           newPoAllocByPr[allocation.prId] =
             (newPoAllocByPr[allocation.prId] || 0) + allocationAmount;
-
-          const itemIndex = Number(allocation.prItemIndex);
-          if (Number.isInteger(itemIndex) && itemIndex >= 0) {
-            const key = `${allocation.prId}:${itemIndex}`;
-            if (!newPoAllocByPrItem[key]) {
-              newPoAllocByPrItem[key] = { prId: allocation.prId, itemIndex, amount: 0 };
-            }
-            newPoAllocByPrItem[key].amount += allocationAmount;
-          }
         });
       });
 
@@ -2081,24 +2103,9 @@ const POView = React.memo(() => {
         })
         .filter(Boolean);
 
-      const prItemOverages = Object.values(newPoAllocByPrItem)
-        .map(({ prId, itemIndex, amount: newAmount }) => {
-          const pr = prs.find((candidate: any) => candidate.id === prId);
-          const itemLimit = getPrItemValidationLimit(prId, itemIndex);
-          if (!pr || itemLimit == null) return null;
-
-          const existingUsed = getUsedAmountByPRItem(prId, itemIndex, editingPoId);
-          const totalAfterSave = existingUsed + (Number(newAmount) || 0);
-          if (totalAfterSave <= itemLimit + 0.01) return null;
-
-          return {
-            prNo: `${pr.prNo || prId} รายการที่ ${itemIndex + 1}`,
-            overage: totalAfterSave - itemLimit,
-          };
-        })
-        .filter(Boolean);
-
-      const allPrOverages = [...prOverages, ...prItemOverages];
+      // Item-level overage is allowed when another item in the same PR has
+      // available balance. Only the PR-level total is a hard limit.
+      const allPrOverages = prOverages;
 
       if (allPrOverages.length > 0) {
         const detail = allPrOverages
@@ -2253,6 +2260,7 @@ const POView = React.memo(() => {
         setVatEditOpen(false);
         setVatEditValue("");
         setDiscountEnabled(false);
+        setDiscountInput("");
         setPoPendingFiles([]);
         setPoSavedAttachments([]);
         if (resolvedPdfUrl) {
@@ -3293,6 +3301,7 @@ const POView = React.memo(() => {
                     setManualVatOverride(null);
                     setVatEditOpen(false);
                     setDiscountEnabled(false);
+                    setDiscountInput("");
                     setIsModalOpen(true);
                     setIsFullScreenModalOpen(true);
                   }}
@@ -3458,6 +3467,7 @@ const POView = React.memo(() => {
                                       setVatEditOpen(false);
                                       setVatEditValue("");
                                       setDiscountEnabled((po.discount ?? 0) > 0);
+                                      setDiscountInput(po.discount != null ? String(po.discount) : "");
                                       setEditingPoId(po.id);
                                       setIsModalOpen(true);
                                       setIsFullScreenModalOpen(true);
@@ -3660,6 +3670,7 @@ const POView = React.memo(() => {
                                     setVatEditOpen(false);
                                     setVatEditValue("");
                                     setDiscountEnabled((po.discount ?? 0) > 0);
+                                    setDiscountInput(po.discount != null ? String(po.discount) : "");
                                     setEditingPoId(po.id);
                                     setIsModalOpen(true);
                                     setIsFullScreenModalOpen(true);
@@ -4139,6 +4150,7 @@ const POView = React.memo(() => {
                             <th className="px-3 py-2 text-right">จำนวน</th>
                             <th className="px-3 py-2 text-right">ราคา/หน่วย</th>
                             <th className="px-3 py-2 text-right">รวม</th>
+                            <th className="px-3 py-2">ตัดจาก PR รายการ</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -4149,30 +4161,55 @@ const POView = React.memo(() => {
                               <td className="px-3 py-1.5 text-right text-slate-500">{it.quantity} {it.unit}</td>
                               <td className="px-3 py-1.5 text-right text-slate-500">{formatCurrency(it.price)}</td>
                               <td className="px-3 py-1.5 text-right font-semibold text-slate-700">{formatCurrency(Number(it.quantity) * Number(it.price))}</td>
+                              <td className="px-3 py-1.5 text-[10px] text-slate-600">
+                                {(() => {
+                                  const allocations = Array.isArray(it.disPrAllocations) && it.disPrAllocations.length > 0
+                                    ? it.disPrAllocations
+                                    : it.prId
+                                      ? [{ prId: it.prId, prNo: it.prNo, prItemIndex: it.prItemIndex, amount: it.amount }]
+                                      : [];
+                                  if (allocations.length === 0) return <span className="text-slate-400">-</span>;
+                                  return (
+                                    <div className="space-y-0.5">
+                                      {allocations.map((allocation: any, allocationIdx: number) => {
+                                        const sourcePr = prs.find((pr: any) => pr.id === allocation?.prId);
+                                        const sourceItem = sourcePr?.items?.[allocation?.prItemIndex];
+                                        const sourceDescription = allocation?.prItemDescription || sourceItem?.description || "PR ระดับเอกสาร";
+                                        return (
+                                          <div key={`${allocation?.prId || "pr"}-${allocation?.prItemIndex ?? "all"}-${allocationIdx}`}>
+                                            <span className="font-semibold text-blue-700">{allocation?.prNo || sourcePr?.prNo || allocation?.prId || "-"}</span>
+                                            <span className="text-slate-500"> · {sourceDescription} · {formatCurrency(allocation?.amount || 0)}</span>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  );
+                                })()}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
                          <tfoot className="bg-slate-800">
-                           <tr>
-                             <td colSpan={4} className="px-3 py-2 text-right text-xs font-bold text-white">Sub Total:</td>
-                             <td className="px-3 py-2 text-right text-sm font-bold text-white">{formatCurrency(subtotal)}</td>
-                           </tr>
-                           {discount > 0 && (
-                             <tr className="bg-red-950/40">
-                               <td colSpan={4} className="px-3 py-1.5 text-right text-xs font-semibold text-red-200">
-                                 ส่วนลด{discountPrNo ? ` (PR ${discountPrNo})` : ""}:
-                               </td>
-                               <td className="px-3 py-1.5 text-right text-xs font-semibold text-red-200">-{formatCurrency(discount)}</td>
-                             </tr>
-                           )}
-                           <tr>
-                             <td colSpan={4} className="px-3 py-1.5 text-right text-xs font-semibold text-slate-300">ยอดหลังหักส่วนลด:</td>
-                             <td className="px-3 py-1.5 text-right text-xs font-semibold text-white">{formatCurrency(subtotalAfterDiscount)}</td>
-                           </tr>
-                           <tr>
-                             <td colSpan={4} className="px-3 py-1.5 text-right text-xs text-slate-300">Grand Total (inc. VAT):</td>
-                             <td className="px-3 py-1.5 text-right text-xs font-semibold text-slate-200">{formatCurrency(viewingPO.amount ?? viewingPO.grandTotal ?? subtotalAfterDiscount)}</td>
-                           </tr>
+                            <tr>
+                              <td colSpan={5} className="px-3 py-2 text-right text-xs font-bold text-white">Sub Total:</td>
+                              <td className="px-3 py-2 text-right text-sm font-bold text-white">{formatCurrency(subtotal)}</td>
+                            </tr>
+                            {discount > 0 && (
+                              <tr className="bg-red-950/40">
+                                <td colSpan={5} className="px-3 py-1.5 text-right text-xs font-semibold text-red-200">
+                                  ส่วนลด{discountPrNo ? ` (PR ${discountPrNo})` : ""}:
+                                </td>
+                                <td className="px-3 py-1.5 text-right text-xs font-semibold text-red-200">-{formatCurrency(discount)}</td>
+                              </tr>
+                            )}
+                            <tr>
+                              <td colSpan={5} className="px-3 py-1.5 text-right text-xs font-semibold text-slate-300">ยอดหลังหักส่วนลด:</td>
+                              <td className="px-3 py-1.5 text-right text-xs font-semibold text-white">{formatCurrency(subtotalAfterDiscount)}</td>
+                            </tr>
+                            <tr>
+                              <td colSpan={5} className="px-3 py-1.5 text-right text-xs text-slate-300">Grand Total (inc. VAT):</td>
+                              <td className="px-3 py-1.5 text-right text-xs font-semibold text-slate-200">{formatCurrency(viewingPO.amount ?? viewingPO.grandTotal ?? subtotalAfterDiscount)}</td>
+                            </tr>
                         </tfoot>
                       </table>
                     </div>
@@ -5271,12 +5308,49 @@ const POView = React.memo(() => {
                         </label>
                         <div className="w-px h-3 bg-slate-300 mx-1 hidden sm:block" />
                         <label className="flex items-center gap-1 text-[11px] text-slate-600 cursor-pointer">
-                          <input type="checkbox" checked={discountEnabled} onChange={e => { const checked = e.target.checked; setDiscountEnabled(checked); if (!checked) setFormData({ ...formData, discount: 0, discountPrId: "", discountPrNo: "" }); }} className="rounded text-red-600 w-3 h-3" />
+                          <input
+                            type="checkbox"
+                            checked={discountEnabled}
+                            onChange={e => {
+                              const checked = e.target.checked;
+                              setDiscountEnabled(checked);
+                              if (!checked) {
+                                setDiscountInput("");
+                                setFormData(prev => ({ ...prev, discount: 0, discountPrId: "", discountPrNo: "" }));
+                              }
+                            }}
+                            className="rounded text-red-600 w-3 h-3"
+                          />
                           <span>ส่วนลด</span>
                         </label>
                         {discountEnabled && (
-                          <input type="text" className="w-20 border border-slate-200 rounded px-1.5 py-0.5 text-[11px] text-right focus:border-red-400 focus:ring-1 focus:ring-red-100 outline-none" placeholder="0.00" value={formData.discount ? String(formData.discount) : ""} onChange={e => { const v = e.target.value.replace(/,/g, ""); const n = parseFloat(v); setFormData({ ...formData, discount: isNaN(n) ? 0 : Math.max(0, n) }); }} />
-                         )}
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            className="w-20 border border-slate-200 rounded px-1.5 py-0.5 text-[11px] text-right focus:border-red-400 focus:ring-1 focus:ring-red-100 outline-none"
+                            placeholder="0.00"
+                            value={discountInput}
+                            onChange={e => {
+                              const rawValue = e.target.value.replace(/,/g, "");
+                              if (!/^\d*(?:\.\d*)?$/.test(rawValue)) return;
+                              setDiscountInput(rawValue);
+                              const numericValue = rawValue === "" || rawValue === "." ? 0 : Number(rawValue);
+                              setFormData(prev => ({
+                                ...prev,
+                                discount: Number.isFinite(numericValue) ? Math.max(0, numericValue) : 0,
+                              }));
+                            }}
+                            onBlur={() => {
+                              if (!discountInput || discountInput === ".") {
+                                setDiscountInput("");
+                                setFormData(prev => ({ ...prev, discount: 0 }));
+                                return;
+                              }
+                              const numericValue = Number(discountInput);
+                              if (Number.isFinite(numericValue)) setDiscountInput(String(numericValue));
+                            }}
+                          />
+                        )}
                         {selectedPrsTotalAmount > 0 && (
                           <div className="ml-auto flex flex-col items-end leading-tight w-full sm:w-auto mt-2 sm:mt-0">
                             <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">คงเหลือ PR</span>
