@@ -88,7 +88,7 @@ const PaymentTableView = React.memo(() => {
     };
   }, [viewingPayment, userData, user]);
 
-  const allStatuses = ["Draft", "Pending", "Approved", "Reject", "Paid"];
+  const allStatuses = ["Draft", "Pending", "Approved", "Reject", "Paid", "จบงาน"];
 
   const filtered = useMemo(() => {
     const q = searchTerm.toLowerCase();
@@ -99,8 +99,9 @@ const PaymentTableView = React.memo(() => {
         (p.paymentNo || "").toLowerCase().includes(q) ||
         (p.paymentType || "").toLowerCase().includes(q) ||
         (contractor?.name || "").toLowerCase().includes(q) ||
-        (p.billingCycle || "").toLowerCase().includes(q);
-      const normalizedStatus = p.status === "Rejected" ? "Reject" : p.status;
+        (p.billingCycle || "").toLowerCase().includes(q) ||
+        (p.jobCompletedBy || p.completedBy || "").toLowerCase().includes(q);
+      const normalizedStatus = p.jobCompleted ? "จบงาน" : (p.status === "Rejected" ? "Reject" : p.status);
       const matchStatus = filterStatus === "all" || normalizedStatus === filterStatus;
       const matchType = filterType === "all" || p.paymentType === filterType;
       const matchProject = filterProject === "all" || p.projectId === filterProject;
@@ -115,6 +116,7 @@ const PaymentTableView = React.memo(() => {
     "Reject": "bg-red-50 text-red-700 border-red-200",
     "Rejected": "bg-red-50 text-red-700 border-red-200",
     "Paid": "bg-teal-50 text-teal-700 border-teal-200",
+    "จบงาน": "bg-teal-100 text-teal-800 border-teal-300",
   };
 
   const hasInvoiceForPayment = (payment: any) => {
@@ -380,7 +382,7 @@ const PaymentTableView = React.memo(() => {
               filtered.map((p: any) => {
                 const contractor = vendors?.find((v: any) => v.id === p.contractorId);
                 const project = projects.find((proj: any) => proj.id === p.projectId);
-                const displayStatus = p.status === "Rejected" ? "Reject" : (p.status || "Draft");
+                const displayStatus = p.jobCompleted ? "จบงาน" : (p.status === "Rejected" ? "Reject" : (p.status || "Draft"));
                 const statusCls = statusColors[displayStatus] || "bg-slate-50 text-slate-500 border-slate-200";
                 const paymentHasInvoice = hasInvoiceForPayment(p) || backfilledPaymentIds.has(String(p.id));
                 const isBackfilling = backfillPaymentId === String(p.id);
@@ -474,6 +476,11 @@ const PaymentTableView = React.memo(() => {
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-semibold ${statusCls}`}>
                           {displayStatus}
                         </span>
+                        {p.jobCompleted && (p.jobCompletedBy || p.completedBy) && (
+                          <div className="mt-0.5 text-[9px] text-teal-700 truncate max-w-[140px] mx-auto" title={`จบงานโดย ${p.jobCompletedBy || p.completedBy}`}>
+                            โดย {p.jobCompletedBy || p.completedBy}
+                          </div>
+                        )}
                       </td>
                     )}
                     {isColumnVisible("payment-table", "actions") && (
@@ -632,8 +639,8 @@ const PaymentTableView = React.memo(() => {
               <div className="flex items-center justify-between px-6 py-3 bg-gradient-to-r from-blue-900 to-blue-700 shrink-0 rounded-t-2xl">
                 <h3 className="text-sm font-bold text-white tracking-wide">แบบฟอร์มเบิกงวดงาน / PAYMENT APPLICATION</h3>
                 <div className="flex items-center gap-2">
-                  <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-[11px] font-semibold ${statusColors[viewingPayment.status] || "bg-slate-100 text-slate-600 border-slate-200"}`}>
-                    {viewingPayment.status === "Rejected" ? "Reject" : (viewingPayment.status || "Draft")}
+                  <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-[11px] font-semibold ${statusColors[viewingPayment.jobCompleted ? "จบงาน" : viewingPayment.status] || "bg-slate-100 text-slate-600 border-slate-200"}`}>
+                    {viewingPayment.jobCompleted ? "จบงาน" : (viewingPayment.status === "Rejected" ? "Reject" : (viewingPayment.status || "Draft"))}
                   </span>
                   <button
                     onClick={() => setViewingPayment(null)}
@@ -706,6 +713,15 @@ const PaymentTableView = React.memo(() => {
                         <span className="w-56 text-slate-500 font-semibold shrink-0">วันที่จัดทำเอกสาร / Date :</span>
                         <span className="font-medium text-slate-700">{viewingPayment.openDate || "-"}</span>
                       </div>
+                      {viewingPayment.jobCompleted && (
+                        <div className="flex">
+                          <span className="w-56 text-teal-700 font-semibold shrink-0">สถานะงาน / JOB STATUS :</span>
+                          <span className="font-semibold text-teal-800">
+                            จบงาน — โดย {viewingPayment.jobCompletedBy || viewingPayment.completedBy || "-"}
+                            {(viewingPayment.jobCompletedAt || viewingPayment.completedAt) ? ` (${new Date(viewingPayment.jobCompletedAt || viewingPayment.completedAt).toLocaleString("th-TH")})` : ""}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
 

@@ -34,7 +34,8 @@ import {
   PO_REVISION_PENDING_GM,
   PR_PENDING_ACTIVE,
 } from "./lib/constants";
-import { getPoItemsGrossSubtotal } from "./lib/poDiscount";
+import { getPoAmountExVat, getPoItemsGrossSubtotal } from "./lib/poDiscount";
+import { getPoPaymentAndReceiveBalanceInfo } from "./lib/poPaymentBalance";
 import { AuthContext } from "./auth/AuthContext";
 import { useAppData } from "./contexts/AppDataContext";
 import { useUI } from "./contexts/UIContext";
@@ -1162,6 +1163,8 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     invoices = [],
     receives = [],
     payments = [],
+    paymentsReady = false,
+    receivesReady = false,
     pays = [],
     pendingPRsGlobal = [],
     pendingPOsGlobal = [],
@@ -1343,6 +1346,13 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   }, [getPendingTaskStatus, handlePOAction, handlePORevisionAllow, handlePRAction, isPR, logAction, openConfirm, pendingActionId, pos, showAlert, updateData, userRoles]);
   const canViewPrBalance = isPR && canUseFunction("pr-table", "viewBalance");
   const canReturnPrBalance = isPR && canUseFunction("pr-table", "returnBalance");
+  const canViewPoBalance = !isPR && canUseFunction("po-table", "viewBalance");
+  const poUsageSourcesReady = paymentsReady && receivesReady;
+  const poPaymentBalanceById = React.useMemo(() => {
+    const next = new Map<string, any>();
+    (pos || []).forEach((po: any) => next.set(String(po.id), getPoPaymentAndReceiveBalanceInfo(po, payments, receives)));
+    return next;
+  }, [payments, pos, receives]);
 
   const handleRecreatePO = React.useCallback((po: any) => {
     if (!po?.id) {
@@ -1964,7 +1974,8 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       : "";
     const poDateText = !isPR ? String(r.poDate || r.createdDate || "") : "";
     const poItemCountText = !isPR ? String(r.items?.length || (r.selectedPrIds?.length || 0)) : "";
-    const poAmountText = !isPR ? String(r.grandTotal ?? r.amount ?? 0) : "";
+    const poAmountText = !isPR ? String(getPoAmountExVat(r)) : "";
+    const poPaymentBalance = !isPR ? poPaymentBalanceById.get(String(r.id)) : null;
     const poSearchBlob = !isPR
       ? [
         noField,
@@ -1976,6 +1987,8 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
         poDateText,
         poItemCountText,
         poAmountText,
+        poPaymentBalance?.usedAmount,
+        poPaymentBalance?.balanceAmount,
         rowStatus,
         r.status,
         r.statusNow,
@@ -2003,7 +2016,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     return matchedRows.sort((a: any, b: any) =>
       Number(isNotificationRow(b)) - Number(isNotificationRow(a))
     );
-  }, [filterProject, filterStatus, getPoLinkedPrMeta, getRowStatus, isNotificationRow, isPR, pos, projectById, rows, searchTerm, vendorById]);
+  }, [filterProject, filterStatus, getPoLinkedPrMeta, getRowStatus, isNotificationRow, isPR, poPaymentBalanceById, pos, projectById, rows, searchTerm, vendorById]);
 
   const getShortTypeLabel = React.useCallback((typeValue: any) => {
     const raw = String(typeValue || "").trim();
@@ -2237,8 +2250,10 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                 {isPR && isColumnVisible("pr-table", "requestor") && <ResizableTh tableId="pr-table" colKey="requestor" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.requestor}>ผู้ขอ</ResizableTh>}
                 {isPR && isColumnVisible("pr-table", "type") && <ResizableTh tableId="pr-table" colKey="type" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.type}>ประเภท</ResizableTh>}
                 {isColumnVisible(tblId, "items") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="items" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.items}>จำนวนรายการ</ResizableTh>}
-                {isColumnVisible(tblId, "amount") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="amount" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.amount}>ยอดรวม</ResizableTh>}
+                {isColumnVisible(tblId, "amount") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="amount" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.amount}>{isPR ? "ยอดรวม" : "ยอดรวม (Ex VAT)"}</ResizableTh>}
                 {canViewPrBalance && isColumnVisible("pr-table", "balance") && <ResizableTh tableId="pr-table" colKey="balance" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.balance}>Balance</ResizableTh>}
+                {canViewPoBalance && isColumnVisible("po-table", "paymentReceive") && <ResizableTh tableId="po-table" colKey="paymentReceive" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.paymentReceive}>Payment &amp; Receive</ResizableTh>}
+                {canViewPoBalance && isColumnVisible("po-table", "balance") && <ResizableTh tableId="po-table" colKey="balance" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.balance}>Balance PO</ResizableTh>}
                 {isColumnVisible(tblId, "status") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="status" className="px-2 py-0.5 font-semibold text-center" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.status}>สถานะ</ResizableTh>}
                 {isPR && isColumnVisible("pr-table", "poRef") && <ResizableTh tableId="pr-table" colKey="poRef" className="px-2 py-0.5 font-semibold text-center" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.poRef}>Ref PO</ResizableTh>}
                 {isColumnVisible(tblId, "action") && <th className="px-2 py-0.5 font-semibold text-center" style={{ width: prPoScaled.action }}>Action</th>}
@@ -2258,7 +2273,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                 pageRows.map((r: any, idx: number) => {
                   const noField = isPR ? r.prNo : r.poNo;
                   const dateField = isPR ? r.requestDate : (r.poDate || r.createdDate);
-                  const amount = isPR ? r.totalAmount : (r.grandTotal ?? r.amount ?? 0);
+                  const amount = isPR ? r.totalAmount : getPoAmountExVat(r);
                   const itemCount = isPR
                     ? (r.items?.length || 0)
                     : (r.items?.length || (r.selectedPrIds?.length || 0));
@@ -2281,6 +2296,9 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                       .join(", ")
                     : "";
                   const prBalance = isPR ? getPrBalanceAmount(r) : 0;
+                  const poPaymentBalance = !isPR
+                    ? (poPaymentBalanceById.get(String(r.id)) || getPoPaymentAndReceiveBalanceInfo(r, [], []))
+                    : null;
 
                   return (
                     <tr key={r.id} className={`hover:bg-blue-50/40 transition-colors cursor-pointer ${isEven ? "bg-white" : "bg-slate-50/40"}`} onClick={() => { if (!isPR) setViewingPO(r); }}>
@@ -2407,11 +2425,41 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                           ฿{Number(prBalance || 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
                         </td>
                       )}
+                      {canViewPoBalance && isColumnVisible("po-table", "paymentReceive") && (
+                        <td
+                          className="px-2 py-0.5 text-right font-semibold text-blue-700"
+                          title={poPaymentBalance?.sourceDocumentNo ? `${poPaymentBalance.usageSource === "payment" ? "Payment" : "Receive"}: ${poPaymentBalance.sourceDocumentNo}` : `ยังไม่มี ${poPaymentBalance?.usageSource === "payment" ? "Payment" : "Receive"}`}
+                        >
+                          {poUsageSourcesReady
+                            ? `฿${Number(poPaymentBalance?.usedAmount || 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}`
+                            : <span className="text-slate-400">กำลังโหลด…</span>}
+                          {poPaymentBalance?.jobCompleted && (
+                            <span className="mt-0.5 block w-fit ml-auto rounded border border-blue-300 bg-blue-100 px-1.5 py-0.5 text-[9px] leading-tight font-bold text-blue-800" title={`จบงานโดย ${poPaymentBalance.jobCompletedBy || "-"}`}>
+                              จบงาน
+                            </span>
+                          )}
+                        </td>
+                      )}
+                      {canViewPoBalance && isColumnVisible("po-table", "balance") && (
+                        <td
+                          className="px-2 py-0.5 text-right font-semibold text-emerald-700"
+                          title={poPaymentBalance?.sourceDocumentNo ? `${poPaymentBalance.usageSource === "payment" ? "Payment" : "Receive"}: ${poPaymentBalance.sourceDocumentNo}` : `ยังไม่มี ${poPaymentBalance?.usageSource === "payment" ? "Payment" : "Receive"}`}
+                        >
+                          {poUsageSourcesReady
+                            ? `฿${Number(poPaymentBalance?.balanceAmount || 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}`
+                            : <span className="text-slate-400">กำลังโหลด…</span>}
+                        </td>
+                      )}
                       {isColumnVisible(tblId, "status") && (
                         <td className="px-2 py-0.5 text-center">
                           <span className={`inline-flex items-center px-2 py-0 rounded-full border text-[10px] font-semibold whitespace-nowrap ${statusClass}`}>
                             {displayStatus}
                           </span>
+                          {!isPR && r.jobCompleted && (
+                            <div className="mt-0.5 text-[9px] font-semibold text-teal-700" title={`จบงานโดย ${r.jobCompletedBy || "-"}`}>
+                              จบงาน · {r.jobCompletedBy || "-"}
+                            </div>
+                          )}
                         </td>
                       )}
                       {isPR && isColumnVisible("pr-table", "poRef") && (
@@ -2636,22 +2684,28 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
               </div>
             </div>
             <div className="flex flex-wrap gap-4">
-              {!isPR && (
-                <span className="font-bold text-slate-600">
-                  ยอดรวม Type นี้ (Ex VAT): ฿{activeRows.reduce((s: number, r: any) => {
-                    // Calculate amount ex VAT for each PO
-                    let subtotal = 0;
-                    if (r.items && r.items.length > 0) {
-                      subtotal = r.items.reduce((sum: number, item: any) => sum + Number(item.amount || 0), 0);
-                    }
-                    const discount = Number(r.discount || 0);
-                    const amountExVat = Math.max(0, subtotal - discount);
-                    return s + amountExVat;
-                  }, 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
+              {canViewPoBalance && (
+                <span className="font-bold text-blue-700">
+                  Payment &amp; Receive: {poUsageSourcesReady
+                    ? `฿${activeRows.reduce((sum: number, row: any) => (
+                        sum + Number(poPaymentBalanceById.get(String(row.id))?.usedAmount || 0)
+                      ), 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}`
+                    : "กำลังโหลด…"}
+                </span>
+              )}
+              {canViewPoBalance && (
+                <span className="font-bold text-emerald-700">
+                  Balance PO: {poUsageSourcesReady
+                    ? `฿${activeRows.reduce((sum: number, row: any) => (
+                        sum + Number(poPaymentBalanceById.get(String(row.id))?.balanceAmount || 0)
+                      ), 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}`
+                    : "กำลังโหลด…"}
                 </span>
               )}
               <span className="font-bold text-slate-700">
-                ยอดรวม Type นี้: ฿{activeRows.reduce((s: number, r: any) => s + Number(isPR ? r.totalAmount : r.grandTotal || r.amount || 0), 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
+                ยอดรวม Type นี้{isPR ? "" : " (Ex VAT)"}: ฿{activeRows.reduce((sum: number, row: any) => (
+                  sum + Number(isPR ? row.totalAmount : getPoAmountExVat(row))
+                ), 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
               </span>
             </div>
           </div>

@@ -155,8 +155,10 @@ export const AppDataProvider = ({
   const [pos,       setPos]       = useState([]);
   const [invoices,  setInvoices]  = useState([]);
   const [payments,  setPayments]  = useState([]);
+  const [paymentsReady, setPaymentsReady] = useState(false);
   const [pays,      setPays]      = useState([]);
   const [receives,  setReceives]  = useState([]);
+  const [receivesReady, setReceivesReady] = useState(false);
   const [vendorEvaluations, setVendorEvaluations] = useState([]);
   const [availableRoles, setAvailableRoles] = useState<string[]>(() => normalizeRoleNames(USER_ROLES));
 
@@ -258,10 +260,18 @@ export const AppDataProvider = ({
       hasModuleAccessForCurrentRoles("billing") ||
       hasModuleAccessForCurrentRoles("pay"));
   const canSyncPay = rolePermissionsReady && hasModuleAccessForCurrentRoles("pay");
-  const canSyncReceive = rolePermissionsReady && hasModuleAccessForCurrentRoles("receive");
+  const canViewPoBalanceSources = rolePermissionsReady && (
+    roles.includes("Administrator") ||
+    roles.some((role) => functionPermissions.po?.viewBalance?.includes(role)) ||
+    roles.some((role) => functionPermissions["po-table"]?.viewBalance?.includes(role))
+  );
+  const canSyncReceive = rolePermissionsReady && (
+    hasModuleAccessForCurrentRoles("receive") || canViewPoBalanceSources
+  );
 
   // ── Firebase sync (realtime ผ่าน onSnapshot — แก้ไขที่ใดก็ตามจะอัปเดตทุกที่โดยไม่ต้องรีเฟรช) ─
   useEffect(() => {
+    setPaymentsReady(false);
     const syncCollection = (collectionName, setter, onFirstSnapshot = null) => {
       const ref = collection(db, "artifacts", appId, "public", "data", collectionName);
       let gotFirstSnapshot = false;
@@ -277,10 +287,10 @@ export const AppDataProvider = ({
         (err)  => console.error(`Error syncing ${collectionName}:`, err)
       );
     };
-    const stagedSync = (collectionName, setter, delayMs = 0) => {
+    const stagedSync = (collectionName, setter, delayMs = 0, onFirstSnapshot = null) => {
       let unsub = () => {};
       const timer = setTimeout(() => {
-        unsub = syncCollection(collectionName, setter);
+        unsub = syncCollection(collectionName, setter, onFirstSnapshot);
       }, delayMs);
       return () => {
         clearTimeout(timer);
@@ -336,7 +346,7 @@ export const AppDataProvider = ({
     const unsubs = [
       syncCollection("budgets", setBudgets),
       syncCollection("prs", setPrs, startPosSync),
-      stagedSync("payments", setPayments, 1500),
+      stagedSync("payments", setPayments, 1500, () => setPaymentsReady(true)),
     ];
 
     // Per-user column visibility
@@ -367,11 +377,18 @@ export const AppDataProvider = ({
 
   // Separate effect for conditional collections (invoices, receives) to avoid recreating all listeners
   useEffect(() => {
-    const syncCollection = (collectionName, setter) => {
+    const syncCollection = (collectionName, setter, onFirstSnapshot = null) => {
       const ref = collection(db, "artifacts", appId, "public", "data", collectionName);
+      let gotFirstSnapshot = false;
       return onSnapshot(
         query(ref),
-        (snap) => setter(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+        (snap) => {
+          setter(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+          if (!gotFirstSnapshot) {
+            gotFirstSnapshot = true;
+            onFirstSnapshot?.();
+          }
+        },
         (err)  => console.error(`Error syncing ${collectionName}:`, err)
       );
     };
@@ -383,9 +400,11 @@ export const AppDataProvider = ({
       setInvoices([]);
     }
     if (canSyncReceive) {
-      unsubs.push(syncCollection("receives", setReceives));
+      setReceivesReady(false);
+      unsubs.push(syncCollection("receives", setReceives, () => setReceivesReady(true)));
     } else {
       setReceives([]);
+      setReceivesReady(false);
     }
     if (canSyncPay) {
       unsubs.push(syncCollection("pays", setPays));
@@ -963,7 +982,7 @@ export const AppDataProvider = ({
   // ── Context value ──────────────────────────────────────────────────────────
   const value = useMemo(() => ({
     // collections
-    projects, budgets, vendors, materials, prs, pos, invoices, payments, pays, receives, vendorEvaluations, vendorEvaluations,
+    projects, budgets, vendors, materials, prs, pos, invoices, payments, paymentsReady, pays, receives, receivesReady, vendorEvaluations, vendorEvaluations,
     // derived
     visibleProjects,
     // pending (global, for bell + sidebar badges)
@@ -993,7 +1012,7 @@ export const AppDataProvider = ({
     // raw Firebase (for views that need direct Firestore access)
     db, appId,
   }), [
-    projects, budgets, vendors, materials, prs, pos, invoices, payments, pays, receives,
+    projects, budgets, vendors, materials, prs, pos, invoices, payments, paymentsReady, pays, receives, receivesReady,
     visibleProjects,
     pendingBudgetsGlobal, pendingSubItemsGlobal,
     pendingPRsGlobal, pendingPOsGlobal, pendingPaymentsGlobal,

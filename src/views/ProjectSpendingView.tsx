@@ -2,6 +2,7 @@
 import React, { useMemo } from "react";
 import { useAppData } from "../contexts/AppDataContext";
 import { COST_CATEGORIES } from "../lib/constants";
+import { getPoAmountExVat } from "../lib/poDiscount";
 import {
   getInvoiceAmount,
   getInvoiceAmountForPo,
@@ -19,7 +20,7 @@ const ROW_LABELS = [
   { key: "budgetBalance",  label: "Budget Balance",    bold: false },
   { key: "balancePct",     label: "% Balance",         bold: false, pct: true },
   { key: "prTotal",        label: "PR Total",          bold: false },
-  { key: "poTotal",        label: "PO Total",          bold: false },
+  { key: "poTotal",        label: "PO Total (Ex VAT)", bold: false },
   { key: "spentInvTotal",  label: "Spent (Inv)Total",  bold: false },
 ];
 
@@ -87,7 +88,7 @@ const ProjectSpendingView = React.memo(() => {
           const projPos = pos.filter((o) => o.projectId === proj.id && o.costCode === code);
 
           const prTotal = projPrs.reduce((s, r) => s + (Number(r.total) || 0), 0);
-          const poTotal = projPos.reduce((s, o) => s + (Number(o.total) || 0), 0);
+          const poTotal = projPos.reduce((sum, po) => sum + getPoAmountExVat(po), 0);
           const spentInvTotal = invoiceSpentByProjectCode.get(String(proj.id))?.get(String(code)) || 0;
 
           const budgetBalance = budgetTotal - spentInvTotal;
@@ -102,7 +103,7 @@ const ProjectSpendingView = React.memo(() => {
 
         const totalBudgetTotal = allBudgets.reduce((s, b) => s + (Number(b.amount) || 0), 0);
         const totalPrTotal = allPrs.reduce((s, r) => s + (Number(r.total) || 0), 0);
-        const totalPoTotal = allPos.reduce((s, o) => s + (Number(o.total) || 0), 0);
+        const totalPoTotal = allPos.reduce((sum, po) => sum + getPoAmountExVat(po), 0);
         const totalSpentInvTotal = getProjectPayHistoryTotal(proj.id, invoices, payments, pos);
         const totalBudgetBalance = totalBudgetTotal - totalSpentInvTotal;
         const totalBalancePct = totalBudgetTotal > 0 ? (totalBudgetBalance / totalBudgetTotal) * 100 : 0;

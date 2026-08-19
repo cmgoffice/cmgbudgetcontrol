@@ -24,6 +24,7 @@ import {
   truncateLogText,
 } from "../lib/systemLogDetails";
 import { resolveCurrentUserSignatureImage } from "../lib/poSignatureStamps";
+import { getPoAmountExVat } from "../lib/poDiscount";
 import {
   getCmgStoreTargetProjectCode,
   isCmgStoreEligibleInventoryStatus,
@@ -1476,7 +1477,7 @@ const ReceiveView = React.memo(() => {
                           {isColumnVisible("receive-po", "poNo") && <th className="py-1 px-3">PO No.</th>}
                           {isColumnVisible("receive-po", "vendor") && <th className="py-1 px-3">Vendor</th>}
                           {isColumnVisible("receive-po", "description") && <th className="py-1 px-3">รายละเอียด</th>}
-                          {isColumnVisible("receive-po", "amount") && <th className="py-1 px-3 text-right">ยอดรวม</th>}
+                          {isColumnVisible("receive-po", "amount") && <th className="py-1 px-3 text-right">ยอดรวม (Ex VAT)</th>}
                           {isColumnVisible("receive-po", "progress") && <th className="py-1 px-3 text-center">สถานะรับของ</th>}
                           <th className="hidden py-1 px-3 text-center md:table-cell">Actions</th>
                         </tr>
@@ -1525,7 +1526,7 @@ const ReceiveView = React.memo(() => {
                                 </td>
                               )}
                               {isColumnVisible("receive-po", "amount") && (
-                                <td className="py-1 px-3 text-right font-semibold">{formatCurrency(po.amount)}</td>
+                                <td className="py-1 px-3 text-right font-semibold">{formatCurrency(getPoAmountExVat(po))}</td>
                               )}
                               {isColumnVisible("receive-po", "progress") && (
                                 <td className="py-1 px-3">

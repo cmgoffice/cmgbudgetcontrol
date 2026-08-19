@@ -61,7 +61,9 @@ import { validatePoAgainstPaymentProgress } from "../lib/poPaymentValidation";
 import {
   PO_DISCOUNT_ALLOCATION_VERSION,
   applyDiscountToPrAllocations,
+  getPoAmountExVat,
 } from "../lib/poDiscount";
+import { getPoPaymentAndReceiveBalanceInfo } from "../lib/poPaymentBalance";
 import RelatedDocumentDetailModal from "../components/RelatedDocumentDetailModal";
 
 const getDefaultPoFormData = () => ({
@@ -167,11 +169,13 @@ const POView = React.memo(() => {
     savePrAgain: (prNo, status) => `PR ${prNo} มีสถานะ ${status} — กรุณา Active PR รายการนี้ก่อน แล้วค่อยบันทึก PO อีกครั้ง`,
     amountDrop: "ยอด PO ลดลง",
   };
-  const { prs, pos, projects, budgets, vendors, materials, receives, invoices, payments = [], pays = [], addData, updateData, deleteData, loadVendors, loadMaterials,
+  const { prs, pos, projects, budgets, vendors, materials, receives, receivesReady = false, invoices, payments = [], paymentsReady = false, pays = [], addData, updateData, deleteData, loadVendors, loadMaterials,
     showAlert, openConfirm, logAction, userRole, userRoles, columnWidths, handleColumnResize,
     visibleProjects, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,
     userData, user, canUseFunction, canAccessModule, isColumnVisible } = useAppData();
   const canApprovePO = canUseFunction("po", "approve");
+  const canViewPoBalance = canUseFunction("po", "viewBalance");
+  const poUsageSourcesReady = paymentsReady && receivesReady;
   const canRejectPO = canUseFunction("po", "reject");
   const canAllowPORevision = canUseFunction("po", "allowRevision");
   const canDenyPORevision = canUseFunction("po", "denyRevision");
@@ -2850,6 +2854,12 @@ const POView = React.memo(() => {
     return [...new Set([...directPrNos, ...itemPrNos])].join(", ");
   }, []);
 
+  const poPaymentBalanceById = useMemo(() => {
+    const next = new Map<string, any>();
+    (pos || []).forEach((po: any) => next.set(String(po.id), getPoPaymentAndReceiveBalanceInfo(po, payments, receives)));
+    return next;
+  }, [payments, pos, receives]);
+
   const buildPoDisplayEntry = useCallback((po: any) => {
     const vendor = po.vendorName
       ? { id: po.vendorId, name: po.vendorName, code: po.vendorCode, type: po.vendorType }
@@ -2863,11 +2873,13 @@ const POView = React.memo(() => {
     const descSummary = po.items && po.items.length > 1 ? `${firstDesc} (+${po.items.length - 1})` : firstDesc;
     const vendorName = vendor?.name || po.vendor || "-";
     const creatorName = getPoCreatorDisplayName(po);
-    return { po, vendorName, prNos, descSummary, creatorName };
-  }, [getFastPoPrNos, getPoCreatorDisplayName, getPoRefPrIds, poMetaHydrated, prById, vendorById]);
+    const amountExVat = getPoAmountExVat(po);
+    const paymentBalance = poPaymentBalanceById.get(String(po.id)) || getPoPaymentAndReceiveBalanceInfo(po, [], []);
+    return { po, vendorName, prNos, descSummary, creatorName, amountExVat, paymentBalance };
+  }, [getFastPoPrNos, getPoCreatorDisplayName, getPoRefPrIds, poMetaHydrated, poPaymentBalanceById, prById, vendorById]);
 
   const getPoSortValue = useCallback((entry, key) => {
-    const { po, prNos, descSummary, vendorName, creatorName } = entry;
+    const { po, prNos, descSummary, vendorName, creatorName, amountExVat, paymentBalance } = entry;
     switch (key) {
       case "poNo": return String(po.poNo || po.id || "");
       case "poType": return String(po.poType || "");
@@ -2876,7 +2888,9 @@ const POView = React.memo(() => {
       case "vendor": return String(vendorName || "");
       case "creator": return String(creatorName || "");
       case "items": return Number(po.items?.length || 0);
-      case "amount": return Number(po.amount || po.grandTotal || po.totalAmount || 0);
+      case "amount": return Number(amountExVat || 0);
+      case "paymentReceive": return Number(paymentBalance?.usedAmount || 0);
+      case "balance": return Number(paymentBalance?.balanceAmount || 0);
       case "status": return String(po.status || "");
       default: return "";
     }
@@ -2912,7 +2926,7 @@ const POView = React.memo(() => {
 
     const filtered = !q
       ? base
-      : base.filter(({ po, vendorName, prNos, descSummary, creatorName }) => {
+      : base.filter(({ po, vendorName, prNos, descSummary, creatorName, amountExVat, paymentBalance }) => {
         const blob = [
           po.poNo,
           po.poType,
@@ -2930,7 +2944,9 @@ const POView = React.memo(() => {
           vendorName,
           creatorName,
           po.items?.length,
-          po.amount,
+          amountExVat,
+          paymentBalance?.usedAmount,
+          paymentBalance?.balanceAmount,
         ].filter(Boolean).join(" ").toLowerCase();
         return blob.includes(q);
       });
@@ -2971,7 +2987,7 @@ const POView = React.memo(() => {
 
     const filtered = !q
       ? base
-      : base.filter(({ po, vendorName, prNos, descSummary, creatorName }) => {
+      : base.filter(({ po, vendorName, prNos, descSummary, creatorName, amountExVat, paymentBalance }) => {
         const blob = [
           po.poNo,
           po.poType,
@@ -2989,7 +3005,9 @@ const POView = React.memo(() => {
           vendorName,
           creatorName,
           po.items?.length,
-          po.amount,
+          amountExVat,
+          paymentBalance?.usedAmount,
+          paymentBalance?.balanceAmount,
         ].filter(Boolean).join(" ").toLowerCase();
         return blob.includes(q);
       });
@@ -3021,11 +3039,42 @@ const POView = React.memo(() => {
       {isColumnVisible("po", "vendor") && <ResizableTh tableId="po" colKey="vendor" className="py-2 px-3 cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.vendor} onClick={() => requestPoSort("vendor")}>Vendor <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("vendor")}</span></ResizableTh>}
       {isColumnVisible("po", "creator") && <ResizableTh tableId="po" colKey="creator" className="py-2 px-3 cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.creator} onClick={() => requestPoSort("creator")}>ผู้เปิด/สร้าง PO <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("creator")}</span></ResizableTh>}
       {isColumnVisible("po", "items") && <ResizableTh tableId="po" colKey="items" className="py-2 px-3 text-center cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.items} onClick={() => requestPoSort("items")}>Item <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("items")}</span></ResizableTh>}
-      {isColumnVisible("po", "amount") && <ResizableTh tableId="po" colKey="amount" className="py-2 px-3 text-right cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.amount} onClick={() => requestPoSort("amount")}>Amount <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("amount")}</span></ResizableTh>}
+      {isColumnVisible("po", "amount") && <ResizableTh tableId="po" colKey="amount" className="py-2 px-3 text-right cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.amount} onClick={() => requestPoSort("amount")}>Amount (Ex VAT) <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("amount")}</span></ResizableTh>}
+      {canViewPoBalance && isColumnVisible("po", "paymentReceive") && <ResizableTh tableId="po" colKey="paymentReceive" className="py-2 px-3 text-right cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.paymentReceive} onClick={() => requestPoSort("paymentReceive")}>Payment &amp; Receive <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("paymentReceive")}</span></ResizableTh>}
+      {canViewPoBalance && isColumnVisible("po", "balance") && <ResizableTh tableId="po" colKey="balance" className="py-2 px-3 text-right cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.balance} onClick={() => requestPoSort("balance")}>Balance PO <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("balance")}</span></ResizableTh>}
       {isColumnVisible("po", "status") && <ResizableTh tableId="po" colKey="status" className="py-2 px-3 text-center cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.status} onClick={() => requestPoSort("status")}>Status <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("status")}</span></ResizableTh>}
       {isColumnVisible("po", "actions") && <th className="hidden py-2 px-3 text-right md:table-cell" style={{ width: poMainLayout.scaled.actions }}>Action</th>}
     </>
   );
+
+  const renderPoPaymentBalanceCells = (paymentBalance: any) => {
+    const sourceLabel = paymentBalance?.usageSource === "payment" ? "Payment" : "Receive";
+    const latestLabel = paymentBalance?.sourceDocumentNo
+      ? `${sourceLabel}: ${paymentBalance.sourceDocumentNo}`
+      : `ยังไม่มี ${sourceLabel}`;
+    const validationLabel = paymentBalance?.usageSource !== "payment" || paymentBalance?.isPeriodSumConsistent
+      ? ""
+      : ` | ตรวจสอบยอดรายงวด ${formatCurrency(paymentBalance?.summedPeriodNetAmount || 0)}`;
+    return (
+      <>
+        {canViewPoBalance && isColumnVisible("po", "paymentReceive") && (
+          <td className="py-2 px-3 text-right font-semibold text-blue-700" title={`${latestLabel}${validationLabel}`}>
+            {poUsageSourcesReady ? formatCurrency(paymentBalance?.usedAmount || 0) : <span className="text-slate-400">กำลังโหลด…</span>}
+            {paymentBalance?.jobCompleted && (
+              <span className="mt-0.5 block w-fit ml-auto rounded border border-blue-300 bg-blue-100 px-1.5 py-0.5 text-[9px] leading-tight font-bold text-blue-800" title={`จบงานโดย ${paymentBalance.jobCompletedBy || "-"}`}>
+                จบงาน
+              </span>
+            )}
+          </td>
+        )}
+        {canViewPoBalance && isColumnVisible("po", "balance") && (
+          <td className="py-2 px-3 text-right font-semibold text-emerald-700" title={`${latestLabel}${validationLabel}`}>
+            {poUsageSourcesReady ? formatCurrency(paymentBalance?.balanceAmount || 0) : <span className="text-slate-400">กำลังโหลด…</span>}
+          </td>
+        )}
+      </>
+    );
+  };
 
   const renderMobilePoActions = (po) => (
     isColumnVisible("po", "actions") && (
@@ -3330,7 +3379,7 @@ const POView = React.memo(() => {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {displayedPOsPending
-                      .map(({ po, vendorName, prNos, descSummary, creatorName }) => {
+                      .map(({ po, vendorName, prNos, descSummary, creatorName, amountExVat, paymentBalance }) => {
                         return (
                           <React.Fragment key={po.id}>
                             <tr
@@ -3357,10 +3406,16 @@ const POView = React.memo(() => {
                                 );
                               })()}
                               {isColumnVisible("po", "items") && <td className="py-2 px-3 text-center">{po.items ? po.items.length : 1}</td>}
-                              {isColumnVisible("po", "amount") && <td className="py-2 px-3 text-right font-semibold">{formatCurrency(po.amount)}</td>}
+                              {isColumnVisible("po", "amount") && <td className="py-2 px-3 text-right font-semibold">{formatCurrency(amountExVat)}</td>}
+                              {renderPoPaymentBalanceCells(paymentBalance)}
                               {isColumnVisible("po", "status") && <td className="py-2 px-3 text-center">
                                 <div className="flex flex-col items-center">
                                   <Badge status={po.status} />
+                                  {po.jobCompleted && (
+                                    <span className="text-[9px] text-teal-700 mt-0.5 font-semibold max-w-[130px] truncate" title={`จบงานโดย ${po.jobCompletedBy || "-"}`}>
+                                      จบงาน · {po.jobCompletedBy || "-"}
+                                    </span>
+                                  )}
                                   {po.poEditRevisionReason && (po.status === PO_REVISION_PENDING_PCM || po.status === PO_REVISION_PENDING_GM) && (
                                     <span className="text-[9px] text-amber-700 mt-0.5 max-w-[100px] truncate" title={po.poEditRevisionReason}>
                                       เหตุผลขอแก้: {po.poEditRevisionReason}
@@ -3533,7 +3588,7 @@ const POView = React.memo(() => {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {displayedPOsNormal
-                    .map(({ po, vendorName, prNos, descSummary, creatorName }) => {
+                    .map(({ po, vendorName, prNos, descSummary, creatorName, amountExVat, paymentBalance }) => {
                       return (
                         <React.Fragment key={po.id}>
                           <tr
@@ -3560,10 +3615,16 @@ const POView = React.memo(() => {
                               );
                             })()}
                             {isColumnVisible("po", "items") && <td className="py-2 px-3 text-center">{po.items ? po.items.length : 1}</td>}
-                            {isColumnVisible("po", "amount") && <td className="py-2 px-3 text-right font-semibold">{formatCurrency(po.amount)}</td>}
+                            {isColumnVisible("po", "amount") && <td className="py-2 px-3 text-right font-semibold">{formatCurrency(amountExVat)}</td>}
+                            {renderPoPaymentBalanceCells(paymentBalance)}
                             {isColumnVisible("po", "status") && <td className="py-2 px-3 text-center">
                               <div className="flex flex-col items-center">
                                 <Badge status={po.status} />
+                                {po.jobCompleted && (
+                                  <span className="text-[9px] text-teal-700 mt-0.5 font-semibold max-w-[130px] truncate" title={`จบงานโดย ${po.jobCompletedBy || "-"}`}>
+                                    จบงาน · {po.jobCompletedBy || "-"}
+                                  </span>
+                                )}
                                 {po.poEditRevisionReason && (po.status === PO_REVISION_PENDING_PCM || po.status === PO_REVISION_PENDING_GM) && (
                                   <span className="text-[9px] text-amber-700 mt-0.5 max-w-[100px] truncate" title={po.poEditRevisionReason}>
                                     เหตุผลขอแก้: {po.poEditRevisionReason}
@@ -3736,46 +3797,24 @@ const POView = React.memo(() => {
                     })()} className="px-3 py-2 text-right text-xs font-semibold text-slate-600">
                       ยอดรวมทั้งหมด (Ex VAT):
                     </td>
-                    <td className="px-3 py-2 text-right text-sm font-bold text-slate-800">
+                    {isColumnVisible("po", "amount") && <td className="px-3 py-2 text-right text-sm font-bold text-slate-800">
                       {formatCurrency(
                         [...displayedPOsPending, ...displayedPOsNormal]
-                          .reduce((total, { po }) => {
-                            // Calculate amount ex VAT for each PO
-                            let subtotal = 0;
-                            if (po.items && po.items.length > 0) {
-                              subtotal = po.items.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-                            }
-                            const discount = Number(po.discount || 0);
-                            const amountExVat = Math.max(0, subtotal - discount);
-                            return total + amountExVat;
-                          }, 0)
+                          .reduce((total, entry) => total + Number(entry.amountExVat || 0), 0)
                       )}
-                    </td>
-                    {isColumnVisible("po", "status") && <td></td>}
-                    {isColumnVisible("po", "actions") && <td></td>}
-                  </tr>
-                  <tr className="bg-slate-100">
-                    <td colSpan={(() => {
-                      let cols = 0;
-                      if (isColumnVisible("po", "poNo")) cols++;
-                      if (isColumnVisible("po", "poType")) cols++;
-                      if (isColumnVisible("po", "prNos")) cols++;
-                      if (isColumnVisible("po", "description")) cols++;
-                      if (isColumnVisible("po", "vendor")) cols++;
-                      if (isColumnVisible("po", "creator")) cols++;
-                      if (isColumnVisible("po", "items")) cols++;
-                      return Math.max(1, cols);
-                    })()} className="px-3 py-2 text-right text-xs font-semibold text-slate-700">
-                      ยอดรวมทั้งหมด:
-                    </td>
-                    <td className="px-3 py-2 text-right text-sm font-bold text-slate-900">
-                      {formatCurrency(
+                    </td>}
+                    {canViewPoBalance && isColumnVisible("po", "paymentReceive") && <td className="px-3 py-2 text-right text-sm font-bold text-blue-700">
+                      {poUsageSourcesReady ? formatCurrency(
                         [...displayedPOsPending, ...displayedPOsNormal]
-                          .reduce((total, { po }) => {
-                            return total + Number(po.grandTotal || po.amount || po.totalAmount || 0);
-                          }, 0)
-                      )}
-                    </td>
+                          .reduce((total, { paymentBalance }) => total + Number(paymentBalance?.usedAmount || 0), 0)
+                      ) : "กำลังโหลด…"}
+                    </td>}
+                    {canViewPoBalance && isColumnVisible("po", "balance") && <td className="px-3 py-2 text-right text-sm font-bold text-emerald-700">
+                      {poUsageSourcesReady ? formatCurrency(
+                        [...displayedPOsPending, ...displayedPOsNormal]
+                          .reduce((total, { paymentBalance }) => total + Number(paymentBalance?.balanceAmount || 0), 0)
+                      ) : "กำลังโหลด…"}
+                    </td>}
                     {isColumnVisible("po", "status") && <td></td>}
                     {isColumnVisible("po", "actions") && <td></td>}
                   </tr>
@@ -3895,6 +3934,11 @@ const POView = React.memo(() => {
                     </div>
                     <div className="flex items-center gap-2">
                       <Badge status={viewingPO.status} />
+                      {viewingPO.jobCompleted && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 border border-teal-300">
+                          จบงาน
+                        </span>
+                      )}
                       <button onClick={() => setViewingPO(null)} className="text-white/60 hover:text-white hover:bg-white/20 p-2 rounded-xl transition-all ml-2">
                         <XCircle size={20} />
                       </button>
@@ -4214,6 +4258,14 @@ const POView = React.memo(() => {
                       </table>
                     </div>
 
+
+                    {viewingPO.jobCompleted && (
+                      <div className="bg-teal-50 border border-teal-200 rounded-lg px-4 py-3 text-xs text-teal-900">
+                        <span className="font-bold">จบงานแล้ว:</span> โดย {viewingPO.jobCompletedBy || "-"}
+                        {viewingPO.jobCompletedPaymentNo ? ` · Payment ${viewingPO.jobCompletedPaymentNo}` : ""}
+                        {viewingPO.jobCompletedAt ? ` · ${new Date(viewingPO.jobCompletedAt).toLocaleString("th-TH")}` : ""}
+                      </div>
+                    )}
 
                     {viewingPO.note && (
                       <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-800">

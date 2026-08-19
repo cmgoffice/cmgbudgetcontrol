@@ -10,14 +10,40 @@ const roundCurrency = (value: number) => Math.round((Number(value) || 0) * 100) 
 export const getPoItemsGrossSubtotal = (poOrItems: any) => {
   const items = Array.isArray(poOrItems) ? poOrItems : (poOrItems?.items || []);
   return Math.max(0, items.reduce((sum: number, item: any) => {
+    const hasExplicitAmount = item?.amount !== null && item?.amount !== undefined && item?.amount !== "";
     const amount = Number(item?.amount);
     const fallback = asNumber(item?.quantity) * asNumber(item?.price ?? item?.unitPrice);
-    return sum + (Number.isFinite(amount) ? amount : fallback);
+    return sum + (hasExplicitAmount && Number.isFinite(amount) ? amount : fallback);
   }, 0));
 };
 
 export const getPoDiscountAmount = (po: any) =>
   Math.min(getPoItemsGrossSubtotal(po), Math.max(0, asNumber(po?.discount)));
+
+/**
+ * Canonical PO amount for tables, budgets, and summaries: line subtotal after
+ * the PO discount, before VAT. Persisted amount/grandTotal remain untouched
+ * because they are the document total (including VAT when applicable).
+ */
+export const getPoAmountExVat = (po: any) => {
+  const gross = getPoItemsGrossSubtotal(po);
+  if (gross > 0) return roundCurrency(Math.max(0, gross - getPoDiscountAmount(po)));
+
+  const legacyExVat = po?.subTotalAfterDiscount ?? po?.amountExVat ?? po?.subTotal ?? po?.subtotal;
+  if (legacyExVat != null && Number.isFinite(Number(legacyExVat))) {
+    return roundCurrency(Math.max(0, Number(legacyExVat)));
+  }
+
+  const storedTotal = Math.max(0, asNumber(po?.grandTotal ?? po?.amount ?? po?.totalAmount ?? po?.total));
+  if (storedTotal <= 0 || po?.vatType !== "ex-vat") return roundCurrency(storedTotal);
+
+  const manualVat = Number(po?.manualVat);
+  if (po?.manualVat != null && Number.isFinite(manualVat)) {
+    return roundCurrency(Math.max(0, storedTotal - manualVat));
+  }
+
+  return roundCurrency(storedTotal / 1.07);
+};
 
 export const getPoDiscountRate = (po: any) => {
   const gross = getPoItemsGrossSubtotal(po);

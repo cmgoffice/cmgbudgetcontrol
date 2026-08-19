@@ -45,6 +45,7 @@ import { validateInvoiceAmountForPo } from "../lib/billingPayUtils";
 import {
   PO_DISCOUNT_ALLOCATION_VERSION,
   appendPaymentDiscountAdjustment,
+  getPoAmountExVat as resolvePoAmountExVat,
 } from "../lib/poDiscount";
 
 const PO_TYPE_LABELS: Record<string, string> = {
@@ -291,15 +292,7 @@ const InvoiceView = React.memo(() => {
   }, []);
 
   const getPoAmountExVat = useCallback((po: any) => {
-    let subtotal = 0;
-    if (Array.isArray(po?.items) && po.items.length > 0) {
-      subtotal = po.items.reduce(
-        (sum: number, item: any) => sum + Number(item.amount || 0),
-        0
-      );
-    }
-    const discount = Number(po?.discount || 0);
-    return Math.max(0, subtotal - discount);
+    return resolvePoAmountExVat(po);
   }, []);
 
   const validateInvoiceAmount = useCallback(
@@ -1580,10 +1573,6 @@ const InvoiceView = React.memo(() => {
   const invoiceListTotals = useMemo(
     () => ({
       exVat: filteredPOs.reduce((sum, po) => sum + getPoAmountExVat(po), 0),
-      grand: filteredPOs.reduce(
-        (sum, po) => sum + Number(po.grandTotal || po.amount || po.totalAmount || 0),
-        0
-      ),
     }),
     [filteredPOs, getPoAmountExVat]
   );
@@ -1937,14 +1926,6 @@ const InvoiceView = React.memo(() => {
                   </td>
                   <td className="px-3 py-2 text-right text-sm font-bold text-slate-800 w-40">
                     {formatCurrency(invoiceListTotals.exVat)}
-                  </td>
-                </tr>
-                <tr className="bg-slate-100">
-                  <td className="px-3 py-2 text-right text-xs font-semibold text-slate-700">
-                    ยอดรวมทั้งหมด:
-                  </td>
-                  <td className="px-3 py-2 text-right text-sm font-bold text-slate-900">
-                    {formatCurrency(invoiceListTotals.grand)}
                   </td>
                 </tr>
               </tfoot>

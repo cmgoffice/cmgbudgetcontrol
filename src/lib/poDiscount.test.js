@@ -2,7 +2,34 @@ import {
   applyDiscountToPrAllocations,
   calculateNetPeriodAmount,
   calculatePeriodDiscount,
+  getPoAmountExVat,
 } from "./poDiscount";
+
+test("calculates the table PO amount after discount and before VAT", () => {
+  expect(getPoAmountExVat({
+    items: [{ quantity: 1, price: 1000, amount: 1000 }],
+    discount: 100,
+    vatType: "ex-vat",
+    grandTotal: 963,
+  })).toBe(900);
+
+  expect(getPoAmountExVat({
+    items: [{ quantity: 1, price: 1000, amount: 1000 }],
+    discount: 100,
+    vatType: "inc-vat",
+    grandTotal: 900,
+  })).toBe(900);
+});
+
+test("supports legacy and incomplete PO amount data without showing VAT", () => {
+  expect(getPoAmountExVat({ vatType: "ex-vat", grandTotal: 963 })).toBe(900);
+  expect(getPoAmountExVat({ vatType: "ex-vat", grandTotal: 955, manualVat: 55 })).toBe(900);
+  expect(getPoAmountExVat({ amountExVat: 900, grandTotal: 963 })).toBe(900);
+  expect(getPoAmountExVat({
+    items: [{ quantity: 2, price: 500, amount: "" }],
+    discount: 100,
+  })).toBe(900);
+});
 
 test("calculates proportional discount for a payment period", () => {
   expect(calculatePeriodDiscount({

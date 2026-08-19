@@ -101,6 +101,7 @@ const STATUS_BADGE_COLORS: Record<string, string> = {
   "Wait Pay": "bg-orange-200 text-orange-900 border border-orange-400",
   "Hold": "bg-yellow-200 text-yellow-900 border border-yellow-400",
   "Paid": "bg-emerald-100 text-emerald-800 border border-emerald-300",
+  "จบงาน": "bg-teal-100 text-teal-800 border border-teal-300",
   "Revision Requested": "bg-rose-100 text-rose-800 border border-rose-200",
   "Reject": "bg-red-100 text-red-800 border border-red-300",
   "Rejected": "bg-red-100 text-red-800 border border-red-300",
@@ -135,8 +136,8 @@ const getPaymentBaseNo = (paymentNo: any): string => {
   return value.replace(/-\d+$/, "");
 };
 
-const PaymentStatusBadge = ({ status }: { status: string }) => {
-  const displayStatus = status === "Rejected" ? "Reject" : (status || "Draft");
+const PaymentStatusBadge = ({ status, jobCompleted = false }: { status: string; jobCompleted?: boolean }) => {
+  const displayStatus = jobCompleted ? "จบงาน" : (status === "Rejected" ? "Reject" : (status || "Draft"));
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_BADGE_COLORS[displayStatus] || "bg-slate-100 text-slate-700 border border-slate-200"}`}>
       {displayStatus}
@@ -958,6 +959,9 @@ const PaymentView = React.memo(() => {
     }
     setEvaluating(true);
     try {
+      const completedAt = new Date().toISOString();
+      const completedBy = getUserIdentity(userData, user);
+      const completedByName = completedBy.name || userData?.name || user?.email || "";
       // ใช้ข้อมูล Vendor จาก Payment object โดยตรง (fallback ไปที่ vendors array ถ้าไม่มี)
       const contractor = evalModalPayment.contractorName 
         ? { id: evalModalPayment.contractorId, name: evalModalPayment.contractorName, code: evalModalPayment.contractorCode, type: evalModalPayment.contractorType }
@@ -995,26 +999,45 @@ const PaymentView = React.memo(() => {
         totalScore,
         maxTotalScore: 5,
         recommendations: evalForm.recommendations.trim(),
-        createdAt: new Date().toISOString(),
-        createdBy: userData?.name || user?.email || "",
+        createdAt: completedAt,
+        createdBy: completedByName,
       };
       await addData("vendorEvaluations", evalPayload, null, { skipLog: true });
       await updateData("payments", evalModalPayment.id, {
         status: "Paid",
+        jobStatus: "จบงาน",
         jobCompleted: true,
-        completedAt: new Date().toISOString(),
-        completedBy: userData?.name || user?.email || "",
+        completedAt,
+        completedBy: completedByName,
+        completedByUid: completedBy.uid || null,
+        completedByEmail: completedBy.email || null,
+        jobCompletedAt: completedAt,
+        jobCompletedBy: completedByName,
+        jobCompletedByUid: completedBy.uid || null,
+        jobCompletedByEmail: completedBy.email || null,
       }, { skipLog: true });
       const selectedPrIds = evalModalPayment.selectedPrIds || [];
       for (const poId of selectedPrIds) {
         const po = (pos || []).find((x: any) => x.id === poId);
-        if (po && po.status !== "Closed PO") {
-          await updateData("pos", poId, { status: "Closed PO", statusNow: "Closed PO" }, { skipLog: true });
+        if (po) {
+          await updateData("pos", poId, {
+            status: "Closed PO",
+            statusNow: "Closed PO",
+            jobStatus: "จบงาน",
+            jobCompleted: true,
+            jobCompletedAt: completedAt,
+            jobCompletedBy: completedByName,
+            jobCompletedByUid: completedBy.uid || null,
+            jobCompletedByEmail: completedBy.email || null,
+            jobCompletedPaymentId: evalModalPayment.id,
+            jobCompletedPaymentNo: evalModalPayment.paymentNo || "",
+            jobCompletedPeriodNo: evalModalPayment.periodNo || null,
+          }, { skipLog: true });
         }
       }
       await logAction(
         "Complete Job & Evaluate",
-        `จบงานและประเมินผู้รับเหมา | ${getPaymentLogSummary(evalModalPayment, { status: "Paid" })} | คะแนนรวม: ${Number(totalScore || 0).toLocaleString("th-TH")}/5`,
+        `จบงานและประเมินผู้รับเหมา | ${getPaymentLogSummary(evalModalPayment, { status: "Paid" })} | ผู้จบงาน: ${completedByName || "-"} | คะแนนรวม: ${Number(totalScore || 0).toLocaleString("th-TH")}/5`,
         selectedProjectId
       );
       setEvalModalPayment(null);
@@ -1670,7 +1693,12 @@ const PaymentView = React.memo(() => {
                     {isColumnVisible("payment", "status") && (
                       <td className="py-2 px-3 text-center">
                         <div className="flex flex-col items-center gap-0.5">
-                          <PaymentStatusBadge status={p.status || "Draft"} />
+                          <PaymentStatusBadge status={p.status || "Draft"} jobCompleted={Boolean(p.jobCompleted)} />
+                          {p.jobCompleted && p.jobCompletedBy && (
+                            <span className="text-[9px] text-teal-700 max-w-[120px] truncate" title={`จบงานโดย ${p.jobCompletedBy}`}>
+                              โดย {p.jobCompletedBy}
+                            </span>
+                          )}
                           {p.revisionRequested && (
                             <span className="text-[9px] text-rose-600 font-semibold">ขอแก้ไข</span>
                           )}
@@ -1860,7 +1888,7 @@ const PaymentView = React.memo(() => {
                       <FileText size={18} />
                     )}
                   </button>
-                  <PaymentStatusBadge status={vp.status || "Draft"} />
+                  <PaymentStatusBadge status={vp.status || "Draft"} jobCompleted={Boolean(vp.jobCompleted)} />
                   {vp.revisionRequested && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500 text-white">
                       <RotateCcw size={9} /> ขอแก้ไข
@@ -1990,6 +2018,15 @@ const PaymentView = React.memo(() => {
                         <span className="w-56 text-slate-500 font-semibold shrink-0">วันที่จัดทำเอกสาร / Date :</span>
                         <span className="font-medium text-slate-700">{vp.openDate || "-"}</span>
                       </div>
+                      {vp.jobCompleted && (
+                        <div className="flex">
+                          <span className="w-56 text-teal-700 font-semibold shrink-0">สถานะงาน / JOB STATUS :</span>
+                          <span className="font-semibold text-teal-800">
+                            จบงาน — โดย {vp.jobCompletedBy || vp.completedBy || "-"}
+                            {(vp.jobCompletedAt || vp.completedAt) ? ` (${new Date(vp.jobCompletedAt || vp.completedAt).toLocaleString("th-TH")})` : ""}
+                          </span>
+                        </div>
+                      )}
                       {vp.attachmentUrl && (
                         <div className="flex items-center">
                           <span className="w-56 text-slate-500 font-semibold shrink-0">เอกสารแนบ :</span>

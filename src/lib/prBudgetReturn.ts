@@ -1,4 +1,4 @@
-import { PO_DISCOUNT_ALLOCATION_VERSION } from "./poDiscount";
+import { getPoAmountExVat, PO_DISCOUNT_ALLOCATION_VERSION } from "./poDiscount";
 
 export const isPoLinkedToPr = (po: any, prId: string) => {
   if (!po || !prId) return false;
@@ -41,12 +41,7 @@ export const getPoGrandTotalUsedByPr = (pos: any[], prId: string) => {
 
     if (subTotalAfterDiscount > 0) return sum + subTotalAfterDiscount;
 
-    const fallbackSubTotal = Number(
-      po?.subTotalAfterDiscount ?? po?.subTotal ?? po?.subtotal ?? po?.amountExVat ?? 0
-    );
-    if (Number.isFinite(fallbackSubTotal) && fallbackSubTotal > 0) return sum + fallbackSubTotal;
-
-    return sum + (Number(po.grandTotal) || 0);
+    return sum + getPoAmountExVat(po);
   }, 0);
 };
 

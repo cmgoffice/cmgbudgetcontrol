@@ -22,7 +22,8 @@ import { getResumeStatusForPR } from "../lib/prAllocation";
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { scalePrItemsToTotal, sumSubItemAmounts } from "../lib/prBudgetReturn";
 import { getInvoiceAmountForPo, isPaidStatus, isSpentInvoiceRecord } from "../lib/billingPayUtils";
-import { PO_DISCOUNT_ALLOCATION_VERSION } from "../lib/poDiscount";
+import { getPoAmountExVat, PO_DISCOUNT_ALLOCATION_VERSION } from "../lib/poDiscount";
+import { canDirectEditApprovedMainBudget } from "../lib/budgetEditPolicy";
 import { useProportionalTableLayout, chainTableResizeHandlers } from "../hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
@@ -1455,7 +1456,7 @@ const BudgetView = React.memo(() => {
       }
       
       if (!po.items || po.items.length === 0) {
-         return sum + Number(po.totalAmount || 0);
+         return sum + getPoAmountExVat(po);
       }
       return sum;
     }, 0);
@@ -2147,6 +2148,11 @@ const BudgetView = React.memo(() => {
     const editingBudget = editingBudgetId
       ? budgets.find((b) => b.id === editingBudgetId)
       : null;
+    const isDirectPrepareEdit = canDirectEditApprovedMainBudget(
+      selectedProject?.status,
+      editingBudget?.status,
+      budgetCategory
+    );
     if (editingBudgetId) {
       const minAmount = getMinimumBudgetAmountForNonNegativeBalance(editingBudget);
       const nextAmount = Number(formData.amount) || 0;
@@ -2175,18 +2181,60 @@ const BudgetView = React.memo(() => {
         };
         if (newStatus) updatePayload.status = newStatus;
 
-        await updateDoc(
-          doc(
+        const budgetRef = doc(
+          db,
+          "artifacts",
+          appId,
+          "public",
+          "data",
+          "budgets",
+          editingBudgetId
+        );
+
+        if (isDirectPrepareEdit) {
+          const projectRef = doc(
             db,
             "artifacts",
             appId,
             "public",
             "data",
-            "budgets",
-            editingBudgetId
-          ),
-          updatePayload
-        );
+            "projects",
+            selectedProjectId
+          );
+          await runTransaction(db, async (transaction) => {
+            const [projectSnapshot, budgetSnapshot] = await Promise.all([
+              transaction.get(projectRef),
+              transaction.get(budgetRef),
+            ]);
+            const latestProjectStatus = projectSnapshot.data()?.status;
+            const latestBudget = budgetSnapshot.data();
+            if (
+              !projectSnapshot.exists() ||
+              !budgetSnapshot.exists() ||
+              !canDirectEditApprovedMainBudget(latestProjectStatus, latestBudget?.status, budgetCategory)
+            ) {
+              throw Object.assign(new Error("Direct main budget edit is no longer available"), {
+                guardCode: "DIRECT_EDIT_NOT_ALLOWED",
+              });
+            }
+
+            const latestSubTotal = sumSubItemAmounts(
+              Array.isArray(latestBudget.subItems) ? latestBudget.subItems : []
+            );
+            const nextAmount = Number(formData.amount) || 0;
+            if (nextAmount + 0.005 < latestSubTotal) {
+              throw Object.assign(new Error("Main budget is below current sub-items"), {
+                guardCode: "MAIN_BELOW_SUB_TOTAL",
+                mainAmount: nextAmount,
+                subTotal: latestSubTotal,
+              });
+            }
+
+            transaction.update(budgetRef, updatePayload);
+          });
+        } else {
+          await updateDoc(budgetRef, updatePayload);
+        }
         await logAction(
           "Update",
           `อัปเดต Budget | ${buildRecordSummary("budgets", { ...(editingBudget || {}), ...updatePayload }, editingBudgetId)}${newStatus ? ` | สถานะใหม่: ${newStatus}` : ""}`,
@@ -2233,6 +2281,22 @@ const BudgetView = React.memo(() => {
       setEditingBudgetId(null);
       setFormData({ code: "", description: "", amount: 0 });
     } catch (e) {
+      if (e?.guardCode === "MAIN_BELOW_SUB_TOTAL") {
+        showAlert(
+          "ไม่สามารถบันทึก Main Budget ได้",
+          `Amount ใหม่ ${formatCurrency(e.mainAmount)} ต่ำกว่ายอดรวม Sub-Items ล่าสุด ${formatCurrency(e.subTotal)}`,
+          "warning"
+        );
+        return;
+      }
+      if (e?.guardCode === "DIRECT_EDIT_NOT_ALLOWED") {
+        showAlert(
+          "ไม่สามารถแก้ไขโดยตรงได้",
+          "สถานะโครงการหรือ Budget มีการเปลี่ยนแปลง กรุณาโหลดข้อมูลใหม่แล้วตรวจสอบอีกครั้ง",
+          "warning"
+        );
+        return;
+      }
       showAlert("Error", e.message, "error");
     }
   };
@@ -3218,7 +3282,7 @@ const BudgetView = React.memo(() => {
                     Balance
                   </th>
                   <th className="py-3 px-4 text-right text-slate-600">
-                    PO Total
+                    PO Total (Ex VAT)
                   </th>
                   <th className="py-3 px-4 text-right text-orange-700 border-r-0">
                     Spent (Inv)
@@ -3747,7 +3811,7 @@ const BudgetView = React.memo(() => {
                           <ResizableTh tableId="dash-po" colKey="poNo" className="py-1.5 px-3" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.poNo}>PO No.</ResizableTh>
                           <ResizableTh tableId="dash-po" colKey="date" className="py-1.5 px-3" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.date}>วันที่</ResizableTh>
                           <ResizableTh tableId="dash-po" colKey="costCode" className="py-1.5 px-3" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.costCode}>Cost Code</ResizableTh>
-                          <ResizableTh tableId="dash-po" colKey="amount" className="py-1.5 px-3 text-right" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.amount}>จำนวนเงิน</ResizableTh>
+                          <ResizableTh tableId="dash-po" colKey="amount" className="py-1.5 px-3 text-right" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.amount}>จำนวนเงิน (Ex VAT)</ResizableTh>
                           <ResizableTh tableId="dash-po" colKey="status" className="py-1.5 px-3 text-center" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.status}>สถานะ</ResizableTh>
                           <th className="hidden py-1.5 px-3 text-center md:table-cell" style={{ width: dashPoLayout.scaled.actions }}>Actions</th>
                         </tr>
@@ -3822,7 +3886,7 @@ const BudgetView = React.memo(() => {
                                 </span>
                               </td>
                               <td className="py-2 px-3 text-right font-semibold text-orange-700">
-                                {formatCurrency(po.amount || po.totalAmount || po.grandTotal)}
+                                {formatCurrency(getPoAmountExVat(po))}
                               </td>
                               <td className="hidden py-2 px-3 text-center md:table-cell">
                                 <div className="flex flex-col items-center gap-0.5">
@@ -4052,7 +4116,7 @@ const BudgetView = React.memo(() => {
                     {isColumnVisible("budget", "attachment") && <ResizableTh tableId="budget" colKey="attachment" className="py-3 px-4 text-center" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.attachment}>Attachment</ResizableTh>}
                     {isColumnVisible("budget", "balance") && <ResizableTh tableId="budget" colKey="balance" className="py-3 px-4 text-right text-green-800 font-bold border-r" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.balance}>Balance<span className="block mt-1 text-[15px] font-black text-green-700 tracking-tight opacity-100 drop-shadow-sm">{formatCurrency(headerTotals.balance)}</span></ResizableTh>}
                     {isColumnVisible("budget", "prTotal") && <ResizableTh tableId="budget" colKey="prTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.prTotal}>PR Total<span className="block mt-1 text-[15px] font-black text-slate-800 tracking-tight opacity-100 drop-shadow-sm">{formatCurrency(headerTotals.prTotal)}</span></ResizableTh>}
-                    {isColumnVisible("budget", "poTotal") && <ResizableTh tableId="budget" colKey="poTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.poTotal}>PO Total<span className="block mt-1 text-[15px] font-black text-slate-800 tracking-tight opacity-100 drop-shadow-sm">{formatCurrency(headerTotals.poTotal)}</span></ResizableTh>}
+                    {isColumnVisible("budget", "poTotal") && <ResizableTh tableId="budget" colKey="poTotal" className="py-3 px-4 text-right text-slate-600" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.poTotal}>PO Total (Ex VAT)<span className="block mt-1 text-[15px] font-black text-slate-800 tracking-tight opacity-100 drop-shadow-sm">{formatCurrency(headerTotals.poTotal)}</span></ResizableTh>}
                     {isColumnVisible("budget", "actions") && <th className="py-3 px-4 text-right" style={{ width: budgetMainLayout.scaled.actions, minWidth: budgetMainLayout.scaled.actions }}>Actions</th>}
                   </tr>
                 </thead>
@@ -4070,10 +4134,16 @@ const BudgetView = React.memo(() => {
                     const budgetBalance = hasSubItems ? totalBudget - sumSubItems : totalBudget - stats.invoiceTotal;
                     const isLocked =
                       b.status === "Approved" || b.status === "Wait MD Approve";
+                    const isDirectPrepareEdit = canDirectEditApprovedMainBudget(
+                      selectedProject?.status,
+                      b.status,
+                      budgetCategory
+                    );
                     const canDelete = (userRole === "MD" || b.status === "Draft") && canUseFunction("budget", "delete");
                     const isExpanded = expandedBudgetRows[b.id];
                     const canEdit =
-                      !isLocked && b.status !== "Revision Pending" && canUseFunction("budget", "edit");
+                      ((!isLocked && b.status !== "Revision Pending") || isDirectPrepareEdit) &&
+                      canUseFunction("budget", "edit");
                     const isRevisionPending = b.status === "Revision Pending";
                     const isNewRevisionBudget = isBudgetNewInCurrentRevisionCycle(b);
                     return (
@@ -4304,7 +4374,7 @@ const BudgetView = React.memo(() => {
                                   )}
                                 </>
                               )}
-                              {canRequestBudgetRevision && b.status === "Approved" && (
+                              {canRequestBudgetRevision && b.status === "Approved" && !isDirectPrepareEdit && (
                                 <button
                                   className="text-orange-500 hover:text-orange-700 p-1 hover:bg-orange-50 rounded"
                                   title="ขอแก้ไข (Revise)"

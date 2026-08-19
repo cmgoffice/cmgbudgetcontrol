@@ -3,6 +3,7 @@ import React, { useMemo } from "react";
 import { Download } from "lucide-react";
 import { useAppData } from "../contexts/AppDataContext";
 import { getProjectPayHistoryTotal } from "../lib/billingPayUtils";
+import { getPoAmountExVat } from "../lib/poDiscount";
 
 const fmt = (v: number) =>
   v === 0 ? "" : v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -28,9 +29,9 @@ const BudgetSummaryReportView = React.memo(() => {
         const projPrs = prs.filter((r) => r.projectId === proj.id && r.status !== "Rejected");
         const prTotal = projPrs.reduce((s, r) => s + (Number(r.totalAmount || r.amount) || 0), 0);
 
-        // PO Total = sum of po.amount (grandTotal incl. VAT) for all non-Rejected POs
+        // PO Total uses the PO subtotal after discount, before VAT.
         const projPos = pos.filter((o) => o.projectId === proj.id && o.status !== "Rejected");
-        const poTotal = projPos.reduce((s, o) => s + (Number(o.amount || o.grandTotal) || 0), 0);
+        const poTotal = projPos.reduce((sum, po) => sum + getPoAmountExVat(po), 0);
 
         // Budget Balance = Budget Total - PO Total
         const budgetBalance = budgetTotal - poTotal;
@@ -85,7 +86,7 @@ const BudgetSummaryReportView = React.memo(() => {
     const headers = [
       "Job No.", "Project Name", "Contract Value", "Budget Value", "Budget Total",
       "Expect Profit", "%Profit", "Budget Balance", "% Balance",
-      "PR Total", "PO Total", "Spent (Inv)Total",
+      "PR Total", "PO Total (Ex VAT)", "Spent (Inv)Total",
     ];
     const dataRows = rows.map((r) => [
       r.jobNo, r.projectName,
@@ -149,7 +150,7 @@ const BudgetSummaryReportView = React.memo(() => {
               <th className={thCell} style={{ width: 110 }}>Budget Balance</th>
               <th className={thCell} style={{ width: 75 }}>% Balance</th>
               <th className={thCell} style={{ width: 100 }}>PR Total</th>
-              <th className={thCell} style={{ width: 100 }}>PO Total</th>
+              <th className={thCell} style={{ width: 100 }}>PO Total (Ex VAT)</th>
               <th className={thCell} style={{ width: 120 }}>Spent (Inv)Total</th>
             </tr>
           </thead>

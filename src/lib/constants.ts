@@ -89,6 +89,7 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
     { key: "allowRevision", label: "อนุญาตแก้ไข PO" },
     { key: "denyRevision", label: "ไม่อนุญาตแก้ไข PO" },
     { key: "manualPoOverride", label: "แก้ไขเลข PO ด้วยตนเอง" },
+    { key: "viewBalance", label: "ดูคอลัมน์ Payment & Receive / Balance PO" },
     { key: "closePO", label: "ยืนยัน Close PO" },
   ],
   "po-table": [
@@ -96,6 +97,7 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
     { key: "email",   label: "ส่ง Email PDF" },
     { key: "download",label: "Download PDF" },
     { key: "delete",  label: "ลบ PO" },
+    { key: "viewBalance", label: "ดูคอลัมน์ Payment & Receive / Balance PO" },
     { key: "requestClosePO", label: "ขอปิด PO" },
   ],
   vendor: [
@@ -248,9 +250,11 @@ export function mergeFunctionPermissionsWithDefaults(
       approveActivePR: ["PCM"],
     },
     po: {
+      viewBalance: ["PCM", "GM", "MD"],
       closePO: ["PCM"],
     },
     "po-table": {
+      viewBalance: ["PCM", "GM", "MD"],
       requestClosePO: ["Procurement"],
     },
     "payment-subcontract": {
