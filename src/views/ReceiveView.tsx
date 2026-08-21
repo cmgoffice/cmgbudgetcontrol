@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useState, useMemo, useCallback, useContext, useEffect } from "react";
 import {
-  ChevronDown, ChevronRight, Package, Eye, FileText,
+  ChevronDown, ChevronLeft, ChevronRight, Package, Eye, FileText,
   Plus, X, Check, Clock, ExternalLink, Truck, ImageIcon, List, Search, Trash2,
   RefreshCw,
 } from "lucide-react";
@@ -44,6 +44,8 @@ const PO_TYPE_LABELS = {
   WF: "WF — รายจ่ายประจำ",
 };
 
+const RECEIVE_HISTORY_PAGE_SIZE = 100;
+
 const getReceiveLogSummary = (receive: any, patch: any = null) =>
   buildRecordSummary("receives", patch ? { ...receive, ...patch } : receive, receive?.id);
 
@@ -84,6 +86,7 @@ const ReceiveView = React.memo(() => {
   const { selectedProjectId } = useUI();
   const { user, userData, logAction } = useContext(AuthContext);
   const canViewReceiveHistory = canUseFunction("receive", "viewHistory");
+  const isAdministrator = userRoles.includes("Administrator");
   const canDeleteReceivePo = canUseFunction("receive", "delete") || userRoles.includes("MasterAdmin");
 
   // ไม่โหลด vendors ตอน mount — โหลดเมื่อ user เปิด PO detail จริงๆ (ลด Firebase reads)
@@ -113,6 +116,7 @@ const ReceiveView = React.memo(() => {
   const [poVendorSearch, setPoVendorSearch] = useState("");
   const [histPOSearch, setHistPOSearch] = useState("");
   const [histVendorSearch, setHistVendorSearch] = useState("");
+  const [receiveHistoryPage, setReceiveHistoryPage] = useState(1);
 
   useEffect(() => {
     if (!canViewReceiveHistory && activeTab === "history") {
@@ -852,6 +856,24 @@ const ReceiveView = React.memo(() => {
     });
   }, [sortedReceiveHistory, histPOSearch, histVendorSearch]);
 
+  const receiveHistoryTotalPages = Math.max(
+    1,
+    Math.ceil(filteredReceiveHistory.length / RECEIVE_HISTORY_PAGE_SIZE)
+  );
+
+  const paginatedReceiveHistory = useMemo(() => {
+    const startIndex = (receiveHistoryPage - 1) * RECEIVE_HISTORY_PAGE_SIZE;
+    return filteredReceiveHistory.slice(startIndex, startIndex + RECEIVE_HISTORY_PAGE_SIZE);
+  }, [filteredReceiveHistory, receiveHistoryPage]);
+
+  useEffect(() => {
+    setReceiveHistoryPage(1);
+  }, [selectedProjectId, histPOSearch, histVendorSearch]);
+
+  useEffect(() => {
+    setReceiveHistoryPage((currentPage) => Math.min(currentPage, receiveHistoryTotalPages));
+  }, [receiveHistoryTotalPages]);
+
   const handleRetryCmgStoreSync = useCallback(async (rcv) => {
     if (!rcv?.id) return;
 
@@ -942,37 +964,42 @@ const ReceiveView = React.memo(() => {
     }
   }, [logAction, pos, selectedProjectId, showAlert, updateData]);
 
-  const renderCmgStoreSyncStatus = useCallback((rcv) => {
-    const badge = getCmgStoreSyncBadge(rcv?.cmgStoreSync);
-    const failed = String(rcv?.cmgStoreSync?.status || "").toLowerCase() === "failed";
+  const renderCmgStoreSyncStatus = useCallback((rcv, po) => {
+    const isInventory = isCmgStoreEligibleInventoryStatus(po?.inventoryType || rcv?.inventoryType);
+    const badge = isInventory
+      ? getCmgStoreSyncBadge(rcv?.cmgStoreSync)
+      : getCmgStoreSyncBadge({ status: "skipped" });
+    const failed = isInventory && String(rcv?.cmgStoreSync?.status || "").toLowerCase() === "failed";
+    const sent = isInventory && String(rcv?.cmgStoreSync?.status || "").toLowerCase() === "success";
     return (
       <div className="flex flex-col items-center gap-1">
-        <span
-          className={`inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap ${badge.className}`}
-          title={rcv?.cmgStoreSync?.errorMessage || rcv?.cmgStoreSync?.reason || ""}
-        >
-          {badge.label}
-        </span>
-        {failed && (
-          <>
+        <div className="flex items-center justify-center gap-1">
+          <span
+            className={`inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap ${badge.className}`}
+            title={rcv?.cmgStoreSync?.errorMessage || rcv?.cmgStoreSync?.reason || ""}
+          >
+            {badge.label}
+          </span>
+          {isAdministrator && isInventory && !sent && (
             <button
               type="button"
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-amber-200 bg-white hover:bg-amber-50 text-amber-600 text-[10px] font-medium transition-colors disabled:opacity-60"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-blue-200 bg-white hover:bg-blue-50 text-blue-600 text-[10px] font-medium transition-colors disabled:opacity-60"
               onClick={() => handleRetryCmgStoreSync(rcv)}
               disabled={cmgStoreRetryingId === rcv.id}
+              title="ส่งข้อมูล Receive ไป CMG Store Management ด้วยตนเอง"
             >
-              <RefreshCw size={11} className={cmgStoreRetryingId === rcv.id ? "animate-spin" : ""} /> ส่ง Store
+              <RefreshCw size={11} className={cmgStoreRetryingId === rcv.id ? "animate-spin" : ""} /> {failed ? "ส่ง Store" : "ส่งข้อมูล"}
             </button>
-            {rcv?.cmgStoreSync?.errorMessage && (
-              <span className="max-w-[160px] truncate text-[9px] text-red-500" title={rcv.cmgStoreSync.errorMessage}>
-                {rcv.cmgStoreSync.errorMessage}
-              </span>
-            )}
-          </>
+          )}
+        </div>
+        {failed && rcv?.cmgStoreSync?.errorMessage && (
+          <span className="max-w-[160px] truncate text-[9px] text-red-500" title={rcv.cmgStoreSync.errorMessage}>
+            {rcv.cmgStoreSync.errorMessage}
+          </span>
         )}
       </div>
     );
-  }, [cmgStoreRetryingId, handleRetryCmgStoreSync]);
+  }, [cmgStoreRetryingId, handleRetryCmgStoreSync, isAdministrator]);
 
   // Delete receive record
   const handleDeleteReceive = useCallback((rcv) => {
@@ -1242,6 +1269,7 @@ const ReceiveView = React.memo(() => {
               <p className="text-sm">ไม่พบรายการที่ตรงกับการค้นหา</p>
             </div>
           ) : (
+            <>
             <div className="overflow-x-auto">
             <table className="w-full min-w-[900px] text-left text-xs text-slate-600 md:min-w-0">
               <thead className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-100">
@@ -1260,7 +1288,7 @@ const ReceiveView = React.memo(() => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredReceiveHistory.map((rcv) => {
+                {paginatedReceiveHistory.map((rcv) => {
                   const po = pos.find((p) => p.id === rcv.poId);
                   const vendor = vendors.find((v) => v.id === po?.vendorId);
                   const itemCount = (rcv.items || []).length;
@@ -1286,16 +1314,6 @@ const ReceiveView = React.memo(() => {
                               onClick={() => handleDeleteReceive(rcv)}
                             >
                               <Trash2 size={11} /> ลบ
-                            </button>
-                          )}
-                          {rcv.cmgStoreSync?.status === "failed" && (
-                            <button
-                              type="button"
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-amber-200 bg-white hover:bg-amber-50 text-amber-600 text-[10px] font-medium transition-colors disabled:opacity-60"
-                              onClick={() => handleRetryCmgStoreSync(rcv)}
-                              disabled={cmgStoreRetryingId === rcv.id}
-                            >
-                              <RefreshCw size={11} className={cmgStoreRetryingId === rcv.id ? "animate-spin" : ""} /> ส่ง Store
                             </button>
                           )}
                         </div>
@@ -1345,7 +1363,7 @@ const ReceiveView = React.memo(() => {
                       )}
                       {isColumnVisible("receive-history", "storeSync") && (
                         <td className="py-1 px-3 text-center" onClick={(e) => e.stopPropagation()}>
-                          {renderCmgStoreSyncStatus(rcv)}
+                          {renderCmgStoreSyncStatus(rcv, po)}
                         </td>
                       )}
                       {isColumnVisible("receive-history", "receivedBy") && (
@@ -1374,16 +1392,6 @@ const ReceiveView = React.memo(() => {
                               <Trash2 size={11} /> ลบ
                             </button>
                           )}
-                          {rcv.cmgStoreSync?.status === "failed" && (
-                            <button
-                              type="button"
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-amber-200 bg-white hover:bg-amber-50 text-amber-600 text-[10px] font-medium transition-colors disabled:opacity-60"
-                              onClick={() => handleRetryCmgStoreSync(rcv)}
-                              disabled={cmgStoreRetryingId === rcv.id}
-                            >
-                              <RefreshCw size={11} className={cmgStoreRetryingId === rcv.id ? "animate-spin" : ""} /> ส่ง Store
-                            </button>
-                          )}
                         </div>
                       </td>
                     </tr>
@@ -1392,6 +1400,37 @@ const ReceiveView = React.memo(() => {
               </tbody>
             </table>
             </div>
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-3 py-3 border-t border-slate-100 bg-slate-50/50">
+              <p className="text-[11px] text-slate-500">
+                แสดง {((receiveHistoryPage - 1) * RECEIVE_HISTORY_PAGE_SIZE) + 1}
+                -{Math.min(receiveHistoryPage * RECEIVE_HISTORY_PAGE_SIZE, filteredReceiveHistory.length)}
+                จาก {filteredReceiveHistory.length} รายการ
+              </p>
+              {receiveHistoryTotalPages > 1 && (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setReceiveHistoryPage((page) => Math.max(1, page - 1))}
+                    disabled={receiveHistoryPage === 1}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <ChevronLeft size={13} /> ก่อนหน้า
+                  </button>
+                  <span className="text-xs font-medium text-slate-600 whitespace-nowrap">
+                    หน้า {receiveHistoryPage} / {receiveHistoryTotalPages}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setReceiveHistoryPage((page) => Math.min(receiveHistoryTotalPages, page + 1))}
+                    disabled={receiveHistoryPage === receiveHistoryTotalPages}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    ถัดไป <ChevronRight size={13} />
+                  </button>
+                </div>
+              )}
+            </div>
+            </>
           )}
         </Card>
       )}

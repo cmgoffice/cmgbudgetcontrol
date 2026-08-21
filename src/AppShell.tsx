@@ -1593,7 +1593,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       `ยอดคืน PR/Budget: ${formatCurrency(plan.returnableAmount)}`,
       `ส่วนลดจัดซื้อ (ไม่คืน): ${formatCurrency(plan.procurementSaving)}`,
       prSummary ? `\nรายละเอียด PR:\n${prSummary}` : "",
-      "\nระบบจะบันทึก Snapshot ก่อน Rev และส่งยอดคืนเข้าโฟลว์ Balance PR เดิมเพื่อรอผู้มีสิทธิ์รับยอดใน Budget",
+      "\nระบบจะบันทึก Snapshot ก่อน Rev และส่งยอดคืนเข้าโฟลว์ Balance PR เดิมเพื่อรอผู้มีสิทธิ์ตรวจสอบ จากนั้นต้องไปที่หน้า Budget แล้วกด ‘รับ Budget คืน’ เพื่อรับยอดกลับเข้าระบบ",
     ].filter(Boolean).join("\n");
 
     openConfirm?.(
@@ -1618,7 +1618,12 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
           showAlert?.("เริ่ม Process ไม่สำเร็จ", error?.message || "ไม่สามารถสร้าง Process คืน Budget ได้", "error");
         }
       },
-      "warning"
+      "warning",
+      {
+        requireText: "Confirm",
+        requireTextLabel: "พิมพ์ Confirm เพื่อยืนยันการคืน Budget",
+        requireTextPlaceholder: "Confirm",
+      }
     );
   }, [canStartPoBudgetReturn, db, isPR, logAction, openConfirm, payments, paymentsReady, prs, showAlert, user, userData, userRole]);
 

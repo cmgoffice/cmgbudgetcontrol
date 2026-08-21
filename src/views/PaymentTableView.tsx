@@ -431,7 +431,7 @@ const PaymentTableView = React.memo(() => {
       `ยอดคืน PR/Budget: ${formatCurrency(plan.returnableAmount)}`,
       `ส่วนลดจัดซื้อ (ไม่คืน): ${formatCurrency(plan.procurementSaving)}`,
       prSummary ? `\nรายละเอียด PR:\n${prSummary}` : "",
-      "\nระบบจะส่งยอดคืนเข้าโฟลว์ Balance PR เพื่อรอผู้มีสิทธิ์รับยอดใน Budget",
+      "\nระบบจะส่งยอดคืนเข้าโฟลว์ Balance PR และรอผู้มีสิทธิ์ตรวจสอบ จากนั้นต้องไปที่หน้า Budget แล้วกด ‘รับ Budget คืน’ เพื่อรับยอดกลับเข้าระบบ",
     ].filter(Boolean).join("\n");
 
     openConfirm?.(
@@ -456,7 +456,12 @@ const PaymentTableView = React.memo(() => {
           showAlert?.("เริ่ม Process ไม่สำเร็จ", error?.message || "ไม่สามารถสร้าง Process คืน Budget ได้", "error");
         }
       },
-      "warning"
+      "warning",
+      {
+        requireText: "Confirm",
+        requireTextLabel: "พิมพ์ Confirm เพื่อยืนยันการคืน Budget",
+        requireTextPlaceholder: "Confirm",
+      }
     );
   }, [appId, canStartPoBudgetReturn, db, logAction, openConfirm, payments, paymentsReady, prs, showAlert, user, userData, userRole]);
 
@@ -688,6 +693,8 @@ const PaymentTableView = React.memo(() => {
           {visiblePaymentGroups.map((group: any) => {
             const groupAmount = group.payments.reduce((sum: number, payment: any) => sum + (Number(payment.amount) || 0), 0);
             const poPlan = group.po ? buildPoBudgetReturnPlan({ po: group.po, payments, prs }) : null;
+            const poAmountNoVat = poPlan ? Number(poPlan.poNetAmount) || 0 : null;
+            const discountAmount = poPlan ? Number(poPlan.discountAmount) || 0 : 0;
             const balanceAmount = poPlan ? Number(poPlan.balanceBeforeRev) || 0 : null;
             const processStatus = String(group.po?.budgetReturnProcessStatus || "");
             const completedPayment = [...group.payments].reverse().find((payment: any) => (
@@ -740,7 +747,15 @@ const PaymentTableView = React.memo(() => {
                     )}
                   </div>
                   <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-                    <span className={`shrink-0 rounded-lg border bg-white px-2.5 py-1 text-[10px] font-bold ${
+                    <span className="shrink-0 rounded-lg border border-sky-200 bg-white px-4 py-2 text-sm font-extrabold leading-tight text-sky-700 shadow-sm sm:text-base">
+                      ยอด PO No VAT: {poAmountNoVat === null ? "-" : formatCurrency(poAmountNoVat)}
+                    </span>
+                    {discountAmount > 0 && (
+                      <span className="shrink-0 rounded-lg border border-violet-200 bg-white px-2.5 py-1 text-[10px] font-bold text-violet-700">
+                        ส่วนลด: {formatCurrency(discountAmount)}
+                      </span>
+                    )}
+                    <span className={`shrink-0 rounded-lg border bg-white px-4 py-2 text-sm font-extrabold leading-tight shadow-sm sm:text-base ${
                       balanceAmount !== null && balanceAmount > 0 ? "border-emerald-200 text-emerald-700" : "border-slate-200 text-slate-600"
                     }`}>
                       Balance PO: {balanceAmount === null ? "-" : formatCurrency(balanceAmount)}
