@@ -56,6 +56,7 @@ import { VendorEvaluationModal } from "../components/VendorEvaluationModal";
 import {
   findUniquePrByNo,
   getCanonicalLineAmount,
+  repairLegacyAllocationRoutes,
   validatePoPrLinkage,
 } from "../lib/poPrValidation";
 import { validatePoAgainstPaymentProgress } from "../lib/poPaymentValidation";
@@ -366,7 +367,6 @@ const POView = React.memo(() => {
   const [poSavedAttachments, setPoSavedAttachments] = useState<{ url: string; name: string }[]>([]);
   const [userNameByUid, setUserNameByUid] = useState<Record<string, string>>({});
   const [isAddItemModalOpen, setIsAddItemModalOpen] = useState(false);
-  const [freeItemPrNoDropdownId, setFreeItemPrNoDropdownId] = useState<string | null>(null);
   const [disPrPickerOpenKey, setDisPrPickerOpenKey] = useState<string | null>(null); // key: `item:${prId}:${idx}` | `free:${id}`
   const [expandedSelectedPrRows, setExpandedSelectedPrRows] = useState<Record<string, boolean>>({});
 
@@ -1113,14 +1113,6 @@ const POView = React.memo(() => {
       .filter(Boolean);
   }, [approvedPRs, budgets, formData.selectedPrIds, getPrRemainingAmount, prs]);
 
-  // PR No. options สำหรับ dropdown รายการเพิ่ม (manual) — จาก PR ที่เลือกในตารางนี้
-  const prNoOptionsForFreeItems = useMemo(() => {
-    const list = formData.selectedPrIds
-      .map((id: string) => prs.find((p: any) => p.id === id)?.prNo)
-      .filter(Boolean);
-    return [...new Set(list)] as string[];
-  }, [formData.selectedPrIds, prs]);
-
   // PR options สำหรับคอลัมน์ Dis PR — จาก PR ที่เลือกในขั้นตอน 2 (ยึดลำดับที่ผู้ใช้เลือก)
   const disPrOptions = useMemo(() => {
     const ordered = (formData.selectedPrIds || [])
@@ -1137,6 +1129,22 @@ const POView = React.memo(() => {
       return true;
     });
   }, [formData.selectedPrIds, prs]);
+
+  // รายการเพิ่มต้องผูกกับ "รายการย่อย" ของ PR โดยตรง ไม่ใช่เพียงเลข PR
+  // เพื่อให้ validation และรายงานงบสามารถตรวจสอบเส้นทางย้อนหลังได้แน่นอน
+  const freeItemPrRouteOptions = useMemo(() => (
+    (formData.selectedPrIds || []).flatMap((prId: string) => {
+      const pr = prs.find((candidate: any) => candidate.id === prId);
+      if (!pr) return [];
+      return (pr.items || []).map((prItem: any, prItemIndex: number) => ({
+        key: `${pr.id}::${prItemIndex}`,
+        prId: pr.id,
+        prItemIndex,
+        prNo: pr.prNo || pr.id,
+        label: `${pr.prNo || pr.id} · รายการ ${prItemIndex + 1} · ${prItem.description || prItem.materialNo || "ไม่ระบุชื่อรายการ"}`,
+      }));
+    })
+  ), [formData.selectedPrIds, prs]);
 
   // PR list filtered by content (PR No., Cost Code, รายการงบ) สำหรับ Modal เลือกใบขอซื้อ
   const approvedPRsFiltered = useMemo(() => {
@@ -1177,11 +1185,11 @@ const POView = React.memo(() => {
 
   // Handle Item Checkbox (Include in PO) — ถ้ารายการ "เปิด PO ไปแล้ว" จะเด้ง Popup ยืนยันก่อน
   const handleItemToggle = (itemData) => {
-    const exists = formData.items.find(i => i.prId === itemData.prId && i.prItemIndex === itemData.prItemIndex);
+    const exists = formData.items.find(i => !String(i.id || "").startsWith("free-") && i.prId === itemData.prId && i.prItemIndex === itemData.prItemIndex);
     if (exists) {
       setFormData(prev => ({
         ...prev,
-        items: prev.items.filter(i => !(i.prId === itemData.prId && i.prItemIndex === itemData.prItemIndex))
+        items: prev.items.filter(i => String(i.id || "").startsWith("free-") || !(i.prId === itemData.prId && i.prItemIndex === itemData.prItemIndex))
       }));
     } else {
       if (itemData.alreadyOpenedInPO) {
@@ -1195,7 +1203,7 @@ const POView = React.memo(() => {
   };
 
   const handleAddItemClick = (itemData) => {
-    const exists = formData.items.some(i => i.prId === itemData.prId && i.prItemIndex === itemData.prItemIndex);
+    const exists = formData.items.some(i => !String(i.id || "").startsWith("free-") && i.prId === itemData.prId && i.prItemIndex === itemData.prItemIndex);
     if (exists) return;
     if (itemData.alreadyOpenedInPO) {
       const usedBy = getUsedByPOs(itemData.prId, itemData.prItemIndex, editingPoId);
@@ -1218,6 +1226,8 @@ const POView = React.memo(() => {
           id: `free-${Date.now()}`,
           prId: null,
           prItemIndex: -1,
+          sourcePrId: null,
+          sourcePrItemIndex: -1,
           subItemId: null,
           materialNo: "",
           description: "",
@@ -1303,6 +1313,35 @@ const POView = React.memo(() => {
       })
     }));
   };
+
+  const handleFreeItemPrRouteChange = (freeId: string, routeKey: string) => {
+    const route = freeItemPrRouteOptions.find((option: any) => option.key === routeKey);
+    setFormData(prev => ({
+      ...prev,
+      items: prev.items.map((item: any) => {
+        if (item.id !== freeId) return item;
+        if (!route) {
+          return {
+            ...item,
+            prId: null,
+            prItemIndex: -1,
+            sourcePrId: null,
+            sourcePrItemIndex: -1,
+            linkedPrNo: "",
+          };
+        }
+        return {
+          ...item,
+          // แยก route ระหว่างแก้ไข เพื่อไม่ให้ชนกับ checkbox ของ PR item เดียวกัน
+          prId: null,
+          prItemIndex: -1,
+          sourcePrId: route.prId,
+          sourcePrItemIndex: route.prItemIndex,
+          linkedPrNo: route.prNo,
+        };
+      }),
+    }));
+  };
   const removeFreeItem = (freeId) => {
     setFormData(prev => ({ ...prev, items: prev.items.filter(i => i.id !== freeId) }));
   };
@@ -1324,7 +1363,7 @@ const POView = React.memo(() => {
     setFormData(prev => ({
       ...prev,
       items: prev.items.map(item => {
-        if (item.prId === prId && item.prItemIndex === prItemIndex) {
+        if (!String(item.id || "").startsWith("free-") && item.prId === prId && item.prItemIndex === prItemIndex) {
           const updates = { ...item, [field]: value };
           // Recalculate amount if qty or price changes
           if (field === 'quantity' || field === 'price') {
@@ -1553,8 +1592,10 @@ const POView = React.memo(() => {
   const normalizeItemsToPrRoutes = (items: any[]) => {
     const normalizedItems: any[] = [];
     for (const item of items || []) {
-      let pr = item?.prId ? prs.find((candidate: any) => candidate.id === item.prId) : null;
-      let itemIndex = Number(item?.prItemIndex);
+      const routePrId = item?.sourcePrId || item?.prId;
+      const routePrItemIndex = item?.sourcePrItemIndex ?? item?.prItemIndex;
+      let pr = routePrId ? prs.find((candidate: any) => candidate.id === routePrId) : null;
+      let itemIndex = Number(routePrItemIndex);
 
       // A legacy free line can be auto-routed only when its PR has one item.
       if ((!pr || !Number.isInteger(itemIndex) || itemIndex < 0 || !pr.items?.[itemIndex]) && item?.linkedPrNo) {
@@ -1572,7 +1613,7 @@ const POView = React.memo(() => {
       }
 
       const prItem = pr.items[itemIndex];
-      normalizedItems.push({
+      normalizedItems.push(repairLegacyAllocationRoutes({
         ...item,
         prId: pr.id,
         prItemIndex: itemIndex,
@@ -1581,7 +1622,7 @@ const POView = React.memo(() => {
         budgetId: prItem.budgetId || pr.budgetId || item.budgetId || null,
         subItemId: prItem.subItemId || prItem.budgetSubItemId || item.subItemId || null,
         budgetSubItemId: prItem.budgetSubItemId || prItem.subItemId || item.budgetSubItemId || null,
-      });
+      }, prs));
     }
 
     return { items: normalizedItems, invalidItem: null };
@@ -3562,7 +3603,7 @@ const POView = React.memo(() => {
                                         requiredDate: po.requiredDate || "",
                                         poOpenDate: poOpenDateVal,
                                         vatType: po.vatType || "ex-vat",
-                                        selectedPrIds: Array.isArray(po.selectedPrIds) && po.selectedPrIds.length > 0 ? po.selectedPrIds : prIdsFromItems,
+                                        selectedPrIds: prIdsFromItems,
                                         items: (po.items || []).map((it, idx) => ((it.prId == null || it.prId === "") && !it.id) ? { ...it, id: `free-${idx}-${Date.now()}` } : it),
                                          reason: po.reason || "",
                                          note: po.note || "",
@@ -3771,7 +3812,7 @@ const POView = React.memo(() => {
                                       requiredDate: po.requiredDate || "",
                                       poOpenDate: poOpenDateVal,
                                       vatType: po.vatType || "ex-vat",
-                                      selectedPrIds: Array.isArray(po.selectedPrIds) && po.selectedPrIds.length > 0 ? po.selectedPrIds : prIdsFromItems,
+                                      selectedPrIds: prIdsFromItems,
                                       items: (po.items || []).map((it, idx) => ((it.prId == null || it.prId === "") && !it.id) ? { ...it, id: `free-${idx}-${Date.now()}` } : it),
                                        reason: po.reason || "",
                                        note: po.note || "",
@@ -5060,8 +5101,8 @@ const POView = React.memo(() => {
                             </thead>
                             <tbody className="divide-y divide-slate-200 bg-white">
                               {availableItems.map((item) => {
-                                const isSelected = formData.items.some(i => i.prId === item.prId && i.prItemIndex === item.prItemIndex);
-                                const selectedData = formData.items.find(i => i.prId === item.prId && i.prItemIndex === item.prItemIndex) || item;
+                                const isSelected = formData.items.some(i => !String(i.id || "").startsWith("free-") && i.prId === item.prId && i.prItemIndex === item.prItemIndex);
+                                const selectedData = formData.items.find(i => !String(i.id || "").startsWith("free-") && i.prId === item.prId && i.prItemIndex === item.prItemIndex) || item;
                                 const inputCls = "w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed focus:border-red-400 focus:ring-1 focus:ring-red-100 bg-white";
 
                                 return (
@@ -5177,11 +5218,11 @@ const POView = React.memo(() => {
                               {/* รายการว่าง (เพิ่มจากปุ่ม + เพิ่มรายการ) — กรอกอิสระ ไม่จำกัด */}
                               {formData.items.filter(i => i.id && String(i.id).startsWith("free-")).map((freeItem) => {
                                 const inputCls = "w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:border-red-400 focus:ring-1 focus:ring-red-100 bg-white";
-                                const prNoValue = freeItem.linkedPrNo ?? "";
-                                const isPrNoOpen = freeItemPrNoDropdownId === freeItem.id;
-                                const prNoFiltered = prNoValue
-                                  ? prNoOptionsForFreeItems.filter((no: string) => no.toLowerCase().includes(prNoValue.toLowerCase()))
-                                  : prNoOptionsForFreeItems;
+                                const sourcePrId = freeItem.sourcePrId || freeItem.prId || "";
+                                const sourcePrItemIndex = Number(freeItem.sourcePrItemIndex ?? freeItem.prItemIndex);
+                                const routeValue = sourcePrId && Number.isInteger(sourcePrItemIndex) && sourcePrItemIndex >= 0
+                                  ? `${sourcePrId}::${sourcePrItemIndex}`
+                                  : "";
                                 return (
                                   <tr key={freeItem.id} className="bg-white hover:bg-slate-50/30 border-t border-slate-200">
                                     <td className="p-2.5 text-center">
@@ -5189,35 +5230,18 @@ const POView = React.memo(() => {
                                         <Trash2 size={14} />
                                       </button>
                                     </td>
-                                    <td className="p-2.5 relative">
-                                      <input
-                                        type="text"
-                                        className={`${inputCls} min-w-[100px]`}
-                                        placeholder="เลือกหรือพิมพ์ PR No."
-                                        value={prNoValue}
-                                        onChange={(e) => handleFreeItemChange(freeItem.id, "linkedPrNo", e.target.value)}
-                                        onFocus={() => setFreeItemPrNoDropdownId(freeItem.id)}
-                                        onBlur={() => setTimeout(() => setFreeItemPrNoDropdownId(null), 180)}
-                                      />
-                                      {isPrNoOpen && (prNoFiltered.length > 0 || prNoValue) && (
-                                        <div className="absolute left-0 right-0 top-full mt-0.5 z-50 bg-white border border-slate-200 rounded-lg shadow-lg max-h-40 overflow-y-auto">
-                                          {prNoFiltered.length > 0 && prNoFiltered.map((prNo: string) => (
-                                            <button
-                                              key={prNo}
-                                              type="button"
-                                              className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 border-b border-slate-100 last:border-0"
-                                              onMouseDown={(e) => { e.preventDefault(); handleFreeItemChange(freeItem.id, "linkedPrNo", prNo); setFreeItemPrNoDropdownId(null); }}
-                                            >
-                                              {prNo}
-                                            </button>
-                                          ))}
-                                          {prNoValue.trim() && !prNoOptionsForFreeItems.includes(prNoValue.trim()) && (
-                                            <div className="px-3 py-2 text-[10px] text-slate-500 border-t border-slate-100">
-                                              ใช้ค่าที่พิมพ์: &quot;{prNoValue}&quot;
-                                            </div>
-                                          )}
-                                        </div>
-                                      )}
+                                    <td className="p-2.5">
+                                      <select
+                                        className={`${inputCls} min-w-[180px] ${routeValue ? "" : "border-red-300 ring-1 ring-red-100"}`}
+                                        value={routeValue}
+                                        onChange={(e) => handleFreeItemPrRouteChange(freeItem.id, e.target.value)}
+                                        title="เลือกรายการย่อยของ PR ที่รายการ PO นี้ใช้อ้างอิง"
+                                      >
+                                        <option value="">เลือก PR และรายการอ้างอิง...</option>
+                                        {freeItemPrRouteOptions.map((option: any) => (
+                                          <option key={option.key} value={option.key}>{option.label}</option>
+                                        ))}
+                                      </select>
                                     </td>
                                     <td className="p-2.5"><span className="text-amber-600 text-[10px]">รายการเพิ่ม</span></td>
                                     <td className="p-2.5">

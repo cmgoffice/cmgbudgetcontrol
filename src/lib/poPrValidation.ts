@@ -19,6 +19,79 @@ export const findUniquePrByNo = (prs: any[], projectId: string, prNo: any) => {
 };
 
 /**
+ * Older POs stored the PR id on an allocation but not the PR item index.
+ * Recover that missing route only when it can be identified unambiguously;
+ * otherwise leave it untouched so the normal integrity validator still
+ * rejects the record.
+ */
+export const repairLegacyAllocationRoutes = (item: any, prs: any[]) => {
+  const allocations = Array.isArray(item?.disPrAllocations) ? item.disPrAllocations : [];
+  if (allocations.length === 0) return item;
+
+  const prById = new Map((prs || []).map((pr: any) => [pr?.id, pr]));
+  const repairedAllocations = allocations.map((allocation: any) => {
+    const allocationPr: any = prById.get(allocation?.prId);
+    if (!allocationPr || !Array.isArray(allocationPr.items)) return allocation;
+
+    const explicitIndex = Number(allocation?.prItemIndex);
+    if (Number.isInteger(explicitIndex) && explicitIndex >= 0 && allocationPr.items[explicitIndex]) {
+      return allocation;
+    }
+
+    const sourceIndex = Number(item?.prItemIndex);
+    let resolvedIndex: number | null = null;
+    if (
+      item?.prId === allocationPr.id &&
+      Number.isInteger(sourceIndex) &&
+      sourceIndex >= 0 &&
+      allocationPr.items[sourceIndex]
+    ) {
+      resolvedIndex = sourceIndex;
+    }
+
+    const findUniqueIndex = (matcher: (candidate: any) => boolean) => {
+      const matches = allocationPr.items
+        .map((candidate: any, index: number) => ({ candidate, index }))
+        .filter(({ candidate }: any) => matcher(candidate));
+      return matches.length === 1 ? matches[0].index : null;
+    };
+
+    if (resolvedIndex == null) {
+      const subItemId = item?.budgetSubItemId || item?.subItemId;
+      if (subItemId) {
+        resolvedIndex = findUniqueIndex((candidate: any) =>
+          candidate?.budgetSubItemId === subItemId || candidate?.subItemId === subItemId
+        );
+      }
+    }
+    if (resolvedIndex == null) {
+      const description = asText(allocation?.prItemDescription || item?.description);
+      if (description) {
+        resolvedIndex = findUniqueIndex((candidate: any) => asText(candidate?.description) === description);
+      }
+    }
+    if (resolvedIndex == null) {
+      const materialNo = asText(allocation?.prItemMaterialNo || item?.materialNo);
+      if (materialNo) {
+        resolvedIndex = findUniqueIndex((candidate: any) => asText(candidate?.materialNo) === materialNo);
+      }
+    }
+    if (resolvedIndex == null && allocationPr.items.length === 1) resolvedIndex = 0;
+    if (resolvedIndex == null) return allocation;
+
+    const sourceItem = allocationPr.items[resolvedIndex];
+    return {
+      ...allocation,
+      prItemIndex: resolvedIndex,
+      prItemDescription: allocation?.prItemDescription || sourceItem?.description || "",
+      prItemMaterialNo: allocation?.prItemMaterialNo || sourceItem?.materialNo || "",
+    };
+  });
+
+  return { ...item, disPrAllocations: repairedAllocations };
+};
+
+/**
  * Validates the relationship stored in a PO before it is written.
  * A PO may contain many PRs and budgets, but every route must remain on one
  * project and one Cost Code. Budget ownership is read from the referenced PR
