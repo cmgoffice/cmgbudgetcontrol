@@ -158,7 +158,6 @@ export const AppDataProvider = ({
   const [paymentsReady, setPaymentsReady] = useState(false);
   const [pays,      setPays]      = useState([]);
   const [receives,  setReceives]  = useState([]);
-  const [receivesReady, setReceivesReady] = useState(false);
   const [vendorEvaluations, setVendorEvaluations] = useState([]);
   const [availableRoles, setAvailableRoles] = useState<string[]>(() => normalizeRoleNames(USER_ROLES));
 
@@ -260,14 +259,7 @@ export const AppDataProvider = ({
       hasModuleAccessForCurrentRoles("billing") ||
       hasModuleAccessForCurrentRoles("pay"));
   const canSyncPay = rolePermissionsReady && hasModuleAccessForCurrentRoles("pay");
-  const canViewPoBalanceSources = rolePermissionsReady && (
-    roles.includes("Administrator") ||
-    roles.some((role) => functionPermissions.po?.viewBalance?.includes(role)) ||
-    roles.some((role) => functionPermissions["po-table"]?.viewBalance?.includes(role))
-  );
-  const canSyncReceive = rolePermissionsReady && (
-    hasModuleAccessForCurrentRoles("receive") || canViewPoBalanceSources
-  );
+  const canSyncReceive = rolePermissionsReady && hasModuleAccessForCurrentRoles("receive");
 
   // ── Firebase sync (realtime ผ่าน onSnapshot — แก้ไขที่ใดก็ตามจะอัปเดตทุกที่โดยไม่ต้องรีเฟรช) ─
   useEffect(() => {
@@ -377,18 +369,11 @@ export const AppDataProvider = ({
 
   // Separate effect for conditional collections (invoices, receives) to avoid recreating all listeners
   useEffect(() => {
-    const syncCollection = (collectionName, setter, onFirstSnapshot = null) => {
+    const syncCollection = (collectionName, setter) => {
       const ref = collection(db, "artifacts", appId, "public", "data", collectionName);
-      let gotFirstSnapshot = false;
       return onSnapshot(
         query(ref),
-        (snap) => {
-          setter(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-          if (!gotFirstSnapshot) {
-            gotFirstSnapshot = true;
-            onFirstSnapshot?.();
-          }
-        },
+        (snap) => setter(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
         (err)  => console.error(`Error syncing ${collectionName}:`, err)
       );
     };
@@ -400,11 +385,9 @@ export const AppDataProvider = ({
       setInvoices([]);
     }
     if (canSyncReceive) {
-      setReceivesReady(false);
-      unsubs.push(syncCollection("receives", setReceives, () => setReceivesReady(true)));
+      unsubs.push(syncCollection("receives", setReceives));
     } else {
       setReceives([]);
-      setReceivesReady(false);
     }
     if (canSyncPay) {
       unsubs.push(syncCollection("pays", setPays));
@@ -982,7 +965,7 @@ export const AppDataProvider = ({
   // ── Context value ──────────────────────────────────────────────────────────
   const value = useMemo(() => ({
     // collections
-    projects, budgets, vendors, materials, prs, pos, invoices, payments, paymentsReady, pays, receives, receivesReady, vendorEvaluations, vendorEvaluations,
+    projects, budgets, vendors, materials, prs, pos, invoices, payments, paymentsReady, pays, receives, vendorEvaluations, vendorEvaluations,
     // derived
     visibleProjects,
     // pending (global, for bell + sidebar badges)
@@ -1012,7 +995,7 @@ export const AppDataProvider = ({
     // raw Firebase (for views that need direct Firestore access)
     db, appId,
   }), [
-    projects, budgets, vendors, materials, prs, pos, invoices, payments, paymentsReady, pays, receives, receivesReady,
+    projects, budgets, vendors, materials, prs, pos, invoices, payments, paymentsReady, pays, receives,
     visibleProjects,
     pendingBudgetsGlobal, pendingSubItemsGlobal,
     pendingPRsGlobal, pendingPOsGlobal, pendingPaymentsGlobal,

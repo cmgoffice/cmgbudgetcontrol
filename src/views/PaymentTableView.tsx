@@ -3,13 +3,14 @@ import React, { useState, useMemo } from "react";
 import ReactDOM from "react-dom";
 import {
   Search, CreditCard, FileSpreadsheet, Paperclip,
-  Trash2, Eye, Filter, FileText,
+  Trash2, Eye, Filter, FileText, ChevronLeft, ChevronRight, Wallet,
 } from "lucide-react";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 import { Card, Badge, formatCurrency } from "../components/ui";
 import { resolvePaymentSignatureImage } from "../lib/paymentSignatureStamps";
+import { buildPoBudgetReturnPlan, enqueuePoBudgetReturnJob } from "../lib/poBudgetReturn";
 
 const BANK_ACCOUNT_OPTIONS = [
   "KBANK-4971008992",
@@ -18,9 +19,55 @@ const BANK_ACCOUNT_OPTIONS = [
   "GSB-020284909098",
 ];
 
+const PAYMENT_TABLES_PER_PAGE = 10;
+
+// Payment No. ใช้เลขท้ายเป็นเลขงวด เช่น PO-001-001, PO-001-002
+// จึงต้องแยกเลข PO หลักออกมาก่อน แล้วค่อยเรียงงวดเป็นตัวเลข
+const getPaymentPeriodNoForSort = (payment: any): number => {
+  const explicitPeriod = Number.parseInt(String(payment?.periodNo ?? ""), 10);
+  if (Number.isFinite(explicitPeriod) && explicitPeriod > 0) return explicitPeriod;
+
+  const suffix = String(payment?.paymentNo || "").match(/-(\d+)$/);
+  const periodFromPaymentNo = suffix ? Number.parseInt(suffix[1], 10) : NaN;
+  return Number.isFinite(periodFromPaymentNo) && periodFromPaymentNo > 0 ? periodFromPaymentNo : 0;
+};
+
+const getPaymentGroupKeyForSort = (payment: any): string => {
+  const paymentNo = String(payment?.paymentNo || "").trim();
+  if (paymentNo) return paymentNo.replace(/-\d+$/, "");
+
+  const poReference = String(payment?.sourcePoNo || payment?.poNo || "").trim();
+  if (poReference) return poReference;
+
+  const selectedPrIds = Array.isArray(payment?.selectedPrIds)
+    ? payment.selectedPrIds.map((id: any) => String(id)).sort().join("|")
+    : "";
+  return selectedPrIds || String(payment?.id || "");
+};
+
+const comparePaymentRows = (left: any, right: any): number => {
+  const groupCompare = getPaymentGroupKeyForSort(left).localeCompare(
+    getPaymentGroupKeyForSort(right),
+    undefined,
+    { numeric: true, sensitivity: "base" },
+  );
+  if (groupCompare !== 0) return groupCompare;
+
+  const periodCompare = getPaymentPeriodNoForSort(left) - getPaymentPeriodNoForSort(right);
+  if (periodCompare !== 0) return periodCompare;
+
+  return String(left?.paymentNo || left?.id || "").localeCompare(
+    String(right?.paymentNo || right?.id || ""),
+    undefined,
+    { numeric: true, sensitivity: "base" },
+  );
+};
+
 const PaymentTableView = React.memo(() => {
   const {
     payments = [],
+    paymentsReady,
+    prs = [],
     invoices = [],
     addData,
     updateData,
@@ -34,9 +81,12 @@ const PaymentTableView = React.memo(() => {
     logAction,
     canUseFunction,
     userRole,
+    userRoles = [],
     userData,
     user,
     isColumnVisible,
+    db,
+    appId,
   } = useAppData();
 
   const { selectedProjectId } = useUI();
@@ -52,6 +102,7 @@ const PaymentTableView = React.memo(() => {
   const [invoicePaymentModal, setInvoicePaymentModal] = useState<any>(null);
   const [historicalPaymentType, setHistoricalPaymentType] = useState("เครดิต");
   const [historicalBankAccountNo, setHistoricalBankAccountNo] = useState("");
+  const [paymentPage, setPaymentPage] = useState(1);
 
   React.useEffect(() => {
     setFilterProject(selectedProjectId || "all");
@@ -94,9 +145,13 @@ const PaymentTableView = React.memo(() => {
     const q = searchTerm.toLowerCase();
     return payments.filter((p: any) => {
       const contractor = vendors?.find((v: any) => v.id === p.contractorId);
+      const searchableContractTitle = String(p.contractTitle || "").toLowerCase();
+      const searchablePoNo = String(p.sourcePoNo || p.poNo || "").toLowerCase();
       const matchSearch =
         !q ||
         (p.paymentNo || "").toLowerCase().includes(q) ||
+        searchablePoNo.includes(q) ||
+        searchableContractTitle.includes(q) ||
         (p.paymentType || "").toLowerCase().includes(q) ||
         (contractor?.name || "").toLowerCase().includes(q) ||
         (p.billingCycle || "").toLowerCase().includes(q) ||
@@ -106,8 +161,53 @@ const PaymentTableView = React.memo(() => {
       const matchType = filterType === "all" || p.paymentType === filterType;
       const matchProject = filterProject === "all" || p.projectId === filterProject;
       return matchSearch && matchStatus && matchType && matchProject;
-    });
+    }).sort(comparePaymentRows);
   }, [payments, vendors, searchTerm, filterStatus, filterType, filterProject]);
+
+  const paymentGroups = useMemo(() => {
+    const groups = new Map<string, any>();
+
+    filtered.forEach((payment: any) => {
+      const groupKey = getPaymentGroupKeyForSort(payment);
+      if (!groups.has(groupKey)) {
+        const paymentPoIds = new Set([
+          ...(Array.isArray(payment?.selectedPrIds) ? payment.selectedPrIds : []),
+          payment?.sourcePoId,
+          payment?.poId,
+          payment?.poRef,
+        ].filter(Boolean).map((id: any) => String(id)));
+        const linkedPo = (pos || []).find((po: any) => (
+          paymentPoIds.has(String(po.id)) || paymentPoIds.has(String(po.poNo || ""))
+        )) || (pos || []).find((po: any) => String(po.poNo || "") === groupKey);
+
+        groups.set(groupKey, {
+          key: groupKey,
+          po: linkedPo || null,
+          poNo: payment?.sourcePoNo || payment?.poNo || linkedPo?.poNo || groupKey,
+          contractTitle: payment?.contractTitle || linkedPo?.contractTitle || "-",
+          payments: [],
+        });
+      }
+      groups.get(groupKey).payments.push(payment);
+    });
+
+    return Array.from(groups.values());
+  }, [filtered, pos]);
+
+  const totalPaymentPages = Math.max(1, Math.ceil(paymentGroups.length / PAYMENT_TABLES_PER_PAGE));
+
+  React.useEffect(() => {
+    setPaymentPage(1);
+  }, [searchTerm, filterStatus, filterType, filterProject]);
+
+  React.useEffect(() => {
+    setPaymentPage((currentPage) => Math.min(Math.max(currentPage, 1), totalPaymentPages));
+  }, [totalPaymentPages]);
+
+  const visiblePaymentGroups = useMemo(() => {
+    const start = (paymentPage - 1) * PAYMENT_TABLES_PER_PAGE;
+    return paymentGroups.slice(start, start + PAYMENT_TABLES_PER_PAGE);
+  }, [paymentGroups, paymentPage]);
 
   const statusColors: Record<string, string> = {
     "Draft": "bg-slate-50 text-slate-500 border-slate-200",
@@ -287,6 +387,199 @@ const PaymentTableView = React.memo(() => {
     );
   };
 
+  // ใช้สิทธิ์เดียวกับปุ่มคืนยอดใน Log PO เพื่อให้ Administrator ตั้ง Role ได้จากจุดเดิม
+  const isAdministrator = userRole === "Administrator" || userRoles.includes("Administrator");
+  const canStartPoBudgetReturn = isAdministrator || canUseFunction?.("po-table", "returnBudget") === true;
+
+  const handleStartPoBudgetReturn = React.useCallback((po: any, tableCompleted = false) => {
+    if (!po?.id || !canStartPoBudgetReturn) return;
+    if (String(po?.poType || "").toUpperCase() !== "SP") {
+      showAlert?.("ไม่รองรับ PO ประเภทนี้", "ฟังก์ชันคืนยอดรองรับเฉพาะ PO Type SP", "info");
+      return;
+    }
+    if (!paymentsReady) {
+      showAlert?.("กำลังโหลด Payment", "กรุณารอข้อมูล Payment โหลดเสร็จแล้วลองใหม่", "info");
+      return;
+    }
+
+    const plan = buildPoBudgetReturnPlan({ po, payments, prs });
+    const processStatus = String(po?.budgetReturnProcessStatus || "");
+    if (["Queued", "Running", "Waiting Budget Approval"].includes(processStatus)) {
+      showAlert?.("กำลังดำเนินการ", `PO ${po.poNo || po.id} มี Process คืน Budget อยู่แล้ว (${processStatus})`, "info");
+      return;
+    }
+    if (!plan.latestPayment) {
+      showAlert?.("ยังไม่มี Payment", "ฟังก์ชันนี้รองรับเฉพาะ PO ที่มี Payment เท่านั้น", "warning");
+      return;
+    }
+    if (!tableCompleted) {
+      showAlert?.("ยังไม่จบงาน", "ตาราง Payment ต้องเป็นสถานะจบงานก่อนเริ่มคืนยอด", "warning");
+      return;
+    }
+    if (plan.paymentComplete || plan.balanceBeforeRev <= 0 || plan.returnableAmount <= 0) {
+      showAlert?.("ไม่มี Balance ให้คืน", "Payment ใช้ครบ 100% แล้ว จึงไม่ต้องคืน Budget", "info");
+      return;
+    }
+
+    const prSummary = plan.linkedPrs
+      .map((row: any) => `${row.prNo}: คืน ${formatCurrency(row.returnableAmount)} → Rev PR ${formatCurrency(row.newPrTotal)}`)
+      .join("\n");
+    const message = [
+      `PO: ${plan.poNo}`,
+      `Payment งวดล่าสุด: ${plan.latestPaymentNo || "-"}`,
+      `Balance PO: ${formatCurrency(plan.balanceBeforeRev)}`,
+      `ยอดคืน PR/Budget: ${formatCurrency(plan.returnableAmount)}`,
+      `ส่วนลดจัดซื้อ (ไม่คืน): ${formatCurrency(plan.procurementSaving)}`,
+      prSummary ? `\nรายละเอียด PR:\n${prSummary}` : "",
+      "\nระบบจะส่งยอดคืนเข้าโฟลว์ Balance PR เพื่อรอผู้มีสิทธิ์รับยอดใน Budget",
+    ].filter(Boolean).join("\n");
+
+    openConfirm?.(
+      "เริ่มคืน Balance PO เข้า Budget",
+      message,
+      async () => {
+        try {
+          await enqueuePoBudgetReturnJob({
+            db,
+            appId,
+            po,
+            plan,
+            actor: { name: userData?.displayName || userData?.name || userRole, uid: user?.uid, email: user?.email },
+          });
+          await logAction?.(
+            "Start PO Budget Return",
+            `เริ่มคืน Balance PO ${plan.poNo}: Balance ${formatCurrency(plan.balanceBeforeRev)} / คืน Budget ${formatCurrency(plan.returnableAmount)} / ส่วนลดไม่คืน ${formatCurrency(plan.procurementSaving)}`,
+            po.projectId
+          );
+          showAlert?.("ส่ง Process แล้ว", `PO ${plan.poNo} ถูกส่งเข้ากระบวนการคืนยอดหลังบ้านแล้ว`, "success");
+        } catch (error: any) {
+          showAlert?.("เริ่ม Process ไม่สำเร็จ", error?.message || "ไม่สามารถสร้าง Process คืน Budget ได้", "error");
+        }
+      },
+      "warning"
+    );
+  }, [appId, canStartPoBudgetReturn, db, logAction, openConfirm, payments, paymentsReady, prs, showAlert, user, userData, userRole]);
+
+  const renderPaymentRow = (p: any, isCompletedGroup = false) => {
+    const contractor = vendors?.find((v: any) => v.id === p.contractorId);
+    const displayStatus = p.jobCompleted ? "จบงาน" : (p.status === "Rejected" ? "Reject" : (p.status || "Draft"));
+    const statusCls = statusColors[displayStatus] || "bg-slate-50 text-slate-500 border-slate-200";
+    const paymentHasInvoice = hasInvoiceForPayment(p) || backfilledPaymentIds.has(String(p.id));
+    const isBackfilling = backfillPaymentId === String(p.id);
+
+    return (
+      <tr
+        key={p.id}
+        className={`whitespace-nowrap transition-colors cursor-pointer ${
+          isCompletedGroup ? "bg-emerald-50/60 hover:bg-emerald-100/70" : "odd:bg-white even:bg-slate-50/50 hover:bg-orange-50/40"
+        }`}
+        onClick={() => setViewingPayment(p)}
+      >
+        {isColumnVisible("payment-table", "actions") && (
+          <td
+            className="py-2 px-3 md:hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-start gap-1">
+              <button
+                className="p-1.5 rounded hover:bg-orange-100 text-orange-600 transition-colors"
+                title="ดูรายละเอียด"
+                onClick={() => setViewingPayment(p)}
+              >
+                <Eye size={13} />
+              </button>
+              {canBackfillPaymentInvoice && isPaidPayment(p) && !paymentHasInvoice && (
+                <button
+                  className="p-1.5 rounded hover:bg-emerald-100 text-emerald-600 transition-colors disabled:opacity-50"
+                  title="สร้าง Invoice Paid ย้อนหลัง"
+                  disabled={!!backfillPaymentId}
+                  onClick={() => openHistoricalInvoiceModal(p)}
+                >
+                  {isBackfilling ? <span className="inline-block w-3 h-3 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" /> : <FileText size={13} />}
+                </button>
+              )}
+              {canUseFunction?.("payment-subcontract", "delete") !== false && (
+                <button
+                  className="p-1.5 rounded hover:bg-red-100 text-red-500 transition-colors"
+                  title="ลบ"
+                  onClick={() => handleDelete(p)}
+                >
+                  <Trash2 size={13} />
+                </button>
+              )}
+            </div>
+          </td>
+        )}
+        {isColumnVisible("payment-table", "paymentNo") && (
+          <td className="py-2 px-3 font-semibold text-orange-700">{p.paymentNo || "-"}</td>
+        )}
+        {isColumnVisible("payment-table", "type") && (
+          <td className="py-2 px-3 text-center">
+            {p.paymentType && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-700 border border-orange-200">
+                {p.paymentType}
+              </span>
+            )}
+          </td>
+        )}
+        {isColumnVisible("payment-table", "contractor") && (
+          <td className="py-2 px-3 truncate max-w-[200px]" title={contractor?.name || "-"}>
+            {contractor?.name || "-"}
+          </td>
+        )}
+        {isColumnVisible("payment-table", "billingCycle") && (
+          <td className="py-2 px-3 text-slate-500 text-[11px]">{p.billingCycle || "-"}</td>
+        )}
+        {isColumnVisible("payment-table", "openDate") && (
+          <td className="py-2 px-3 text-slate-500 text-[11px]">{p.openDate || "-"}</td>
+        )}
+        {isColumnVisible("payment-table", "amount") && (
+          <td className="py-2 px-3 text-right font-semibold">{formatCurrency(p.amount || 0)}</td>
+        )}
+        {isColumnVisible("payment-table", "status") && (
+          <td className="py-2 px-3 text-center">
+            <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-semibold ${statusCls}`}>
+              {displayStatus}
+            </span>
+          </td>
+        )}
+        {isColumnVisible("payment-table", "actions") && (
+          <td
+            className="hidden py-2 px-3 text-right md:flex md:justify-end md:gap-1"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="p-1.5 rounded hover:bg-orange-100 text-orange-600 transition-colors"
+              title="ดูรายละเอียด"
+              onClick={() => setViewingPayment(p)}
+            >
+              <Eye size={13} />
+            </button>
+            {canBackfillPaymentInvoice && isPaidPayment(p) && !paymentHasInvoice && (
+              <button
+                className="p-1.5 rounded hover:bg-emerald-100 text-emerald-600 transition-colors disabled:opacity-50"
+                title="สร้าง Invoice Paid ย้อนหลัง"
+                disabled={!!backfillPaymentId}
+                onClick={() => openHistoricalInvoiceModal(p)}
+              >
+                {isBackfilling ? <span className="inline-block w-3 h-3 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" /> : <FileText size={13} />}
+              </button>
+            )}
+            {canUseFunction?.("payment-subcontract", "delete") !== false && (
+              <button
+                className="p-1.5 rounded hover:bg-red-100 text-red-500 transition-colors"
+                title="ลบ"
+                onClick={() => handleDelete(p)}
+              >
+                <Trash2 size={13} />
+              </button>
+            )}
+          </td>
+        )}
+      </tr>
+    );
+  };
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -301,7 +594,7 @@ const PaymentTableView = React.memo(() => {
               <ColumnVisibilityToggle tableId="payment-table" />
             </div>
             <p className="text-xs text-slate-500">
-              {filtered.length} รายการ{filterStatus !== "all" ? ` (${filterStatus})` : " ทั้งหมด"}
+              {paymentGroups.length} ตาราง PO / {filtered.length} รายการ{filterStatus !== "all" ? ` (${filterStatus})` : " ทั้งหมด"}
             </p>
           </div>
         </div>
@@ -354,190 +647,177 @@ const PaymentTableView = React.memo(() => {
         </div>
       </div>
 
-      {/* Table */}
-      <Card className="overflow-x-auto w-full">
-        <table className="w-full text-left text-xs text-slate-600 min-w-[800px]">
-          <thead className="bg-slate-50 text-slate-900 uppercase font-semibold border-b border-slate-200">
-            <tr>
-              {isColumnVisible("payment-table", "actions") && <th className="py-2.5 px-3 text-left w-24 md:hidden">Action</th>}
-              {isColumnVisible("payment-table", "paymentNo") && <th className="py-2.5 px-3 w-40">Payment No.</th>}
-              {isColumnVisible("payment-table", "type") && <th className="py-2.5 px-3 text-center w-20">Type</th>}
-              {isColumnVisible("payment-table", "contractor") && <th className="py-2.5 px-3">ผู้รับเหมา</th>}
-              {isColumnVisible("payment-table", "billingCycle") && <th className="py-2.5 px-3 w-36">รอบวางบิล</th>}
-              {isColumnVisible("payment-table", "openDate") && <th className="py-2.5 px-3 w-28">วันที่เปิด</th>}
-              {isColumnVisible("payment-table", "amount") && <th className="py-2.5 px-3 text-right w-32">ยอดรวม</th>}
-              {isColumnVisible("payment-table", "attachment") && <th className="py-2.5 px-3 text-center w-24">เอกสาร</th>}
-              {isColumnVisible("payment-table", "status") && <th className="py-2.5 px-3 text-center w-28">Status</th>}
-              {isColumnVisible("payment-table", "actions") && <th className="hidden py-2.5 px-3 text-right w-24 md:table-cell">Action</th>}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {filtered.length === 0 ? (
-              <tr>
-                <td colSpan={["paymentNo", "type", "contractor", "billingCycle", "openDate", "amount", "attachment", "status", "actions"].filter(k => isColumnVisible("payment-table", k)).length} className="py-12 text-center text-slate-400 text-sm">
-                  ไม่พบรายการ Payment ที่ตรงกับเงื่อนไข
-                </td>
-              </tr>
-            ) : (
-              filtered.map((p: any) => {
-                const contractor = vendors?.find((v: any) => v.id === p.contractorId);
-                const project = projects.find((proj: any) => proj.id === p.projectId);
-                const displayStatus = p.jobCompleted ? "จบงาน" : (p.status === "Rejected" ? "Reject" : (p.status || "Draft"));
-                const statusCls = statusColors[displayStatus] || "bg-slate-50 text-slate-500 border-slate-200";
-                const paymentHasInvoice = hasInvoiceForPayment(p) || backfilledPaymentIds.has(String(p.id));
-                const isBackfilling = backfillPaymentId === String(p.id);
-                return (
-                  <tr
-                    key={p.id}
-                    className="hover:bg-orange-50/40 transition-colors cursor-pointer odd:bg-white even:bg-slate-50/50"
-                    onClick={() => setViewingPayment(p)}
-                  >
-                    {isColumnVisible("payment-table", "actions") && (
-                      <td
-                        className="py-2 px-3 md:hidden"
-                        onClick={(e) => e.stopPropagation()}
+      {paymentGroups.length > 0 && (
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs">
+          <span className="text-slate-500">
+            แสดงตารางที่ {(paymentPage - 1) * PAYMENT_TABLES_PER_PAGE + 1}–{Math.min(paymentPage * PAYMENT_TABLES_PER_PAGE, paymentGroups.length)} จาก {paymentGroups.length} ตาราง
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={paymentPage <= 1}
+              onClick={() => setPaymentPage((currentPage) => Math.max(1, currentPage - 1))}
+            >
+              <ChevronLeft size={14} /> ก่อนหน้า
+            </button>
+            <span className="min-w-[72px] text-center font-semibold text-slate-700">
+              หน้า {paymentPage} / {totalPaymentPages}
+            </span>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={paymentPage >= totalPaymentPages}
+              onClick={() => setPaymentPage((currentPage) => Math.min(totalPaymentPages, currentPage + 1))}
+            >
+              ถัดไป <ChevronRight size={14} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Grouped Payment Tables */}
+      {filtered.length === 0 ? (
+        <Card className="overflow-hidden">
+          <div className="py-12 text-center text-slate-400 text-sm">
+            ไม่พบรายการ Payment ที่ตรงกับเงื่อนไข
+          </div>
+        </Card>
+      ) : (
+        <div className="space-y-4">
+          {visiblePaymentGroups.map((group: any) => {
+            const groupAmount = group.payments.reduce((sum: number, payment: any) => sum + (Number(payment.amount) || 0), 0);
+            const poPlan = group.po ? buildPoBudgetReturnPlan({ po: group.po, payments, prs }) : null;
+            const balanceAmount = poPlan ? Number(poPlan.balanceBeforeRev) || 0 : null;
+            const processStatus = String(group.po?.budgetReturnProcessStatus || "");
+            const completedPayment = [...group.payments].reverse().find((payment: any) => (
+              payment?.jobCompleted || payment?.status === "จบงาน"
+            ));
+            const isCompletedGroup = !!completedPayment;
+            const completedBy = completedPayment?.jobCompletedBy || completedPayment?.completedBy || "-";
+            const hasReturnBudgetPermission = canStartPoBudgetReturn
+              && !!group.po
+              && String(group.po?.poType || "").toUpperCase() === "SP";
+            const processInProgress = ["Queued", "Running", "Waiting Budget Approval"].includes(processStatus);
+            const canReturnBudget = Boolean(hasReturnBudgetPermission
+              && !processInProgress
+              && isCompletedGroup
+              && balanceAmount !== null
+              && balanceAmount > 0
+              && poPlan
+              && !poPlan.paymentComplete
+              && poPlan.returnableAmount > 0);
+            const returnBudgetDisabledReason = !group.po
+              ? "ไม่พบข้อมูล PO ที่เชื่อมกับ Payment"
+              : !poPlan
+                ? "ยังคำนวณ Balance PO ไม่ได้"
+                : processInProgress
+                  ? "มี Process คืน Budget กำลังดำเนินการอยู่"
+                  : !isCompletedGroup
+                    ? "ตาราง Payment ยังไม่จบงาน"
+                    : balanceAmount === null || balanceAmount <= 0 || poPlan.paymentComplete || poPlan.returnableAmount <= 0
+                      ? "ไม่มี Balance ที่คืนได้"
+                      : "ยังไม่พร้อมคืน Budget";
+            return (
+              <Card
+                key={group.key}
+                className={`overflow-hidden ${isCompletedGroup ? "border-emerald-300 bg-emerald-50/30" : "border-slate-200"}`}
+              >
+                <div className={`flex flex-col gap-1 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between ${
+                  isCompletedGroup ? "border-emerald-200 bg-emerald-100" : "border-orange-200 bg-orange-50"
+                }`}>
+                  <div className="min-w-0">
+                    <div className={`truncate text-sm font-bold ${isCompletedGroup ? "text-emerald-800" : "text-orange-800"}`} title={group.poNo || "-"}>
+                      PO: {group.poNo || "-"}
+                    </div>
+                    <div className="truncate text-xs font-semibold text-slate-700" title={group.contractTitle || "-"}>
+                      CONTRACT TITLE: {group.contractTitle || "-"}
+                    </div>
+                    {isCompletedGroup && (
+                      <div className="truncate text-xs font-bold text-emerald-700" title={`จบงานโดย ${completedBy}`}>
+                        จบงานโดย: {completedBy}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                    <span className={`shrink-0 rounded-lg border bg-white px-2.5 py-1 text-[10px] font-bold ${
+                      balanceAmount !== null && balanceAmount > 0 ? "border-emerald-200 text-emerald-700" : "border-slate-200 text-slate-600"
+                    }`}>
+                      Balance PO: {balanceAmount === null ? "-" : formatCurrency(balanceAmount)}
+                    </span>
+                    <span className={`shrink-0 rounded-full border bg-white px-2.5 py-1 text-[10px] font-bold ${
+                      isCompletedGroup ? "border-emerald-200 text-emerald-700" : "border-orange-200 text-orange-700"
+                    }`}>
+                      {group.payments.length} งวด
+                    </span>
+                    {hasReturnBudgetPermission && !processInProgress && (
+                      <button
+                        type="button"
+                        disabled={!canReturnBudget}
+                        className={`inline-flex shrink-0 items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[10px] font-bold shadow-sm disabled:cursor-not-allowed ${
+                          canReturnBudget
+                            ? "border-emerald-300 bg-emerald-600 text-white hover:bg-emerald-700"
+                            : "border-slate-300 bg-slate-100 text-slate-500 opacity-80"
+                        }`}
+                        title={canReturnBudget
+                          ? `คืน Balance PO เข้า Budget (${formatCurrency(poPlan.returnableAmount)})`
+                          : returnBudgetDisabledReason}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (canReturnBudget) handleStartPoBudgetReturn(group.po, isCompletedGroup);
+                        }}
                       >
-                        <div className="flex justify-start gap-1">
-                          <button
-                            className="p-1.5 rounded hover:bg-orange-100 text-orange-600 transition-colors"
-                            title="ดูรายละเอียด"
-                            onClick={() => setViewingPayment(p)}
-                          >
-                            <Eye size={13} />
-                          </button>
-                          {canBackfillPaymentInvoice && isPaidPayment(p) && !paymentHasInvoice && (
-                            <button
-                              className="p-1.5 rounded hover:bg-emerald-100 text-emerald-600 transition-colors disabled:opacity-50"
-                              title="สร้าง Invoice Paid ย้อนหลัง"
-                              disabled={!!backfillPaymentId}
-                              onClick={() => openHistoricalInvoiceModal(p)}
-                            >
-                              {isBackfilling ? <span className="inline-block w-3 h-3 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" /> : <FileText size={13} />}
-                            </button>
-                          )}
-                          {canUseFunction?.("payment-subcontract", "delete") !== false && (
-                            <button
-                              className="p-1.5 rounded hover:bg-red-100 text-red-500 transition-colors"
-                              title="ลบ"
-                              onClick={() => handleDelete(p)}
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          )}
-                        </div>
-                      </td>
+                        <Wallet size={13} />
+                        {canReturnBudget && poPlan
+                          ? `คืน Budget (${formatCurrency(poPlan.returnableAmount)})`
+                          : "คืน Budget"}
+                      </button>
                     )}
-                    {isColumnVisible("payment-table", "paymentNo") && (
-                      <td className="py-2 px-3 font-semibold text-orange-700">{p.paymentNo || "-"}</td>
+                    {canStartPoBudgetReturn && processInProgress && (
+                      <span className="shrink-0 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[10px] font-bold text-amber-800">
+                        คืน Budget: {processStatus === "Waiting Budget Approval" ? "รอรับยอด" : processStatus === "Queued" ? "รอเริ่มทำงาน" : "กำลังดำเนินการ"}
+                      </span>
                     )}
-                    {isColumnVisible("payment-table", "type") && (
-                      <td className="py-2 px-3 text-center">
-                        {p.paymentType && (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-700 border border-orange-200">
-                            {p.paymentType}
-                          </span>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className={`w-full min-w-[800px] text-left text-xs text-slate-600 ${isCompletedGroup ? "bg-emerald-50/30" : ""}`}>
+                    <thead className="bg-slate-50 text-slate-900 uppercase font-semibold border-b border-slate-200">
+                      <tr>
+                        {isColumnVisible("payment-table", "actions") && <th className="py-2.5 px-3 text-left w-24 md:hidden">Action</th>}
+                        {isColumnVisible("payment-table", "paymentNo") && <th className="py-2.5 px-3 w-40">Payment No.</th>}
+                        {isColumnVisible("payment-table", "type") && <th className="py-2.5 px-3 text-center w-20">Type</th>}
+                        {isColumnVisible("payment-table", "contractor") && <th className="py-2.5 px-3">ผู้รับเหมา</th>}
+                        {isColumnVisible("payment-table", "billingCycle") && <th className="py-2.5 px-3 w-36">รอบวางบิล</th>}
+                        {isColumnVisible("payment-table", "openDate") && <th className="py-2.5 px-3 w-28">วันที่เปิด</th>}
+                        {isColumnVisible("payment-table", "amount") && <th className="py-2.5 px-3 text-right w-32">ยอดรวม</th>}
+                        {isColumnVisible("payment-table", "status") && <th className="py-2.5 px-3 text-center w-28">Status</th>}
+                        {isColumnVisible("payment-table", "actions") && <th className="hidden py-2.5 px-3 text-right w-24 md:table-cell">Action</th>}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {group.payments.map((payment: any) => renderPaymentRow(payment, isCompletedGroup))}
+                    </tbody>
+                    <tfoot className="bg-slate-50 border-t border-slate-200">
+                      <tr>
+                        <td colSpan={["paymentNo", "type", "contractor", "billingCycle", "openDate"].filter(k => isColumnVisible("payment-table", k)).length || 1} className="py-2 px-3 text-xs font-bold text-slate-600">
+                          รวม {group.payments.length} งวด
+                        </td>
+                        {isColumnVisible("payment-table", "amount") && (
+                          <td className="py-2 px-3 text-right text-xs font-bold text-orange-700">
+                            {formatCurrency(groupAmount)}
+                          </td>
                         )}
-                      </td>
-                    )}
-                    {isColumnVisible("payment-table", "contractor") && (
-                      <td className="py-2 px-3 truncate max-w-[200px]" title={contractor?.name || "-"}>
-                        {contractor?.name || "-"}
-                      </td>
-                    )}
-                    {isColumnVisible("payment-table", "billingCycle") && (
-                      <td className="py-2 px-3 text-slate-500 text-[11px]">{p.billingCycle || "-"}</td>
-                    )}
-                    {isColumnVisible("payment-table", "openDate") && (
-                      <td className="py-2 px-3 text-slate-500 text-[11px]">{p.openDate || "-"}</td>
-                    )}
-                    {isColumnVisible("payment-table", "amount") && (
-                      <td className="py-2 px-3 text-right font-semibold">{formatCurrency(p.amount || 0)}</td>
-                    )}
-                    {isColumnVisible("payment-table", "attachment") && (
-                      <td className="py-2 px-3 text-center" onClick={(e) => e.stopPropagation()}>
-                        {p.attachmentUrl ? (
-                          <a
-                            href={p.attachmentUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-orange-600 hover:text-orange-800 text-[10px] font-medium underline"
-                            title={p.attachmentName || "เอกสารแนบ"}
-                          >
-                            <Paperclip size={11} />
-                            ดูไฟล์
-                          </a>
-                        ) : (
-                          <span className="text-slate-300 text-[10px]">—</span>
-                        )}
-                      </td>
-                    )}
-                    {isColumnVisible("payment-table", "status") && (
-                      <td className="py-2 px-3 text-center">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-semibold ${statusCls}`}>
-                          {displayStatus}
-                        </span>
-                        {p.jobCompleted && (p.jobCompletedBy || p.completedBy) && (
-                          <div className="mt-0.5 text-[9px] text-teal-700 truncate max-w-[140px] mx-auto" title={`จบงานโดย ${p.jobCompletedBy || p.completedBy}`}>
-                            โดย {p.jobCompletedBy || p.completedBy}
-                          </div>
-                        )}
-                      </td>
-                    )}
-                    {isColumnVisible("payment-table", "actions") && (
-                      <td
-                        className="hidden py-2 px-3 text-right md:flex md:justify-end md:gap-1"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <button
-                          className="p-1.5 rounded hover:bg-orange-100 text-orange-600 transition-colors"
-                          title="ดูรายละเอียด"
-                          onClick={() => setViewingPayment(p)}
-                        >
-                          <Eye size={13} />
-                        </button>
-                        {canBackfillPaymentInvoice && isPaidPayment(p) && !paymentHasInvoice && (
-                          <button
-                            className="p-1.5 rounded hover:bg-emerald-100 text-emerald-600 transition-colors disabled:opacity-50"
-                            title="สร้าง Invoice Paid ย้อนหลัง"
-                            disabled={!!backfillPaymentId}
-                            onClick={() => openHistoricalInvoiceModal(p)}
-                          >
-                            {isBackfilling ? <span className="inline-block w-3 h-3 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" /> : <FileText size={13} />}
-                          </button>
-                        )}
-                        {canUseFunction?.("payment-subcontract", "delete") !== false && (
-                          <button
-                            className="p-1.5 rounded hover:bg-red-100 text-red-500 transition-colors"
-                            title="ลบ"
-                            onClick={() => handleDelete(p)}
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        )}
-                      </td>
-                    )}
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-          {filtered.length > 0 && (
-            <tfoot className="bg-slate-50 border-t border-slate-200">
-              <tr>
-                <td colSpan={["paymentNo", "type", "contractor", "billingCycle", "openDate"].filter(k => isColumnVisible("payment-table", k)).length || 1} className="py-2 px-3 text-xs font-bold text-slate-600">
-                  รวม {filtered.length} รายการ
-                </td>
-                {isColumnVisible("payment-table", "amount") && (
-                  <td className="py-2 px-3 text-right text-xs font-bold text-orange-700">
-                    {formatCurrency(filtered.reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0))}
-                  </td>
-                )}
-                <td colSpan={["attachment", "status", "actions"].filter(k => isColumnVisible("payment-table", k)).length || 1} />
-              </tr>
-            </tfoot>
-          )}
-        </table>
-      </Card>
+                        <td colSpan={["status", "actions"].filter(k => isColumnVisible("payment-table", k)).length || 1} />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
 
       {invoicePaymentModal && ReactDOM.createPortal(
         <div className="fixed inset-0 z-[10030] flex items-center justify-center bg-black/50 p-4" onClick={() => setInvoicePaymentModal(null)}>

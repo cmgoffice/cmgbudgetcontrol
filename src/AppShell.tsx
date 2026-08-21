@@ -25,6 +25,7 @@ import { computeBudgetUsedAfterPrRevision, getLinkedPoRefsForPr, getPrBudgetRetu
 import { Card, Button, InputGroup, Badge, formatCurrency } from "./components/ui";
 import ResizableTh from "./components/ResizableTh";
 import { useProportionalTableLayout, chainTableResizeHandlers } from "./hooks/useProportionalTableLayout";
+import { useDebouncedValue } from "./hooks/useDebouncedValue";
 import { TABLE_LAYOUT_DEFAULTS } from "./lib/tableLayoutDefaults";
 import {
   MODULE_ACCESS,
@@ -35,7 +36,8 @@ import {
   PR_PENDING_ACTIVE,
 } from "./lib/constants";
 import { getPoAmountExVat, getPoItemsGrossSubtotal } from "./lib/poDiscount";
-import { getPoNumberVariants, getPoPaymentAndReceiveBalanceInfo } from "./lib/poPaymentBalance";
+import { getPoNumberVariants } from "./lib/poPaymentBalance";
+import { buildPrPoIndexes } from "./lib/prPoLogIndexes";
 import { buildPoActiveBlockedMessage, getPoActiveDependencies } from "./lib/poActiveValidation";
 import { buildPoBudgetReturnPlan, enqueuePoBudgetReturnJob } from "./lib/poBudgetReturn";
 import { getPreviousGeneratedPdfPath, removePreviousGeneratedPdf, uploadRevisionPdf } from "./lib/pdfReplacement";
@@ -75,9 +77,35 @@ const ProfileAvatar = ({ src, className, fallback }) => {
   );
 };
 
+const useMediaQuery = (mediaQuery: string) => {
+  const getMatches = () => (
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia(mediaQuery).matches
+      : false
+  );
+  const [matches, setMatches] = useState(getMatches);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return undefined;
+    const media = window.matchMedia(mediaQuery);
+    const handleChange = () => setMatches(media.matches);
+    handleChange();
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", handleChange);
+      return () => media.removeEventListener("change", handleChange);
+    }
+    media.addListener?.(handleChange);
+    return () => media.removeListener?.(handleChange);
+  }, [mediaQuery]);
+
+  return matches;
+};
+
 // Process คืนยอด PO ที่ไม่มี worker ทำต่อจะถูกถือว่าค้างหลัง 10 นาที
 // เพื่อให้ผู้มีสิทธิ์กด Retry ได้ โดยไม่ปลดล็อก Process ที่กำลังทำงานอยู่จริงทันที
 const PO_BUDGET_RETURN_RETRY_AFTER_MS = 10 * 60 * 1000;
+const EMPTY_ARRAY: any[] = [];
+const EMPTY_PO_META = { linkedPrIds: [], prNos: [], costCodes: [] };
 const isStalePoBudgetReturnProcess = (po: any) => {
   const timestamp = po?.budgetReturnProcessUpdatedAt
     || po?.budgetReturnProcessRetryAt
@@ -170,7 +198,7 @@ const TableActionMenu = ({
         </button>
       )}
       {hasPendingAction && <div className="my-1 border-t border-slate-100" />}
-      {children}
+      {typeof children === "function" ? children() : children}
     </div>
   ) : null;
 
@@ -1318,7 +1346,6 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     receives = [],
     payments = [],
     paymentsReady = false,
-    receivesReady = false,
     pays = [],
     pendingPRsGlobal = [],
     pendingPOsGlobal = [],
@@ -1331,10 +1358,18 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   const tableModule = mode === "pr" ? "pr-table" : "po-table";
   const tblId = mode === "pr" ? "pr-table" : "po-table";
   const [searchTerm, setSearchTerm] = React.useState("");
+  const [searchQuery, setSearchQuery] = React.useState("");
+  const searchComposingRef = React.useRef(false);
+  const debouncedSearchTerm = useDebouncedValue(searchQuery, 250);
+  const [effectiveSearchTerm, setEffectiveSearchTerm] = React.useState("");
+  React.useEffect(() => {
+    setEffectiveSearchTerm(debouncedSearchTerm);
+  }, [debouncedSearchTerm]);
   const [filterStatus, setFilterStatus] = React.useState("all");
   const [filterProject, setFilterProject] = React.useState(selectedProjectId || "all");
   const [activeTypeTab, setActiveTypeTab] = React.useState("");
   const [currentPage, setCurrentPage] = React.useState(1);
+  const isDesktopTable = useMediaQuery("(min-width: 768px)");
 
   // ซิงก์ filterProject เมื่อ selectedProjectId เปลี่ยน (เช่นกดเปลี่ยนโครงการที่ header)
   React.useEffect(() => {
@@ -1504,14 +1539,12 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   }, [getPendingTaskStatus, handlePOAction, handlePORevisionAllow, handlePRAction, isPR, logAction, openConfirm, pendingActionId, pos, showAlert, updateData, userRoles]);
   const canViewPrBalance = isPR && canUseFunction("pr-table", "viewBalance");
   const canReturnPrBalance = isPR && canUseFunction("pr-table", "returnBalance");
-  const canViewPoBalance = !isPR && canUseFunction("po-table", "viewBalance");
   const canStartPoBudgetReturn = !isPR && canUseFunction("po-table", "returnBudget");
-  const poUsageSourcesReady = paymentsReady && receivesReady;
-  const poPaymentBalanceById = React.useMemo(() => {
-    const next = new Map<string, any>();
-    (pos || []).forEach((po: any) => next.set(String(po.id), getPoPaymentAndReceiveBalanceInfo(po, payments, receives)));
-    return next;
-  }, [payments, pos, receives]);
+  const prById = React.useMemo(() => new Map((prs || []).map((pr: any) => [pr.id, pr])), [prs]);
+  const prPoIndexes = React.useMemo(
+    () => buildPrPoIndexes(pos, prById),
+    [pos, prById]
+  );
 
   const handleStartPoBudgetReturn = React.useCallback((po: any) => {
     if (!po?.id || isPR || !canStartPoBudgetReturn) return;
@@ -1519,7 +1552,10 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       showAlert?.("ไม่รองรับ PO ประเภทนี้", "ฟังก์ชัน Rev PO และคืนยอดรองรับเฉพาะ PO Type SP", "info");
       return;
     }
-    const paymentBalance = poPaymentBalanceById.get(String(po.id)) || getPoPaymentAndReceiveBalanceInfo(po, payments, []);
+    if (!paymentsReady) {
+      showAlert?.("กำลังโหลด Payment", "กรุณารอข้อมูล Payment โหลดเสร็จแล้วลองใหม่", "info");
+      return;
+    }
     const plan = buildPoBudgetReturnPlan({ po, payments, prs });
     const processStatus = String(po?.budgetReturnProcessStatus || "");
     const activeProcess = ["Queued", "Running", "Waiting Budget Approval"].includes(processStatus);
@@ -1528,7 +1564,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       showAlert?.("กำลังดำเนินการ", `PO ${po.poNo || po.id} มี Process คืน Budget อยู่แล้ว (${processStatus})`, "info");
       return;
     }
-    if (String(paymentBalance?.usageSource || "") !== "payment" || !plan.latestPayment) {
+    if (!plan.latestPayment) {
       showAlert?.("ยังไม่มี Payment", "ฟังก์ชันนี้รองรับเฉพาะ PO ที่มี Payment เท่านั้น", "warning");
       return;
     }
@@ -1584,7 +1620,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       },
       "warning"
     );
-  }, [canStartPoBudgetReturn, db, isPR, logAction, openConfirm, payments, poPaymentBalanceById, poUsageSourcesReady, prs, showAlert, user, userData, userRole]);
+  }, [canStartPoBudgetReturn, db, isPR, logAction, openConfirm, payments, paymentsReady, prs, showAlert, user, userData, userRole]);
 
   const handleRetryPoBudgetReturn = React.useCallback(async (po: any) => {
     const jobId = String(po?.budgetReturnProcessId || "");
@@ -1938,14 +1974,33 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     "Partial": "bg-yellow-50 text-yellow-700 border-yellow-200",
   };
 
-  const getBudgetDesc = (costCode: string, projectId: string) =>
-    budgets.find((b) => b.code === costCode && b.projectId === projectId)?.description || "-";
+  const projectById = React.useMemo(() => new Map((projects || []).map((project: any) => [project.id, project])), [projects]);
+  const vendorById = React.useMemo(() => new Map((vendors || []).map((vendor: any) => [vendor.id, vendor])), [vendors]);
+  const { budgetById, budgetByProjectCode } = React.useMemo(() => {
+    const byId = new Map<any, any>();
+    const byProjectCode = new Map<any, Map<any, any>>();
+    (budgets || []).forEach((budget: any) => {
+      // Array.find เดิมคืนรายการแรก จึงไม่เขียนทับเมื่อ key ซ้ำ
+      if (budget?.id && !byId.has(budget.id)) byId.set(budget.id, budget);
+      if (!byProjectCode.has(budget?.projectId)) byProjectCode.set(budget?.projectId, new Map());
+      const projectBudgets = byProjectCode.get(budget?.projectId)!;
+      if (!projectBudgets.has(budget?.code)) projectBudgets.set(budget?.code, budget);
+    });
+    return { budgetById: byId, budgetByProjectCode: byProjectCode };
+  }, [budgets]);
 
-  const getPrBudgetItemName = (pr: any) => {
+  const getBudgetDesc = React.useCallback((costCode: string, projectId: string) => (
+    budgetByProjectCode.get(projectId)?.get(costCode)?.description || "-"
+  ), [budgetByProjectCode]);
+
+  const getPrBudgetItemName = React.useCallback((pr: any) => {
     const headerBudgetItem = pr?.budgetId
-      ? budgets.find((b: any) => b.id === pr.budgetId && b.projectId === pr.projectId)
+      ? (() => {
+        const budget = budgetById.get(pr.budgetId);
+        return budget?.projectId === pr.projectId ? budget : null;
+      })()
       : pr?.costCode
-        ? budgets.find((b: any) => b.code === pr.costCode && b.projectId === pr.projectId)
+        ? budgetByProjectCode.get(pr.projectId)?.get(pr.costCode)
         : null;
 
     if (!headerBudgetItem) return "";
@@ -1959,53 +2014,21 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       const sub = headerBudgetItem.subItems.find((s: any) => s.id === subItemId);
       subDesc = sub?.description || "";
     }
-
     return mainDesc && subDesc ? `${mainDesc} + ${subDesc}` : (mainDesc || subDesc || "");
-  };
+  }, [budgetById, budgetByProjectCode]);
 
-  const projectById = React.useMemo(() => new Map((projects || []).map((project: any) => [project.id, project])), [projects]);
-  const prById = React.useMemo(() => new Map((prs || []).map((pr: any) => [pr.id, pr])), [prs]);
-  const vendorById = React.useMemo(() => new Map((vendors || []).map((vendor: any) => [vendor.id, vendor])), [vendors]);
+  const getProjectName = React.useCallback((projectId: string) => (
+    projectById.get(projectId)?.name || projectId
+  ), [projectById]);
 
-  const getProjectName = (projectId: string) =>
-    projectById.get(projectId)?.name || projectId;
-
-  const getPoLinkedPrMeta = useCallback((po: any) => {
-    if (!po) return { prNos: [], costCodes: [] };
-
-    const itemPrIds = Array.isArray(po.items)
-      ? po.items.flatMap((item: any) => {
-        const directPrId = item?.prId ? [item.prId] : [];
-        const disPrIds = Array.isArray(item?.disPrAllocations)
-          ? item.disPrAllocations.map((a: any) => a?.prId).filter(Boolean)
-          : [];
-        return [...directPrId, ...disPrIds];
-      })
-      : [];
-    const selectedPrIds = Array.isArray(po.selectedPrIds) ? po.selectedPrIds.filter(Boolean) : [];
-    const prRefIds = po.prRefId ? [po.prRefId] : [];
-    const allPrIds = [...new Set([...itemPrIds, ...selectedPrIds, ...prRefIds])];
-
-    const linkedPrs = allPrIds
-      .map((prId: string) => prById.get(prId))
-      .filter(Boolean);
-
-    const itemPrNos = Array.isArray(po.items)
-      ? po.items.map((item: any) => item?.prNo).filter(Boolean)
-      : [];
-
-    const prNos = [...new Set([...linkedPrs.map((pr: any) => pr.prNo).filter(Boolean), ...itemPrNos])];
-    const costCodes = [...new Set([
-      ...linkedPrs.map((pr: any) => pr.costCode).filter(Boolean),
-      ...(po.costCode ? [po.costCode] : []),
-    ])];
-
-    return { prNos, costCodes };
-  }, [prById]);
+  const getPoLinkedPrMeta = useCallback((po: any) => (
+    prPoIndexes.poMetaById.get(String(po?.id || "")) || EMPTY_PO_META
+  ), [prPoIndexes]);
 
   const getPrBalanceAmount = React.useCallback((pr: any) => {
-    return getPrBudgetReturnInfo(pr, pos).returnAmount;
-  }, [pos]);
+    const linkedPos = prPoIndexes.financialPosByPrId.get(String(pr?.id || "")) || [];
+    return getPrBudgetReturnInfo(pr, linkedPos).returnAmount;
+  }, [prPoIndexes]);
 
   const handleReturnPrBalanceToBudget = React.useCallback((pr: any) => {
     if (!pr?.id) return;
@@ -2506,7 +2529,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
           pendingActionIsActive={isActivePoTaskRow(r)}
           onPendingAction={() => handlePendingTask(r)}
         >
-          {renderActionMenuItems(r)}
+          {() => renderActionMenuItems(r)}
         </TableActionMenu>
       </td>
     );
@@ -2525,72 +2548,68 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     }
   }, [handleRecreatePO, isPR]);
 
-  const filtered = React.useMemo(() => {
-    const matchedRows = rows.filter((r: any) => {
-    const noField = isPR ? r.prNo : r.poNo;
+  // ตัดข้อมูลด้วยเงื่อนไขราคาถูกก่อนสร้าง Ref/Search
+  const scopedRows = React.useMemo(() => rows.filter((r: any) => {
+    if (filterProject !== "all" && r.projectId !== filterProject) return false;
+    if (filterStatus === "all") return true;
     const rowStatus = getRowStatus(r);
-    const lowerSearch = (searchTerm || "").toLowerCase();
-    const poRefText = isPR
-      ? pos
-        .filter((po: any) =>
-          (po.selectedPrIds || []).includes(r.id) ||
-          (po.items || []).some((it: any) => it.prId === r.id) ||
-          po.prRefId === r.id
-        )
-        .map((po: any) => po.poNo || po.id)
-        .filter(Boolean)
-        .join(", ")
-      : "";
-    const poLinkedMeta = !isPR ? getPoLinkedPrMeta(r) : { prNos: [], costCodes: [] };
-    const poProjectName = !isPR ? getProjectName(r.projectId) : "";
-    const poVendorName = !isPR
-      ? (r.vendor || vendorById.get(r.vendorId)?.name || "-")
-      : "";
-    const poDateText = !isPR ? String(r.poDate || r.createdDate || "") : "";
-    const poItemCountText = !isPR ? String(r.items?.length || (r.selectedPrIds?.length || 0)) : "";
-    const poAmountText = !isPR ? String(getPoAmountExVat(r)) : "";
-    const poPaymentBalance = !isPR ? poPaymentBalanceById.get(String(r.id)) : null;
-    const poSearchBlob = !isPR
-      ? [
-        noField,
-        poProjectName,
-        poVendorName,
-        r.poType,
-        poLinkedMeta.prNos.join(", "),
-        poLinkedMeta.costCodes.join(", "),
-        poDateText,
-        poItemCountText,
-        poAmountText,
-        poPaymentBalance?.usedAmount,
-        poPaymentBalance?.balanceAmount,
-        rowStatus,
-        r.status,
-        r.statusNow,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase()
-      : "";
-    const matchSearch =
-      !lowerSearch ||
-      (noField || "").toLowerCase().includes(lowerSearch) ||
-      (r.costCode || "").toLowerCase().includes(lowerSearch) ||
-      (r.requestor || r.vendor || "").toLowerCase().includes(lowerSearch) ||
-      (poRefText || "").toLowerCase().includes(lowerSearch) ||
-      (!isPR && poSearchBlob.includes(lowerSearch));
-    const matchStatus =
-      filterStatus === "all" ||
-      rowStatus === filterStatus ||
-      (!isPR && (r.status === filterStatus || r.statusNow === filterStatus));
-    const matchProject = filterProject === "all" || r.projectId === filterProject;
-      return matchSearch && matchStatus && matchProject;
-    });
+    return rowStatus === filterStatus || (!isPR && (r.status === filterStatus || r.statusNow === filterStatus));
+  }), [filterProject, filterStatus, getRowStatus, isPR, rows]);
+
+  const lowerSearch = (effectiveSearchTerm || "").toLowerCase();
+  const filtered = React.useMemo(() => {
+    const matchedRows = !lowerSearch
+      ? [...scopedRows]
+      : scopedRows.filter((r: any) => {
+        const noField = isPR ? r.prNo : r.poNo;
+        const rowStatus = getRowStatus(r);
+        const poRefText = isPR
+          ? (prPoIndexes.displayPoRefsByPrId.get(String(r.id)) || [])
+            .map((ref: any) => ref.poNo)
+            .filter(Boolean)
+            .join(", ")
+          : "";
+        const poLinkedMeta = !isPR ? getPoLinkedPrMeta(r) : EMPTY_PO_META;
+        const poProjectName = !isPR ? getProjectName(r.projectId) : "";
+        const poVendorName = !isPR
+          ? (r.vendor || vendorById.get(r.vendorId)?.name || "-")
+          : "";
+        const poDateText = !isPR ? String(r.poDate || r.createdDate || "") : "";
+        const poItemCountText = !isPR ? String(r.items?.length || (r.selectedPrIds?.length || 0)) : "";
+        const poAmountText = !isPR ? String(getPoAmountExVat(r)) : "";
+        const poSearchBlob = !isPR
+          ? [
+            noField,
+            poProjectName,
+            poVendorName,
+            r.poType,
+            poLinkedMeta.prNos.join(", "),
+            poLinkedMeta.costCodes.join(", "),
+            poDateText,
+            poItemCountText,
+            poAmountText,
+            rowStatus,
+            r.status,
+            r.statusNow,
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase()
+          : "";
+        return (
+          (noField || "").toLowerCase().includes(lowerSearch) ||
+          (r.costCode || "").toLowerCase().includes(lowerSearch) ||
+          (r.requestor || r.vendor || "").toLowerCase().includes(lowerSearch) ||
+          (poRefText || "").toLowerCase().includes(lowerSearch) ||
+          (!isPR && poSearchBlob.includes(lowerSearch))
+        );
+      });
 
     // ให้รายการที่ผู้ใช้ต้องดำเนินการขึ้นก่อนเสมอ ก่อนแบ่งหน้าและแบ่งแท็บ Type
     return matchedRows.sort((a: any, b: any) =>
       Number(isNotificationRow(b)) - Number(isNotificationRow(a))
     );
-  }, [filterProject, filterStatus, getPoLinkedPrMeta, getRowStatus, isNotificationRow, isPR, poPaymentBalanceById, pos, projectById, rows, searchTerm, vendorById]);
+  }, [getPoLinkedPrMeta, getProjectName, getRowStatus, isNotificationRow, isPR, lowerSearch, prPoIndexes, scopedRows, vendorById]);
 
   const getShortTypeLabel = React.useCallback((typeValue: any) => {
     const raw = String(typeValue || "").trim();
@@ -2624,7 +2643,8 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       return;
     }
     if (!typeTabs.some((tab) => tab.key === activeTypeTab)) {
-      setActiveTypeTab(ALL_TYPE_TAB_KEY);
+      const firstSpecificType = typeTabs.find((tab) => tab.key !== ALL_TYPE_TAB_KEY && tab.rows.length > 0);
+      setActiveTypeTab(firstSpecificType?.key || ALL_TYPE_TAB_KEY);
       setCurrentPage(1);
     }
   }, [ALL_TYPE_TAB_KEY, activeTypeTab, currentPage, typeTabs]);
@@ -2633,12 +2653,57 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     setCurrentPage(1);
   }, [searchTerm, filterStatus, filterProject, mode]);
 
-  const activeTypeGroup = typeTabs.find((tab) => tab.key === activeTypeTab) || typeTabs[0] || null;
-  const activeRows = activeTypeGroup?.rows || [];
+  const activeTypeGroup = React.useMemo(
+    () => typeTabs.find((tab) => tab.key === activeTypeTab) || typeTabs[0] || null,
+    [activeTypeTab, typeTabs]
+  );
+  const activeRows = activeTypeGroup?.rows || EMPTY_ARRAY;
   const totalPages = Math.max(1, Math.ceil(activeRows.length / PAGE_SIZE));
   const safePage = Math.min(Math.max(currentPage, 1), totalPages);
   const pageStart = (safePage - 1) * PAGE_SIZE;
-  const pageRows = activeRows.slice(pageStart, pageStart + PAGE_SIZE);
+  const pageRows = React.useMemo(
+    () => activeRows.slice(pageStart, pageStart + PAGE_SIZE),
+    [activeRows, pageStart]
+  );
+  const [footerSummary, setFooterSummary] = React.useState<{
+    rows: any[] | null;
+    totalAmount: number;
+  }>({ rows: null, totalAmount: 0 });
+
+  React.useEffect(() => {
+    if (activeRows.length === 0) return undefined;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cursor = 0;
+    let totalAmount = 0;
+
+    // คงยอดรวมทั้ง Type ตามเดิม แต่แบ่งงานเป็นช่วงเพื่อไม่บล็อกการแสดง 50 แถวแรก
+    const processChunk = () => {
+      if (cancelled) return;
+      const chunkEnd = Math.min(cursor + PAGE_SIZE, activeRows.length);
+      for (; cursor < chunkEnd; cursor += 1) {
+        const row = activeRows[cursor];
+        totalAmount += Number(isPR ? row.totalAmount : getPoAmountExVat(row));
+      }
+      if (cursor < activeRows.length) {
+        timer = setTimeout(processChunk, 0);
+        return;
+      }
+      setFooterSummary({
+        rows: activeRows,
+        totalAmount,
+      });
+    };
+
+    timer = setTimeout(processChunk, 0);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [PAGE_SIZE, activeRows, isPR]);
+
+  const footerTotalReady = footerSummary.rows === activeRows;
   const pageFrom = activeRows.length === 0 ? 0 : pageStart + 1;
   const pageTo = Math.min(pageStart + PAGE_SIZE, activeRows.length);
 
@@ -2780,7 +2845,34 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
               type="text"
               placeholder={isPR ? "ค้นหา PR No., Cost Code, Ref PO..." : "ค้นหา PO ได้ทุกคอลัมน์ (PO, Vendor, Cost Code, Ref PR...)"}
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value;
+                setSearchTerm(value);
+                if (value === "") setEffectiveSearchTerm("");
+                if (!searchComposingRef.current) setSearchQuery(value);
+              }}
+              onCompositionStart={() => { searchComposingRef.current = true; }}
+              onCompositionEnd={(e) => {
+                const value = e.currentTarget.value;
+                searchComposingRef.current = false;
+                setSearchTerm(value);
+                setSearchQuery(value);
+                if (value === "") setEffectiveSearchTerm("");
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" || searchComposingRef.current) return;
+                const value = e.currentTarget.value;
+                setSearchQuery(value);
+                setEffectiveSearchTerm(value);
+              }}
+              onBlur={(e) => {
+                if (!searchComposingRef.current) return;
+                const value = e.currentTarget.value;
+                searchComposingRef.current = false;
+                setSearchTerm(value);
+                setSearchQuery(value);
+                if (value === "") setEffectiveSearchTerm("");
+              }}
               className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-56"
             />
           </div>
@@ -2811,7 +2903,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
           <table className="w-full min-w-[1040px] text-left text-xs table-fixed md:min-w-0">
             <thead>
               <tr className="bg-slate-800 text-white">
-                {isColumnVisible(tblId, "action") && <th className="px-2 py-0.5 font-semibold text-left md:hidden" style={{ width: prPoScaled.action }}>Action</th>}
+                {!isDesktopTable && isColumnVisible(tblId, "action") && <th className="px-2 py-0.5 font-semibold text-left" style={{ width: prPoScaled.action }}>Action</th>}
                 {isColumnVisible(tblId, "rowNum") && <th className="px-2 py-0.5 font-semibold" style={{ width: prPoScaled.rowNum }}>#</th>}
                 {isColumnVisible(tblId, "no") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="no" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.no}>{isPR ? "PR No." : "PO No."}</ResizableTh>}
                 {isColumnVisible(tblId, "project") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="project" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.project}>โครงการ</ResizableTh>}
@@ -2826,11 +2918,9 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                 {isColumnVisible(tblId, "items") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="items" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.items}>จำนวนรายการ</ResizableTh>}
                 {isColumnVisible(tblId, "amount") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="amount" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.amount}>{isPR ? "ยอดรวม" : "ยอดรวม (Ex VAT)"}</ResizableTh>}
                 {canViewPrBalance && isColumnVisible("pr-table", "balance") && <ResizableTh tableId="pr-table" colKey="balance" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.balance}>Balance</ResizableTh>}
-                {canViewPoBalance && isColumnVisible("po-table", "paymentReceive") && <ResizableTh tableId="po-table" colKey="paymentReceive" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.paymentReceive}>Payment &amp; Receive</ResizableTh>}
-                {canViewPoBalance && isColumnVisible("po-table", "balance") && <ResizableTh tableId="po-table" colKey="balance" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.balance}>Balance PO</ResizableTh>}
                 {isColumnVisible(tblId, "status") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="status" className="px-2 py-0.5 font-semibold text-center" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.status}>สถานะ</ResizableTh>}
                 {isPR && isColumnVisible("pr-table", "poRef") && <ResizableTh tableId="pr-table" colKey="poRef" className="px-2 py-0.5 font-semibold text-center" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.poRef}>Ref PO</ResizableTh>}
-                {isColumnVisible(tblId, "action") && <th className="hidden px-2 py-0.5 font-semibold text-center md:table-cell" style={{ width: prPoScaled.action }}>Action</th>}
+                {isDesktopTable && isColumnVisible(tblId, "action") && <th className="px-2 py-0.5 font-semibold text-center" style={{ width: prPoScaled.action }}>Action</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -2855,28 +2945,20 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                   const statusClass = statusColors[displayStatus] || "bg-slate-50 text-slate-500 border-slate-200";
                   const isEven = idx % 2 === 0;
                   const vendorName = !isPR
-                    ? (r.vendor || (vendors || []).find((v: any) => v.id === r.vendorId)?.name || "-")
+                    ? (r.vendor || vendorById.get(r.vendorId)?.name || "-")
                     : "";
                   const poLinkedMeta = !isPR ? getPoLinkedPrMeta(r) : { prNos: [], costCodes: [] };
                   const poRefNos = isPR
-                    ? pos
-                      .filter((po: any) =>
-                        (po.selectedPrIds || []).includes(r.id) ||
-                        (po.items || []).some((it: any) => it.prId === r.id) ||
-                        po.prRefId === r.id
-                      )
-                      .map((po: any) => po.poNo || po.id)
+                    ? (prPoIndexes.displayPoRefsByPrId.get(String(r.id)) || [])
+                      .map((ref: any) => ref.poNo)
                       .filter(Boolean)
                       .join(", ")
                     : "";
-                  const prBalance = isPR ? getPrBalanceAmount(r) : 0;
-                  const poPaymentBalance = !isPR
-                    ? (poPaymentBalanceById.get(String(r.id)) || getPoPaymentAndReceiveBalanceInfo(r, [], []))
-                    : null;
+                  const prBalance = canViewPrBalance ? getPrBalanceAmount(r) : 0;
 
                   return (
                     <tr key={r.id} className={`hover:bg-blue-50/40 transition-colors cursor-pointer ${isEven ? "bg-white" : "bg-slate-50/40"}`} onClick={() => openPoDetail(r)}>
-                      {renderActionCell(r, "md:hidden")}
+                      {!isDesktopTable && renderActionCell(r, "")}
                       {isColumnVisible(tblId, "rowNum") && (
                         <td className="px-2 py-0.5 text-slate-400 font-mono">
                           <span className="inline-flex items-center gap-1.5" title={isNotificationRow(r) ? "มีรายการรอ action" : undefined}>
@@ -2970,31 +3052,6 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                           ฿{Number(prBalance || 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
                         </td>
                       )}
-                      {canViewPoBalance && isColumnVisible("po-table", "paymentReceive") && (
-                        <td
-                          className="px-2 py-0.5 text-right font-semibold text-blue-700"
-                          title={poPaymentBalance?.sourceDocumentNo ? `${poPaymentBalance.usageSource === "payment" ? "Payment" : "Receive"}: ${poPaymentBalance.sourceDocumentNo}` : `ยังไม่มี ${poPaymentBalance?.usageSource === "payment" ? "Payment" : "Receive"}`}
-                        >
-                          {poUsageSourcesReady
-                            ? `฿${Number(poPaymentBalance?.usedAmount || 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}`
-                            : <span className="text-slate-400">กำลังโหลด…</span>}
-                          {poPaymentBalance?.jobCompleted && (
-                            <span className="mt-0.5 block w-fit ml-auto rounded border border-blue-300 bg-blue-100 px-1.5 py-0.5 text-[9px] leading-tight font-bold text-blue-800" title={`จบงานโดย ${poPaymentBalance.jobCompletedBy || "-"}`}>
-                              จบงาน
-                            </span>
-                          )}
-                        </td>
-                      )}
-                      {canViewPoBalance && isColumnVisible("po-table", "balance") && (
-                        <td
-                          className="px-2 py-0.5 text-right font-semibold text-emerald-700"
-                          title={poPaymentBalance?.sourceDocumentNo ? `${poPaymentBalance.usageSource === "payment" ? "Payment" : "Receive"}: ${poPaymentBalance.sourceDocumentNo}` : `ยังไม่มี ${poPaymentBalance?.usageSource === "payment" ? "Payment" : "Receive"}`}
-                        >
-                          {poUsageSourcesReady
-                            ? `฿${Number(poPaymentBalance?.balanceAmount || 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}`
-                            : <span className="text-slate-400">กำลังโหลด…</span>}
-                        </td>
-                      )}
                       {isColumnVisible(tblId, "status") && (
                         <td className="px-2 py-0.5 text-center">
                           <span className={`inline-flex items-center px-2 py-0 rounded-full border text-[10px] font-semibold whitespace-nowrap ${statusClass}`}>
@@ -3017,7 +3074,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                           {poRefNos || "-"}
                         </td>
                       )}
-                      {renderActionCell(r, "hidden md:table-cell")}
+                      {isDesktopTable && renderActionCell(r, "")}
                       {false && isColumnVisible(tblId, "action") && <td className="px-2 py-0.5" onClick={e => e.stopPropagation()}>
                         {isActionTaskRow(r) && (
                           <button
@@ -3264,28 +3321,10 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
               </div>
             </div>
             <div className="flex flex-wrap gap-4">
-              {canViewPoBalance && (
-                <span className="font-bold text-blue-700">
-                  Payment &amp; Receive: {poUsageSourcesReady
-                    ? `฿${activeRows.reduce((sum: number, row: any) => (
-                        sum + Number(poPaymentBalanceById.get(String(row.id))?.usedAmount || 0)
-                      ), 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}`
-                    : "กำลังโหลด…"}
-                </span>
-              )}
-              {canViewPoBalance && (
-                <span className="font-bold text-emerald-700">
-                  Balance PO: {poUsageSourcesReady
-                    ? `฿${activeRows.reduce((sum: number, row: any) => (
-                        sum + Number(poPaymentBalanceById.get(String(row.id))?.balanceAmount || 0)
-                      ), 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}`
-                    : "กำลังโหลด…"}
-                </span>
-              )}
               <span className="font-bold text-slate-700">
-                ยอดรวม Type นี้{isPR ? "" : " (Ex VAT)"}: ฿{activeRows.reduce((sum: number, row: any) => (
-                  sum + Number(isPR ? row.totalAmount : getPoAmountExVat(row))
-                ), 0).toLocaleString("th-TH", { minimumFractionDigits: 2 })}
+                ยอดรวม Type นี้{isPR ? "" : " (Ex VAT)"}: {footerTotalReady
+                  ? `฿${footerSummary.totalAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })}`
+                  : "กำลังโหลด…"}
               </span>
             </div>
           </div>

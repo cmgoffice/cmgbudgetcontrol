@@ -1059,7 +1059,27 @@ const PaymentView = React.memo(() => {
         jobCompletedByUid: completedBy.uid || null,
         jobCompletedByEmail: completedBy.email || null,
       }, { skipLog: true });
-      const selectedPrIds = evalModalPayment.selectedPrIds || [];
+      // Payment รุ่นเก่าอาจไม่มี selectedPrIds แต่ยังมี reference PO อยู่ใน
+      // sourcePoId / poId / poRef หรือ Payment No. จึงต้อง resolve ให้ครบก่อนปิด PO
+      const selectedPoIdSet = new Set(
+        (Array.isArray(evalModalPayment.selectedPrIds) ? evalModalPayment.selectedPrIds : [])
+          .filter(Boolean)
+          .map((id: any) => String(id))
+      );
+      const directPoRefs = [
+        evalModalPayment.sourcePoId,
+        evalModalPayment.poId,
+        evalModalPayment.poRef,
+      ].filter(Boolean).map((id: any) => String(id));
+      const paymentBaseNo = getPaymentBaseNo(evalModalPayment.paymentNo);
+      (pos || []).forEach((po: any) => {
+        const poId = String(po?.id || "");
+        const poNo = String(po?.poNo || "");
+        if (directPoRefs.includes(poId) || directPoRefs.includes(poNo) || (paymentBaseNo && poNo === paymentBaseNo)) {
+          selectedPoIdSet.add(poId);
+        }
+      });
+      const selectedPrIds = Array.from(selectedPoIdSet);
       let queuedReturnCount = 0;
       let queueReturnError = "";
       const planningPayments = [

@@ -65,7 +65,7 @@ import {
   applyDiscountToPrAllocations,
   getPoAmountExVat,
 } from "../lib/poDiscount";
-import { getPoNumberVariants, getPoPaymentAndReceiveBalanceInfo } from "../lib/poPaymentBalance";
+import { getPoNumberVariants } from "../lib/poPaymentBalance";
 import { getPreviousGeneratedPdfPath, removePreviousGeneratedPdf, uploadRevisionPdf } from "../lib/pdfReplacement";
 import RelatedDocumentDetailModal from "../components/RelatedDocumentDetailModal";
 
@@ -172,13 +172,11 @@ const POView = React.memo(() => {
     savePrAgain: (prNo, status) => `PR ${prNo} มีสถานะ ${status} — กรุณา Active PR รายการนี้ก่อน แล้วค่อยบันทึก PO อีกครั้ง`,
     amountDrop: "ยอด PO ลดลง",
   };
-  const { prs, pos, projects, budgets, vendors, materials, receives, receivesReady = false, invoices, payments = [], paymentsReady = false, pays = [], addData, updateData, deleteData, loadVendors, loadMaterials,
+  const { prs, pos, projects, budgets, vendors, materials, receives, invoices, payments = [], pays = [], addData, updateData, deleteData, loadVendors, loadMaterials,
     showAlert, openConfirm, logAction, userRole, userRoles, columnWidths, handleColumnResize,
     visibleProjects, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,
     userData, user, canUseFunction, canAccessModule, isColumnVisible } = useAppData();
   const canApprovePO = canUseFunction("po", "approve");
-  const canViewPoBalance = canUseFunction("po", "viewBalance");
-  const poUsageSourcesReady = paymentsReady && receivesReady;
   const canRejectPO = canUseFunction("po", "reject");
   const canAllowPORevision = canUseFunction("po", "allowRevision");
   const canDenyPORevision = canUseFunction("po", "denyRevision");
@@ -2986,12 +2984,6 @@ const POView = React.memo(() => {
     return [...new Set([...directPrNos, ...itemPrNos])].join(", ");
   }, []);
 
-  const poPaymentBalanceById = useMemo(() => {
-    const next = new Map<string, any>();
-    (pos || []).forEach((po: any) => next.set(String(po.id), getPoPaymentAndReceiveBalanceInfo(po, payments, receives)));
-    return next;
-  }, [payments, pos, receives]);
-
   const buildPoDisplayEntry = useCallback((po: any) => {
     const vendor = po.vendorName
       ? { id: po.vendorId, name: po.vendorName, code: po.vendorCode, type: po.vendorType }
@@ -3006,12 +2998,11 @@ const POView = React.memo(() => {
     const vendorName = vendor?.name || po.vendor || "-";
     const creatorName = getPoCreatorDisplayName(po);
     const amountExVat = getPoAmountExVat(po);
-    const paymentBalance = poPaymentBalanceById.get(String(po.id)) || getPoPaymentAndReceiveBalanceInfo(po, [], []);
-    return { po, vendorName, prNos, descSummary, creatorName, amountExVat, paymentBalance };
-  }, [getFastPoPrNos, getPoCreatorDisplayName, getPoRefPrIds, poMetaHydrated, poPaymentBalanceById, prById, vendorById]);
+    return { po, vendorName, prNos, descSummary, creatorName, amountExVat };
+  }, [getFastPoPrNos, getPoCreatorDisplayName, getPoRefPrIds, poMetaHydrated, prById, vendorById]);
 
   const getPoSortValue = useCallback((entry, key) => {
-    const { po, prNos, descSummary, vendorName, creatorName, amountExVat, paymentBalance } = entry;
+    const { po, prNos, descSummary, vendorName, creatorName, amountExVat } = entry;
     switch (key) {
       case "poNo": return String(po.poNo || po.id || "");
       case "poType": return String(po.poType || "");
@@ -3021,8 +3012,6 @@ const POView = React.memo(() => {
       case "creator": return String(creatorName || "");
       case "items": return Number(po.items?.length || 0);
       case "amount": return Number(amountExVat || 0);
-      case "paymentReceive": return Number(paymentBalance?.usedAmount || 0);
-      case "balance": return Number(paymentBalance?.balanceAmount || 0);
       case "status": return String(po.statusNow || po.status || "");
       default: return "";
     }
@@ -3058,7 +3047,7 @@ const POView = React.memo(() => {
 
     const filtered = !q
       ? base
-      : base.filter(({ po, vendorName, prNos, descSummary, creatorName, amountExVat, paymentBalance }) => {
+      : base.filter(({ po, vendorName, prNos, descSummary, creatorName, amountExVat }) => {
         const blob = [
           po.poNo,
           po.poType,
@@ -3077,8 +3066,6 @@ const POView = React.memo(() => {
           creatorName,
           po.items?.length,
           amountExVat,
-          paymentBalance?.usedAmount,
-          paymentBalance?.balanceAmount,
         ].filter(Boolean).join(" ").toLowerCase();
         return blob.includes(q);
       });
@@ -3118,7 +3105,7 @@ const POView = React.memo(() => {
 
     const filtered = !q
       ? base
-      : base.filter(({ po, vendorName, prNos, descSummary, creatorName, amountExVat, paymentBalance }) => {
+      : base.filter(({ po, vendorName, prNos, descSummary, creatorName, amountExVat }) => {
         const blob = [
           po.poNo,
           po.poType,
@@ -3137,8 +3124,6 @@ const POView = React.memo(() => {
           creatorName,
           po.items?.length,
           amountExVat,
-          paymentBalance?.usedAmount,
-          paymentBalance?.balanceAmount,
         ].filter(Boolean).join(" ").toLowerCase();
         return blob.includes(q);
       });
@@ -3171,41 +3156,10 @@ const POView = React.memo(() => {
       {isColumnVisible("po", "creator") && <ResizableTh tableId="po" colKey="creator" className="py-2 px-3 cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.creator} onClick={() => requestPoSort("creator")}>ผู้เปิด/สร้าง PO <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("creator")}</span></ResizableTh>}
       {isColumnVisible("po", "items") && <ResizableTh tableId="po" colKey="items" className="py-2 px-3 text-center cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.items} onClick={() => requestPoSort("items")}>Item <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("items")}</span></ResizableTh>}
       {isColumnVisible("po", "amount") && <ResizableTh tableId="po" colKey="amount" className="py-2 px-3 text-right cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.amount} onClick={() => requestPoSort("amount")}>Amount (Ex VAT) <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("amount")}</span></ResizableTh>}
-      {canViewPoBalance && isColumnVisible("po", "paymentReceive") && <ResizableTh tableId="po" colKey="paymentReceive" className="py-2 px-3 text-right cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.paymentReceive} onClick={() => requestPoSort("paymentReceive")}>Payment &amp; Receive <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("paymentReceive")}</span></ResizableTh>}
-      {canViewPoBalance && isColumnVisible("po", "balance") && <ResizableTh tableId="po" colKey="balance" className="py-2 px-3 text-right cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.balance} onClick={() => requestPoSort("balance")}>Balance PO <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("balance")}</span></ResizableTh>}
       {isColumnVisible("po", "status") && <ResizableTh tableId="po" colKey="status" className="py-2 px-3 text-center cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPOViewColumnResize} currentWidth={poMainLayout.scaled.status} onClick={() => requestPoSort("status")}>Status <span className="text-[10px] ml-1 opacity-70">{getPoSortIndicator("status")}</span></ResizableTh>}
       {isColumnVisible("po", "actions") && <th className="hidden py-2 px-3 text-right md:table-cell" style={{ width: poMainLayout.scaled.actions }}>Action</th>}
     </>
   );
-
-  const renderPoPaymentBalanceCells = (paymentBalance: any) => {
-    const sourceLabel = paymentBalance?.usageSource === "payment" ? "Payment" : "Receive";
-    const latestLabel = paymentBalance?.sourceDocumentNo
-      ? `${sourceLabel}: ${paymentBalance.sourceDocumentNo}`
-      : `ยังไม่มี ${sourceLabel}`;
-    const validationLabel = paymentBalance?.usageSource !== "payment" || paymentBalance?.isPeriodSumConsistent
-      ? ""
-      : ` | ตรวจสอบยอดรายงวด ${formatCurrency(paymentBalance?.summedPeriodNetAmount || 0)}`;
-    return (
-      <>
-        {canViewPoBalance && isColumnVisible("po", "paymentReceive") && (
-          <td className="py-2 px-3 text-right font-semibold text-blue-700" title={`${latestLabel}${validationLabel}`}>
-            {poUsageSourcesReady ? formatCurrency(paymentBalance?.usedAmount || 0) : <span className="text-slate-400">กำลังโหลด…</span>}
-            {paymentBalance?.jobCompleted && (
-              <span className="mt-0.5 block w-fit ml-auto rounded border border-blue-300 bg-blue-100 px-1.5 py-0.5 text-[9px] leading-tight font-bold text-blue-800" title={`จบงานโดย ${paymentBalance.jobCompletedBy || "-"}`}>
-                จบงาน
-              </span>
-            )}
-          </td>
-        )}
-        {canViewPoBalance && isColumnVisible("po", "balance") && (
-          <td className="py-2 px-3 text-right font-semibold text-emerald-700" title={`${latestLabel}${validationLabel}`}>
-            {poUsageSourcesReady ? formatCurrency(paymentBalance?.balanceAmount || 0) : <span className="text-slate-400">กำลังโหลด…</span>}
-          </td>
-        )}
-      </>
-    );
-  };
 
   const renderMobilePoActions = (po) => (
     isColumnVisible("po", "actions") && (
@@ -3510,7 +3464,7 @@ const POView = React.memo(() => {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {displayedPOsPending
-                      .map(({ po, vendorName, prNos, descSummary, creatorName, amountExVat, paymentBalance }) => {
+                      .map(({ po, vendorName, prNos, descSummary, creatorName, amountExVat }) => {
                         return (
                           <React.Fragment key={po.id}>
                             <tr
@@ -3538,7 +3492,6 @@ const POView = React.memo(() => {
                               })()}
                               {isColumnVisible("po", "items") && <td className="py-2 px-3 text-center">{po.items ? po.items.length : 1}</td>}
                               {isColumnVisible("po", "amount") && <td className="py-2 px-3 text-right font-semibold">{formatCurrency(amountExVat)}</td>}
-                              {renderPoPaymentBalanceCells(paymentBalance)}
                               {isColumnVisible("po", "status") && <td className="py-2 px-3 text-center">
                                 <div className="flex flex-col items-center">
                                   <Badge status={po.statusNow || po.status} />
@@ -3719,7 +3672,7 @@ const POView = React.memo(() => {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {displayedPOsNormal
-                    .map(({ po, vendorName, prNos, descSummary, creatorName, amountExVat, paymentBalance }) => {
+                    .map(({ po, vendorName, prNos, descSummary, creatorName, amountExVat }) => {
                       return (
                         <React.Fragment key={po.id}>
                           <tr
@@ -3747,7 +3700,6 @@ const POView = React.memo(() => {
                             })()}
                             {isColumnVisible("po", "items") && <td className="py-2 px-3 text-center">{po.items ? po.items.length : 1}</td>}
                             {isColumnVisible("po", "amount") && <td className="py-2 px-3 text-right font-semibold">{formatCurrency(amountExVat)}</td>}
-                            {renderPoPaymentBalanceCells(paymentBalance)}
                             {isColumnVisible("po", "status") && <td className="py-2 px-3 text-center">
                               <div className="flex flex-col items-center">
                                 <Badge status={po.statusNow || po.status} />
@@ -3933,18 +3885,6 @@ const POView = React.memo(() => {
                         [...displayedPOsPending, ...displayedPOsNormal]
                           .reduce((total, entry) => total + Number(entry.amountExVat || 0), 0)
                       )}
-                    </td>}
-                    {canViewPoBalance && isColumnVisible("po", "paymentReceive") && <td className="px-3 py-2 text-right text-sm font-bold text-blue-700">
-                      {poUsageSourcesReady ? formatCurrency(
-                        [...displayedPOsPending, ...displayedPOsNormal]
-                          .reduce((total, { paymentBalance }) => total + Number(paymentBalance?.usedAmount || 0), 0)
-                      ) : "กำลังโหลด…"}
-                    </td>}
-                    {canViewPoBalance && isColumnVisible("po", "balance") && <td className="px-3 py-2 text-right text-sm font-bold text-emerald-700">
-                      {poUsageSourcesReady ? formatCurrency(
-                        [...displayedPOsPending, ...displayedPOsNormal]
-                          .reduce((total, { paymentBalance }) => total + Number(paymentBalance?.balanceAmount || 0), 0)
-                      ) : "กำลังโหลด…"}
                     </td>}
                     {isColumnVisible("po", "status") && <td></td>}
                     {isColumnVisible("po", "actions") && <td></td>}
