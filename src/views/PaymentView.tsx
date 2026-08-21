@@ -109,6 +109,24 @@ const STATUS_BADGE_COLORS: Record<string, string> = {
   "Rejected": "bg-red-100 text-red-800 border border-red-300",
 };
 
+const getPoItemsMissingFromPayment = (payment: any, pos: any[]) => {
+  const linkedPoIds = new Set((payment?.selectedPrIds || []).map(String));
+  if (payment?.poId) linkedPoIds.add(String(payment.poId));
+  const existingKeys = new Set((payment?.items || []).map((item: any, fallbackIndex: number) => {
+    const poId = String(item?.prId || item?.poId || "");
+    const parsedIndex = Number(item?.prItemIndex);
+    const itemIndex = Number.isInteger(parsedIndex) && parsedIndex >= 0 ? parsedIndex : fallbackIndex;
+    return `${poId}:${itemIndex}`;
+  }));
+
+  return (pos || []).flatMap((po: any) => {
+    if (!linkedPoIds.has(String(po.id))) return [];
+    return (po.items || []).flatMap((item: any, itemIndex: number) => (
+      existingKeys.has(`${String(po.id)}:${itemIndex}`) ? [] : [{ po, item, itemIndex }]
+    ));
+  });
+};
+
 const PERIOD_APPROVER_ROLES: Record<string, string[]> = {
   "งวดงาน Pending CM": ["CM", "Administrator"],
   "งวดงาน Pending PM": ["PM", "PCM", "Administrator"],
@@ -1202,6 +1220,7 @@ const PaymentView = React.memo(() => {
     try {
       const creator = getUserIdentity(userData, user);
       const currentItems = p.items || [];
+      const missingPoItems = getPoItemsMissingFromPayment(p, pos);
       const paymentDiscountEnabled = p.discountAllocationVersion === PO_DISCOUNT_ALLOCATION_VERSION;
 
       // Carry over accumulated quantities and reset thisPeriod
@@ -1213,7 +1232,23 @@ const PaymentView = React.memo(() => {
         thisPeriodAmount: 0,
         thisPeriodPct: 0,
         remark: "",
-      }));
+      })).concat(missingPoItems.map(({ po, item, itemIndex }: any) => ({
+        prId: po.id,
+        prItemIndex: itemIndex,
+        description: item.description || "",
+        unit: item.unit || "",
+        contractQty: Number(item.quantity) || 0,
+        contractPrice: Number(item.price ?? item.unitPrice) || 0,
+        contractAmount: (Number(item.quantity) || 0) * (Number(item.price ?? item.unitPrice) || 0),
+        thisPeriodQty: 0,
+        thisPeriodAmount: 0,
+        thisPeriodPct: 0,
+        prevAccumQty: 0,
+        prevAccumAmount: 0,
+        remark: "",
+        budgetId: item.budgetId || null,
+        budgetSubItemId: item.budgetSubItemId || null,
+      })));
 
       const newPayload = {
         paymentNo: nextPaymentNo,
@@ -1231,7 +1266,7 @@ const PaymentView = React.memo(() => {
         amount: 0,
         ...(paymentDiscountEnabled ? {
           discountAllocationVersion: PO_DISCOUNT_ALLOCATION_VERSION,
-          poGrossAmount: Number(p.poGrossAmount) || getPaymentContractGrossAmount(p),
+          poGrossAmount: nextItems.reduce((sum: number, item: any) => sum + (Number(item.contractAmount) || ((Number(item.contractQty) || 0) * (Number(item.contractPrice) || 0))), 0),
           poDiscountAmount: Number(p.poDiscountAmount) || 0,
           discountPrId: p.discountPrId || null,
           discountPrNo: p.discountPrNo || null,
@@ -1308,9 +1343,11 @@ const PaymentView = React.memo(() => {
   // ─── Filtered payments for current project ───────────────────────────────────
   const projectPayments = useMemo(() => {
     return (payments || [])
-      .filter((p: any) => p.projectId === selectedProjectId && p.status !== "Paid")
+      .filter((p: any) => p.projectId === selectedProjectId && (
+        p.status !== "Paid" || (!p.hasNextPeriodStarted && getPoItemsMissingFromPayment(p, pos).length > 0)
+      ))
       .map(withLatestPo);
-  }, [payments, selectedProjectId, withLatestPo]);
+  }, [payments, pos, selectedProjectId, withLatestPo]);
 
   // ─── PO SP/DC ที่ Approved แต่ยังไม่มี Payment document (Auto Draft) ────────
   const linkedPoIds = useMemo(() => {
@@ -1911,6 +1948,7 @@ const PaymentView = React.memo(() => {
           if (contractAmt <= 0) return true;
           return (Number(it.prevAccumAmount) || 0) + (Number(it.thisPeriodAmount) || 0) >= contractAmt;
         });
+        const hasNewPoItems = !isViewingOldPeriod && getPoItemsMissingFromPayment(vp, pos).length > 0;
         const thisPeriodGrandTotal = vpItems.reduce((s: number, it: any) => {
           if (isViewingOldPeriod) return s + (Number(it.thisPeriodAmount) || 0);
           const k = `${it.prId}_${it.prItemIndex}`;
@@ -2628,7 +2666,7 @@ const PaymentView = React.memo(() => {
                     </button>
                   )}
                   {/* In Process / Paid → ใส่ปริมาณ (start next period) — ซ่อนเมื่อครบ 100% ทุกรายการ หรือ Procurement */}
-                  {(vp.status === "Paid" || vp.status === "In Process") && !vp.hasNextPeriodStarted && !isViewingOldPeriod && !allItemsComplete && !myRoles.some(r => r === "Procurement") && canStartNextPeriod && (
+                  {(vp.status === "Paid" || vp.status === "In Process") && !vp.hasNextPeriodStarted && !isViewingOldPeriod && (!allItemsComplete || hasNewPoItems) && !myRoles.some(r => r === "Procurement") && canStartNextPeriod && (
                     <button
                       disabled={actioning}
                       onClick={() => handleStartNextPeriod(vp)}

@@ -59,7 +59,7 @@ import {
   repairLegacyAllocationRoutes,
   validatePoPrLinkage,
 } from "../lib/poPrValidation";
-import { validatePoAgainstPaymentProgress } from "../lib/poPaymentValidation";
+import { getPaidPoItemIndexes, validatePoAgainstPaymentProgress } from "../lib/poPaymentValidation";
 import {
   PO_DISCOUNT_ALLOCATION_VERSION,
   applyDiscountToPrAllocations,
@@ -351,6 +351,12 @@ const POView = React.memo(() => {
 
   // Form Data State
   const [formData, setFormData] = useState(getDefaultPoFormData());
+  const editingPo = useMemo(() => editingPoId ? pos.find((po: any) => po.id === editingPoId) : null, [editingPoId, pos]);
+  const paidLockedPoItemIndexes = useMemo(
+    () => editingPo ? getPaidPoItemIndexes({ po: editingPo, payments }) : new Set<number>(),
+    [editingPo, payments]
+  );
+  const hasPaidLockedPoItems = paidLockedPoItemIndexes.size > 0;
   const [isInvoiceSetupModalOpen, setIsInvoiceSetupModalOpen] = useState(false);
   const [invoiceSetupDraft, setInvoiceSetupDraft] = useState(() => createInvoiceSetupDraft());
   const [isReceiveSetupModalOpen, setIsReceiveSetupModalOpen] = useState(false);
@@ -1187,6 +1193,11 @@ const POView = React.memo(() => {
   const handleItemToggle = (itemData) => {
     const exists = formData.items.find(i => !String(i.id || "").startsWith("free-") && i.prId === itemData.prId && i.prItemIndex === itemData.prItemIndex);
     if (exists) {
+      const formIndex = formData.items.indexOf(exists);
+      if (paidLockedPoItemIndexes.has(formIndex)) {
+        showAlert("ลบรายการไม่ได้", "รายการนี้ถูกบันทึกใน Payment สถานะ Paid แล้ว สามารถเพิ่มรายการใหม่ได้เท่านั้น", "warning");
+        return;
+      }
       setFormData(prev => ({
         ...prev,
         items: prev.items.filter(i => String(i.id || "").startsWith("free-") || !(i.prId === itemData.prId && i.prItemIndex === itemData.prItemIndex))
@@ -1271,6 +1282,10 @@ const POView = React.memo(() => {
 
   const toggleDisPrInPlan = (itemRef: { type: "item"; prId: string; prItemIndex: number } | { type: "free"; id: string }, prNo: string) => {
     if (!prNo) return;
+    const formIndex = itemRef.type === "item"
+      ? formData.items.findIndex((item: any) => !String(item.id || "").startsWith("free-") && item.prId === itemRef.prId && item.prItemIndex === itemRef.prItemIndex)
+      : formData.items.findIndex((item: any) => item.id === itemRef.id);
+    if (paidLockedPoItemIndexes.has(formIndex)) return;
     if (itemRef.type === "item") {
       setFormData(prev => ({
         ...prev,
@@ -1301,6 +1316,8 @@ const POView = React.memo(() => {
   };
 
   const handleFreeItemChange = (freeId, field, value) => {
+    const formIndex = formData.items.findIndex((item: any) => item.id === freeId);
+    if (paidLockedPoItemIndexes.has(formIndex)) return;
     setFormData(prev => ({
       ...prev,
       items: prev.items.map(item => {
@@ -1315,6 +1332,8 @@ const POView = React.memo(() => {
   };
 
   const handleFreeItemPrRouteChange = (freeId: string, routeKey: string) => {
+    const formIndex = formData.items.findIndex((item: any) => item.id === freeId);
+    if (paidLockedPoItemIndexes.has(formIndex)) return;
     const route = freeItemPrRouteOptions.find((option: any) => option.key === routeKey);
     setFormData(prev => ({
       ...prev,
@@ -1343,10 +1362,17 @@ const POView = React.memo(() => {
     }));
   };
   const removeFreeItem = (freeId) => {
+    const formIndex = formData.items.findIndex((item: any) => item.id === freeId);
+    if (paidLockedPoItemIndexes.has(formIndex)) {
+      showAlert("ลบรายการไม่ได้", "รายการนี้ถูกบันทึกใน Payment สถานะ Paid แล้ว สามารถเพิ่มรายการใหม่ได้เท่านั้น", "warning");
+      return;
+    }
     setFormData(prev => ({ ...prev, items: prev.items.filter(i => i.id !== freeId) }));
   };
 
   const setFreeItemMaterial = (freeId, mat) => {
+    const formIndex = formData.items.findIndex((item: any) => item.id === freeId);
+    if (paidLockedPoItemIndexes.has(formIndex)) return;
     const qty = 1;
     const price = Number(mat?.price) || 0;
     setFormData(prev => ({
@@ -1360,6 +1386,8 @@ const POView = React.memo(() => {
 
   // Handle Item Detail Change
   const handleItemChange = (prId, prItemIndex, field, value) => {
+    const formIndex = formData.items.findIndex((item: any) => !String(item.id || "").startsWith("free-") && item.prId === prId && item.prItemIndex === prItemIndex);
+    if (paidLockedPoItemIndexes.has(formIndex)) return;
     setFormData(prev => ({
       ...prev,
       items: prev.items.map(item => {
@@ -1705,7 +1733,7 @@ const POView = React.memo(() => {
     if (result.valid) return true;
 
     showAlert(
-      "แก้ไข PO ต่ำกว่ายอดสะสม Payment ไม่ได้",
+      "แก้ไขรายการ PO ที่ผูก Payment ไม่ได้",
       result.errors.slice(0, 8).join("\n"),
       "warning"
     );
@@ -5080,6 +5108,11 @@ const POView = React.memo(() => {
                       </div>
 
                       <div className="p-4 overflow-hidden w-full min-w-0">
+                        {hasPaidLockedPoItems && (
+                          <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                            รายการที่บันทึกใน Payment สถานะ Paid แล้วถูกล็อก ไม่สามารถแก้ไขหรือลบได้ทุกงวด แต่สามารถเพิ่มรายการ PO ใหม่ได้
+                          </div>
+                        )}
                         <div ref={selectItemsTableRef} className="w-full min-w-0 overflow-x-auto pb-1">
                           <table
                             className="text-left text-xs rounded-xl border border-slate-200 table-fixed"
@@ -5103,12 +5136,14 @@ const POView = React.memo(() => {
                               {availableItems.map((item) => {
                                 const isSelected = formData.items.some(i => !String(i.id || "").startsWith("free-") && i.prId === item.prId && i.prItemIndex === item.prItemIndex);
                                 const selectedData = formData.items.find(i => !String(i.id || "").startsWith("free-") && i.prId === item.prId && i.prItemIndex === item.prItemIndex) || item;
+                                const selectedFormIndex = formData.items.indexOf(selectedData);
+                                const isPaidLocked = isSelected && paidLockedPoItemIndexes.has(selectedFormIndex);
                                 const inputCls = "w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed focus:border-red-400 focus:ring-1 focus:ring-red-100 bg-white";
 
                                 return (
                                   <tr key={`${item.prId}-${item.prItemIndex}`} className={isSelected ? "bg-white hover:bg-slate-50/30" : "bg-slate-50/60 opacity-60"}>
                                     <td className="p-2.5 text-center">
-                                      <input type="checkbox" checked={isSelected} onChange={() => handleItemToggle(item)} className="rounded border-slate-300 cursor-pointer" />
+                                      <input type="checkbox" checked={isSelected} disabled={isPaidLocked} onChange={() => handleItemToggle(item)} className="rounded border-slate-300 cursor-pointer disabled:cursor-not-allowed" title={isPaidLocked ? "ล็อกโดย Payment Paid" : ""} />
                                     </td>
                                     <td className="p-2.5 font-medium text-slate-800 whitespace-nowrap">
                                       {item.prNo}
@@ -5125,7 +5160,7 @@ const POView = React.memo(() => {
                                       <MaterialAutoComplete
                                         value={selectedData.materialNo ?? ""}
                                         className={inputCls}
-                                        disabled={!isSelected}
+                                        disabled={!isSelected || isPaidLocked}
                                         placeholder="ระบุ Material No."
                                         materials={materials}
                                         onChange={(val) => handleItemChange(item.prId, item.prItemIndex, "materialNo", val)}
@@ -5137,7 +5172,7 @@ const POView = React.memo(() => {
                                       <MaterialAutoComplete
                                         value={selectedData.description ?? ""}
                                         className={inputCls}
-                                        disabled={!isSelected}
+                                        disabled={!isSelected || isPaidLocked}
                                         placeholder="รายการสินค้า"
                                         materials={materials}
                                         onChange={(val) => handleItemChange(item.prId, item.prItemIndex, "description", val)}
@@ -5149,7 +5184,7 @@ const POView = React.memo(() => {
                                       <input
                                         type="text"
                                         className={`${inputCls} w-20`}
-                                        disabled={!isSelected}
+                                        disabled={!isSelected || isPaidLocked}
                                         value={selectedData.unit ?? item.unit ?? ""}
                                         placeholder="หน่วย"
                                         onChange={(e) => handleItemChange(item.prId, item.prItemIndex, "unit", e.target.value)}
@@ -5161,7 +5196,7 @@ const POView = React.memo(() => {
                                         type="text"
                                         inputMode="decimal"
                                         className={`${inputCls} text-right`}
-                                        disabled={!isSelected}
+                                        disabled={!isSelected || isPaidLocked}
                                         value={formatNumericInput(selectedData.quantity)}
                                         onChange={(e) => handleItemChange(item.prId, item.prItemIndex, "quantity", normalizeNumericInput(e.target.value))}
                                       />
@@ -5172,7 +5207,7 @@ const POView = React.memo(() => {
                                         type="text"
                                         inputMode="decimal"
                                         className={`${inputCls} text-right`}
-                                        disabled={!isSelected}
+                                        disabled={!isSelected || isPaidLocked}
                                         value={formatNumericInput(selectedData.price)}
                                         onChange={(e) => handleItemChange(item.prId, item.prItemIndex, "price", normalizeNumericInput(e.target.value))}
                                       />
@@ -5190,7 +5225,7 @@ const POView = React.memo(() => {
                                           <div className="relative">
                                             <button
                                               type="button"
-                                              disabled={!isSelected}
+                                              disabled={!isSelected || isPaidLocked}
                                               onClick={(e) => toggleDisPrPick(key, (e.currentTarget as any)?.getBoundingClientRect?.() || null)}
                                               className={`w-full min-w-0 text-left rounded-lg px-1.5 py-1 text-xs bg-white ${borderCls} border disabled:bg-slate-50 disabled:text-slate-400`}
                                               title="เลือก PR ที่จะตัดยอด (เรียงตามลำดับที่เลือก)"
@@ -5218,6 +5253,8 @@ const POView = React.memo(() => {
                               {/* รายการว่าง (เพิ่มจากปุ่ม + เพิ่มรายการ) — กรอกอิสระ ไม่จำกัด */}
                               {formData.items.filter(i => i.id && String(i.id).startsWith("free-")).map((freeItem) => {
                                 const inputCls = "w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:border-red-400 focus:ring-1 focus:ring-red-100 bg-white";
+                                const freeFormIndex = formData.items.indexOf(freeItem);
+                                const isPaidLocked = paidLockedPoItemIndexes.has(freeFormIndex);
                                 const sourcePrId = freeItem.sourcePrId || freeItem.prId || "";
                                 const sourcePrItemIndex = Number(freeItem.sourcePrItemIndex ?? freeItem.prItemIndex);
                                 const routeValue = sourcePrId && Number.isInteger(sourcePrItemIndex) && sourcePrItemIndex >= 0
@@ -5226,7 +5263,7 @@ const POView = React.memo(() => {
                                 return (
                                   <tr key={freeItem.id} className="bg-white hover:bg-slate-50/30 border-t border-slate-200">
                                     <td className="p-2.5 text-center">
-                                      <button type="button" className="text-red-400 hover:text-red-600 p-1" onClick={() => removeFreeItem(freeItem.id)} title="ลบรายการ">
+                                      <button type="button" disabled={isPaidLocked} className="text-red-400 hover:text-red-600 p-1 disabled:text-slate-300 disabled:cursor-not-allowed" onClick={() => removeFreeItem(freeItem.id)} title={isPaidLocked ? "ล็อกโดย Payment Paid" : "ลบรายการ"}>
                                         <Trash2 size={14} />
                                       </button>
                                     </td>
@@ -5234,6 +5271,7 @@ const POView = React.memo(() => {
                                       <select
                                         className={`${inputCls} min-w-[180px] ${routeValue ? "" : "border-red-300 ring-1 ring-red-100"}`}
                                         value={routeValue}
+                                        disabled={isPaidLocked}
                                         onChange={(e) => handleFreeItemPrRouteChange(freeItem.id, e.target.value)}
                                         title="เลือกรายการย่อยของ PR ที่รายการ PO นี้ใช้อ้างอิง"
                                       >
@@ -5245,19 +5283,19 @@ const POView = React.memo(() => {
                                     </td>
                                     <td className="p-2.5"><span className="text-amber-600 text-[10px]">รายการเพิ่ม</span></td>
                                     <td className="p-2.5">
-                                      <MaterialAutoComplete value={freeItem.materialNo || ""} className={inputCls} placeholder="Material No." materials={materials} onChange={(val) => handleFreeItemChange(freeItem.id, "materialNo", val)} onSelectMaterial={(mat) => setFreeItemMaterial(freeItem.id, mat)} />
+                                      <MaterialAutoComplete value={freeItem.materialNo || ""} className={inputCls} disabled={isPaidLocked} placeholder="Material No." materials={materials} onChange={(val) => handleFreeItemChange(freeItem.id, "materialNo", val)} onSelectMaterial={(mat) => setFreeItemMaterial(freeItem.id, mat)} />
                                     </td>
                                     <td className="p-2.5">
-                                      <input type="text" className={inputCls} placeholder="รายการ" value={freeItem.description || ""} onChange={e => handleFreeItemChange(freeItem.id, "description", e.target.value)} />
+                                      <input type="text" className={inputCls} disabled={isPaidLocked} placeholder="รายการ" value={freeItem.description || ""} onChange={e => handleFreeItemChange(freeItem.id, "description", e.target.value)} />
                                     </td>
                                     <td className="p-2.5">
-                                      <input type="text" className={`${inputCls} w-16`} placeholder="หน่วย" value={freeItem.unit || ""} onChange={e => handleFreeItemChange(freeItem.id, "unit", e.target.value)} />
+                                      <input type="text" className={`${inputCls} w-16`} disabled={isPaidLocked} placeholder="หน่วย" value={freeItem.unit || ""} onChange={e => handleFreeItemChange(freeItem.id, "unit", e.target.value)} />
                                     </td>
                                     <td className="p-2.5" style={{ minWidth: selectItemsNumericMinWidths.orderQty }}>
-                                      <input type="text" inputMode="decimal" className={`${inputCls} text-right`} value={formatNumericInput(freeItem.quantity)} onChange={e => handleFreeItemChange(freeItem.id, "quantity", normalizeNumericInput(e.target.value))} />
+                                      <input type="text" inputMode="decimal" className={`${inputCls} text-right`} disabled={isPaidLocked} value={formatNumericInput(freeItem.quantity)} onChange={e => handleFreeItemChange(freeItem.id, "quantity", normalizeNumericInput(e.target.value))} />
                                     </td>
                                     <td className="p-2.5" style={{ minWidth: selectItemsNumericMinWidths.price }}>
-                                      <input type="text" inputMode="decimal" className={`${inputCls} text-right`} value={formatNumericInput(freeItem.price)} onChange={e => handleFreeItemChange(freeItem.id, "price", normalizeNumericInput(e.target.value))} />
+                                      <input type="text" inputMode="decimal" className={`${inputCls} text-right`} disabled={isPaidLocked} value={formatNumericInput(freeItem.price)} onChange={e => handleFreeItemChange(freeItem.id, "price", normalizeNumericInput(e.target.value))} />
                                     </td>
                                     <td className="p-2.5 text-right font-bold text-slate-800 whitespace-nowrap" style={{ minWidth: selectItemsNumericMinWidths.total }}>
                                       {formatCurrency(Number(freeItem.quantity) * Number(freeItem.price))}
@@ -5272,8 +5310,9 @@ const POView = React.memo(() => {
                                           <div className="relative">
                                             <button
                                               type="button"
+                                              disabled={isPaidLocked}
                                               onClick={(e) => toggleDisPrPick(key, (e.currentTarget as any)?.getBoundingClientRect?.() || null)}
-                                              className={`w-full min-w-0 text-left rounded-lg px-1.5 py-1 text-xs bg-white ${borderCls} border`}
+                                              className={`w-full min-w-0 text-left rounded-lg px-1.5 py-1 text-xs bg-white ${borderCls} border disabled:bg-slate-50 disabled:text-slate-400`}
                                               title="เลือก PR ที่จะตัดยอด (เรียงตามลำดับที่เลือก)"
                                             >
                                               {plan.length === 0 ? (
@@ -5452,6 +5491,7 @@ const POView = React.memo(() => {
                           <input
                             type="checkbox"
                             checked={discountEnabled}
+                            disabled={hasPaidLockedPoItems}
                             onChange={e => {
                               const checked = e.target.checked;
                               setDiscountEnabled(checked);
@@ -5460,7 +5500,7 @@ const POView = React.memo(() => {
                                 setFormData(prev => ({ ...prev, discount: 0, discountPrId: "", discountPrNo: "" }));
                               }
                             }}
-                            className="rounded text-red-600 w-3 h-3"
+                            className="rounded text-red-600 w-3 h-3 disabled:cursor-not-allowed"
                           />
                           <span>ส่วนลด</span>
                         </label>
@@ -5471,6 +5511,7 @@ const POView = React.memo(() => {
                             className="w-20 border border-slate-200 rounded px-1.5 py-0.5 text-[11px] text-right focus:border-red-400 focus:ring-1 focus:ring-red-100 outline-none"
                             placeholder="0.00"
                             value={discountInput}
+                            disabled={hasPaidLockedPoItems}
                             onChange={e => {
                               const rawValue = e.target.value.replace(/,/g, "");
                               if (!/^\d*(?:\.\d*)?$/.test(rawValue)) return;

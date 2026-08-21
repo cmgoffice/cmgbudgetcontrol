@@ -595,13 +595,48 @@ const InvoiceView = React.memo(() => {
       "ยืนยันการลบ",
       `ต้องการลบ Invoice ${invoice.invNo || invoice.id} ใช่หรือไม่?`,
       async () => {
-        const hasBillingStage = Boolean(String(invoice?.billingNo || "").trim());
-        const hasPayStage = Boolean(String(invoice?.payNo || "").trim());
+        const basePath = ["artifacts", appId, "public", "data"] as const;
+        const invoiceId = String(invoice?.id || "");
+        const invoiceNo = String(invoice?.invNo || invoice?.docNo || invoiceId);
+        let linkedBillings: any[] = [];
+        let linkedPays: any[] = [];
+        try {
+          const [billingSnapshot, paySnapshot] = await Promise.all([
+            getDocs(collection(db, ...basePath, "billings")),
+            getDocs(collection(db, ...basePath, "pays")),
+          ]);
+          linkedBillings = billingSnapshot.docs
+            .map((entry: any) => ({ id: entry.id, ...entry.data() }))
+            .filter((billing: any) => (
+              (billing.invoiceIds || []).map(String).includes(invoiceId) ||
+              (billing.invoiceRefs || []).map(String).includes(invoiceNo)
+            ));
+          const linkedBillingIds = new Set(linkedBillings.map((billing: any) => String(billing.id)));
+          linkedPays = paySnapshot.docs
+            .map((entry: any) => ({ id: entry.id, ...entry.data() }))
+            .filter((pay: any) => (
+              (pay.invoiceIds || []).map(String).includes(invoiceId) ||
+              (pay.invoiceRefs || []).map(String).includes(invoiceNo) ||
+              (pay.billingIds || []).some((id: any) => linkedBillingIds.has(String(id)))
+            ));
+        } catch (error: any) {
+          showAlert("ตรวจสอบเอกสารไม่สำเร็จ", error?.message || String(error), "error");
+          return;
+        }
+        const hasBillingStage = Boolean(String(invoice?.billingNo || "").trim()) || linkedBillings.length > 0;
+        const hasPayStage = Boolean(String(invoice?.payNo || "").trim()) || linkedPays.length > 0;
 
         if (hasPayStage || hasBillingStage) {
+          const payNos = linkedPays.map((pay: any) => pay.docNo || pay.payNo || pay.id).filter(Boolean);
+          const billingNos = linkedBillings.map((billing: any) => billing.docNo || billing.billingNo || billing.id).filter(Boolean);
+          const rollbackSteps = [
+            ...(hasPayStage ? [`ลบ Pay ก่อน${payNos.length ? `: ${payNos.join(", ")}` : ""}`] : []),
+            ...(hasBillingStage ? [`ลบ Billing${billingNos.length ? `: ${billingNos.join(", ")}` : ""}`] : []),
+            `แล้วจึงลบ Invoice ${invoice.invNo || invoice.id}`,
+          ];
           showAlert(
             "ยังลบไม่ได้",
-            `Invoice ${invoice.invNo || invoice.id} อยู่ใน stage Billing/Pay กรุณาลบรายการปลายทางก่อนเพื่อให้สถานะถอยกลับ`,
+            `Invoice นี้ถูกนำไปใช้งานแล้ว กรุณา Roll Back ทีละขั้น ห้ามลบข้าม:\n${rollbackSteps.map((step, index) => `${index + 1}. ${step}`).join("\n")}`,
             "warning"
           );
           return;

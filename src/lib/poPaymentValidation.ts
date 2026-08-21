@@ -31,6 +31,8 @@ export type PoPaymentItemLock = {
   description: string;
   minimumQty: number;
   minimumAmount: number;
+  immutable: boolean;
+  paidPaymentNos: string[];
 };
 
 export type PoPaymentValidationResult = {
@@ -39,6 +41,36 @@ export type PoPaymentValidationResult = {
   revisedTotal: number;
   itemLocks: PoPaymentItemLock[];
   errors: string[];
+};
+
+const isPaidPayment = (payment: any) => normalizeText(payment?.status || payment?.statusNow).toLowerCase() === "paid";
+
+export const getPaidPoItemIndexes = ({ po, payments }: { po: any; payments: any[] }): Set<number> => {
+  const indexes = new Set<number>();
+  (payments || [])
+    .filter((payment: any) => isPaymentLinkedToPo(payment, po) && isPaidPayment(payment))
+    .forEach((payment: any) => {
+      (payment?.items || []).forEach((item: any, fallbackIndex: number) => {
+        const parsedIndex = Number(item?.prItemIndex);
+        const itemIndex = Number.isInteger(parsedIndex) && parsedIndex >= 0 ? parsedIndex : fallbackIndex;
+        if (po?.items?.[itemIndex]) indexes.add(itemIndex);
+      });
+    });
+  return indexes;
+};
+
+const numberEqual = (left: any, right: any) => Math.abs(asNumber(left) - asNumber(right)) <= 0.000001;
+const listEqual = (left: any, right: any) => JSON.stringify(Array.isArray(left) ? left : []) === JSON.stringify(Array.isArray(right) ? right : []);
+const paidItemWasChanged = (original: any, revised: any) => {
+  if (!original || !revised) return true;
+  const textFields = ["materialNo", "description", "unit", "prId", "sourcePrId", "linkedPrNo"];
+  if (textFields.some((field) => normalizeText(original?.[field]) !== normalizeText(revised?.[field]))) return true;
+  const numberFields = ["quantity", "price", "unitPrice", "prItemIndex", "sourcePrItemIndex"];
+  if (numberFields.some((field) => {
+    if (original?.[field] == null && revised?.[field] == null) return false;
+    return !numberEqual(original?.[field], revised?.[field]);
+  })) return true;
+  return !listEqual(original?.disPrPlan, revised?.disPrPlan) || !listEqual(original?.disPrAllocations, revised?.disPrAllocations);
 };
 
 /**
@@ -74,6 +106,26 @@ export const validatePoAgainstPaymentProgress = ({
         description: normalizeText(item?.description) || `รายการที่ ${itemIndex + 1}`,
         minimumQty: Math.max(existing?.minimumQty || 0, cumulativeQty),
         minimumAmount: Math.max(existing?.minimumAmount || 0, cumulativeAmount),
+        immutable: Boolean(existing?.immutable),
+        paidPaymentNos: existing?.paidPaymentNos || [],
+      });
+    });
+  });
+
+  linkedPayments.filter(isPaidPayment).forEach((payment: any) => {
+    (payment?.items || []).forEach((item: any, fallbackIndex: number) => {
+      const parsedIndex = Number(item?.prItemIndex);
+      const itemIndex = Number.isInteger(parsedIndex) && parsedIndex >= 0 ? parsedIndex : fallbackIndex;
+      if (!po?.items?.[itemIndex]) return;
+      const existing = lockByIndex.get(itemIndex);
+      const paymentNo = normalizeText(payment?.paymentNo || payment?.id);
+      lockByIndex.set(itemIndex, {
+        itemIndex,
+        description: normalizeText(po.items[itemIndex]?.description || item?.description) || `รายการที่ ${itemIndex + 1}`,
+        minimumQty: existing?.minimumQty || 0,
+        minimumAmount: existing?.minimumAmount || 0,
+        immutable: true,
+        paidPaymentNos: Array.from(new Set([...(existing?.paidPaymentNos || []), paymentNo].filter(Boolean))),
       });
     });
   });
@@ -90,7 +142,14 @@ export const validatePoAgainstPaymentProgress = ({
   itemLocks.forEach((lock) => {
     const revisedItem = revisedItems?.[lock.itemIndex];
     if (!revisedItem) {
-      errors.push(`${lock.description}: ลบรายการไม่ได้ เนื่องจากมีผลงานสะสมแล้ว ${lock.minimumAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`);
+      errors.push(lock.immutable
+        ? `${lock.description}: ลบไม่ได้ เพราะบันทึกใน Payment Paid แล้ว${lock.paidPaymentNos.length ? ` (${lock.paidPaymentNos.join(", ")})` : ""}`
+        : `${lock.description}: ลบรายการไม่ได้ เนื่องจากมีผลงานสะสมแล้ว ${lock.minimumAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`);
+      return;
+    }
+
+    if (lock.immutable && paidItemWasChanged(po?.items?.[lock.itemIndex], revisedItem)) {
+      errors.push(`${lock.description}: แก้ไขรายการ จำนวน ราคา หรือการอ้างอิง PR ไม่ได้ เพราะบันทึกใน Payment Paid แล้ว${lock.paidPaymentNos.length ? ` (${lock.paidPaymentNos.join(", ")})` : ""}`);
       return;
     }
 
@@ -103,6 +162,10 @@ export const validatePoAgainstPaymentProgress = ({
       errors.push(`${lock.description}: มูลค่ารายการต้องไม่น้อยกว่า ${lock.minimumAmount.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`);
     }
   });
+
+  if (itemLocks.some((lock) => lock.immutable) && !numberEqual(discount, po?.discount)) {
+    errors.push("แก้ไขส่วนลดเดิมไม่ได้ เพราะมีรายการถูกบันทึกใน Payment Paid แล้ว (สามารถเพิ่มรายการ PO ใหม่ได้)");
+  }
 
   if (revisedTotal + 0.005 < minimumTotal) {
     errors.push(`ยอด PO หลังส่วนลดต้องไม่น้อยกว่ายอดสะสม Payment ${minimumTotal.toLocaleString("th-TH", { minimumFractionDigits: 2 })} บาท`);

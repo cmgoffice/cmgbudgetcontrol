@@ -36,6 +36,7 @@ import {
 } from "./lib/constants";
 import { getPoAmountExVat, getPoItemsGrossSubtotal } from "./lib/poDiscount";
 import { getPoNumberVariants, getPoPaymentAndReceiveBalanceInfo } from "./lib/poPaymentBalance";
+import { buildPoActiveBlockedMessage, getPoActiveDependencies } from "./lib/poActiveValidation";
 import { buildPoBudgetReturnPlan, enqueuePoBudgetReturnJob } from "./lib/poBudgetReturn";
 import { getPreviousGeneratedPdfPath, removePreviousGeneratedPdf, uploadRevisionPdf } from "./lib/pdfReplacement";
 import { AuthContext } from "./auth/AuthContext";
@@ -1485,7 +1486,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       } else if (status === "Closed PO" && userRoles.includes("Administrator")) {
         openConfirm?.(
           "Active PO",
-          `การคืนสถานะ PO ${row.poNo || row.id} จะเปลี่ยนสถานะกลับเป็น Approved และลบ Invoice/Receive ที่ผูกไว้ ต้องการดำเนินการต่อหรือไม่?`,
+          `ระบบจะตรวจสอบเอกสารที่ผูกกับ PO ${row.poNo || row.id} ก่อน หากไม่มี Invoice/Billing/Pay/Receive ค้างอยู่ จึงจะคืนสถานะเป็น Approved โดย Payment ทุกงวดยังคงอยู่ ต้องการดำเนินการต่อหรือไม่?`,
           async () => handleActivePO(row),
           "danger",
           {
@@ -1822,42 +1823,31 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     })();
   }, [recreatePoInFlightId, vendors, projects, updateData, logAction, selectedProjectId, userData, user]);
 
-  const getRelatedInvoicesForPo = React.useCallback((po: any) => {
-    if (!po) return [];
-    const poNo = String(po.poNo || "").trim();
-    return invoices.filter((inv: any) =>
-      inv?.poId === po.id ||
-      (poNo && [inv?.poNo, inv?.poRef].some((value) => String(value || "").trim() === poNo))
-    );
-  }, [invoices]);
-
-  const getRelatedReceivesForPo = React.useCallback((po: any) => {
-    if (!po) return [];
-    const poNo = String(po.poNo || "").trim();
-    return receives.filter((rcv: any) =>
-      rcv?.poId === po.id ||
-      (poNo && String(rcv?.poNo || "").trim() === poNo)
-    );
-  }, [receives]);
-
   const handleActivePO = React.useCallback(async (po: any) => {
     if (!po || po.status !== "Closed PO") return false;
     try {
-      const relatedInvoices = getRelatedInvoicesForPo(po);
-      const relatedReceives = getRelatedReceivesForPo(po);
-
-      for (const receive of relatedReceives) {
-        if (receive?.pdfPath) await deleteGeneratedPdf(receive.pdfPath);
-      }
-
-      for (const invoice of relatedInvoices) {
-        const deleted = await deleteData?.("invoices", invoice.id, { skipLog: true });
-        if (!deleted) throw new Error(`ลบ Invoice ${invoice.invNo || invoice.id} ไม่สำเร็จ`);
-      }
-
-      for (const receive of relatedReceives) {
-        const deleted = await deleteData?.("receives", receive.id, { skipLog: true });
-        if (!deleted) throw new Error(`ลบ Receive ${receive.rpNo || receive.receiveNo || receive.id} ไม่สำเร็จ`);
+      // Always read the dependency collections at action time. Active PO is a
+      // destructive workflow boundary, so a stale client subscription must not
+      // allow the user to skip Pay -> Billing -> Invoice -> Receive rollback.
+      const basePath = ["artifacts", appId, "public", "data"] as const;
+      const [invoiceSnapshot, billingSnapshot, paySnapshot, receiveSnapshot] = await Promise.all([
+        getDocs(collection(db, ...basePath, "invoices")),
+        getDocs(collection(db, ...basePath, "billings")),
+        getDocs(collection(db, ...basePath, "pays")),
+        getDocs(collection(db, ...basePath, "receives")),
+      ]);
+      const fromSnapshot = (snapshot: any) => snapshot.docs.map((entry: any) => ({ id: entry.id, ...entry.data() }));
+      const dependencies = getPoActiveDependencies({
+        po,
+        invoices: fromSnapshot(invoiceSnapshot),
+        billings: fromSnapshot(billingSnapshot),
+        pays: fromSnapshot(paySnapshot),
+        receives: fromSnapshot(receiveSnapshot),
+      });
+      const blockedMessage = buildPoActiveBlockedMessage(po, dependencies);
+      if (blockedMessage) {
+        showAlert?.("ยัง Active PO ไม่ได้", blockedMessage, "warning");
+        return false;
       }
 
       const resumed = await updateData?.("pos", po.id, {
@@ -1869,12 +1859,12 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
       await logAction?.(
         "Approve Active PO",
-        `คืนสถานะ PO ${po.poNo || po.id}: Closed PO → Approved, ลบ ${relatedInvoices.length} Invoice และ ${relatedReceives.length} Receive`,
+        `คืนสถานะ PO ${po.poNo || po.id}: Closed PO → Approved | ตรวจสอบ Roll Back เอกสารปลายทางครบแล้ว | คง Payment ทุกงวดไว้`,
         po.projectId
       );
       showAlert?.(
         "สำเร็จ",
-        `PO ${po.poNo || po.id} กลับเป็น Approved แล้ว และลบ ${relatedInvoices.length} Invoice / ${relatedReceives.length} Receive เรียบร้อย`,
+        `PO ${po.poNo || po.id} กลับเป็น Approved แล้ว โดย Payment ทุกงวดยังคงอยู่`,
         "success"
       );
       return true;
@@ -1882,7 +1872,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       showAlert?.("คืนสถานะ PO ไม่สำเร็จ", errMsg(e), "error");
       return false;
     }
-  }, [deleteData, getRelatedInvoicesForPo, getRelatedReceivesForPo, logAction, showAlert, updateData]);
+  }, [logAction, showAlert, updateData]);
 
   const prPoTableWrapRef = React.useRef(null);
   const resizeFn = handleColumnResize || ((_tid: string, _k: string, _w: number) => { });
@@ -2465,11 +2455,9 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
             tone="teal"
             title="Active PO"
             onClick={() => {
-              const relatedInvoices = getRelatedInvoicesForPo(r);
-              const relatedReceives = getRelatedReceivesForPo(r);
               openConfirm?.(
                 "Active PO",
-                `การคืนสถานะ PO ${r.poNo || r.id} จะเปลี่ยนสถานะกลับเป็น Approved\n\nระบบจะลบข้อมูลต่อไปนี้ถาวร:\n- Invoice ที่ผูกกับ PO นี้ ${relatedInvoices.length} รายการ\n- Receive ที่ผูกกับ PO นี้ ${relatedReceives.length} รายการ\n- PDF ของ Receive ที่อยู่ใน Firebase Storage\n\nหากต้องการดำเนินการต่อ ให้พิมพ์ Confirm`,
+                `ระบบจะตรวจสอบว่า PO ${r.poNo || r.id} Roll Back เอกสารตามลำดับ Pay → Billing → Invoice → Receive ครบแล้วหรือไม่\n\nหากยังมีเอกสารผูกอยู่ ระบบจะแจ้งเลขเอกสารและไม่ Active PO\nPayment ทุกงวดจะไม่ถูกลบ\n\nหากต้องการตรวจสอบและดำเนินการต่อ ให้พิมพ์ Confirm`,
                 async () => {
                   await handleActivePO(r);
                 },
@@ -3183,11 +3171,9 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                               className="p-1.5 rounded hover:bg-teal-100 text-teal-700"
                               title="Active PO"
                               onClick={() => {
-                                const relatedInvoices = getRelatedInvoicesForPo(r);
-                                const relatedReceives = getRelatedReceivesForPo(r);
                                 openConfirm?.(
                                   "Active PO",
-                                  `การคืนสถานะ PO ${r.poNo || r.id} จะเปลี่ยนสถานะกลับเป็น Approved\n\nระบบจะลบข้อมูลต่อไปนี้ถาวร:\n- Invoice ที่ผูกกับ PO นี้ ${relatedInvoices.length} รายการ\n- Receive ที่ผูกกับ PO นี้ ${relatedReceives.length} รายการ\n- PDF ของ Receive ที่อยู่ใน Firebase Storage\n\nหากต้องการดำเนินการต่อ ให้พิมพ์ Confirm`,
+                                  `ระบบจะตรวจสอบว่า PO ${r.poNo || r.id} Roll Back เอกสารตามลำดับ Pay → Billing → Invoice → Receive ครบแล้วหรือไม่\n\nหากยังมีเอกสารผูกอยู่ ระบบจะแจ้งเลขเอกสารและไม่ Active PO\nPayment ทุกงวดจะไม่ถูกลบ\n\nหากต้องการตรวจสอบและดำเนินการต่อ ให้พิมพ์ Confirm`,
                                   async () => {
                                     await handleActivePO(r);
                                   },
