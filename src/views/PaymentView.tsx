@@ -231,6 +231,7 @@ const PaymentView = React.memo(() => {
     recommendations: "",
   });
   const [evaluating, setEvaluating] = useState(false);
+  const [confirmEmptyActivePeriodCleanup, setConfirmEmptyActivePeriodCleanup] = useState(false);
 
   const [holdModalPayment, setHoldModalPayment] = useState<any>(null);
   const [holdReasonInput, setHoldReasonInput] = useState("");
@@ -360,6 +361,52 @@ const PaymentView = React.memo(() => {
   );
   const canStartNextPeriod = !myRoles.some(r => r === "Procurement") && (myRoles.includes("Administrator") || canUseFunction?.("payment-subcontract", "startNextPeriod") !== false);
   const canCompleteJob = myRoles.includes("Administrator") || canUseFunction?.("payment-subcontract", "completeJob") !== false;
+
+  // A next-period Payment is intentionally created as an empty Active document.
+  // If the user decides to finish the job immediately, only that empty child
+  // document may be removed; a period containing any work/payment artefact is
+  // never auto-deleted.
+  const getEmptyActivePeriodCleanup = (payment: any) => {
+    if (!payment || payment.status !== "Active" || payment.jobCompleted) return null;
+
+    const items = Array.isArray(payment.items) ? payment.items : [];
+    const currentPeriodQty = items.reduce((sum: number, item: any) => sum + Math.abs(Number(item?.thisPeriodQty) || 0), 0);
+    const currentPeriodAmount = items.reduce((sum: number, item: any) => sum + Math.abs(Number(item?.thisPeriodAmount) || 0), 0);
+    const hasPaymentAmount = Math.abs(Number(payment.amount) || 0) > 0.005
+      || Math.abs(Number(payment.grossPeriodAmount) || 0) > 0.005
+      || Math.abs(Number(payment.netPeriodAmount) || 0) > 0.005;
+    const hasPaymentFile = Boolean(payment.paySlipUrl)
+      || Boolean(payment.attachmentUrl)
+      || (Array.isArray(payment.paymentAttachments) && payment.paymentAttachments.length > 0);
+    const hasPeriodNotes = Boolean(String(payment.note || "").trim())
+      || items.some((item: any) => Boolean(String(item?.remark || "").trim()));
+    const hasInvoice = (invoices || []).some((invoice: any) => (
+      invoice?.sourceType === "payment"
+        ? String(invoice.paymentId || invoice.poId || "") === String(payment.id)
+        : String(invoice?.poId || "") === String(payment.id)
+    ));
+
+    if (currentPeriodQty > 0.000001 || currentPeriodAmount > 0.005 || hasPaymentAmount || hasPaymentFile || hasPeriodNotes || hasInvoice) {
+      return null;
+    }
+
+    const previousPaymentId = String(payment.previousPaymentId || "");
+    if (!previousPaymentId) return null;
+    const previousPayment = (payments || []).find((candidate: any) => String(candidate.id) === previousPaymentId);
+    if (!previousPayment || String(previousPayment.status || "").trim().toLowerCase() !== "paid") return null;
+
+    return { activePayment: payment, previousPayment };
+  };
+
+  const openJobEvaluation = (payment: any) => {
+    setConfirmEmptyActivePeriodCleanup(false);
+    setEvalModalPayment(payment);
+    setEvalForm((prev) => ({
+      ...prev,
+      jobName: payment.contractTitle || "",
+      evaluatorName: userData?.name || user?.email || "",
+    }));
+  };
   // ── aliases ที่ชัดเจนเพื่อส่งให้ ResizableTh (ใช้ handleColumnResize จาก AppDataContext)
   const handlePaymentMainColResize = handleColumnResize;
   const handlePayItemColResize = handleColumnResize;
@@ -988,6 +1035,11 @@ const PaymentView = React.memo(() => {
   const handleEvalSubmit = async () => {
     if (!evalModalPayment) return;
     if (!canCompleteJob) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์จบงาน", "warning");
+    const emptyPeriodCleanup = getEmptyActivePeriodCleanup(evalModalPayment);
+    if (emptyPeriodCleanup && !confirmEmptyActivePeriodCleanup) {
+      showAlert("ยืนยันการลบงวดว่าง", "งวด Active นี้เป็นงวดถัดไปที่ยังไม่มีปริมาณ ยอดเงิน เอกสารแนบ หรือ Invoice\nกรุณาติ๊กยืนยันการลบงวดนี้ก่อนจบงาน", "warning");
+      return;
+    }
     const missing = [];
     if (!evalForm.evaluatorName.trim()) missing.push("ชื่อผู้ประเมิน");
     if (!evalForm.jobName.trim()) missing.push("ระบุชื่องาน");
@@ -1005,11 +1057,12 @@ const PaymentView = React.memo(() => {
       const completedAt = new Date().toISOString();
       const completedBy = getUserIdentity(userData, user);
       const completedByName = completedBy.name || userData?.name || user?.email || "";
+      const completionPayment = emptyPeriodCleanup?.previousPayment || evalModalPayment;
       // ใช้ข้อมูล Vendor จาก Payment object โดยตรง (fallback ไปที่ vendors array ถ้าไม่มี)
-      const contractor = evalModalPayment.contractorName 
-        ? { id: evalModalPayment.contractorId, name: evalModalPayment.contractorName, code: evalModalPayment.contractorCode, type: evalModalPayment.contractorType }
-        : vendors.find((v: any) => v.id === evalModalPayment.contractorId);
-      const project = (projects || []).find((p: any) => p.id === evalModalPayment.projectId);
+      const contractor = completionPayment.contractorName
+        ? { id: completionPayment.contractorId, name: completionPayment.contractorName, code: completionPayment.contractorCode, type: completionPayment.contractorType }
+        : vendors.find((v: any) => v.id === completionPayment.contractorId);
+      const project = (projects || []).find((p: any) => p.id === completionPayment.projectId);
       const rateMap: Record<string, number> = { good: 1, fair: 0.75, poor: 0.5 };
       const questions = [
         { key: "q1", max: 1, label: "วัสดุที่นำมาใช้ต้องมีคุณภาพและตรงตามข้อกำหนด" },
@@ -1028,11 +1081,11 @@ const PaymentView = React.memo(() => {
         scores[q.key] = { rate, rateValue, maxScore: q.max, score, label: q.label };
       }
       const evalPayload = {
-        vendorId: evalModalPayment.contractorId || "",
+        vendorId: completionPayment.contractorId || "",
         vendorName: contractor?.name || "",
-        paymentId: evalModalPayment.id,
-        paymentNo: evalModalPayment.paymentNo,
-        projectId: evalModalPayment.projectId || "",
+        paymentId: completionPayment.id,
+        paymentNo: completionPayment.paymentNo,
+        projectId: completionPayment.projectId || "",
         projectName: project?.name || "",
         evaluatorName: evalForm.evaluatorName.trim(),
         evaluationDate: evalForm.evaluationDate,
@@ -1045,8 +1098,18 @@ const PaymentView = React.memo(() => {
         createdAt: completedAt,
         createdBy: completedByName,
       };
-      await addData("vendorEvaluations", evalPayload, null, { skipLog: true });
-      await updateData("payments", evalModalPayment.id, {
+      const evaluationCreated = await addData("vendorEvaluations", evalPayload, null, { skipLog: true });
+      if (!evaluationCreated) throw new Error("บันทึกแบบประเมินผู้รับเหมาไม่สำเร็จ จึงยังไม่จบงาน");
+      if (emptyPeriodCleanup) {
+        const deleted = await deleteData("payments", emptyPeriodCleanup.activePayment.id, { skipLog: true });
+        if (!deleted) throw new Error(`ลบงวด Active ${emptyPeriodCleanup.activePayment.paymentNo || emptyPeriodCleanup.activePayment.id} ไม่สำเร็จ จึงยังไม่จบงาน`);
+        await logAction(
+          "Delete Empty Payment Period",
+          `${buildDeleteLogDetails("payments", emptyPeriodCleanup.activePayment, emptyPeriodCleanup.activePayment.id)} | สาเหตุ: จบงานจากงวดก่อนหน้า ${completionPayment.paymentNo || completionPayment.id}`,
+          selectedProjectId
+        );
+      }
+      const completedPaymentUpdated = await updateData("payments", completionPayment.id, {
         status: "Paid",
         jobStatus: "จบงาน",
         jobCompleted: true,
@@ -1059,19 +1122,20 @@ const PaymentView = React.memo(() => {
         jobCompletedByUid: completedBy.uid || null,
         jobCompletedByEmail: completedBy.email || null,
       }, { skipLog: true });
+      if (!completedPaymentUpdated) throw new Error(`อัปเดต Payment ${completionPayment.paymentNo || completionPayment.id} เป็นจบงานไม่สำเร็จ`);
       // Payment รุ่นเก่าอาจไม่มี selectedPrIds แต่ยังมี reference PO อยู่ใน
       // sourcePoId / poId / poRef หรือ Payment No. จึงต้อง resolve ให้ครบก่อนปิด PO
       const selectedPoIdSet = new Set(
-        (Array.isArray(evalModalPayment.selectedPrIds) ? evalModalPayment.selectedPrIds : [])
+        (Array.isArray(completionPayment.selectedPrIds) ? completionPayment.selectedPrIds : [])
           .filter(Boolean)
           .map((id: any) => String(id))
       );
       const directPoRefs = [
-        evalModalPayment.sourcePoId,
-        evalModalPayment.poId,
-        evalModalPayment.poRef,
+        completionPayment.sourcePoId,
+        completionPayment.poId,
+        completionPayment.poRef,
       ].filter(Boolean).map((id: any) => String(id));
-      const paymentBaseNo = getPaymentBaseNo(evalModalPayment.paymentNo);
+      const paymentBaseNo = getPaymentBaseNo(completionPayment.paymentNo);
       (pos || []).forEach((po: any) => {
         const poId = String(po?.id || "");
         const poNo = String(po?.poNo || "");
@@ -1083,9 +1147,9 @@ const PaymentView = React.memo(() => {
       let queuedReturnCount = 0;
       let queueReturnError = "";
       const planningPayments = [
-        ...(payments || []).filter((payment: any) => payment.id !== evalModalPayment.id),
+        ...(payments || []).filter((payment: any) => payment.id !== completionPayment.id && payment.id !== evalModalPayment.id),
         {
-          ...evalModalPayment,
+          ...completionPayment,
           status: "Paid",
           jobStatus: "จบงาน",
           jobCompleted: true,
@@ -1105,9 +1169,9 @@ const PaymentView = React.memo(() => {
             jobCompletedBy: completedByName,
             jobCompletedByUid: completedBy.uid || null,
             jobCompletedByEmail: completedBy.email || null,
-            jobCompletedPaymentId: evalModalPayment.id,
-            jobCompletedPaymentNo: evalModalPayment.paymentNo || "",
-            jobCompletedPeriodNo: evalModalPayment.periodNo || null,
+            jobCompletedPaymentId: completionPayment.id,
+            jobCompletedPaymentNo: completionPayment.paymentNo || "",
+            jobCompletedPeriodNo: completionPayment.periodNo || null,
           }, { skipLog: true });
           if (!poUpdateOk) {
             queueReturnError = `อัปเดตสถานะ PO ${po.poNo || poId} ไม่สำเร็จ`;
@@ -1145,7 +1209,7 @@ const PaymentView = React.memo(() => {
       }
       await logAction(
         "Complete Job & Evaluate",
-        `จบงานและประเมินผู้รับเหมา | ${getPaymentLogSummary(evalModalPayment, { status: "Paid" })} | ผู้จบงาน: ${completedByName || "-"} | คะแนนรวม: ${Number(totalScore || 0).toLocaleString("th-TH")}/5`,
+        `จบงานและประเมินผู้รับเหมา | ${getPaymentLogSummary(completionPayment, { status: "Paid" })}${emptyPeriodCleanup ? ` | ลบงวดว่าง: ${emptyPeriodCleanup.activePayment.paymentNo || emptyPeriodCleanup.activePayment.id}` : ""} | ผู้จบงาน: ${completedByName || "-"} | คะแนนรวม: ${Number(totalScore || 0).toLocaleString("th-TH")}/5`,
         selectedProjectId
       );
       if (queuedReturnCount > 0) {
@@ -1158,6 +1222,7 @@ const PaymentView = React.memo(() => {
         showAlert("จบงานแล้ว แต่ส่ง Rev PO ไม่สำเร็จ", queueReturnError, "warning");
       }
       setEvalModalPayment(null);
+      setConfirmEmptyActivePeriodCleanup(false);
       setViewingPayment(null);
       setEvalForm({
         jobName: "", jobNo: "", evaluatorName: "",
@@ -2009,11 +2074,11 @@ const PaymentView = React.memo(() => {
          const totalPeriodCount = allPeriods.length + 1;
 
         return (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[10010] p-4">
-            <div className="bg-white shadow-2xl border border-slate-300 w-[90vw] max-w-[90vw] max-h-[92vh] flex flex-col rounded-2xl overflow-hidden">
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[10010] p-3 sm:p-4">
+            <div className="bg-white shadow-2xl border border-slate-300 w-full max-w-[1500px] max-h-[calc(100vh-1.5rem)] sm:max-h-[calc(100vh-2rem)] flex flex-col rounded-2xl overflow-hidden">
 
               {/* ─ Title bar ─ */}
-              <div className="flex items-center justify-between px-6 py-3 bg-gradient-to-r from-blue-900 to-blue-700 shrink-0 rounded-t-2xl">
+              <div className="flex items-center justify-between px-5 py-2.5 bg-gradient-to-r from-blue-900 to-blue-700 shrink-0 rounded-t-2xl">
                 <h3 className="text-sm font-bold text-white tracking-wide">แบบฟอร์มเบิกงวดงาน / PAYMENT APPLICATION</h3>
                 <div className="flex items-center gap-2">
                   <button
@@ -2041,13 +2106,13 @@ const PaymentView = React.memo(() => {
               </div>
 
               {/* ─ Scrollable body ─ */}
-              <div className="flex-1 overflow-y-auto">
-                <div className="p-5 space-y-4">
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                <div className="p-4 space-y-3">
 
                   {/* ── Header info grid ── */}
-                  <div className="grid grid-cols-2 gap-x-8 gap-y-1.5 text-xs border border-slate-200 rounded-lg p-4 bg-slate-50/50">
+                  <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-xs leading-tight border border-slate-200 rounded-lg p-3 bg-slate-50/50">
                     {/* Left */}
-                    <div className="space-y-1.5">
+                    <div className="space-y-1">
                       <div className="flex">
                         <span className="w-52 text-slate-500 font-semibold shrink-0">ชื่อโครงการ / PROJECT NAME :</span>
                         <span className="font-bold text-slate-800">{project?.name || vp.projectId || "-"}</span>
@@ -2084,7 +2149,7 @@ const PaymentView = React.memo(() => {
                       )}
                     </div>
                     {/* Right */}
-                    <div className="space-y-1.5">
+                    <div className="space-y-1">
                       <div className="flex">
                         <span className="w-56 text-slate-500 font-semibold shrink-0">เลขที่เบิกงวดงาน / PAYMENT NO. :</span>
                         <span className="font-bold text-blue-800">{displayPaymentNo}</span>
@@ -2261,13 +2326,13 @@ const PaymentView = React.memo(() => {
                         <thead>
                           {/* Row 1: Group headers */}
                           <tr className="bg-slate-100 border-b-2 border-slate-300">
-                            <ResizableTh tableId="payItems" colKey="item" isAdmin={isPayTableAdmin} onResize={handlePayItemColResize} currentWidth={payItemColWidths.item} rowSpan={2} className="border border-slate-300 px-2 py-2 text-center font-bold text-slate-700 bg-slate-100">
+                            <ResizableTh tableId="payItems" colKey="item" isAdmin={isPayTableAdmin} onResize={handlePayItemColResize} currentWidth={payItemColWidths.item} rowSpan={2} className="border border-slate-300 px-2 py-1.5 text-center font-bold text-slate-700 bg-slate-100">
                               ITEM<br /><span className="font-normal text-[9px] text-slate-500">ลำดับ</span>
                             </ResizableTh>
-                            <ResizableTh tableId="payItems" colKey="description" isAdmin={isPayTableAdmin} onResize={handlePayItemColResize} currentWidth={payItemColWidths.description} rowSpan={2} className="border border-slate-300 px-2 py-2 text-left font-bold text-slate-700 bg-slate-100">
+                            <ResizableTh tableId="payItems" colKey="description" isAdmin={isPayTableAdmin} onResize={handlePayItemColResize} currentWidth={payItemColWidths.description} rowSpan={2} className="border border-slate-300 px-2 py-1.5 text-left font-bold text-slate-700 bg-slate-100">
                               DESCRIPTION<br /><span className="font-normal text-[9px] text-slate-500">รายละเอียด</span>
                             </ResizableTh>
-                            <ResizableTh tableId="payItems" colKey="unit" isAdmin={isPayTableAdmin} onResize={handlePayItemColResize} currentWidth={payItemColWidths.unit} rowSpan={2} className="border border-slate-300 px-2 py-2 text-center font-bold text-slate-700 bg-slate-100">
+                            <ResizableTh tableId="payItems" colKey="unit" isAdmin={isPayTableAdmin} onResize={handlePayItemColResize} currentWidth={payItemColWidths.unit} rowSpan={2} className="border border-slate-300 px-2 py-1.5 text-center font-bold text-slate-700 bg-slate-100">
                               หน่วย<br /><span className="font-normal text-[9px] text-slate-500">Unit</span>
                             </ResizableTh>
                             <th colSpan={3} className="border border-slate-300 px-2 py-1.5 text-center font-bold text-purple-800 bg-purple-50">
@@ -2340,24 +2405,24 @@ const PaymentView = React.memo(() => {
                                   </td>
                                   <td className="border border-slate-200 px-2 py-1.5 text-center text-slate-500">{it.unit || "-"}</td>
                                   {/* CONTRACT */}
-                                  <td className="border border-slate-200 px-2 py-1.5 text-right font-mono bg-purple-50/20">{cQty.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                  <td className="border border-slate-200 px-2 py-1.5 text-right font-mono bg-purple-50/20">{formatCurrency(cPrice)}</td>
-                                  <td className="border border-slate-200 px-2 py-1.5 text-right font-mono font-semibold bg-purple-50/20">{formatCurrency(cAmount)}</td>
+                                  <td className="border border-slate-200 px-2 py-1.5 text-right bg-purple-50/20">{cQty.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                  <td className="border border-slate-200 px-2 py-1.5 text-right bg-purple-50/20">{formatCurrency(cPrice)}</td>
+                                  <td className="border border-slate-200 px-2 py-1.5 text-right font-semibold bg-purple-50/20">{formatCurrency(cAmount)}</td>
                                   {/* TOTAL ACCUMULATED */}
-                                  <td className="border border-slate-200 px-2 py-1.5 text-right font-mono bg-blue-50/20">{totalQty > 0 ? totalQty.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "-"}</td>
-                                  <td className="border border-slate-200 px-2 py-1.5 text-right font-mono bg-blue-50/20">{totalAmt > 0 ? formatCurrency(totalAmt) : "-"}</td>
-                                  <td className="border border-slate-200 px-2 py-1.5 text-right font-mono bg-blue-50/20">{totalPct > 0 ? totalPct.toFixed(2) + "%" : "-"}</td>
+                                  <td className="border border-slate-200 px-2 py-1.5 text-right bg-blue-50/20">{totalQty > 0 ? totalQty.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "-"}</td>
+                                  <td className="border border-slate-200 px-2 py-1.5 text-right bg-blue-50/20">{totalAmt > 0 ? formatCurrency(totalAmt) : "-"}</td>
+                                  <td className="border border-slate-200 px-2 py-1.5 text-right bg-blue-50/20">{totalPct > 0 ? totalPct.toFixed(2) + "%" : "-"}</td>
                                   {/* PREVIOUS ACCUMULATED */}
-                                  <td className="border border-slate-200 px-2 py-1.5 text-right font-mono bg-amber-50/20 text-slate-400">{prevQty > 0 ? prevQty.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "-"}</td>
-                                  <td className="border border-slate-200 px-2 py-1.5 text-right font-mono bg-amber-50/20 text-slate-400">{prevAmt > 0 ? formatCurrency(prevAmt) : "-"}</td>
-                                  <td className="border border-slate-200 px-2 py-1.5 text-right font-mono bg-amber-50/20 text-slate-400">{prevPct > 0 ? prevPct.toFixed(2) + "%" : "-"}</td>
+                                  <td className="border border-slate-200 px-2 py-1.5 text-right bg-amber-50/20 text-slate-400">{prevQty > 0 ? prevQty.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "-"}</td>
+                                  <td className="border border-slate-200 px-2 py-1.5 text-right bg-amber-50/20 text-slate-400">{prevAmt > 0 ? formatCurrency(prevAmt) : "-"}</td>
+                                  <td className="border border-slate-200 px-2 py-1.5 text-right bg-amber-50/20 text-slate-400">{prevPct > 0 ? prevPct.toFixed(2) + "%" : "-"}</td>
                                   {/* THIS PERIOD — editable when isQtyEditMode */}
                                   <td className={`border px-1 py-1 ${isOverCumulative ? "border-red-400 bg-red-50" : "border-slate-200 bg-green-50/40"}`}>
                                     {canEditQty ? (
                                       <>
                                         <input
                                           type="number" min={0} step={0.01}
-                                          className={`w-full border rounded px-1 py-0.5 text-xs text-right focus:outline-none focus:ring-1 bg-white font-mono ${isOverCumulative ? "border-red-500 focus:ring-red-500 text-red-700" : "border-green-400 focus:ring-green-500"}`}
+                                          className={`w-full border rounded px-1 py-0.5 text-xs text-right focus:outline-none focus:ring-1 bg-white ${isOverCumulative ? "border-red-500 focus:ring-red-500 text-red-700" : "border-green-400 focus:ring-green-500"}`}
                                           value={edit.thisPeriodQty !== undefined ? edit.thisPeriodQty : (it.thisPeriodQty || "")}
                                           onChange={(e) => updateActiveQty(key, "thisPeriodQty", e.target.value, cPrice, cAmount, prevAmt)}
                                         />
@@ -2366,11 +2431,11 @@ const PaymentView = React.memo(() => {
                                         )}
                                       </>
                                     ) : (
-                                      <span className="block text-right font-mono px-1">{tpQty > 0 ? tpQty.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "-"}</span>
+                                      <span className="block text-right px-1">{tpQty > 0 ? tpQty.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "-"}</span>
                                     )}
                                   </td>
-                                  <td className={`border px-2 py-1.5 text-right font-mono font-semibold ${isOverCumulative ? "border-red-300 bg-red-50 text-red-700" : "border-slate-200 bg-green-50/40 text-green-700"}`}>{tpAmt > 0 ? formatCurrency(tpAmt) : "-"}</td>
-                                  <td className={`border px-2 py-1.5 text-right font-mono ${isOverCumulative ? "border-red-300 bg-red-50 text-red-600 font-bold" : "border-slate-200 bg-green-50/40 text-green-600"}`}>{tpPct > 0 ? tpPct.toFixed(2) + "%" : "-"}</td>
+                                  <td className={`border px-2 py-1.5 text-right font-semibold ${isOverCumulative ? "border-red-300 bg-red-50 text-red-700" : "border-slate-200 bg-green-50/40 text-green-700"}`}>{tpAmt > 0 ? formatCurrency(tpAmt) : "-"}</td>
+                                  <td className={`border px-2 py-1.5 text-right ${isOverCumulative ? "border-red-300 bg-red-50 text-red-600 font-bold" : "border-slate-200 bg-green-50/40 text-green-600"}`}>{tpPct > 0 ? tpPct.toFixed(2) + "%" : "-"}</td>
                                   <td className="border border-slate-200 px-2 py-1.5 text-slate-400">{it.remark || "-"}</td>
                                 </tr>
                               );
@@ -2383,33 +2448,33 @@ const PaymentView = React.memo(() => {
                               <td colSpan={5} className="border border-slate-600 px-3 py-2 text-right text-[11px] tracking-wide">
                                 ผลรวมทั้งสิ้น / GRAND TOTAL
                               </td>
-                              <td className="border border-slate-600 px-2 py-2 text-right font-mono text-sm">{formatCurrency(contractGrandTotal)}</td>
+                              <td className="border border-slate-600 px-2 py-2 text-right text-sm">{formatCurrency(contractGrandTotal)}</td>
                               {/* Total accumulated */}
                               <td className="border border-slate-600 px-2 py-2" />
-                              <td className="border border-slate-600 px-2 py-2 text-right font-mono">
+                              <td className="border border-slate-600 px-2 py-2 text-right">
                                 {formatCurrency(vpItems.reduce((s: number, it: any) => s + ((Number(it.prevAccumAmount) || 0) + (Number(it.thisPeriodAmount) || 0)), 0))}
                               </td>
-                              <td className="border border-slate-600 px-2 py-2 text-right font-mono text-[10px]">
+                              <td className="border border-slate-600 px-2 py-2 text-right text-[10px]">
                                 {contractGrandTotal > 0 ? (((vpItems.reduce((s: number, it: any) => s + ((Number(it.prevAccumAmount) || 0) + (Number(it.thisPeriodAmount) || 0)), 0)) / contractGrandTotal) * 100).toFixed(2) + "%" : "0.00%"}
                               </td>
                               {/* Previous accumulated */}
                               <td className="border border-slate-600 px-2 py-2" />
-                              <td className="border border-slate-600 px-2 py-2 text-right font-mono text-slate-300">
+                              <td className="border border-slate-600 px-2 py-2 text-right text-slate-300">
                                 {formatCurrency(vpItems.reduce((s: number, it: any) => s + (Number(it.prevAccumAmount) || 0), 0))}
                               </td>
-                              <td className="border border-slate-600 px-2 py-2 text-right font-mono text-[10px] text-slate-300">
+                              <td className="border border-slate-600 px-2 py-2 text-right text-[10px] text-slate-300">
                                 {contractGrandTotal > 0 ? ((vpItems.reduce((s: number, it: any) => s + (Number(it.prevAccumAmount) || 0), 0) / contractGrandTotal) * 100).toFixed(2) + "%" : "0.00%"}
                               </td>
                               {/* This period */}
                               <td className="border border-slate-600 px-2 py-2" />
-                              <td className="border border-slate-600 px-2 py-2 text-right font-mono text-sm text-green-300">{formatCurrency(thisPeriodGrandTotal)}</td>
-                              <td className="border border-slate-600 px-2 py-2 text-right font-mono text-[10px] text-green-300">{thisPeriodPctTotal.toFixed(2)}%</td>
+                              <td className="border border-slate-600 px-2 py-2 text-right text-sm text-green-300">{formatCurrency(thisPeriodGrandTotal)}</td>
+                              <td className="border border-slate-600 px-2 py-2 text-right text-[10px] text-green-300">{thisPeriodPctTotal.toFixed(2)}%</td>
                               <td className="border border-slate-600 px-2 py-2" />
                             </tr>
                             {paymentDiscountEnabled && (
                               <tr className="bg-red-50 text-[11px]">
                                 <td colSpan={16} className="border border-red-200 px-4 py-2">
-                                  <div className="flex flex-wrap justify-end gap-x-8 gap-y-1 font-mono">
+                                  <div className="flex flex-wrap justify-end gap-x-8 gap-y-1">
                                     <span className="text-slate-600">ยอดงวดก่อนส่วนลด: <b>{formatCurrency(thisPeriodGrandTotal)}</b></span>
                                     <span className="text-red-700">ส่วนลด{discountSource?.discountPrNo ? ` (PR ${discountSource.discountPrNo})` : ""}: <b>-{formatCurrency(displayDiscount)}</b></span>
                                     <span className="text-emerald-700">ยอดสุทธิงวดนี้: <b>{formatCurrency(displayNetPeriodAmount)}</b></span>
@@ -2424,7 +2489,7 @@ const PaymentView = React.memo(() => {
                   </div>
 
                   {/* ── Signature section ── */}
-                  <div className="grid grid-cols-3 gap-4 text-xs mt-6 px-2">
+                  <div className="grid grid-cols-3 gap-3 text-xs mt-3 px-2">
                     {(() => {
                       const src = isViewingOldPeriod ? activePeriod : vp;
                       return [
@@ -2448,9 +2513,9 @@ const PaymentView = React.memo(() => {
                       const hasResolvedSignature = Object.prototype.hasOwnProperty.call(paymentSignatureImages, sig.slot);
                       const signatureImageUrl = paymentSignatureImages[sig.slot];
                       return (
-                        <div key={sig.title} className={`border rounded-lg p-3 text-center space-y-3 ${sig.filled ? "border-green-300 bg-green-50/40" : "border-slate-200 bg-slate-50/50"}`}>
+                        <div key={sig.title} className={`border rounded-lg p-2.5 text-center space-y-2 ${sig.filled ? "border-green-300 bg-green-50/40" : "border-slate-200 bg-slate-50/50"}`}>
                           <p className="font-bold text-slate-700 text-[11px]">{sig.title}</p>
-                          <div className={`h-12 flex items-center justify-center px-2 py-1 ${sig.filled ? "border-b-2 border-green-500" : ""}`}>
+                          <div className={`h-10 flex items-center justify-center px-2 py-1 ${sig.filled ? "border-b-2 border-green-500" : ""}`}>
                             {sig.filled ? (
                               signatureImageUrl ? (
                                 <img
@@ -2467,7 +2532,7 @@ const PaymentView = React.memo(() => {
                               <span className="text-[10px] text-slate-300 italic">— ยังไม่ได้ลงนาม —</span>
                             )}
                           </div>
-                          <div className="border-t border-slate-300 pt-2 space-y-1">
+                          <div className="border-t border-slate-300 pt-1.5 space-y-1">
                             <p className="text-[10px] text-slate-500">POSITION : <span className="font-semibold text-slate-700">{sig.position}</span></p>
                             <p className="text-[10px] text-slate-500">
                               DATE : {sig.date ? new Date(sig.date).toLocaleDateString("th-TH", { day: "2-digit", month: "short", year: "numeric" }) : "_______________"}
@@ -2480,14 +2545,14 @@ const PaymentView = React.memo(() => {
 
                   {/* Note */}
                   {vp.note && (
-                    <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-800">
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800">
                       <span className="font-bold">หมายเหตุ:</span> {vp.note}
                     </div>
                   )}
 
                   {/* ── Rejection banner ── */}
                   {["Reject", "Rejected"].includes(vp.status) && (
-                    <div className="bg-red-50 border border-red-300 rounded-lg px-4 py-3 text-xs text-red-800 flex items-start gap-2">
+                    <div className="bg-red-50 border border-red-300 rounded-lg px-3 py-2 text-xs text-red-800 flex items-start gap-2">
                       <ThumbsDown size={14} className="mt-0.5 shrink-0 text-red-600" />
                       <div className="space-y-0.5">
                         <p className="font-bold text-red-700">สถานะ Reject — กรุณาแก้ไขรายการ ใส่ปริมาณ และส่งอนุมัติใหม่</p>
@@ -2504,7 +2569,7 @@ const PaymentView = React.memo(() => {
 
                   {/* ── Revision info banner ── */}
                   {vp.revisionRequested && (
-                    <div className="bg-rose-50 border border-rose-200 rounded-lg px-4 py-3 text-xs text-rose-800 flex items-start gap-2">
+                    <div className="bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 text-xs text-rose-800 flex items-start gap-2">
                       <RotateCcw size={14} className="mt-0.5 shrink-0" />
                       <div>
                         <p className="font-bold">คำขอแก้ไข</p>
@@ -2518,7 +2583,7 @@ const PaymentView = React.memo(() => {
               </div>
 
               {/* ─ Footer buttons ─ */}
-              <div className="px-6 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-2 shrink-0 rounded-b-2xl">
+              <div className="px-5 py-2.5 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-2 shrink-0 rounded-b-2xl">
                 {/* Left: action buttons based on status */}
                 <div className="flex items-center gap-2 flex-wrap">
                   {/* Submit (Draft) */}
@@ -2672,15 +2737,19 @@ const PaymentView = React.memo(() => {
                   {vp.status === "In Process" && canCompleteJob && (
                     <button
                       disabled={actioning}
-                      onClick={() => {
-                        setEvalModalPayment(vp);
-                        setEvalForm((prev) => ({
-                          ...prev,
-                          jobName: vp.contractTitle || "",
-                          evaluatorName: userData?.name || user?.email || "",
-                        }));
-                      }}
+                      onClick={() => openJobEvaluation(vp)}
                       className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+                    >
+                      <CheckCircle size={14} /> จบงาน
+                    </button>
+                  )}
+                  {/* Active → จบงาน; an empty next period can be cleaned up after confirmation */}
+                  {vp.status === "Active" && !vp.jobCompleted && canCompleteJob && !isQtyEditMode && !isViewingOldPeriod && (
+                    <button
+                      disabled={actioning}
+                      onClick={() => openJobEvaluation(vp)}
+                      className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+                      title="จบงานจากงวด Active"
                     >
                       <CheckCircle size={14} /> จบงาน
                     </button>
@@ -2946,11 +3015,13 @@ const PaymentView = React.memo(() => {
 
       {/* ─── Subcontractor Evaluation Modal ─────────────────────────────────────── */}
       {evalModalPayment && createPortal((() => {
+        const emptyPeriodCleanup = getEmptyActivePeriodCleanup(evalModalPayment);
+        const completionPayment = emptyPeriodCleanup?.previousPayment || evalModalPayment;
         // ใช้ข้อมูล Vendor จาก Payment object โดยตรง (fallback ไปที่ vendors array ถ้าไม่มี)
-        const contractor = evalModalPayment.contractorName 
-          ? { id: evalModalPayment.contractorId, name: evalModalPayment.contractorName, code: evalModalPayment.contractorCode, type: evalModalPayment.contractorType }
-          : vendors.find((v: any) => v.id === evalModalPayment.contractorId);
-        const project = (projects || []).find((p: any) => p.id === evalModalPayment.projectId);
+        const contractor = completionPayment.contractorName
+          ? { id: completionPayment.contractorId, name: completionPayment.contractorName, code: completionPayment.contractorCode, type: completionPayment.contractorType }
+          : vendors.find((v: any) => v.id === completionPayment.contractorId);
+        const project = (projects || []).find((p: any) => p.id === completionPayment.projectId);
         const rateMap: Record<string, number> = { good: 1, fair: 0.75, poor: 0.5 };
         const questions = [
           {
@@ -3009,14 +3080,31 @@ const PaymentView = React.memo(() => {
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden">
               <div className="px-6 py-3 bg-gradient-to-r from-blue-900 to-blue-700 shrink-0 flex items-center justify-between rounded-t-2xl">
                 <h3 className="text-sm font-bold text-white tracking-wide">แบบประเมินผู้รับเหมาช่วง / Subcontractor Evaluation Form</h3>
-                <button onClick={() => setEvalModalPayment(null)} className="text-white/60 hover:text-white hover:bg-white/20 p-1.5 rounded-lg transition-all">
+                <button onClick={() => { setEvalModalPayment(null); setConfirmEmptyActivePeriodCleanup(false); }} className="text-white/60 hover:text-white hover:bg-white/20 p-1.5 rounded-lg transition-all">
                   <XCircle size={18} />
                 </button>
               </div>
               <div className="flex-1 overflow-y-auto p-6 space-y-5">
                 <p className="text-xs text-slate-500">
-                  Payment: <strong>{evalModalPayment.paymentNo}</strong> | ผู้รับเหมา: <strong>{contractor?.name || "-"}</strong> | โครงการ: <strong>{project?.name || "-"}</strong>
+                  Payment ที่จบงาน: <strong>{completionPayment.paymentNo}</strong> | ผู้รับเหมา: <strong>{contractor?.name || "-"}</strong> | โครงการ: <strong>{project?.name || "-"}</strong>
                 </p>
+                {emptyPeriodCleanup && (
+                  <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-900 space-y-2">
+                    <p className="font-bold flex items-start gap-2">
+                      <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-600" />
+                      งวดนี้เป็นงวด Active ที่เปิดต่อจาก {emptyPeriodCleanup.previousPayment.paymentNo || "งวดก่อนหน้า"} แต่ยังไม่มีการกรอกปริมาณหรือยอดเงิน
+                    </p>
+                    <label className="flex items-start gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={confirmEmptyActivePeriodCleanup}
+                        onChange={(e) => setConfirmEmptyActivePeriodCleanup(e.target.checked)}
+                        className="mt-0.5 accent-amber-600"
+                      />
+                      <span>ยืนยันให้ระบบลบงวด Active {evalModalPayment.paymentNo || evalModalPayment.id} แล้วจบงานจากงวดก่อนหน้า</span>
+                    </label>
+                  </div>
+                )}
                 {/* ── Basic info (1-5) ── */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border border-slate-200 rounded-lg p-4 bg-slate-50/50">
                   <div className="space-y-1">
@@ -3096,11 +3184,11 @@ const PaymentView = React.memo(() => {
                 </div>
               </div>
               <div className="px-6 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0 rounded-b-2xl">
-                <button onClick={() => setEvalModalPayment(null)} className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-600 text-sm font-medium hover:bg-slate-50 flex items-center gap-2">
+                <button onClick={() => { setEvalModalPayment(null); setConfirmEmptyActivePeriodCleanup(false); }} className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-600 text-sm font-medium hover:bg-slate-50 flex items-center gap-2">
                   <XCircle size={15} /> ยกเลิก
                 </button>
                 <button
-                  disabled={evaluating}
+                  disabled={evaluating || Boolean(emptyPeriodCleanup && !confirmEmptyActivePeriodCleanup)}
                   onClick={handleEvalSubmit}
                   className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
                 >
@@ -3194,9 +3282,9 @@ const PaymentView = React.memo(() => {
                                 <td className="border border-slate-200 px-2 py-1.5 text-center text-slate-500">{i + 1}</td>
                                 <td className="border border-slate-200 px-2 py-1.5 text-slate-700 font-medium">{it.description || "-"}</td>
                                 <td className="border border-slate-200 px-2 py-1.5 text-center text-slate-500">{it.unit || "-"}</td>
-                                <td className="border border-slate-200 px-2 py-1.5 text-right font-mono bg-purple-50/20">{qty.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                                <td className="border border-slate-200 px-2 py-1.5 text-right font-mono bg-purple-50/20">{formatCurrency(price)}</td>
-                                <td className="border border-slate-200 px-2 py-1.5 text-right font-mono font-semibold bg-purple-50/20">{formatCurrency(qty * price)}</td>
+                                <td className="border border-slate-200 px-2 py-1.5 text-right bg-purple-50/20">{qty.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                                <td className="border border-slate-200 px-2 py-1.5 text-right bg-purple-50/20">{formatCurrency(price)}</td>
+                                <td className="border border-slate-200 px-2 py-1.5 text-right font-semibold bg-purple-50/20">{formatCurrency(qty * price)}</td>
                               </tr>
                             );
                           })}
@@ -3205,7 +3293,7 @@ const PaymentView = React.memo(() => {
                           <tfoot>
                             <tr className="bg-slate-700 text-white font-bold">
                               <td colSpan={5} className="border border-slate-600 px-3 py-2 text-right text-[11px] tracking-wide">ยอดรวมทั้งสิ้น / GRAND TOTAL</td>
-                              <td className="border border-slate-600 px-2 py-2 text-right font-mono text-sm">{formatCurrency(contractTotal)}</td>
+                              <td className="border border-slate-600 px-2 py-2 text-right text-sm">{formatCurrency(contractTotal)}</td>
                             </tr>
                           </tfoot>
                         )}

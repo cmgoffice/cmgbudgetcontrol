@@ -265,6 +265,7 @@ const AppShell = () => {
     addData, updateData, deleteData,
     loadVendors, loadMaterials,
     totalPendingCount, pendingByProject, pendingCountByMenu,
+    pendingBudgetReturnByProject,
     handlePRAction, handlePOAction,
     showAlert, openConfirm,
     canAccessModule,
@@ -292,6 +293,7 @@ const AppShell = () => {
     if (typeof window === "undefined") return false;
     return window.innerWidth < 1024;
   });
+  const isNarrowSidebarViewport = useMediaQuery("(min-width: 1024px) and (max-width: 1279px)");
   const [isSidebarOpenMobile, setIsSidebarOpenMobile] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -400,7 +402,8 @@ const AppShell = () => {
     }
   }, [handleMenuChange, isCompactViewport, setIsBellOpen]);
 
-  const sidebarDense = isCompactViewport;
+  const sidebarDense = isCompactViewport || isNarrowSidebarViewport;
+  const collapsedSidebarWidth = isNarrowSidebarViewport ? "w-16" : "w-[4.5rem]";
   const shouldShowSidebar = !isFullScreenModalOpen;
   const moduleMenus = ["budget", "pr", "po", "payment-subcontract", "invoice", "billing", "pay", "receive"].includes(activeMenu);
   const selectedProjectPending = pendingByProject?.find((item: any) => item.projectId === selectedProjectId);
@@ -424,17 +427,17 @@ const AppShell = () => {
         <aside
           className={`${isCompactViewport
             ? `fixed inset-y-0 left-0 z-40 w-[14.5rem] max-w-[78vw] transform transition-transform duration-200 ease-out ${isSidebarOpenMobile ? "translate-x-0" : "-translate-x-full"}`
-            : `${sidebarCollapsed ? "w-[4.5rem]" : "w-64"} relative z-20 transition-[width] duration-200 ease-out`
+            : `${sidebarCollapsed ? collapsedSidebarWidth : "w-64"} relative z-20 transition-[width] duration-200 ease-out`
             } ${isCompactViewport ? "bg-white text-slate-800 border-r border-slate-200" : "bg-slate-900 text-white"} flex flex-col shadow-xl overflow-hidden`}
         >
-          <div className={`shrink-0 ${isCompactViewport ? "border-b border-slate-200 bg-white" : "border-b border-slate-800 bg-slate-950"} ${sidebarCollapsed && !isCompactViewport ? "p-2" : isCompactViewport ? "p-2.5" : "p-4"}`}>
-            <div className={`rounded-xl ${isCompactViewport ? "bg-slate-50 border border-slate-200" : "bg-slate-800/80 border border-slate-700"} ${sidebarCollapsed && !isCompactViewport ? "p-2" : isCompactViewport ? "p-2" : "p-3"}`}>
+          <div className={`shrink-0 ${isCompactViewport ? "border-b border-slate-200 bg-white" : "border-b border-slate-800 bg-slate-950"} ${sidebarCollapsed && !isCompactViewport ? (isNarrowSidebarViewport ? "p-1.5" : "p-2") : isCompactViewport ? "p-2.5" : "p-4"}`}>
+            <div className={`rounded-xl ${isCompactViewport ? "bg-slate-50 border border-slate-200" : "bg-slate-800/80 border border-slate-700"} ${sidebarCollapsed && !isCompactViewport ? (isNarrowSidebarViewport ? "p-1.5" : "p-2") : isCompactViewport ? "p-2" : "p-3"}`}>
               <div className={`flex items-center ${sidebarCollapsed && !isCompactViewport ? "justify-center" : "gap-3"}`}>
                 <ProfileAvatar
                   src={userData?.profilePhotoUrl || user?.photoURL}
-                  className={`${isCompactViewport ? "w-9 h-9 border-slate-300" : "w-11 h-11 border-slate-600"} rounded-full object-cover border-2 shadow-md flex-shrink-0`}
+                  className={`${isCompactViewport ? "w-9 h-9 border-slate-300" : sidebarCollapsed && isNarrowSidebarViewport ? "w-10 h-10 border-slate-600" : "w-11 h-11 border-slate-600"} rounded-full object-cover border-2 shadow-md flex-shrink-0`}
                   fallback={
-                    <div className={`${isCompactViewport ? "w-9 h-9 text-xs" : "w-11 h-11 text-sm"} bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold shadow-md flex-shrink-0`}>
+                    <div className={`${isCompactViewport ? "w-9 h-9 text-xs" : sidebarCollapsed && isNarrowSidebarViewport ? "w-10 h-10 text-xs" : "w-11 h-11 text-sm"} bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold shadow-md flex-shrink-0`}>
                       {userData?.firstName?.charAt(0) || user?.email?.charAt(0) || "?"}
                     </div>
                   }
@@ -758,6 +761,8 @@ const AppShell = () => {
                   ).map((p) => {
                     const projPending = pendingByProject?.find((x) => x.projectId === p.id);
                     const pendingTotal = projPending?.total || 0;
+                    const pendingBudgetReturn = pendingBudgetReturnByProject?.find((x) => x.projectId === p.id);
+                    const hasPendingBudgetReturn = (pendingBudgetReturn?.count || 0) > 0;
                     return (
                       <button
                         key={p.id}
@@ -765,7 +770,7 @@ const AppShell = () => {
                         onClick={() => setSelectedProjectId(p.id)}
                         title={p.name}
                         className={`relative flex-shrink-0 rounded-lg font-extrabold transition-all text-center flex items-center justify-center break-all ${isCompactViewport ? "w-8 h-8 px-0.5 text-[9px]" : "w-9 h-9 px-0.5 text-[10px]"
-                          } ${selectedProjectId === p.id
+                          } ${selectedProjectId === p.id || hasPendingBudgetReturn
                             ? "bg-orange-500 text-white shadow-md scale-105"
                             : "bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200"
                           }`}
@@ -958,11 +963,11 @@ const AppShell = () => {
               <div data-menu-page="pr" style={{ display: activeMenu === "pr" ? undefined : "none" }}>
                 {activeMenu === "pr" && (
                   <>
-                    <div className="flex items-center gap-1 mb-4 bg-white rounded-xl shadow-sm border border-slate-200 p-1 w-fit">
+                    <div className="flex w-full max-w-full items-center gap-1 overflow-x-auto no-scrollbar mb-4 bg-white rounded-xl shadow-sm border border-slate-200 p-1 sm:w-fit">
                       <button
                         type="button"
                         onClick={() => setPrTab("system")}
-                        className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${prTab === "system"
+                        className={`shrink-0 whitespace-nowrap px-4 py-2 rounded-lg text-sm font-semibold transition-all ${prTab === "system"
                           ? "bg-blue-600 text-white shadow"
                           : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                           }`}
@@ -979,7 +984,7 @@ const AppShell = () => {
                       <button
                         type="button"
                         onClick={() => setPrTab("table")}
-                        className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${prTab === "table"
+                        className={`shrink-0 whitespace-nowrap px-4 py-2 rounded-lg text-sm font-semibold transition-all ${prTab === "table"
                           ? "bg-blue-600 text-white shadow"
                           : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                           }`}
@@ -1019,11 +1024,11 @@ const AppShell = () => {
               <div data-menu-page="po" style={{ display: activeMenu === "po" ? undefined : "none" }}>
                 {activeMenu === "po" && (
                   <>
-                    <div className="flex items-center gap-1 mb-4 bg-white rounded-xl shadow-sm border border-slate-200 p-1 w-fit">
+                    <div className="flex w-full max-w-full items-center gap-1 overflow-x-auto no-scrollbar mb-4 bg-white rounded-xl shadow-sm border border-slate-200 p-1 sm:w-fit">
                       <button
                         type="button"
                         onClick={() => setPoTab("system")}
-                        className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${poTab === "system"
+                        className={`shrink-0 whitespace-nowrap px-4 py-2 rounded-lg text-sm font-semibold transition-all ${poTab === "system"
                           ? "bg-blue-600 text-white shadow"
                           : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                           }`}
@@ -1040,7 +1045,7 @@ const AppShell = () => {
                       <button
                         type="button"
                         onClick={() => setPoTab("table")}
-                        className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${poTab === "table"
+                        className={`shrink-0 whitespace-nowrap px-4 py-2 rounded-lg text-sm font-semibold transition-all ${poTab === "table"
                           ? "bg-blue-600 text-white shadow"
                           : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                           }`}
@@ -1080,11 +1085,11 @@ const AppShell = () => {
               <div data-menu-page="payment-subcontract" style={{ display: activeMenu === "payment-subcontract" ? undefined : "none" }}>
                 {activeMenu === "payment-subcontract" && (
                   <>
-                    <div className="flex items-center gap-1 mb-4 bg-white rounded-xl shadow-sm border border-slate-200 p-1 w-fit">
+                    <div className="flex w-full max-w-full items-center gap-1 overflow-x-auto no-scrollbar mb-4 bg-white rounded-xl shadow-sm border border-slate-200 p-1 sm:w-fit">
                       <button
                         type="button"
                         onClick={() => setPaymentSubTab("system")}
-                        className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${paymentSubTab === "system"
+                        className={`shrink-0 whitespace-nowrap px-4 py-2 rounded-lg text-sm font-semibold transition-all ${paymentSubTab === "system"
                           ? "bg-orange-500 text-white shadow"
                           : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                           }`}
@@ -1101,7 +1106,7 @@ const AppShell = () => {
                       <button
                         type="button"
                         onClick={() => setPaymentSubTab("table")}
-                        className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${paymentSubTab === "table"
+                        className={`shrink-0 whitespace-nowrap px-4 py-2 rounded-lg text-sm font-semibold transition-all ${paymentSubTab === "table"
                           ? "bg-orange-500 text-white shadow"
                           : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                           }`}
@@ -1370,6 +1375,8 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   const [activeTypeTab, setActiveTypeTab] = React.useState("");
   const [currentPage, setCurrentPage] = React.useState(1);
   const isDesktopTable = useMediaQuery("(min-width: 768px)");
+  // Keep the dense Log tables readable while the surrounding layout is responsive.
+  const isResponsiveLog = useMediaQuery("(max-width: 1279px)");
 
   // ซิงก์ filterProject เมื่อ selectedProjectId เปลี่ยน (เช่นกดเปลี่ยนโครงการที่ header)
   React.useEffect(() => {
@@ -1380,6 +1387,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   const [pdfLoadingId, setPdfLoadingId] = React.useState<string | null>(null);
   const [pendingActionId, setPendingActionId] = React.useState<string | null>(null);
   const [pdfPreviewUrl, setPdfPreviewUrl] = React.useState<string | null>(null);
+  const [viewingPR, setViewingPR] = React.useState<any>(null);
   const [viewingPO, setViewingPO] = React.useState<any>(null);
   const [isReturnBalanceModalOpen, setIsReturnBalanceModalOpen] = React.useState(false);
   const [returnBalanceContext, setReturnBalanceContext] = React.useState<any>(null);
@@ -1564,7 +1572,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       showAlert?.("กำลังดำเนินการ", `PO ${po.poNo || po.id} มี Process คืน Budget อยู่แล้ว (${processStatus})`, "info");
       return;
     }
-    if (!plan.latestPayment) {
+    if (!plan.latestPaymentId) {
       showAlert?.("ยังไม่มี Payment", "ฟังก์ชันนี้รองรับเฉพาะ PO ที่มี Payment เท่านั้น", "warning");
       return;
     }
@@ -1683,6 +1691,10 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   }, [db, showAlert, user, userData, userRole]);
 
   const handleRecreatePO = React.useCallback((po: any) => {
+    if (isPR || !canUseFunction("po-table", "recreate")) {
+      showAlert?.("ไม่มีสิทธิ์", "Role นี้ไม่มีสิทธิ์ Recreate PO", "warning");
+      return;
+    }
     if (!po?.id) {
       setRecreatePoProgress({
         show: true,
@@ -1862,7 +1874,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
         }));
       }
     })();
-  }, [recreatePoInFlightId, vendors, projects, updateData, logAction, selectedProjectId, userData, user]);
+  }, [canUseFunction, isPR, recreatePoInFlightId, vendors, projects, updateData, logAction, selectedProjectId, showAlert, userData, user]);
 
   const handleActivePO = React.useCallback(async (po: any) => {
     if (!po || po.status !== "Closed PO") return false;
@@ -2307,11 +2319,32 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     showAlert?.("เตรียมอีเมลแล้ว", "เปิดหน้าส่งเมลให้แล้ว และคัดลอกลิงก์ PDF เรียบร้อย", "success");
   };
 
+  // การเปิดรายละเอียดเป็นสิทธิ์อ่านอย่างเดียว ไม่ควรทำให้เกิดการ Recreate PO
+  // หรือเขียนข้อมูลอัตโนมัติเมื่อผู้ใช้กดแถว
+  const openLogDetail = React.useCallback((row: any) => {
+    if (!row?.id) return;
+    if (isPR) {
+      setViewingPO(null);
+      setViewingPR(row);
+    } else {
+      setViewingPR(null);
+      setViewingPO(row);
+    }
+  }, [isPR]);
+
   const renderActionMenuItems = (r: any) => {
     const actionTask = isActionTaskRow(r);
 
     return (
       <>
+        <>
+          <ActionMenuItem
+            icon={<FileText size={14} />}
+            onClick={() => openLogDetail(r)}
+          >
+            ดูรายละเอียด
+          </ActionMenuItem>
+        </>
         {!actionTask && canUseFunction(tableModule, "email") && (
           <ActionMenuItem
             icon={<Mail size={14} />}
@@ -2501,7 +2534,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
             Active PO
           </ActionMenuItem>
         )}
-        {!actionTask && !isPR && (userRoles.some((role: string) => role.toUpperCase() === "ADMINISTRATOR") || userRole?.toUpperCase() === "ADMINISTRATOR") && (
+        {!actionTask && !isPR && canUseFunction(tableModule, "recreate") && (
           <ActionMenuItem
             icon={<RefreshCw size={14} className={recreatePoInFlightId === r.id ? "animate-spin" : ""} />}
             disabled={Boolean(recreatePoInFlightId)}
@@ -2541,17 +2574,6 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   };
 
   const rows = isPR ? prs : pos;
-
-  const openPoDetail = React.useCallback((row: any) => {
-    if (isPR) return;
-    setViewingPO(row);
-    const revisionNo = Number(row?.poBudgetReturnRevNo || row?.poBudgetReturnRevisions?.length || 0);
-    const pdfRevisionNo = Number(row?.poPdfRevisionNo || 0);
-    if (revisionNo > 0 && revisionNo > pdfRevisionNo) {
-      // เปิดดูได้ทันที และสร้าง PDF ฉบับ Rev ใหม่แบบ unique path จากนั้นค่อยลบไฟล์เดิม
-      handleRecreatePO(row);
-    }
-  }, [handleRecreatePO, isPR]);
 
   // ตัดข้อมูลด้วยเงื่อนไขราคาถูกก่อนสร้าง Ref/Search
   const scopedRows = React.useMemo(() => rows.filter((r: any) => {
@@ -2790,8 +2812,8 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       )}
 
       {/* Header bar */}
-      <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-2 md:flex-row md:items-center md:justify-between">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-2 xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
           <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm ${isPR ? "bg-slate-700" : "bg-red-600"}`}>
             {isPR ? <FileText size={18} className="text-white" /> : <ShoppingCart size={18} className="text-white" />}
           </div>
@@ -2809,7 +2831,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
         </div>
 
         {typeTabs.length > 0 && (
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 md:px-3">
+          <div className="flex w-full min-w-0 flex-wrap items-center gap-2 xl:w-auto xl:flex-1 xl:px-3">
             {typeTabs.map((tab) => {
               const active = (activeTypeGroup?.key || "") === tab.key;
               return (
@@ -2843,8 +2865,8 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
         )}
 
         {/* Filters */}
-        <div className="flex shrink-0 flex-wrap gap-2">
-          <div className="relative">
+        <div className="flex w-full shrink-0 flex-wrap gap-2 xl:w-auto">
+          <div className="relative w-full sm:w-auto">
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
@@ -2878,13 +2900,13 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                 setSearchQuery(value);
                 if (value === "") setEffectiveSearchTerm("");
               }}
-              className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-56"
+              className="w-full pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 sm:w-56"
             />
           </div>
           <select
             value={filterProject}
             onChange={(e) => setFilterProject(e.target.value)}
-            className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="min-w-0 flex-1 text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 sm:flex-none"
           >
             <option value="all">ทุกโครงการ</option>
             {allProjects.map((pid: string) => (
@@ -2894,7 +2916,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
           <select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
-            className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="min-w-0 flex-1 text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 sm:flex-none"
           >
             <option value="all">ทุกสถานะ</option>
             {allStatuses.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -2905,18 +2927,18 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       {/* Table Card */}
       <Card className="overflow-hidden w-full min-w-0">
         <div ref={prPoTableWrapRef} className="w-full min-w-0 overflow-x-auto">
-          <table className="w-full min-w-[1040px] text-left text-xs table-fixed md:min-w-0">
+          <table className="log-prpo-table w-full min-w-[1040px] text-left text-xs table-fixed">
             <thead>
               <tr className="bg-slate-800 text-white">
                 {!isDesktopTable && isColumnVisible(tblId, "action") && <th className="px-2 py-0.5 font-semibold text-left" style={{ width: prPoScaled.action }}>Action</th>}
                 {isColumnVisible(tblId, "rowNum") && <th className="px-2 py-0.5 font-semibold" style={{ width: prPoScaled.rowNum }}>#</th>}
                 {isColumnVisible(tblId, "no") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="no" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.no}>{isPR ? "PR No." : "PO No."}</ResizableTh>}
-                {isColumnVisible(tblId, "project") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="project" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.project}>โครงการ</ResizableTh>}
+                {isColumnVisible(tblId, "project") && (isPR || !isResponsiveLog) && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="project" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.project}>โครงการ</ResizableTh>}
                 {isPR && isColumnVisible("pr-table", "costCode") && <ResizableTh tableId="pr-table" colKey="costCode" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.costCode}>Cost Code</ResizableTh>}
                 {isPR && isColumnVisible("pr-table", "description") && <ResizableTh tableId="pr-table" colKey="description" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.description}>รายการงบ</ResizableTh>}
                 {!isPR && isColumnVisible("po-table", "costCode") && <ResizableTh tableId="po-table" colKey="costCode" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.costCode}>Cost Code</ResizableTh>}
                 {!isPR && isColumnVisible("po-table", "vendor") && <ResizableTh tableId="po-table" colKey="vendor" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.vendor}>Vendor</ResizableTh>}
-                {!isPR && isColumnVisible("po-table", "prRef") && <ResizableTh tableId="po-table" colKey="prRef" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.prRef}>Ref PR No.</ResizableTh>}
+                {!isPR && !isResponsiveLog && isColumnVisible("po-table", "prRef") && <ResizableTh tableId="po-table" colKey="prRef" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.prRef}>Ref PR No.</ResizableTh>}
                 {isColumnVisible(tblId, "date") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="date" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.date}>วันที่</ResizableTh>}
                 {isPR && isColumnVisible("pr-table", "requestor") && <ResizableTh tableId="pr-table" colKey="requestor" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.requestor}>ผู้ขอ</ResizableTh>}
                 {isPR && isColumnVisible("pr-table", "type") && <ResizableTh tableId="pr-table" colKey="type" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.type}>ประเภท</ResizableTh>}
@@ -2924,7 +2946,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                 {isColumnVisible(tblId, "amount") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="amount" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.amount}>{isPR ? "ยอดรวม" : "ยอดรวม (Ex VAT)"}</ResizableTh>}
                 {canViewPrBalance && isColumnVisible("pr-table", "balance") && <ResizableTh tableId="pr-table" colKey="balance" className="px-2 py-0.5 font-semibold text-right" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.balance}>Balance</ResizableTh>}
                 {isColumnVisible(tblId, "status") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="status" className="px-2 py-0.5 font-semibold text-center" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.status}>สถานะ</ResizableTh>}
-                {isPR && isColumnVisible("pr-table", "poRef") && <ResizableTh tableId="pr-table" colKey="poRef" className="px-2 py-0.5 font-semibold text-center" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.poRef}>Ref PO</ResizableTh>}
+                {isPR && !isResponsiveLog && isColumnVisible("pr-table", "poRef") && <ResizableTh tableId="pr-table" colKey="poRef" className="px-2 py-0.5 font-semibold text-center" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.poRef}>Ref PO</ResizableTh>}
                 {isDesktopTable && isColumnVisible(tblId, "action") && <th className="px-2 py-0.5 font-semibold text-center" style={{ width: prPoScaled.action }}>Action</th>}
               </tr>
             </thead>
@@ -2962,7 +2984,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                   const prBalance = canViewPrBalance ? getPrBalanceAmount(r) : 0;
 
                   return (
-                    <tr key={r.id} className={`hover:bg-blue-50/40 transition-colors cursor-pointer ${isEven ? "bg-white" : "bg-slate-50/40"}`} onClick={() => openPoDetail(r)}>
+                    <tr key={r.id} className={`hover:bg-blue-50/40 transition-colors cursor-pointer ${isEven ? "bg-white" : "bg-slate-50/40"}`} onClick={() => openLogDetail(r)}>
                       {!isDesktopTable && renderActionCell(r, "")}
                       {isColumnVisible(tblId, "rowNum") && (
                         <td className="px-2 py-0.5 text-slate-400 font-mono">
@@ -2983,7 +3005,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                           </div>
                         </td>
                       )}
-                      {isColumnVisible(tblId, "project") && (
+                      {isColumnVisible(tblId, "project") && (isPR || !isResponsiveLog) && (
                         <td className="px-2 py-0.5 text-slate-600 max-w-[140px] truncate" title={getProjectName(r.projectId)}>
                           {getProjectName(r.projectId)}
                         </td>
@@ -3024,7 +3046,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                       {!isPR && isColumnVisible("po-table", "vendor") && (
                         <td className="px-2 py-0.5 text-slate-700 font-medium">{vendorName}</td>
                       )}
-                      {!isPR && isColumnVisible("po-table", "prRef") && (
+                      {!isPR && !isResponsiveLog && isColumnVisible("po-table", "prRef") && (
                         <td className="px-2 py-0.5 text-slate-500 text-[11px]">
                           {poLinkedMeta.prNos.length > 0 ? poLinkedMeta.prNos.join(", ") : "-"}
                         </td>
@@ -3074,7 +3096,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                           )}
                         </td>
                       )}
-                      {isPR && isColumnVisible("pr-table", "poRef") && (
+                      {isPR && !isResponsiveLog && isColumnVisible("pr-table", "poRef") && (
                         <td className="px-2 py-0.5 text-slate-500 text-[11px] text-center">
                           {poRefNos || "-"}
                         </td>
@@ -3251,7 +3273,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                               <CheckCircle size={14} />
                             </button>
                           )}
-                          {!isPR && (userRoles.some((role: string) => role.toUpperCase() === "ADMINISTRATOR") || userRole?.toUpperCase() === "ADMINISTRATOR") && (
+                          {!isPR && canUseFunction(tableModule, "recreate") && (
                             <button
                               type="button"
                               disabled={Boolean(recreatePoInFlightId)}
@@ -3453,6 +3475,158 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
           </div>
         </div>
       )}
+
+      {/* PR Detail Modal for Log PR */}
+      {viewingPR && (() => {
+        const pr = prs.find((item: any) => item.id === viewingPR.id) || viewingPR;
+        const items = Array.isArray(pr.items) ? pr.items : [];
+        const itemTotal = items.reduce((sum: number, item: any) => {
+          const qty = Number(item?.quantity ?? item?.qty ?? 0);
+          const price = Number(item?.price ?? item?.unitPrice ?? 0);
+          return sum + Number(item?.amount ?? (qty * price));
+        }, 0);
+        const totalAmount = Number(pr.totalAmount ?? pr.amount ?? itemTotal);
+        const pdfUrl = pr.pdfUrl || "";
+        const attachments = Array.isArray(pr.attachments)
+          ? pr.attachments.filter((attachment: any) => attachment?.url)
+          : (pr.attachmentUrl ? [{ url: pr.attachmentUrl, name: pr.attachmentName || "ไฟล์แนบจาก PR" }] : []);
+        const refPoNos = (prPoIndexes.displayPoRefsByPrId.get(String(pr.id)) || [])
+          .map((ref: any) => ref?.poNo)
+          .filter(Boolean)
+          .join(", ");
+        const fields = [
+          { label: "PR NO.", value: pr.prNo || pr.id },
+          { label: "โครงการ", value: getProjectName(pr.projectId) },
+          { label: "วันที่", value: pr.requestDate ? String(pr.requestDate).split("T")[0] : "-" },
+          { label: "ผู้ขอซื้อ", value: pr.requestor || "-" },
+          { label: "Cost Code", value: pr.costCode || "-" },
+          { label: "รายการงบ", value: getPrBudgetItemName(pr) || "-" },
+          { label: "ประเภท", value: pr.purchaseType || "-" },
+          { label: "สถานที่รับของ", value: pr.deliveryLocation || "-" },
+          { label: "Ref PO", value: refPoNos || "-" },
+        ];
+
+        return (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10010] p-4" onClick={() => setViewingPR(null)}>
+            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[90vh] flex flex-col" onClick={(event) => event.stopPropagation()}>
+              <div className="px-6 py-4 bg-gradient-to-r from-slate-700 to-slate-900 rounded-t-2xl flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center">
+                    <ClipboardList size={18} className="text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white">ใบขอซื้อ (PR)</h3>
+                    <p className="text-slate-300 text-xs mt-0.5">{pr.prNo || pr.id}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge status={pr.status} />
+                  <button type="button" onClick={() => setViewingPR(null)} className="text-white/60 hover:text-white hover:bg-white/20 p-2 rounded-xl transition-all ml-2">
+                    <XCircle size={20} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+                {pdfUrl && (
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">เอกสาร PDF</span>
+                      <a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-blue-600 hover:underline flex items-center gap-1">
+                        <FileOutput size={13} /> เปิด PDF
+                      </a>
+                    </div>
+                    <a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="group relative block w-48 h-64 border border-slate-200 rounded-xl overflow-hidden bg-slate-50 hover:border-blue-400 hover:shadow-md transition-all" title="คลิกเพื่อเปิด PDF ในแท็บใหม่">
+                      <iframe src={`${pdfUrl}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`} className="w-full h-full pointer-events-none opacity-80 group-hover:opacity-100 transition-opacity" title="PR PDF Thumbnail" />
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors flex items-center justify-center">
+                        <span className="bg-white/90 text-blue-600 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5">
+                          <FileOutput size={14} /> เปิดดู PDF
+                        </span>
+                      </div>
+                    </a>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                  {fields.map(({ label, value }) => (
+                    <div key={label} className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
+                      <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">{label}</p>
+                      <p className="font-semibold text-slate-700 truncate" title={String(value)}>{value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {attachments.length > 0 && (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <p className="text-xs font-bold text-slate-700 flex items-center gap-1.5 mb-2"><Paperclip size={13} /> ไฟล์แนบ ({attachments.length} ไฟล์)</p>
+                    <div className="space-y-1">
+                      {attachments.map((attachment: any, index: number) => (
+                        <a key={`${attachment.url}-${index}`} href={attachment.url} target="_blank" rel="noopener noreferrer" className="block text-xs text-blue-600 hover:underline truncate" title={attachment.name || attachment.url}>
+                          {attachment.name || `ไฟล์แนบ ${index + 1}`}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="rounded-xl border border-slate-200 overflow-hidden">
+                  <div className="bg-slate-700 px-4 py-2 flex items-center justify-between">
+                    <span className="text-xs font-bold text-white uppercase tracking-wide">รายการสินค้า</span>
+                    <span className="bg-white/20 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">{items.length} รายการ</span>
+                  </div>
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
+                      <tr>
+                        <th className="px-3 py-2 w-8 text-center">#</th>
+                        <th className="px-3 py-2">รายการ</th>
+                        <th className="px-3 py-2 text-right">จำนวน</th>
+                        <th className="px-3 py-2 text-right">ราคา/หน่วย</th>
+                        <th className="px-3 py-2 text-right">รวม</th>
+                        <th className="px-3 py-2">วันที่ใช้</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {items.map((item: any, index: number) => {
+                        const qty = Number(item?.quantity ?? item?.qty ?? 0);
+                        const price = Number(item?.price ?? item?.unitPrice ?? 0);
+                        const amount = Number(item?.amount ?? (qty * price));
+                        return (
+                          <tr key={index}>
+                            <td className="px-3 py-2 text-center text-slate-400">{index + 1}</td>
+                            <td className="px-3 py-2 text-slate-700">{item?.description || item?.name || "-"}</td>
+                            <td className="px-3 py-2 text-right text-slate-600">{qty.toLocaleString("th-TH")} {item?.unit || ""}</td>
+                            <td className="px-3 py-2 text-right text-slate-600">{formatCurrency(price)}</td>
+                            <td className="px-3 py-2 text-right font-semibold text-slate-800">{formatCurrency(amount)}</td>
+                            <td className="px-3 py-2 text-slate-500">{item?.requiredDate || "-"}</td>
+                          </tr>
+                        );
+                      })}
+                      {items.length === 0 && <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-400">ไม่มีรายการสินค้า</td></tr>}
+                    </tbody>
+                    <tfoot className="bg-slate-50 border-t border-slate-200">
+                      <tr>
+                        <td colSpan={4} className="px-3 py-2 text-right font-bold text-slate-600">ยอดรวมทั้งสิ้น:</td>
+                        <td colSpan={2} className="px-3 py-2 text-right font-bold text-slate-700">{formatCurrency(totalAmount)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+
+              <div className="px-6 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0 rounded-b-2xl">
+                <button type="button" onClick={() => setViewingPR(null)} className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-600 text-sm font-medium hover:bg-slate-50 transition-all flex items-center gap-2">
+                  <XCircle size={15} /> ปิด
+                </button>
+                {pdfUrl && (
+                  <a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-800 text-white text-sm font-semibold transition-all flex items-center gap-2">
+                    <FileOutput size={15} /> เปิด PDF
+                  </a>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* PO Detail Modal for Log PO */}
       {viewingPO && (() => {

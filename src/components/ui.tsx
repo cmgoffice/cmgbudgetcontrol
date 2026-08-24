@@ -131,7 +131,7 @@ export const SidebarItem = React.memo(({ icon, label, active, onClick, collapsed
     onClick={onClick}
     title={collapsed ? label : undefined}
     className={`relative w-full flex items-center rounded-lg overflow-hidden group ${
-      collapsed ? "justify-center p-3" : dense ? "gap-2 px-2.5 py-2" : "gap-3 px-4 py-3"
+     collapsed ? (dense ? "justify-center p-2.5" : "justify-center p-3") : dense ? "gap-2 px-2.5 py-2" : "gap-3 px-4 py-3"
     } ${active ? "text-white" : dense ? "text-slate-600 hover:text-slate-800 hover:bg-slate-100" : "text-slate-400 hover:text-white hover:bg-slate-800/80"}`}
     whileHover={{ scale: 1.02 }}
     whileTap={{ scale: 0.98 }}

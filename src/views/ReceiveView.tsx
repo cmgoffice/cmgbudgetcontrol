@@ -1629,7 +1629,7 @@ const ReceiveView = React.memo(() => {
             onClick={() => { if (!saving) { setViewingPO(null); setReceiveMode(false); } }}
           >
             <motion.div
-              className={`bg-white rounded-2xl shadow-2xl w-full my-8 ${receiveMode ? "max-w-6xl" : "max-w-4xl"}`}
+              className={`bg-white rounded-2xl shadow-2xl w-full my-8 ${receiveMode ? "max-w-6xl" : "max-w-7xl"}`}
               variants={modalContentVariants}
               transition={modalTransition}
               onClick={(e) => e.stopPropagation()}
@@ -1657,7 +1657,7 @@ const ReceiveView = React.memo(() => {
               </div>
 
               {/* Body */}
-              <div className="p-6 max-h-[70vh] overflow-y-auto custom-scrollbar">
+              <div className={`p-6 overflow-y-auto custom-scrollbar ${receiveMode ? "max-h-[70vh]" : "max-h-[78vh]"}`}>
                 {!receiveMode ? (
                   /* ── PO Detail View ── */
                   <div className="space-y-5">
@@ -1673,9 +1673,9 @@ const ReceiveView = React.memo(() => {
                         { label: "สถานะ", value: viewingPO.status },
                         { label: "Receive Type", value: viewingPO.receiveType || "-" },
                       ].map((f) => (
-                        <div key={f.label} className="bg-slate-50 rounded-lg p-3">
+                        <div key={f.label} className="bg-slate-50 rounded-lg p-3 min-w-0">
                           <p className="text-[10px] text-slate-400 uppercase font-semibold">{f.label}</p>
-                          <p className="text-sm font-medium text-slate-800 truncate" title={String(f.value)}>{f.value}</p>
+                          <p className="text-sm font-medium text-slate-800 truncate min-w-0" title={String(f.value)}>{f.value}</p>
                         </div>
                       ))}
                     </div>
@@ -1683,8 +1683,17 @@ const ReceiveView = React.memo(() => {
                     {/* PO Items Table */}
                     <div>
                       <h4 className="text-sm font-bold text-slate-700 mb-2">รายการสินค้า ({(viewingPO.items || []).length} รายการ)</h4>
-                      <div className="border rounded-lg overflow-hidden">
-                        <table className="w-full text-xs text-slate-600">
+                      <div className="receive-detail-table-wrapper border rounded-lg overflow-x-auto">
+                        <table className="receive-detail-items-table w-full text-xs text-slate-600 table-fixed">
+                          <colgroup>
+                            <col style={{ width: "6%" }} />
+                            <col style={{ width: "15%" }} />
+                            <col style={{ width: "39%" }} />
+                            <col style={{ width: "10%" }} />
+                            <col style={{ width: "10%" }} />
+                            <col style={{ width: "10%" }} />
+                            <col style={{ width: "10%" }} />
+                          </colgroup>
                           <thead className="bg-slate-50 text-slate-500 uppercase font-semibold">
                             <tr>
                               <th className="py-2 px-3 text-left">#</th>
@@ -1702,14 +1711,14 @@ const ReceiveView = React.memo(() => {
                               const remaining = Math.max(0, Number(item.quantity || 0) - received);
                               return (
                                 <tr key={idx} className={remaining === 0 ? "bg-green-50/50" : ""}>
-                                  <td className="py-2 px-3 text-slate-400">{idx + 1}</td>
-                                  <td className="py-2 px-3 font-mono text-[10px]">{item.materialNo || "-"}</td>
-                                  <td className="py-2 px-3">{item.description || "-"}</td>
-                                  <td className="py-2 px-3 text-center">{item.unit || "-"}</td>
-                                  <td className="py-2 px-3 text-right font-semibold">{item.quantity || 0}</td>
-                                  <td className="py-2 px-3 text-right font-semibold text-blue-600">{received}</td>
+                                  <td className="py-2 px-3 text-slate-400"><span className="receive-detail-cell-text">{idx + 1}</span></td>
+                                  <td className="py-2 px-3 font-mono text-[10px]" title={String(item.materialNo || "-")}><span className="receive-detail-cell-text">{item.materialNo || "-"}</span></td>
+                                  <td className="py-2 px-3" title={String(item.description || "-")}><span className="receive-detail-description">{item.description || "-"}</span></td>
+                                  <td className="py-2 px-3 text-center" title={String(item.unit || "-")}><span className="receive-detail-cell-text">{item.unit || "-"}</span></td>
+                                  <td className="py-2 px-3 text-right font-semibold"><span className="receive-detail-cell-text">{item.quantity || 0}</span></td>
+                                  <td className="py-2 px-3 text-right font-semibold text-blue-600"><span className="receive-detail-cell-text">{received}</span></td>
                                   <td className={`py-2 px-3 text-right font-semibold ${remaining === 0 ? "text-green-600" : "text-orange-600"}`}>
-                                    {remaining}
+                                    <span className="receive-detail-cell-text">{remaining}</span>
                                   </td>
                                 </tr>
                               );

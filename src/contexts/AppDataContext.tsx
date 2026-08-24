@@ -25,6 +25,7 @@ import {
   findAutoReceiveForPO,
   isReceiveAutoType,
 } from "../lib/receiveAuto";
+import { TABLE_COLUMN_DEFS } from "../lib/tableColumnDefs";
 import {
   buildConfiguredInvoiceData,
   buildConfiguredReceiveData,
@@ -437,7 +438,8 @@ export const AppDataProvider = ({
   const isColumnVisible = useCallback((tableId, colKey) => {
     const userPref = columnVisibility[tableId]?.[colKey];
     if (userPref !== undefined) return userPref;
-    return true;
+    const columnDef = TABLE_COLUMN_DEFS[tableId]?.find((column) => column.key === colKey);
+    return columnDef?.defaultVisible ?? true;
   }, [columnVisibility]);
 
   // ── ป้องกันการบันทึกซ้ำ (double submit) ───────────────────────────────────
@@ -681,6 +683,26 @@ export const AppDataProvider = ({
     if (roles.includes("Procurement") && (s === "Pending Procurement" || s === "Wait Pay")) return true;
     return false;
   }), [payments, roles]);
+
+  // ── Pending Budget return requests — used to highlight project badges ──────
+  // Keep this separate from approval tasks so the existing bell/sidebar counts
+  // continue to represent only actions that are currently awaiting approval.
+  const pendingBudgetReturnByProject = useMemo(() => {
+    const counts = {};
+    const visibleProjectIds = new Set(visibleProjects.map((project) => project.id));
+
+    budgets.forEach((budget) => {
+      if (!budget?.projectId || !visibleProjectIds.has(budget.projectId)) return;
+      const pendingCount = Array.isArray(budget.budgetReturnNotifications)
+        ? budget.budgetReturnNotifications.filter((notification) => (
+          (notification?.status || "pending") !== "accepted"
+        )).length
+        : 0;
+      if (pendingCount > 0) counts[budget.projectId] = (counts[budget.projectId] || 0) + pendingCount;
+    });
+
+    return Object.entries(counts).map(([projectId, count]) => ({ projectId, count }));
+  }, [budgets, visibleProjects]);
 
   const totalPendingCount = useMemo(() => {
     const visibleProjectIds = visibleProjects.map(p => p.id);
@@ -971,7 +993,7 @@ export const AppDataProvider = ({
     // pending (global, for bell + sidebar badges)
     pendingBudgetsGlobal, pendingSubItemsGlobal,
     pendingPRsGlobal, pendingPOsGlobal, pendingPaymentsGlobal,
-    totalPendingCount, pendingByProject, pendingCountByMenu,
+    totalPendingCount, pendingByProject, pendingCountByMenu, pendingBudgetReturnByProject,
     // CRUD
     addData, updateData, deleteData,
     // lazy / one-shot load (ลดโควต้า — โหลดเมื่อเข้าหน้าที่ใช้)
@@ -999,7 +1021,7 @@ export const AppDataProvider = ({
     visibleProjects,
     pendingBudgetsGlobal, pendingSubItemsGlobal,
     pendingPRsGlobal, pendingPOsGlobal, pendingPaymentsGlobal,
-    totalPendingCount, pendingByProject, pendingCountByMenu,
+    totalPendingCount, pendingByProject, pendingCountByMenu, pendingBudgetReturnByProject,
     addData, updateData, deleteData,
     loadVendors, loadMaterials,
     vendorsLoading, materialsLoading,

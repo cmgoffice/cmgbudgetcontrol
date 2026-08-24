@@ -95,6 +95,7 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
     { key: "export",  label: "Export CSV" },
     { key: "email",   label: "ส่ง Email PDF" },
     { key: "download",label: "Download PDF" },
+    { key: "recreate", label: "Recreate PO" },
     { key: "delete",  label: "ลบ PO" },
     { key: "returnBudget", label: "คืน Balance PO เข้า Budget" },
     { key: "requestClosePO", label: "ขอปิด PO" },
@@ -253,6 +254,7 @@ export function mergeFunctionPermissionsWithDefaults(
     },
     "po-table": {
       returnBudget: ["PCM", "GM", "MD"],
+      recreate: ["Administrator"],
       requestClosePO: ["Procurement"],
     },
     "payment-subcontract": {

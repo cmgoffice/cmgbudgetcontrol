@@ -408,7 +408,7 @@ const PaymentTableView = React.memo(() => {
       showAlert?.("กำลังดำเนินการ", `PO ${po.poNo || po.id} มี Process คืน Budget อยู่แล้ว (${processStatus})`, "info");
       return;
     }
-    if (!plan.latestPayment) {
+    if (!plan.latestPaymentId) {
       showAlert?.("ยังไม่มี Payment", "ฟังก์ชันนี้รองรับเฉพาะ PO ที่มี Payment เท่านั้น", "warning");
       return;
     }

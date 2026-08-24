@@ -264,7 +264,7 @@ thead th > div {
 /* Responsive: ignore saved widths on smartphone */
 @media (max-width: 767px) {
   table {
-    table-layout: auto !important;
+    table-layout: fixed !important;
   }
   thead th {
     width: auto !important;
@@ -272,6 +272,218 @@ thead th > div {
   }
   .col-resize-handle {
     display: none;
+  }
+}
+
+/* =============================
+   Responsive tables — fit the viewport
+   Tables stay inside the page width on laptop/tablet/mobile layouts. Long
+   values are clipped with an ellipsis instead of expanding a column and
+   causing horizontal scrolling or overlapping text.
+   ============================= */
+@media (max-width: 1279px) {
+  .app-shell-root table {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    table-layout: fixed !important;
+    font-size: 11px !important;
+    line-height: 1.25 !important;
+  }
+
+  .app-shell-root :is(.overflow-x-auto, .overflow-auto):has(table) {
+    max-width: 100% !important;
+    overflow-x: hidden !important;
+  }
+
+  .app-shell-root table :is(th, td) {
+    min-width: 0 !important;
+    max-width: 100% !important;
+    padding: 6px !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    overflow-wrap: normal;
+    word-break: normal;
+  }
+
+  .app-shell-root table thead th {
+    font-size: 10px !important;
+    letter-spacing: -0.01em;
+  }
+
+  .app-shell-root table tbody td,
+  .app-shell-root table tfoot td {
+    font-size: 11px !important;
+  }
+
+  .app-shell-root table :is(th, td).text-right {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.025em;
+  }
+
+  .app-shell-root table td.text-right {
+    font-weight: 600;
+  }
+
+  .app-shell-root table :is(th, td) > * {
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  .app-shell-root table :is(th, td) > span {
+    font-size: inherit !important;
+  }
+
+  .app-shell-root table :is(input, select, textarea) {
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  /* Log PR / Log PO: compact rows for responsive layouts. */
+  .app-shell-root table.log-prpo-table thead th {
+    height: 28px !important;
+    padding: 4px !important;
+    font-size: 9px !important;
+    line-height: 1.05 !important;
+  }
+
+  .app-shell-root table.log-prpo-table tbody td {
+    height: 30px !important;
+    padding: 3px 4px !important;
+    font-size: 10px !important;
+    line-height: 1.1 !important;
+  }
+
+  .app-shell-root table.log-prpo-table tbody td > .leading-tight {
+    max-height: 22px !important;
+    overflow: hidden !important;
+    line-height: 1.05 !important;
+  }
+
+  .app-shell-root table.log-prpo-table tbody td > .leading-tight > span {
+    line-height: 1.05 !important;
+  }
+
+  .app-shell-root table.log-prpo-table tbody td [aria-label="เปิดเมนู Action"] {
+    width: 26px !important;
+    height: 26px !important;
+  }
+
+  .app-shell-root table.log-prpo-table tbody td :is(.rounded-full, .rounded-md) {
+    line-height: 1.05 !important;
+  }
+
+  /* Budget detail: keep the important values readable without the secondary
+     attachment/action columns consuming the responsive table width. */
+  .app-shell-root .budget-main-table .budget-col-attachment,
+  .app-shell-root .budget-main-table .budget-col-status {
+    display: none !important;
+  }
+
+  .app-shell-root .budget-main-table .budget-col-checkbox {
+    width: 6% !important;
+    min-width: 0 !important;
+  }
+
+  .app-shell-root .budget-main-table .budget-col-code {
+    width: 14% !important;
+    min-width: 0 !important;
+  }
+
+  .app-shell-root .budget-main-table .budget-col-description {
+    width: 25% !important;
+    min-width: 0 !important;
+  }
+
+  .app-shell-root .budget-main-table .budget-col-budget {
+    width: 14% !important;
+    min-width: 0 !important;
+  }
+
+  .app-shell-root .budget-main-table .budget-col-status {
+    width: 0 !important;
+    min-width: 0 !important;
+  }
+
+  .app-shell-root .budget-main-table .budget-col-balance {
+    width: 14% !important;
+    min-width: 0 !important;
+  }
+
+  .app-shell-root .budget-main-table .budget-col-pr-total,
+  .app-shell-root .budget-main-table .budget-col-po-total {
+    width: 8% !important;
+    min-width: 0 !important;
+    padding-left: 2px !important;
+    padding-right: 2px !important;
+    font-size: 10px !important;
+  }
+
+  .app-shell-root .budget-main-table .budget-col-actions {
+    width: 11% !important;
+    min-width: 0 !important;
+    padding-left: 2px !important;
+    padding-right: 2px !important;
+  }
+
+  .app-shell-root .budget-main-table td.budget-col-actions > div {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    justify-content: center !important;
+    gap: 1px !important;
+    opacity: 1 !important;
+  }
+
+  .app-shell-root .budget-main-table td.budget-col-actions button {
+    width: 22px !important;
+    min-width: 22px !important;
+    height: 22px !important;
+    padding: 3px !important;
+    gap: 0 !important;
+    font-size: 0 !important;
+    line-height: 1 !important;
+  }
+
+  .app-shell-root .budget-main-table td.budget-col-actions button svg {
+    width: 13px !important;
+    height: 13px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .app-shell-root .budget-main-table .budget-col-pr-po-placeholder {
+    display: none !important;
+  }
+}
+
+@media (max-width: 767px) {
+  /* On phone-sized screens selection/status and secondary totals give the
+     description and the two primary money columns room to remain legible. */
+  .app-shell-root .budget-main-table .budget-col-checkbox,
+  .app-shell-root .budget-main-table .budget-col-status,
+  .app-shell-root .budget-main-table .budget-col-pr-total,
+  .app-shell-root .budget-main-table .budget-col-po-total {
+    display: none !important;
+  }
+
+  .app-shell-root .budget-main-table .budget-col-code {
+    width: 16% !important;
+  }
+
+  .app-shell-root .budget-main-table .budget-col-description {
+    width: 34% !important;
+  }
+
+  .app-shell-root .budget-main-table .budget-col-budget,
+  .app-shell-root .budget-main-table .budget-col-balance {
+    width: 20% !important;
+    font-size: 10px !important;
+    padding-left: 2px !important;
+    padding-right: 2px !important;
+  }
+
+  .app-shell-root .budget-main-table .budget-col-actions {
+    width: 10% !important;
   }
 }
 
@@ -381,5 +593,54 @@ input[type="checkbox"] {
   select,
   textarea {
     font-size: 16px;
+  }
+}
+
+/* =============================
+   Receive detail modal
+   Keep long PO item text inside its own cell. The global responsive table
+   rules intentionally compact tables, so this table gets its own readable
+   column proportions and a horizontal fallback on narrow screens.
+   ============================= */
+.receive-detail-table-wrapper {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.receive-detail-items-table {
+  table-layout: fixed !important;
+}
+
+.receive-detail-items-table .receive-detail-cell-text,
+.receive-detail-items-table .receive-detail-description {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.receive-detail-items-table .receive-detail-cell-text {
+  white-space: nowrap;
+}
+
+.receive-detail-items-table .receive-detail-description {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+  max-height: 2.7em;
+}
+
+@media (max-width: 1279px) {
+  .app-shell-root .receive-detail-table-wrapper {
+    overflow-x: auto !important;
+  }
+
+  .app-shell-root .receive-detail-items-table {
+    min-width: 760px !important;
+  }
+
+  .app-shell-root .receive-detail-items-table td .receive-detail-description {
+    white-space: normal !important;
   }
 }

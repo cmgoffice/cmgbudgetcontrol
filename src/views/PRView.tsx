@@ -64,7 +64,7 @@ const PRView = React.memo(() => {
   }, [prs, updateData]);
 
   // Helper function to get reference document info based on PR status
-  const getRefDocInfo = (pr) => {
+  const getRefDocInfo = useCallback((pr) => {
     if (!pr) return { docNo: "-", pdfUrl: null, docType: "PR" };
 
     const status = pr.status;
@@ -100,7 +100,7 @@ const PRView = React.memo(() => {
     // For all other PR statuses (Draft, Pending CM, Pending PM, etc.), show PR document
 
     return { docNo, pdfUrl, docType };
-  };
+  }, [pos]);
 
   // Handle clicking on ref doc to open PDF
   const handleRefDocClick = (pdfUrl, docNo, e) => {
@@ -1593,7 +1593,6 @@ const PRView = React.memo(() => {
   }, [budgets]);
 
   const getPrSortValue = useCallback((pr, key) => {
-    const balanceAmount = getPrBudgetReturnInfo(pr, pos).returnAmount;
     switch (key) {
       case "prNo": return String(pr.prNo || pr.id || "");
       case "date": return String(pr.requestDate || "");
@@ -1607,12 +1606,12 @@ const PRView = React.memo(() => {
       case "requestor": return String(pr.requestor || "");
       case "items": return Number(pr.items?.length || 0);
       case "amount": return Number(pr.totalAmount || pr.amount || 0);
-      case "balance": return balanceAmount;
+      case "balance": return getPrBudgetReturnInfo(pr, pos).returnAmount;
       case "status": return String(pr.status || "");
       case "refDoc": return String(getRefDocInfo(pr)?.docNo || "");
       default: return "";
     }
-  }, [getPrBudgetItemName, pos]);
+  }, [getPrBudgetItemName, getRefDocInfo, pos]);
 
   const requestPrSort = useCallback((key) => {
     setPrSortConfig((prev) => ({
@@ -1665,7 +1664,7 @@ const PRView = React.memo(() => {
       refDoc?.docNo,
     ].filter(Boolean).join(" ").toLowerCase();
     return blob.includes(q);
-  }, [prTableSearchText, getPrBudgetItemName]);
+  }, [prTableSearchText, getPrBudgetItemName, getRefDocInfo]);
 
   /** ตารางบนสุด: รายการรอ Action (รอ Approve หรือ รอแก้ไข หรือ รอปิด) */
   const pendingActionStatuses = ["Pending CM", "Pending PM", "Pending GM", "Pending MD", "Edit Budget", "Rejected", "Pending Close"];
@@ -1725,6 +1724,51 @@ const PRView = React.memo(() => {
 
   const showPoIssuedPrTable = flatPoIssuedPrs.length > 0;
 
+  // Prepare the values used by every table row once per data change. This keeps
+  // Sidebar/table resizes from recalculating balance, descriptions, and ref docs
+  // for every PR on every render.
+  const tablePrs = useMemo(() => {
+    const rows = [];
+    const seen = new Set();
+    const addRows = (entries) => {
+      entries.forEach(([, groupPrs]) => {
+        groupPrs.forEach((pr) => {
+          if (!seen.has(pr.id)) {
+            seen.add(pr.id);
+            rows.push(pr);
+          }
+        });
+      });
+    };
+    addRows(groupedPrEntriesPending);
+    addRows(groupedPrEntriesMain);
+    flatPoIssuedPrs.forEach((pr) => {
+      if (!seen.has(pr.id)) {
+        seen.add(pr.id);
+        rows.push(pr);
+      }
+    });
+    return rows;
+  }, [groupedPrEntriesPending, groupedPrEntriesMain, flatPoIssuedPrs]);
+
+  const prRowDisplayDataById = useMemo(() => {
+    const map = new Map();
+    tablePrs.forEach((pr) => {
+      const budgetItemName = getPrBudgetItemName(pr);
+      const itemDescriptions = pr.items?.map((it) => it.description).filter(Boolean).join(", ") || "";
+      const descriptionText = itemDescriptions || budgetItemName || "-";
+      map.set(pr.id, {
+        balanceAmount: getPrBudgetReturnInfo(pr, pos).returnAmount,
+        budgetItemName,
+        itemDescriptions,
+        descriptionText,
+        descriptionTitle: pr.rejectReason ? `${descriptionText} | ปฏิเสธ: ${pr.rejectReason}` : descriptionText,
+        refDoc: getRefDocInfo(pr),
+      });
+    });
+    return map;
+  }, [tablePrs, getPrBudgetItemName, getRefDocInfo, pos]);
+
   const renderPrHeaderCells = () => (
     <>
       {isColumnVisible("pr", "actions") && <th className="py-0.5 px-2 text-left md:hidden" style={{ width: prTableLayout.scaled.actions }}>Actions</th>}
@@ -1748,7 +1792,7 @@ const PRView = React.memo(() => {
       ? "hover:bg-teal-50/60 border-b cursor-pointer transition-colors odd:bg-white even:bg-teal-50/25"
       : "hover:bg-blue-50 border-b cursor-pointer transition-colors odd:bg-white even:bg-slate-50";
 
-  const renderPrActionCell = (pr, className) => (
+  const renderPrActionCell = (pr, className, rowDisplayData) => (
     isColumnVisible("pr", "actions") && (
       <td className={`py-0.5 px-2 text-right ${className}`} onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-start gap-1 md:justify-end">
@@ -1790,12 +1834,12 @@ const PRView = React.memo(() => {
               </button>
             )}
             {canReturnPrBalance && (() => {
-              const info = getPrBudgetReturnInfo(pr, pos);
-              if (info.returnAmount <= 0) return null;
+              const returnAmount = rowDisplayData?.balanceAmount ?? getPrBudgetReturnInfo(pr, pos).returnAmount;
+              if (returnAmount <= 0) return null;
               return (
                 <button
                   className="text-emerald-600 hover:bg-emerald-50 p-1 rounded-full transition-colors"
-                  title={`คืน Balance PR กลับ Budget (${formatCurrency(info.returnAmount)})`}
+                  title={`คืน Balance PR กลับ Budget (${formatCurrency(returnAmount)})`}
                   onClick={() => handleReturnPrBalanceToBudget(pr)}
                 >
                   <Wallet size={13} />
@@ -1862,10 +1906,11 @@ const PRView = React.memo(() => {
     return groupPrs.map((pr) => (
       <React.Fragment key={pr.id}>
         {(() => {
-          const balanceAmount = getPrBudgetReturnInfo(pr, pos).returnAmount;
+          const rowDisplayData = prRowDisplayDataById.get(pr.id) || {};
+          const balanceAmount = rowDisplayData.balanceAmount ?? getPrBudgetReturnInfo(pr, pos).returnAmount;
           return (
         <tr className={dataRowClass} onClick={() => setViewingPR(pr)}>
-          {renderPrActionCell(pr, "md:hidden")}
+          {renderPrActionCell(pr, "md:hidden", rowDisplayData)}
           {isColumnVisible("pr", "prNo") && <td className="py-0.5 px-2 font-medium" title={pr.prNo}><span className="cell-text">{pr.prNo}</span></td>}
           {isColumnVisible("pr", "date") && <td className="py-0.5 px-2" title={pr.requestDate}><span className="cell-text">{pr.requestDate}</span></td>}
           {isColumnVisible("pr", "costCode") && <td className="py-0.5 px-2">
@@ -1875,24 +1920,15 @@ const PRView = React.memo(() => {
           </td>}
           {isColumnVisible("pr", "description") && <td
             className="py-0.5 px-2 text-xs text-slate-500"
-            title={(() => {
-              const budgetItemName = getPrBudgetItemName(pr);
-              const itemDescs = pr.items && pr.items.length > 0
-                ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
-                : "-";
-              const displayText = budgetItemName || itemDescs;
-              return pr.rejectReason ? `${displayText} | ปฏิเสธ: ${pr.rejectReason}` : displayText;
-            })()}
+            title={rowDisplayData.descriptionTitle}
           >
             <div className="leading-tight">
               <span className="cell-text font-semibold text-slate-700">
-                {pr.items && pr.items.length > 0
-                  ? pr.items.map((it) => it.description).filter(Boolean).join(", ")
-                  : (getPrBudgetItemName(pr) || "-")}
+                {rowDisplayData.descriptionText}
               </span>
-              {pr.items && pr.items.length > 0 && getPrBudgetItemName(pr) && (
+              {rowDisplayData.itemDescriptions && rowDisplayData.budgetItemName && (
                 <div className="cell-text text-[10px] text-slate-400 mt-0.5">
-                  {getPrBudgetItemName(pr)}
+                  {rowDisplayData.budgetItemName}
                 </div>
               )}
             </div>
@@ -1915,7 +1951,7 @@ const PRView = React.memo(() => {
           </td>}
           {isColumnVisible("pr", "refDoc") && <td className="py-0.5 px-2 text-center">
             {(() => {
-              const { docNo, pdfUrl, docType } = getRefDocInfo(pr);
+              const { docNo, pdfUrl, docType } = rowDisplayData.refDoc || getRefDocInfo(pr);
               return pdfUrl ? (
                 <button
                   className="text-blue-600 hover:text-blue-800 hover:underline text-xs font-medium transition-colors"
@@ -1931,7 +1967,7 @@ const PRView = React.memo(() => {
               );
             })()}
           </td>}
-          {renderPrActionCell(pr, "hidden md:table-cell")}
+          {renderPrActionCell(pr, "hidden md:table-cell", rowDisplayData)}
         </tr>
           );
         })()}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export function mergeColumnWeights(
   defaultWeights: Record<string, number>,
@@ -53,25 +53,50 @@ export function useProportionalTableLayout({
   fitToContainer = true,
 }: UseProportionalTableLayoutArgs) {
   const [containerWidth, setContainerWidth] = useState(0);
+  const pendingWidthRef = useRef<number | null>(null);
+  const committedWidthRef = useRef<number | null>(null);
+  const resizeCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!enabled) return;
     let ro: ResizeObserver | undefined;
     let cancelled = false;
+    const commitWidth = (width: number) => {
+      if (cancelled || width <= 0 || committedWidthRef.current === width) return;
+      committedWidthRef.current = width;
+      setContainerWidth(width);
+    };
+    const scheduleWidthCommit = (width: number, delay = 120) => {
+      if (width <= 0 || committedWidthRef.current === width) return;
+      pendingWidthRef.current = width;
+      if (resizeCommitTimerRef.current) clearTimeout(resizeCommitTimerRef.current);
+      resizeCommitTimerRef.current = setTimeout(() => {
+        resizeCommitTimerRef.current = null;
+        const pendingWidth = pendingWidthRef.current;
+        pendingWidthRef.current = null;
+        if (pendingWidth != null) commitWidth(pendingWidth);
+      }, delay);
+    };
     const raf = requestAnimationFrame(() => {
       if (cancelled) return;
       const el = containerRef.current;
       if (!el || typeof ResizeObserver === "undefined") return;
       ro = new ResizeObserver((entries) => {
         const w = Math.floor(entries[0]?.contentRect?.width ?? 0);
-        setContainerWidth(w);
+        // Sidebar collapse animates the table width for a few frames. Delay the
+        // commit until the width is stable so each animation does not trigger a
+        // full table recalculation.
+        scheduleWidthCommit(w);
       });
       ro.observe(el);
-      setContainerWidth(Math.floor(el.getBoundingClientRect().width));
+      commitWidth(Math.floor(el.getBoundingClientRect().width));
     });
     return () => {
       cancelled = true;
       cancelAnimationFrame(raf);
+      if (resizeCommitTimerRef.current) clearTimeout(resizeCommitTimerRef.current);
+      resizeCommitTimerRef.current = null;
+      pendingWidthRef.current = null;
       ro?.disconnect();
     };
   }, [enabled, containerRef]);
