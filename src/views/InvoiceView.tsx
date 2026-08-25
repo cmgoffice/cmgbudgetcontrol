@@ -209,6 +209,7 @@ const InvoiceView = React.memo(() => {
   // Create Invoice Modal State
   const [isCreateInvoiceModalOpen, setIsCreateInvoiceModalOpen] = useState(false);
   const [createInvoiceVendorId, setCreateInvoiceVendorId] = useState<string>("");
+  const [createInvoicePoId, setCreateInvoicePoId] = useState<string>("");
   const [createInvoiceSelectedReceiveIds, setCreateInvoiceSelectedReceiveIds] = useState<string[]>([]);
   const [createInvoiceForm, setCreateInvoiceForm] = useState({
     invNo: "",
@@ -490,6 +491,20 @@ const InvoiceView = React.memo(() => {
     });
     return groups;
   }, [filteredPOs]);
+
+  // Pay before receive POs do not have a Receive document yet. They must be
+  // opened directly from the PO so that Invoice can be created before payment
+  // and receiving. Keep POs with an existing invoice out of this shortcut;
+  // those records are available from the Draft/History lists instead.
+  const payBeforeReceivePOs = useMemo(() => (
+    invoiceEligiblePOs.filter((po: any) => {
+      const currentStatus = po.statusNow || po.status;
+      const hasInvoice = (invoices || []).some((invoice: any) => (
+        String(invoice?.poId || "") === String(po?.id || "")
+      ));
+      return currentStatus === "Wait Invoice" && !po.isPaymentSubcontract && !hasInvoice;
+    })
+  ), [invoiceEligiblePOs, invoices]);
 
   const toggleType = (type: string) =>
     setExpandedTypes((prev) => ({ ...prev, [type]: !prev[type] }));
@@ -2903,7 +2918,7 @@ const InvoiceView = React.memo(() => {
                     สร้าง Invoice ใหม่
                   </h3>
                   <p className="text-violet-200 text-xs mt-1 font-medium">
-                    เลือกรายการรับของ (Receive) ที่ต้องการออกใบแจ้งหนี้
+                    เลือก PO Pay before receive หรือรายการรับของ (Receive) ที่ต้องการออกใบแจ้งหนี้
                   </p>
                 </div>
                 <button
@@ -2916,6 +2931,58 @@ const InvoiceView = React.memo(() => {
               </div>
 
               <div className="p-6 space-y-6">
+                {payBeforeReceivePOs.length > 0 && (
+                  <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50/70 p-4">
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                        1. เลือก PO ที่รอ Invoice (Pay before receive)
+                      </label>
+                      <select
+                        value={createInvoicePoId}
+                        onChange={(e) => setCreateInvoicePoId(e.target.value)}
+                        className="w-full px-3 py-2 border border-amber-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
+                        disabled={saving}
+                      >
+                        <option value="">-- เลือก PO ที่รอ Invoice --</option>
+                        {payBeforeReceivePOs.map((po: any) => (
+                          <option key={po.id} value={po.id}>
+                            {po.poNo || po.id} — {getPoVendorName(po)}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="mt-1.5 text-xs text-amber-700">
+                        PO กลุ่มนี้ยังไม่มี Receive จึงต้องสร้าง Invoice จาก PO โดยตรง
+                      </p>
+                    </div>
+                    {createInvoicePoId && (
+                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2">
+                        <span className="text-xs text-slate-600">
+                          เลือกแล้ว: <span className="font-semibold text-violet-700">
+                            {payBeforeReceivePOs.find((po: any) => String(po.id) === String(createInvoicePoId))?.poNo || createInvoicePoId}
+                          </span>
+                        </span>
+                        <Button
+                          type="button"
+                          variant="primary"
+                          className="px-3 py-1.5 text-xs bg-amber-600 hover:bg-amber-700"
+                          disabled={saving}
+                          onClick={() => {
+                            const selectedPO = payBeforeReceivePOs.find((po: any) => String(po.id) === String(createInvoicePoId));
+                            if (!selectedPO) return;
+                            setIsCreateInvoiceModalOpen(false);
+                            setCreateInvoicePoId("");
+                            setCreateInvoiceVendorId("");
+                            setCreateInvoiceSelectedReceiveIds([]);
+                            openPODetail(selectedPO);
+                          }}
+                        >
+                          ลง Invoice จาก PO
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Section 1: Vendor & Receives */}
                 <div className="space-y-4 border-b border-slate-100 pb-6">
                    <div>
