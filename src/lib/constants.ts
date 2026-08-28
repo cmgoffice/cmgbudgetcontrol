@@ -15,6 +15,37 @@ export const COST_CATEGORIES: Record<string, string> = {
 export const PO_REVISION_PENDING_PCM = "PO Edit Pending PCM";
 export const PO_REVISION_PENDING_GM = "PO Edit Pending GM";
 
+/**
+ * สถานะที่แสดงในตาราง PO
+ *
+ * `statusNow` เป็นสถานะปลายทางของ PO ในขั้นตอน Receive/Invoice แต่รายการที่
+ * อยู่ระหว่าง workflow อาจมีค่าเก่าค้างอยู่ จึงต้องให้ workflow status
+ * (`status`) เป็นตัวจริงก่อน เพื่อไม่ให้หน้าจอแสดงสถานะเก่าค้างหลังเปลี่ยนสถานะ
+ */
+export const getPoDisplayStatus = (po: any) => {
+  const status = String(po?.status || "").trim();
+  const statusNow = String(po?.statusNow || "").trim();
+  const workflowStatuses = new Set([
+    "Draft",
+    "Rejected",
+    "Pending PCM",
+    "Pending GM",
+    PO_REVISION_PENDING_PCM,
+    PO_REVISION_PENDING_GM,
+    "Pending Close PO",
+  ]);
+  // Legacy data can retain Pending Close PO after the PO is already settled.
+  if (status === "Pending Close PO" && ["paid", "Paid", "Deposit", "Invcredit", "Inpay"].includes(statusNow)) {
+    return statusNow;
+  }
+  // Legacy data can also retain Draft in the mirror field after the PO has
+  // already moved to a real workflow status. Do not let that stale value hide
+  // the current status field.
+  if (statusNow === "Draft" && status && status !== "Draft") return status;
+  if (workflowStatuses.has(status)) return status;
+  return statusNow || status || "Draft";
+};
+
 /** PR ขอ Active คืน — รอ PCM อนุมัติ */
 export const PR_PENDING_ACTIVE = "Pending Active PR";
 

@@ -1,4 +1,4 @@
-import { buildPoBudgetReturnPlan, scalePoItemsToNetAmount } from "./poBudgetReturn";
+import { buildPoBudgetReturnPlan, isPaymentJobCompleted, scalePoItemsToNetAmount } from "./poBudgetReturn";
 import { getPrBudgetReturnInfo } from "./prBudgetReturn";
 
 const makePayment = (used) => ({
@@ -9,6 +9,13 @@ const makePayment = (used) => ({
   status: "Paid",
   jobCompleted: true,
   items: [{ prevAccumAmount: 0, thisPeriodAmount: used }],
+});
+
+test("recognizes completed Payment records used by legacy and current flows", () => {
+  expect(isPaymentJobCompleted({ jobCompleted: true })).toBe(true);
+  expect(isPaymentJobCompleted({ jobStatus: "จบงาน" })).toBe(true);
+  expect(isPaymentJobCompleted({ status: "จบงาน" })).toBe(true);
+  expect(isPaymentJobCompleted({ status: "Paid" })).toBe(false);
 });
 
 test("excludes procurement discount from the PR/Budget return", () => {

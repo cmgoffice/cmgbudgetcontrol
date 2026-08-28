@@ -131,6 +131,12 @@ export const getPaymentActualUsedForPo = (po: any, payments: any[]) => {
   };
 };
 
+export const isPaymentJobCompleted = (payment: any) => Boolean(
+  payment?.jobCompleted === true
+  || String(payment?.jobStatus || "") === "จบงาน"
+  || String(payment?.status || "") === "จบงาน"
+);
+
 /**
  * Builds the immutable business result used by both the Log PO preview and
  * the backend worker. The result deliberately separates the procurement
@@ -179,6 +185,11 @@ export const buildPoBudgetReturnPlan = ({ po, payments = [], prs = [] }: any) =>
     latestPaymentId: latestPayment?.id || null,
     latestPaymentNo: latestPayment?.paymentNo || "",
     latestPeriodNo: latestPayment?.periodNo || null,
+    latestPaymentJobCompleted: isPaymentJobCompleted(latestPayment),
+    latestPaymentJobCompletedAt: latestPayment?.jobCompletedAt || latestPayment?.completedAt || null,
+    latestPaymentJobCompletedBy: latestPayment?.jobCompletedBy || latestPayment?.completedBy || null,
+    latestPaymentJobCompletedByUid: latestPayment?.jobCompletedByUid || latestPayment?.completedByUid || null,
+    latestPaymentJobCompletedByEmail: latestPayment?.jobCompletedByEmail || latestPayment?.completedByEmail || null,
     poNetAmount,
     actualUsed,
     balanceBeforeRev: roundCurrency(Math.max(0, poNetAmount - actualUsed)),
@@ -209,6 +220,9 @@ export const enqueuePoBudgetReturnJob = async ({ db, appId, po, plan, actor = {}
   }
   if (String(po?.poType || "").toUpperCase() !== "SP") {
     return { queued: false, reason: "PO_TYPE_NOT_SUPPORTED" };
+  }
+  if (!plan.latestPaymentJobCompleted && !po?.jobCompleted) {
+    throw new Error("Payment งวดล่าสุดยังไม่ได้จบงาน");
   }
   const startedAt = new Date().toISOString();
   const safePaymentId = String(plan.latestPaymentId || "latest").replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -251,6 +265,20 @@ export const enqueuePoBudgetReturnJob = async ({ db, appId, po, plan, actor = {}
       updatedAt: startedAt,
     });
     transaction.update(poRef, {
+      // Keep the manual Log Payment action on the same completion path as
+      // PaymentView: the PO is closed and marked complete before the durable
+      // worker is allowed to claim the return job.
+      status: "Closed PO",
+      statusNow: "Closed PO",
+      jobStatus: "จบงาน",
+      jobCompleted: true,
+      jobCompletedAt: latestPo.jobCompletedAt || plan.latestPaymentJobCompletedAt || startedAt,
+      jobCompletedBy: latestPo.jobCompletedBy || plan.latestPaymentJobCompletedBy || actorName,
+      jobCompletedByUid: latestPo.jobCompletedByUid || plan.latestPaymentJobCompletedByUid || actor?.uid || null,
+      jobCompletedByEmail: latestPo.jobCompletedByEmail || plan.latestPaymentJobCompletedByEmail || actor?.email || null,
+      jobCompletedPaymentId: latestPo.jobCompletedPaymentId || plan.latestPaymentId || null,
+      jobCompletedPaymentNo: latestPo.jobCompletedPaymentNo || plan.latestPaymentNo || "",
+      jobCompletedPeriodNo: latestPo.jobCompletedPeriodNo || plan.latestPeriodNo || null,
       budgetReturnProcessId: jobId,
       budgetReturnProcessStatus: "Queued",
       budgetReturnProcessStep: "Queued",

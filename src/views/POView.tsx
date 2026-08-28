@@ -22,7 +22,7 @@ import MaterialAutoComplete from "../components/MaterialAutoComplete";
 import {
   PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, PURCHASE_TYPE_EQUIPMENT, DELIVERY_LOCATIONS,
   getPurchaseTypeDisplayLabel, COST_CATEGORIES,
-  getPORevisionFlow, PO_REVISION_PENDING_PCM, PO_REVISION_PENDING_GM,
+  getPORevisionFlow, getPoDisplayStatus, PO_REVISION_PENDING_PCM, PO_REVISION_PENDING_GM,
 } from "../lib/constants";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
 import { motion, AnimatePresence } from "framer-motion";
@@ -1822,6 +1822,7 @@ const POView = React.memo(() => {
         reason: formData.reason || "",
         ...(manualVatOverride != null && !isNaN(manualVatOverride) ? { manualVat: manualVatOverride } : {}),
         status: "Draft",
+        statusNow: "Draft",
         createdDate: editingPo?.createdDate || new Date().toISOString(),
         poDate: formData.poOpenDate ? new Date(formData.poOpenDate + "T00:00:00").toISOString() : new Date().toISOString(),
         location: formData.location || "",
@@ -2366,6 +2367,7 @@ const POView = React.memo(() => {
         receivedAfterPaymentChecked: configuredFlowPayload.receivedAfterPaymentChecked,
         receivedAfterPaymentSetup: configuredFlowPayload.receivedAfterPaymentSetup,
         status: "Pending PCM",
+        statusNow: "Pending PCM",
         createdDate: existingPoForCreator?.createdDate || new Date().toISOString(),
         poDate: formData.poOpenDate ? new Date(formData.poOpenDate + "T00:00:00").toISOString() : new Date().toISOString(),
         location: formData.location || "",
@@ -2630,7 +2632,7 @@ const POView = React.memo(() => {
       "ยืนยันการปิด PO",
       `คุณต้องการปิด ${L.docName} ${po.poNo} ใช่หรือไม่?`,
       async () => {
-        const ok = await updateData("pos", po.id, { status: "Closed PO" }, { skipLog: true });
+        const ok = await updateData("pos", po.id, { status: "Closed PO", statusNow: "Closed PO" }, { skipLog: true });
         if (!ok) return;
         await logAction("Approve", `Confirm Close PO ${po.poNo || po.id}: ${po.status} → Closed PO`, po.projectId || selectedProjectId);
       },
@@ -2722,7 +2724,12 @@ const POView = React.memo(() => {
           console.warn("[PO Reject] Stamp reason failed:", e);
         }
       }
-      await updateData("pos", poId, { status: "Rejected", rejectReason: reason, ...(updatedPdfUrl ? { pdfUrl: updatedPdfUrl } : {}) });
+      await updateData("pos", poId, {
+        status: "Rejected",
+        statusNow: "Rejected",
+        rejectReason: reason,
+        ...(updatedPdfUrl ? { pdfUrl: updatedPdfUrl } : {}),
+      });
       showAlert("ปฏิเสธ", L.rejected, "error");
       return;
     }
@@ -2930,9 +2937,9 @@ const POView = React.memo(() => {
 
       const ok = await updateData("pos", poId, {
         status: newStatus,
-        ...(newStatus === "Received" ? { statusNow: "Received" } : {}),
-        ...(newStatus === "Wait Invoice" ? { statusNow: "Wait Invoice" } : {}),
-        ...(newStatus === "Paid" ? { statusNow: "Paid" } : {}),
+        // Keep the display/status mirror in sync so an old Draft value cannot
+        // hide the new workflow status after a resubmission or approval.
+        statusNow: newStatus,
         rejectReason: "",
         ...(isPCMApprove ? { pcmApprovedAt: nowIso } : {}),
         ...(isGMApprove ? { gmApprovedAt: nowIso } : {}),
@@ -2950,6 +2957,7 @@ const POView = React.memo(() => {
         setViewingPO((prev) => ({
           ...prev,
           status: newStatus,
+          statusNow: newStatus,
           rejectReason: "",
           ...(updatedPdfUrl ? { pdfUrl: updatedPdfUrl, pdfUpdatedAt: nowIso } : {}),
         }));
@@ -3012,7 +3020,7 @@ const POView = React.memo(() => {
       case "creator": return String(creatorName || "");
       case "items": return Number(po.items?.length || 0);
       case "amount": return Number(amountExVat || 0);
-      case "status": return String(po.statusNow || po.status || "");
+      case "status": return getPoDisplayStatus(po);
       default: return "";
     }
   }, []);
@@ -3036,7 +3044,7 @@ const POView = React.memo(() => {
 
     const base = pos
       .filter((po) => {
-        const currentStatus = po.statusNow || po.status;
+        const currentStatus = getPoDisplayStatus(po);
         return (
           po.projectId === selectedProjectId &&
           pendingActionStatuses.includes(po.status) &&
@@ -3094,7 +3102,7 @@ const POView = React.memo(() => {
 
     const base = pos
       .filter((po) => {
-        const currentStatus = po.statusNow || po.status;
+        const currentStatus = getPoDisplayStatus(po);
         return (
           po.projectId === selectedProjectId &&
           !hiddenSystemStatuses.includes(currentStatus) &&
@@ -3204,7 +3212,7 @@ const POView = React.memo(() => {
                   "ยืนยันการปิด PO",
                   `คุณต้องการปิด ${L.docName} ${po.poNo} ใช่หรือไม่?`,
                   async () => {
-                    await updateData("pos", po.id, { status: "Closed PO" });
+                    await updateData("pos", po.id, { status: "Closed PO", statusNow: "Closed PO" });
                   },
                   "success"
                 );
@@ -3465,10 +3473,11 @@ const POView = React.memo(() => {
                   <tbody className="divide-y divide-slate-100">
                     {displayedPOsPending
                       .map(({ po, vendorName, prNos, descSummary, creatorName, amountExVat }) => {
+                        const displayStatus = getPoDisplayStatus(po);
                         return (
                           <React.Fragment key={po.id}>
                             <tr
-                              className="hover:bg-amber-50 cursor-pointer transition-colors border-b odd:bg-white even:bg-amber-50/25"
+                              className={`hover:bg-amber-50 cursor-pointer transition-colors border-b odd:bg-white even:bg-amber-50/25 ${getPoDisplayStatus(po) === "Rejected" ? "po-rejected-row" : ""}`}
                               onClick={() => openPoDetail(po)}
                             >
                               {renderMobilePoActions(po)}
@@ -3494,7 +3503,7 @@ const POView = React.memo(() => {
                               {isColumnVisible("po", "amount") && <td className="py-2 px-3 text-right font-semibold">{formatCurrency(amountExVat)}</td>}
                               {isColumnVisible("po", "status") && <td className="py-2 px-3 text-center">
                                 <div className="flex flex-col items-center">
-                                  <Badge status={po.statusNow || po.status} />
+                                  <Badge status={displayStatus} />
                                   {po.jobCompleted && (
                                     <span className="text-[9px] text-teal-700 mt-0.5 font-semibold max-w-[130px] truncate" title={`จบงานโดย ${po.jobCompletedBy || "-"}`}>
                                       จบงาน · {po.jobCompletedBy || "-"}
@@ -3673,10 +3682,11 @@ const POView = React.memo(() => {
                 <tbody className="divide-y divide-slate-100">
                   {displayedPOsNormal
                     .map(({ po, vendorName, prNos, descSummary, creatorName, amountExVat }) => {
-                      return (
+                      const displayStatus = getPoDisplayStatus(po);
+                        return (
                         <React.Fragment key={po.id}>
                           <tr
-                            className="hover:bg-blue-50 cursor-pointer transition-colors border-b odd:bg-white even:bg-slate-50"
+                            className={`hover:bg-blue-50 cursor-pointer transition-colors border-b odd:bg-white even:bg-slate-50 ${getPoDisplayStatus(po) === "Rejected" ? "po-rejected-row" : ""}`}
                             onClick={() => openPoDetail(po)}
                           >
                             {renderMobilePoActions(po)}
@@ -3702,7 +3712,7 @@ const POView = React.memo(() => {
                             {isColumnVisible("po", "amount") && <td className="py-2 px-3 text-right font-semibold">{formatCurrency(amountExVat)}</td>}
                             {isColumnVisible("po", "status") && <td className="py-2 px-3 text-center">
                               <div className="flex flex-col items-center">
-                                <Badge status={po.statusNow || po.status} />
+                                  <Badge status={displayStatus} />
                                 {po.jobCompleted && (
                                   <span className="text-[9px] text-teal-700 mt-0.5 font-semibold max-w-[130px] truncate" title={`จบงานโดย ${po.jobCompletedBy || "-"}`}>
                                     จบงาน · {po.jobCompletedBy || "-"}
@@ -4005,7 +4015,7 @@ const POView = React.memo(() => {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Badge status={viewingPO.statusNow || viewingPO.status} />
+                      <Badge status={getPoDisplayStatus(viewingPO)} />
                       {viewingPO.jobCompleted && (
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 border border-teal-300">
                           จบงาน

@@ -219,13 +219,32 @@ exports.processPoBudgetReturn = onDocumentWritten("artifacts/{appId}/public/data
       });
       return;
     }
-    if (po.status !== "Closed PO" || !po.jobCompleted) throw new Error("PO ต้องเป็น Closed PO และ Payment ต้องจบงานแล้ว");
+    if (po.status !== "Closed PO") throw new Error("PO ต้องเป็น Closed PO ก่อนคืน Budget");
     if (po.budgetReturnProcessId && po.budgetReturnProcessId !== jobId && ACTIVE_JOB_STATUSES.has(po.budgetReturnProcessStatus)) throw new Error("PO มี Process อื่นกำลังทำงานอยู่");
 
     const paymentsSnapshot = await root(appId, "payments").get();
     const payments = paymentsSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
     const latestPayment = latestPaymentForPo(po, payments);
     if (!latestPayment) throw new Error("ไม่พบ Payment ที่ผูกกับ PO");
+    const paymentJobCompleted = latestPayment.jobCompleted === true
+      || String(latestPayment.jobStatus || "") === "จบงาน"
+      || String(latestPayment.status || "") === "จบงาน";
+    if (!po.jobCompleted && !paymentJobCompleted) throw new Error("Payment งวดล่าสุดยังไม่ได้จบงาน");
+    if (!po.jobCompleted && paymentJobCompleted) {
+      const syncedAt = new Date().toISOString();
+      await poRef.update({
+        jobStatus: "จบงาน",
+        jobCompleted: true,
+        jobCompletedAt: latestPayment.jobCompletedAt || latestPayment.completedAt || syncedAt,
+        jobCompletedBy: latestPayment.jobCompletedBy || latestPayment.completedBy || initialJob.requestedBy || "System",
+        jobCompletedByUid: latestPayment.jobCompletedByUid || latestPayment.completedByUid || initialJob.requestedByUid || null,
+        jobCompletedByEmail: latestPayment.jobCompletedByEmail || latestPayment.completedByEmail || initialJob.requestedByEmail || null,
+        jobCompletedPaymentId: latestPayment.id,
+        jobCompletedPaymentNo: latestPayment.paymentNo || "",
+        jobCompletedPeriodNo: latestPayment.periodNo || null,
+        updatedAt: syncedAt,
+      });
+    }
     const actualUsed = paymentActual(latestPayment);
     const poNetAmount = poNet(po);
     const discountAmount = poDiscount(po);

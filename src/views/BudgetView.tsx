@@ -18,7 +18,7 @@ import {
   COST_CATEGORIES, PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, getPurchaseTypeDisplayLabel,
   PO_REVISION_PENDING_PCM, PO_REVISION_PENDING_GM, PR_PENDING_ACTIVE,
 } from "../lib/constants";
-import { getResumeStatusForPR } from "../lib/prAllocation";
+import { canActivatePR, getResumeStatusForPR } from "../lib/prAllocation";
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { scalePrItemsToTotal, sumSubItemAmounts } from "../lib/prBudgetReturn";
 import { getInvoiceAmountForPo, isPaidStatus, isSpentInvoiceRecord } from "../lib/billingPayUtils";
@@ -512,17 +512,19 @@ const BudgetView = React.memo(() => {
     return projectPrs.filter((pr) => {
       if (pr.status === "Rejected" || pr.status === "Approved" || pr.status === "PO Issued") return false;
 
-      if (userRoles.includes("Administrator")) return true;
+      if (userRoles.includes("Administrator")) {
+        return pr.status !== PR_PENDING_ACTIVE || canActivatePR(pr, pos);
+      }
       if (userRoles.includes("CM") && pr.status === "Pending CM") return true;
       if (userRoles.includes("PM") && pr.status === "Pending PM") return true;
       if (userRoles.includes("GM") && pr.status === "Pending GM") return true;
       if (userRoles.includes("MD") && pr.status === "Pending MD") return true;
       // PCM เห็น PR ที่ขอ Active
-      if (userRoles.includes("PCM") && pr.status === PR_PENDING_ACTIVE) return true;
+      if (userRoles.includes("PCM") && pr.status === PR_PENDING_ACTIVE && canActivatePR(pr, pos)) return true;
 
       return false;
     });
-  }, [projectPrs, selectedProjectId, userRoles]);
+  }, [projectPrs, selectedProjectId, userRoles, pos]);
 
   const pendingSubItemsForProject = useMemo(() => {
     if (!selectedProjectId) return [];
@@ -3872,7 +3874,7 @@ const BudgetView = React.memo(() => {
                             (pr.status === "Pending PM" && (userRoles.includes("PM") || userRoles.includes("Administrator"))) ||
                             (pr.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator"))) ||
                             (pr.status === "Pending MD" && (userRoles.includes("MD") || userRoles.includes("Administrator"))) ||
-                            (isActivePr && (userRoles.includes("PCM") || userRoles.includes("Administrator")));
+                            (isActivePr && canActivatePR(pr, pos) && (userRoles.includes("PCM") || userRoles.includes("Administrator")));
 
                           if (!canApprove) return null;
 

@@ -391,7 +391,7 @@ const PaymentTableView = React.memo(() => {
   const isAdministrator = userRole === "Administrator" || userRoles.includes("Administrator");
   const canStartPoBudgetReturn = isAdministrator || canUseFunction?.("po-table", "returnBudget") === true;
 
-  const handleStartPoBudgetReturn = React.useCallback((po: any, tableCompleted = false) => {
+  const handleStartPoBudgetReturn = React.useCallback((po: any) => {
     if (!po?.id || !canStartPoBudgetReturn) return;
     if (String(po?.poType || "").toUpperCase() !== "SP") {
       showAlert?.("ไม่รองรับ PO ประเภทนี้", "ฟังก์ชันคืนยอดรองรับเฉพาะ PO Type SP", "info");
@@ -412,7 +412,7 @@ const PaymentTableView = React.memo(() => {
       showAlert?.("ยังไม่มี Payment", "ฟังก์ชันนี้รองรับเฉพาะ PO ที่มี Payment เท่านั้น", "warning");
       return;
     }
-    if (!tableCompleted) {
+    if (!plan.latestPaymentJobCompleted && !po?.jobCompleted) {
       showAlert?.("ยังไม่จบงาน", "ตาราง Payment ต้องเป็นสถานะจบงานก่อนเริ่มคืนยอด", "warning");
       return;
     }
@@ -709,6 +709,7 @@ const PaymentTableView = React.memo(() => {
             const canReturnBudget = Boolean(hasReturnBudgetPermission
               && !processInProgress
               && isCompletedGroup
+              && (poPlan?.latestPaymentJobCompleted || group.po?.jobCompleted)
               && balanceAmount !== null
               && balanceAmount > 0
               && poPlan
@@ -779,7 +780,7 @@ const PaymentTableView = React.memo(() => {
                           : returnBudgetDisabledReason}
                         onClick={(event) => {
                           event.stopPropagation();
-                          if (canReturnBudget) handleStartPoBudgetReturn(group.po, isCompletedGroup);
+                          if (canReturnBudget) handleStartPoBudgetReturn(group.po);
                         }}
                       >
                         <Wallet size={13} />

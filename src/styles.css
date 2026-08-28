@@ -220,6 +220,15 @@ thead th > div {
   max-width: 100%;
 }
 
+/* PO ที่ถูก Reject: ให้ข้อมูลทุกช่องเป็นสีแดง แต่คงสีของปุ่ม Action และ Badge ตามหน้าที่ */
+.po-rejected-row > td {
+  color: #dc2626;
+}
+
+.po-rejected-row > td > .cell-text {
+  color: #dc2626 !important;
+}
+
 /* ===== ล็อคตาราง: ป้องกัน wrapper ขยายตาม table ===== */
 .table-wrapper {
   width: 100%;

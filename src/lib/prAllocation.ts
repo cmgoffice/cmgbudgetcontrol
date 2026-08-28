@@ -65,7 +65,7 @@ export const getUsedAmountByPR = (pos: any[], prId: string, excludePoId: string 
 };
 
 export const getResumeStatusForPR = (pr: any, pos: any[]) => {
-  const totalAmount = Number(pr?.totalAmount || pr?.amount || 0);
+  const totalAmount = Number(pr?.totalAmount ?? pr?.amount ?? 0);
   const usedAmount = getUsedAmountByPR(pos, pr?.id);
 
   if (totalAmount > 0 && usedAmount >= totalAmount - 0.01) {
@@ -90,3 +90,12 @@ export const getResumeStatusForPR = (pr: any, pos: any[]) => {
     totalAmount,
   };
 };
+
+export const getAvailableBalanceForPR = (pr: any, pos: any[]) => {
+  const { totalAmount, usedAmount } = getResumeStatusForPR(pr, pos);
+  return Math.max(0, totalAmount - usedAmount);
+};
+
+export const canActivatePR = (pr: any, pos: any[]) => (
+  getAvailableBalanceForPR(pr, pos) > 0.01
+);

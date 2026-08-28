@@ -20,7 +20,7 @@ import { ref, uploadBytes, getDownloadURL, uploadBytesResumable } from "firebase
 import { db, appId, storage, FORM_TEMPLATE_PATHS } from "./lib/firebase";
 import { generatePRPdfBytes, generatePOPdfBytes, downloadBytes, uploadGeneratedPdf, deleteGeneratedPdf } from "./lib/pdfForms";
 import { stampPoSignaturesToPdf } from "./lib/poSignatureStamps";
-import { getResumeStatusForPR } from "./lib/prAllocation";
+import { canActivatePR, getResumeStatusForPR } from "./lib/prAllocation";
 import { computeBudgetUsedAfterPrRevision, getLinkedPoRefsForPr, getPrBudgetReturnInfo, scalePrItemsToTotal } from "./lib/prBudgetReturn";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "./components/ui";
 import ResizableTh from "./components/ResizableTh";
@@ -33,6 +33,7 @@ import {
   PURCHASE_TYPES,
   PO_REVISION_PENDING_PCM,
   PO_REVISION_PENDING_GM,
+  getPoDisplayStatus,
   PR_PENDING_ACTIVE,
 } from "./lib/constants";
 import { getPoAmountExVat, getPoItemsGrossSubtotal } from "./lib/poDiscount";
@@ -1428,7 +1429,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   const isPR = mode === "pr";
   const getRowStatus = React.useCallback((row: any) => {
     if (isPR) return row?.status || "Draft";
-    return row?.statusNow || row?.status || "Draft";
+    return getPoDisplayStatus(row);
   }, [isPR]);
   const getPendingTaskStatus = React.useCallback((row: any) => {
     if (isPR) return getRowStatus(row);
@@ -1459,12 +1460,13 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   const isActionTaskRow = React.useCallback(
     (row: any) => {
       if (!isPR && isPaidLikePo(row)) return false;
+      if (isPR && row?.status === PR_PENDING_ACTIVE && !canActivatePR(row, pos)) return false;
       return Boolean(
         isNotificationRow(row) ||
         (!isPR && row?.status === "Closed PO" && userRoles.includes("Administrator"))
       );
     },
-    [isNotificationRow, isPaidLikePo, isPR, userRoles]
+    [isNotificationRow, isPaidLikePo, isPR, pos, userRoles]
   );
   const isActivePoTaskRow = React.useCallback(
     (row: any) => !isPR && getPendingTaskStatus(row) === "Closed PO" && userRoles.includes("Administrator"),
@@ -1502,6 +1504,10 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
         if (["Pending CM", "Pending PM", "Pending GM", "Pending MD"].includes(status)) {
           await handlePRAction?.(row.id, "approve");
         } else if (status === PR_PENDING_ACTIVE) {
+          if (!canActivatePR(row, pos)) {
+            showAlert?.("ไม่มี Balance", "PR นี้ไม่มียอดคงเหลือที่สามารถ Active กลับมาใช้ได้", "warning");
+            return;
+          }
           const { status: resume, usedAmount, totalAmount } = getResumeStatusForPR(row, pos);
           await updateData?.("prs", row.id, {
             status: resume,
@@ -1524,7 +1530,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       } else if ([PO_REVISION_PENDING_PCM, PO_REVISION_PENDING_GM].includes(status)) {
         await handlePORevisionAllow?.(row.id);
       } else if (status === "Pending Close PO") {
-        await updateData?.("pos", row.id, { status: "Closed PO" }, { skipLog: true });
+        await updateData?.("pos", row.id, { status: "Closed PO", statusNow: "Closed PO" }, { skipLog: true });
         await logAction?.("Approve", `Confirm Close PO ${row.poNo || row.id}: ${row.status} → Closed PO`, row.projectId);
       } else if (status === "Closed PO" && userRoles.includes("Administrator")) {
         openConfirm?.(
@@ -2391,7 +2397,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
             ยืนยันปิด PR
           </ActionMenuItem>
         )}
-        {!actionTask && canUseFunction(tableModule, "requestActivePR") && isPR && (r.status === "Closed PR" || r.status === "Closed PR Auto") && (userRoles.includes("Procurement") || userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
+        {!actionTask && canUseFunction(tableModule, "requestActivePR") && isPR && canActivatePR(r, pos) && (r.status === "Closed PR" || r.status === "Closed PR Auto") && (userRoles.includes("Procurement") || userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
           <ActionMenuItem
             icon={<CheckCircle size={14} />}
             tone="teal"
@@ -2404,7 +2410,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
             ขอ Active PR คืน
           </ActionMenuItem>
         )}
-        {!actionTask && canUseFunction(tableModule, "approveActivePR") && isPR && r.status === "Pending Active PR" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
+        {!actionTask && canUseFunction(tableModule, "approveActivePR") && isPR && canActivatePR(r, pos) && r.status === "Pending Active PR" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
           <ActionMenuItem
             icon={<CheckCircle size={14} />}
             tone="success"
@@ -2502,7 +2508,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
             icon={<CheckCircle size={14} />}
             tone="success"
             onClick={() => openConfirm?.("ยืนยันปิด PO", "สถานะจะเปลี่ยนเป็น Closed PO", async () => {
-              await updateData?.("pos", r.id, { status: "Closed PO" }, { skipLog: true });
+              await updateData?.("pos", r.id, { status: "Closed PO", statusNow: "Closed PO" }, { skipLog: true });
               await logAction?.("Approve", `Confirm Close PO ${r.poNo || r.id}: ${r.status} → Closed PO`, r.projectId);
               showAlert?.("สำเร็จ", "ปิด PO เรียบร้อย", "success");
             })}
@@ -3158,7 +3164,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                             </button>
                           )}
                           {/* ขอ Active PR (Procurement/PCM) เมื่อ PR ถูกปิดแล้ว */}
-                          {canUseFunction(tableModule, "requestActivePR") && isPR && (r.status === "Closed PR" || r.status === "Closed PR Auto") && (userRoles.includes("Procurement") || userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
+                          {canUseFunction(tableModule, "requestActivePR") && isPR && canActivatePR(r, pos) && (r.status === "Closed PR" || r.status === "Closed PR Auto") && (userRoles.includes("Procurement") || userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
                             <button type="button" className="p-1.5 rounded hover:bg-teal-100 text-teal-700" title="ขอ Active PR คืน (รอ PCM อนุมัติ)" onClick={() => openConfirm?.("ขอ Active PR", "ส่งคำขอให้ PCM อนุมัติ Active PR คืน", async () => {
                               await updateData?.("prs", r.id, { status: "Pending Active PR", activeRequestedAt: new Date().toISOString() }, { skipLog: true });
                               logAction?.("Request Active PR", `ขอ Active PR ${r.prNo || r.id}`, r.projectId);
@@ -3168,7 +3174,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                             </button>
                           )}
                           {/* PCM อนุมัติ Active PR */}
-                          {canUseFunction(tableModule, "approveActivePR") && isPR && r.status === "Pending Active PR" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
+                          {canUseFunction(tableModule, "approveActivePR") && isPR && canActivatePR(r, pos) && r.status === "Pending Active PR" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
                             <button type="button" className="p-1.5 rounded hover:bg-emerald-100 text-emerald-700 text-[10px] font-medium" title="อนุมัติ Active PR" onClick={() => openConfirm?.("อนุมัติ Active PR", "PR จะกลับไปสถานะก่อนถูกปิด", async () => {
                               const { status: resume, usedAmount, totalAmount } = getResumeStatusForPR(r, pos);
                               await updateData?.("prs", r.id, { status: resume, preCloseStatus: null, activeRequestedAt: null }, { skipLog: true });
@@ -3242,7 +3248,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                           )}
                           {canUseFunction("po", "closePO") && !isPR && r.status === "Pending Close PO" && (userRole === "PCM" || userRole === "Administrator") && (
                             <button type="button" className="p-1.5 rounded hover:bg-emerald-100 text-emerald-700 text-[10px] font-medium" title="ยืนยันปิด PO" onClick={() => openConfirm?.("ยืนยันปิด PO", "สถานะจะเปลี่ยนเป็น Closed PO", async () => {
-                              await updateData?.("pos", r.id, { status: "Closed PO" }, { skipLog: true });
+                              await updateData?.("pos", r.id, { status: "Closed PO", statusNow: "Closed PO" }, { skipLog: true });
                               await logAction?.("Approve", `Confirm Close PO ${r.poNo || r.id}: ${r.status} → Closed PO`, r.projectId);
                               showAlert?.("สำเร็จ", "ปิด PO เรียบร้อย", "success");
                             })}>

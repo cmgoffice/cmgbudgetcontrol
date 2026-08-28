@@ -2218,6 +2218,38 @@ const PRView = React.memo(() => {
       {/* PR View Modal — ดูข้อมูล + Approve/Reject */}
       {viewingPR && (() => {
         const prLive = prs.find((p: any) => p.id === viewingPR.id) || viewingPR;
+        const itemNotes = (prLive.items || [])
+          .map((item: any, index: number) => ({
+            index,
+            description: item?.description || item?.name || "-",
+            note: String(item?.note || "").trim(),
+          }))
+          .filter((item: any) => item.note);
+        const detailBudgetItem = prLive.budgetId
+          ? budgets.find((budget: any) => budget.id === prLive.budgetId && budget.projectId === prLive.projectId)
+          : prLive.costCode
+            ? budgets.find((budget: any) => budget.code === prLive.costCode && budget.projectId === prLive.projectId)
+            : null;
+        const budgetAttachments: { url: string; name: string }[] = Array.isArray(detailBudgetItem?.attachments)
+          ? detailBudgetItem.attachments.filter((attachment: any) => attachment?.url)
+          : [];
+        const subItemAttachments: { url: string; name: string }[] = [];
+        const detailSubItemId = prLive.items?.find((item: any) => item?.subItemId || item?.budgetSubItemId)?.subItemId
+          || prLive.items?.find((item: any) => item?.subItemId || item?.budgetSubItemId)?.budgetSubItemId;
+        if (detailSubItemId && Array.isArray(detailBudgetItem?.subItems)) {
+          const detailSubItem = detailBudgetItem.subItems.find((subItem: any) => subItem.id === detailSubItemId);
+          if (Array.isArray(detailSubItem?.attachments)) {
+            subItemAttachments.push(...detailSubItem.attachments.filter((attachment: any) => attachment?.url));
+          }
+        }
+        const allBudgetAttachments = [...budgetAttachments, ...subItemAttachments];
+        const prAttachmentsList: { url: string; name: string }[] = Array.isArray(prLive.attachments) && prLive.attachments.length > 0
+          ? prLive.attachments.filter((attachment: any) => attachment?.url)
+          : (prLive.attachmentUrl ? [{ url: prLive.attachmentUrl, name: prLive.attachmentName || "ไฟล์แนบจาก PR" }] : []);
+        const allDetailAttachments = [
+          ...allBudgetAttachments.map((attachment: any) => ({ ...attachment, source: "งบประมาณ" })),
+          ...prAttachmentsList.map((attachment: any) => ({ ...attachment, source: "PR" })),
+        ];
         return (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10010] p-4">
             <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-[90vh] flex flex-col">
@@ -2335,8 +2367,6 @@ const PRView = React.memo(() => {
                     const costCodeDisplay = prLive.costCode
                       ? `${prLive.costCode}${subDesc ? ` ${subDesc}` : ""}`
                       : "";
-                    const combinedRemark = (prLive.items || []).map((i: any) => i.note).filter(Boolean).join(", ");
-
                     return [
                       { label: "PR No.", value: prLive.prNo },
                       { label: "วันที่", value: prLive.requestDate },
@@ -2346,7 +2376,6 @@ const PRView = React.memo(() => {
                       { label: "ความเร่งด่วน", value: prLive.urgency || "-" },
                       { label: "สถานที่รับของ", value: prLive.deliveryLocation || "-" },
                       { label: "Email", value: prLive.requestorEmail || "-" },
-                      { label: "หมายเหตุ", value: combinedRemark || "-" },
                     ].map(({ label, value }) => (
                       <div key={label} className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
                         <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">{label}</p>
@@ -2356,82 +2385,61 @@ const PRView = React.memo(() => {
                   })()}
                 </div>
 
-                {/* Attachments Section - Combined Budget & PR Attachments */}
-                {(() => {
-                  // Get budget attachments
-                  const budgetItem = prLive.budgetId
-                    ? budgets.find(b => b.id === prLive.budgetId && b.projectId === prLive.projectId)
-                    : prLive.costCode
-                      ? budgets.find(b => b.code === prLive.costCode && b.projectId === prLive.projectId)
-                      : null;
-
-                  const budgetAttachments: { url: string; name: string }[] = budgetItem?.attachments || [];
-                  const subItemAttachments: { url: string; name: string }[] = [];
-
-                  // Get sub-item attachments if applicable
-                  if (budgetItem?.subItems && prLive.items?.length > 0) {
-                    const firstItem = prLive.items[0];
-                    if (firstItem.subItemId || firstItem.budgetSubItemId) {
-                      const subItemId = firstItem.subItemId || firstItem.budgetSubItemId;
-                      const subItem = budgetItem.subItems.find(s => s.id === subItemId);
-                      if (subItem?.attachments) {
-                        subItemAttachments.push(...subItem.attachments);
-                      }
-                    }
-                  }
-
-                  const allBudgetAttachments = [...budgetAttachments, ...subItemAttachments];
-                  const hasBudgetAttachments = allBudgetAttachments.length > 0;
-                  const prAttachmentsList: { url: string; name: string }[] = prLive.attachments?.length > 0 
-                    ? prLive.attachments 
-                    : (prLive.attachmentUrl ? [{ url: prLive.attachmentUrl, name: prLive.attachmentName || "ไฟล์แนบจาก PR" }] : []);
-                  const hasPrAttachments = prAttachmentsList.length > 0;
-
-                  if (!hasBudgetAttachments && !hasPrAttachments) return null;
-
-                  return (
-                    <div className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
-                      <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1.5 flex items-center gap-1">
-                        <Paperclip size={11} /> ไฟล์แนบทั้งหมด ({allBudgetAttachments.length + prAttachmentsList.length} ไฟล์)
-                      </p>
-                      <div className="space-y-1">
-                        {/* Budget Attachments */}
-                        {hasBudgetAttachments && allBudgetAttachments.map((att, idx) => (
-                          <div key={`budget-${idx}`} className="flex items-center gap-1.5 text-[11px]">
-                            <span className="text-slate-400">•</span>
-                            <span className="text-[9px] px-1 py-0.5 bg-blue-100 text-blue-700 rounded font-medium">งบประมาณ</span>
-                            <a
-                              href={att.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-600 hover:text-blue-800 hover:underline truncate"
-                              title={att.name}
-                            >
-                              {att.name || `ไฟล์แนบ ${idx + 1}`}
-                            </a>
-                          </div>
-                        ))}
-
-                        {/* PR Attachments */}
-                        {hasPrAttachments && prAttachmentsList.map((att, idx) => (
-                          <div key={`pr-att-${idx}`} className="flex items-center gap-1.5 text-[11px]">
-                            <span className="text-slate-400">•</span>
-                            <span className="text-[9px] px-1 py-0.5 bg-green-100 text-green-700 rounded font-medium">PR</span>
-                            <a
-                              href={att.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-green-600 hover:text-green-800 hover:underline truncate"
-                              title={att.name}
-                            >
-                              {att.name || `ไฟล์แนบจาก PR ${idx + 1}`}
-                            </a>
-                          </div>
-                        ))}
+                {/* Item notes + attachments */}
+                {(itemNotes.length > 0 || allDetailAttachments.length > 0) && (
+                  <div className={`grid gap-3 ${itemNotes.length > 0 && allDetailAttachments.length > 0 ? "md:grid-cols-2" : "grid-cols-1"}`}>
+                    {itemNotes.length > 0 && (
+                      <div className="rounded-xl border-2 border-amber-200 bg-amber-50 px-4 py-3">
+                        <p className="text-xs font-extrabold text-amber-900 flex items-center gap-1.5 mb-2">
+                          <FileText size={14} className="text-amber-700" />
+                          หมายเหตุรายการ ({itemNotes.length})
+                        </p>
+                        <div className="space-y-2">
+                          {itemNotes.map((item: any) => (
+                            <div key={item.index} className="rounded-lg border border-amber-200 bg-white/80 px-3 py-2">
+                              <div className="flex items-start gap-2 mb-1">
+                                <span className="shrink-0 rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">
+                                  รายการ {item.index + 1}
+                                </span>
+                                <span className="min-w-0 text-[11px] font-semibold text-slate-600 break-words">
+                                  {item.description}
+                                </span>
+                              </div>
+                              <p className="text-xs leading-relaxed text-amber-950 whitespace-pre-wrap break-words">{item.note}</p>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })()}
+                    )}
+
+                    {allDetailAttachments.length > 0 && (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                        <p className="text-xs font-bold text-slate-700 flex items-center gap-1.5 mb-2">
+                          <Paperclip size={13} /> ไฟล์แนบทั้งหมด ({allDetailAttachments.length} ไฟล์)
+                        </p>
+                        <div className="space-y-1.5">
+                          {allDetailAttachments.map((attachment: any, index: number) => (
+                            <div key={`${attachment.url}-${index}`} className="flex min-w-0 items-start gap-1.5 text-[11px]">
+                              <span className="mt-0.5 text-slate-400">•</span>
+                              <span className={`shrink-0 text-[9px] px-1 py-0.5 rounded font-medium ${attachment.source === "PR" ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"}`}>
+                                {attachment.source}
+                              </span>
+                              <a
+                                href={attachment.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className={`min-w-0 break-words ${attachment.source === "PR" ? "text-green-600 hover:text-green-800" : "text-blue-600 hover:text-blue-800"} hover:underline`}
+                                title={attachment.name || attachment.url}
+                              >
+                                {attachment.name || `ไฟล์แนบ ${index + 1}`}
+                              </a>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Line Items */}
                 <div className="rounded-xl border border-slate-200 overflow-hidden">
@@ -2439,7 +2447,16 @@ const PRView = React.memo(() => {
                     <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">รายการสินค้า</span>
                     <span className="bg-slate-600 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">{prLive.items?.length || 0} รายการ</span>
                   </div>
-                  <table className="w-full text-xs text-left">
+                  <table className="w-full table-fixed text-xs text-left">
+                    <colgroup>
+                      <col className="w-[5%]" />
+                      <col className="w-[29%]" />
+                      <col className="w-[11%]" />
+                      <col className="w-[12%]" />
+                      <col className="w-[12%]" />
+                      <col className="w-[12%]" />
+                      <col className="w-[19%]" />
+                    </colgroup>
                     <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
                       <tr>
                         <th className="px-3 py-2 w-8 text-center">#</th>
@@ -2457,19 +2474,35 @@ const PRView = React.memo(() => {
                           const poAllocations = getPrItemPoAllocations(prLive.id, idx);
                           return (
                             <tr key={idx} className="hover:bg-slate-50">
-                              <td className="px-3 py-1.5 text-center text-slate-400">{idx + 1}</td>
-                              <td className="px-3 py-1.5 font-medium text-slate-700">{it.description}</td>
-                              <td className="px-3 py-1.5 text-right text-slate-500">{it.quantity} {it.unit}</td>
-                              <td className="px-3 py-1.5 text-right text-slate-500">{formatCurrency(it.price)}</td>
-                              <td className="px-3 py-1.5 text-right font-semibold text-slate-700">{formatCurrency(getCanonicalLineAmount(it))}</td>
-                              <td className="px-3 py-1.5 text-center text-slate-400">{it.requiredDate || "-"}</td>
-                              <td className="px-3 py-1.5 text-[10px] text-slate-600">
+                              <td className="px-2 py-2 text-center align-top text-slate-400">
+                                <span className="cell-text" title={String(idx + 1)}>{idx + 1}</span>
+                              </td>
+                              <td className="min-w-0 px-2 py-2 align-top font-medium text-slate-700" title={it.description || "-"}>
+                                <span className="cell-text">{it.description || "-"}</span>
+                              </td>
+                              <td className="px-2 py-2 text-right align-top text-slate-500" title={`${it.quantity ?? "-"} ${it.unit || ""}`.trim()}>
+                                <span className="cell-text">{it.quantity} {it.unit}</span>
+                              </td>
+                              <td className="px-2 py-2 text-right align-top text-slate-500" title={formatCurrency(it.price)}>
+                                <span className="cell-text">{formatCurrency(it.price)}</span>
+                              </td>
+                              <td className="px-2 py-2 text-right align-top font-semibold text-slate-700" title={formatCurrency(getCanonicalLineAmount(it))}>
+                                <span className="cell-text">{formatCurrency(getCanonicalLineAmount(it))}</span>
+                              </td>
+                              <td className="px-2 py-2 text-center align-top text-slate-400" title={it.requiredDate || "-"}>
+                                <span className="cell-text">{it.requiredDate || "-"}</span>
+                              </td>
+                              <td className="min-w-0 px-2 py-2 align-top text-[10px] text-slate-600">
                                 {poAllocations.length === 0 ? (
-                                  <span className="text-slate-400">ยังไม่มี PO</span>
+                                  <span className="cell-text text-slate-400" title="ยังไม่มี PO">ยังไม่มี PO</span>
                                 ) : (
                                   <div className="space-y-0.5">
                                     {poAllocations.map((allocation: any, allocationIdx: number) => (
-                                      <div key={`${allocation.poNo}-${allocation.poItemIndex}-${allocationIdx}`}>
+                                      <div
+                                        key={`${allocation.poNo}-${allocation.poItemIndex}-${allocationIdx}`}
+                                        className="cell-text"
+                                        title={`${allocation.poNo} · รายการที่ ${allocation.poItemIndex + 1} · ${allocation.poItemDescription} · ${formatCurrency(allocation.amount)}`}
+                                      >
                                         <span className="font-semibold text-blue-700">{allocation.poNo}</span>
                                         <span className="text-slate-500"> · รายการที่ {allocation.poItemIndex + 1} · {allocation.poItemDescription} · {formatCurrency(allocation.amount)}</span>
                                       </div>

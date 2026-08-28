@@ -800,7 +800,7 @@ export const AppDataProvider = ({
       newStatus = "Rejected";
     }
     if (newStatus !== po.status) {
-      const payload: any = { status: newStatus };
+      const payload: any = { status: newStatus, statusNow: newStatus };
       if (newStatus === "Received") payload.statusNow = "Received";
       if (newStatus === "Wait Invoice") payload.statusNow = "Wait Invoice";
       if (newStatus === "Paid") payload.statusNow = "Paid";
