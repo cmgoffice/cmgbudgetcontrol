@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { collection, doc, onSnapshot, query, writeBatch } from "firebase/firestore";
+import { doc, writeBatch } from "firebase/firestore";
 import { AnimatePresence, motion } from "framer-motion";
 
 
@@ -220,6 +220,8 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
     pos = [],
     invoices: contextInvoices = [],
     receives = [],
+    billings: contextBillings = [],
+    pays: contextPays = [],
     vendors = [],
     projects = [],
     visibleProjects = [],
@@ -252,10 +254,11 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
     return [project.jobNo, project.name].filter(Boolean).join(" - ") || project.id;
   }, [projectById]);
 
-  const [rows, setRows] = useState([]);
-  const [localInvoices, setLocalInvoices] = useState([]);
-  const [billingRows, setBillingRows] = useState([]);
-  const [payRows, setPayRows] = useState([]);
+  const isBillingMode = config.moduleKey === "billing";
+  const isPayMode = config.moduleKey === "pay";
+  const rows = isPayMode ? contextPays : contextBillings;
+  const billingRows = contextBillings;
+  const payRows = contextPays;
   const [searchTerm, setSearchTerm] = useState("");
   const [projectFilterId, setProjectFilterId] = useState("all");
   const [saving, setSaving] = useState(false);
@@ -269,16 +272,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
   const canCreate = canUseFunction(config.moduleKey, "create");
   const canEdit = canUseFunction(config.moduleKey, "edit");
   const canDelete = canUseFunction(config.moduleKey, "delete");
-  const isBillingMode = config.moduleKey === "billing";
-  const isPayMode = config.moduleKey === "pay";
-  const invoices = useMemo(() => {
-    const invoiceMap = new Map();
-    [...(contextInvoices || []), ...(localInvoices || [])].forEach((invoice: any) => {
-      if (!invoice?.id) return;
-      invoiceMap.set(String(invoice.id), invoice);
-    });
-    return Array.from(invoiceMap.values());
-  }, [contextInvoices, localInvoices]);
+  const invoices = contextInvoices;
   const logCollectionName = getLedgerCollectionName(config.moduleKey);
   const getRowLogSummary = useCallback(
     (row: any, patch: any = null) => buildRecordSummary(logCollectionName, patch ? { ...row, ...patch } : row, row?.id),
@@ -556,45 +550,6 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
     },
     [getNextPoStatusFromInvoices, invoices, updateData]
   );
-
-  useEffect(() => {
-    const ref = collection(db, "artifacts", appId, "public", "data", config.collectionName);
-    return onSnapshot(
-      query(ref),
-      (snap) => setRows(snap.docs.map((docItem) => ({ id: docItem.id, ...docItem.data() }))),
-      (err) => console.error(`Error syncing ${config.collectionName}:`, err)
-    );
-  }, [appId, config.collectionName, db]);
-
-  useEffect(() => {
-    if (!isPayMode) return;
-    const ref = collection(db, "artifacts", appId, "public", "data", "invoices");
-    return onSnapshot(
-      query(ref),
-      (snap) => setLocalInvoices(snap.docs.map((docItem) => ({ id: docItem.id, ...docItem.data() }))),
-      (err) => console.error("Error syncing invoices for pay history:", err)
-    );
-  }, [appId, db, isPayMode]);
-
-  useEffect(() => {
-    if (!isPayMode) return;
-    const ref = collection(db, "artifacts", appId, "public", "data", "billings");
-    return onSnapshot(
-      query(ref),
-      (snap) => setBillingRows(snap.docs.map((docItem) => ({ id: docItem.id, ...docItem.data() }))),
-      (err) => console.error("Error syncing billings for pay:", err)
-    );
-  }, [appId, db, isPayMode]);
-
-  useEffect(() => {
-    if (!isBillingMode) return;
-    const ref = collection(db, "artifacts", appId, "public", "data", "pays");
-    return onSnapshot(
-      query(ref),
-      (snap) => setPayRows(snap.docs.map((docItem) => ({ id: docItem.id, ...docItem.data() }))),
-      (err) => console.error("Error syncing pays for billing:", err)
-    );
-  }, [appId, db, isBillingMode]);
 
   const formatDate = useCallback((value?: string) => {
     if (!value) return "-";

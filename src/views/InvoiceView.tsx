@@ -168,11 +168,6 @@ const InvoiceView = React.memo(() => {
     [visibleProjects]
   );
 
-  // โหลด vendors เมื่อเข้าหน้า Invoice (vendor ข้อมูลจาก PO ต้องใช้ vendors)
-  React.useEffect(() => {
-    loadVendors?.();
-  }, [loadVendors]);
-
   const [activeTab, setActiveTab] = useState<"po" | "history">("po");
   const [viewingPO, setViewingPO] = useState<any>(null);
   const [editingInvoice, setEditingInvoice] = useState<any>(null);
@@ -575,6 +570,7 @@ const InvoiceView = React.memo(() => {
 
     const receiveSnap = await getDocs(query(
       collection(db, "artifacts", appId, "public", "data", "receives"),
+      where("projectId", "==", po.projectId),
       where("poId", "==", po.id)
     ));
     if (!receiveSnap.empty) {
@@ -619,8 +615,14 @@ const InvoiceView = React.memo(() => {
         let linkedPays: any[] = [];
         try {
           const [billingSnapshot, paySnapshot] = await Promise.all([
-            getDocs(collection(db, ...basePath, "billings")),
-            getDocs(collection(db, ...basePath, "pays")),
+            getDocs(query(
+              collection(db, ...basePath, "billings"),
+              where("projectId", "==", invoice.projectId || selectedProjectId)
+            )),
+            getDocs(query(
+              collection(db, ...basePath, "pays"),
+              where("projectId", "==", invoice.projectId || selectedProjectId)
+            )),
           ]);
           linkedBillings = billingSnapshot.docs
             .map((entry: any) => ({ id: entry.id, ...entry.data() }))
@@ -1501,6 +1503,10 @@ const InvoiceView = React.memo(() => {
       // legacy records (which may not have a projectId) behaving as before.
       if (histProjectId !== "all") {
         filters.push(where("projectId", "==", String(histProjectId)));
+      } else if (visibleIds.length <= 30) {
+        filters.push(where("projectId", "in", visibleIds));
+      } else {
+        throw new Error("LOCAL_HISTORY_SCOPE");
       }
       if (histPaymentType) filters.push(where("paymentType", "==", histPaymentType));
 
@@ -1534,7 +1540,9 @@ const InvoiceView = React.memo(() => {
       setHistoryInvoicesPage(pageRows);
     } catch (error: any) {
       if (requestId !== historyRequestIdRef.current) return;
-      console.error("Error loading paginated invoice history:", error);
+      if (error?.message !== "LOCAL_HISTORY_SCOPE") {
+        console.error("Error loading paginated invoice history:", error);
+      }
 
       // If Firestore has not built the required composite index yet, keep the
       // history usable by falling back to the already-synced invoice cache.

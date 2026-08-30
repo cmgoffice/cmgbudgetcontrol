@@ -75,6 +75,9 @@ const getDefaultPoFormData = () => ({
   receiveType: "",
   inventoryType: "",
   vendorId: "",
+  vendorName: "",
+  vendorCode: "",
+  vendorType: "",
   requiredDate: "",
   poOpenDate: new Date().toISOString().split("T")[0],
   vatType: "ex-vat",
@@ -369,7 +372,6 @@ const POView = React.memo(() => {
   const [discountInput, setDiscountInput] = useState("");
   const [poPendingFiles, setPoPendingFiles] = useState<File[]>([]);
   const [poSavedAttachments, setPoSavedAttachments] = useState<{ url: string; name: string }[]>([]);
-  const [userNameByUid, setUserNameByUid] = useState<Record<string, string>>({});
   const [isAddItemModalOpen, setIsAddItemModalOpen] = useState(false);
   const [disPrPickerOpenKey, setDisPrPickerOpenKey] = useState<string | null>(null); // key: `item:${prId}:${idx}` | `free:${id}`
   const [expandedSelectedPrRows, setExpandedSelectedPrRows] = useState<Record<string, boolean>>({});
@@ -409,33 +411,6 @@ const POView = React.memo(() => {
   const [vendorDropdownRect, setVendorDropdownRect] = useState(null);
 
   useEffect(() => {
-    let mounted = true;
-    const loadUserNames = async () => {
-      try {
-        const snap = await getDocs(collection(db, "artifacts", appId, "public", "data", "users"));
-        if (!mounted) return;
-        const map: Record<string, string> = {};
-        snap.docs.forEach((d) => {
-          const data: any = d.data() || {};
-          const fullName = [data.firstName, data.lastName].filter(Boolean).join(" ").trim();
-          const displayName = fullName || data.displayName || data.email || "";
-          if (displayName) {
-            map[d.id] = displayName;
-            if (data.uid) map[data.uid] = displayName;
-          }
-        });
-        setUserNameByUid(map);
-      } catch (err) {
-        console.warn("[POView] Failed to load users for creator display:", err);
-      }
-    };
-    loadUserNames();
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
     setVendorSearchQuery(vendorSearchText.trim());
   }, [vendorSearchText]);
   const vendorFilteredList = useMemo(() => {
@@ -468,12 +443,6 @@ const POView = React.memo(() => {
       if (timerId != null) clearTimeout(timerId);
     };
   }, [pos, selectedProjectId]);
-
-  // โหลด vendors + materials เมื่อเข้าหน้า PO (ลดโควต้าเปิดแอป)
-  useEffect(() => {
-    loadVendors();
-    loadMaterials();
-  }, [loadVendors, loadMaterials]);
 
   const poTableRef = useRef(null);
   const selectItemsTableRef = useRef(null);
@@ -525,9 +494,11 @@ const POView = React.memo(() => {
     if (editingPoId && formData.vendorId && vendors.length > 0) {
       const v = vendors.find((x: any) => x.id === formData.vendorId);
       if (v?.name) setVendorSearchText(v.name);
+    } else if (editingPoId && formData.vendorName) {
+      setVendorSearchText(formData.vendorName);
     }
     if (!isModalOpen) { setVendorSearchText(""); setVendorDropdownOpen(false); setVendorDropdownRect(null); }
-  }, [editingPoId, formData.vendorId, isModalOpen]);
+  }, [editingPoId, formData.vendorId, formData.vendorName, isModalOpen, vendors]);
 
   // วัดตำแหน่ง Vendor dropdown เพื่อ render ผ่าน Portal (ให้ list ล้ำลงไปด้านล่างได้)
   useEffect(() => {
@@ -1431,8 +1402,8 @@ const POView = React.memo(() => {
   }, [creatorFirstName, creatorLastName, user?.email]);
   const selectedVendorName = useMemo(() => {
     const vendor = vendors.find((entry: any) => entry.id === formData.vendorId);
-    return vendor?.name || "";
-  }, [vendors, formData.vendorId]);
+    return vendor?.name || formData.vendorName || "";
+  }, [vendors, formData.vendorId, formData.vendorName]);
 
   const openInvoiceSetupModal = useCallback(() => {
     if (!formData.items.length) {
@@ -1812,6 +1783,9 @@ const POView = React.memo(() => {
         ...(configuredFlowPayload.receiveType ? { receiveType: configuredFlowPayload.receiveType } : {}),
         projectId: selectedProjectId,
         vendorId: formData.vendorId || "",
+        vendorName: formData.vendorName || "",
+        vendorCode: formData.vendorCode || "",
+        vendorType: formData.vendorType || "",
         requiredDate: formData.requiredDate || "",
         vatType: formData.vatType || "ex-vat",
         items: itemsDraft,
@@ -2274,13 +2248,21 @@ const POView = React.memo(() => {
       let pdfUrl: string | undefined;
       let pdfError: string | null = null;
       try {
-        const vendor = vendors.find((v: any) => v.id === formData.vendorId) || null;
+        const vendor = vendors.find((v: any) => v.id === formData.vendorId) || {
+          id: formData.vendorId,
+          name: formData.vendorName || "",
+          code: formData.vendorCode || "",
+          type: formData.vendorType || "",
+        };
         const project = projects.find((p: any) => p.id === selectedProjectId) || null;
         const draftPayload = {
           poNo: resolvedPoNo, poType: formData.poType,
           inventoryType: formData.inventoryType || "",
           receiveType: configuredFlowPayload.receiveType,
           projectId: selectedProjectId, vendorId: formData.vendorId,
+          vendorName: formData.vendorName || vendor?.name || "",
+          vendorCode: formData.vendorCode || vendor?.code || "",
+          vendorType: formData.vendorType || vendor?.type || "",
           requiredDate: formData.requiredDate, vatType: formData.vatType,
           items: itemsWithAllocations, amount: totals.total,
           discount: formData.discount || 0,
@@ -2330,11 +2312,11 @@ const POView = React.memo(() => {
 
       // เพิ่มข้อมูล Vendor เพื่อให้ Role อื่นๆ ที่ไม่มีสิทธิ์เข้าถึง Vendor Management สามารถเห็นชื่อ Vendor ได้
       const selectedVendor = vendors.find((v: any) => v.id === formData.vendorId);
-      const vendorInfo = selectedVendor ? {
-        vendorName: selectedVendor.name || "",
-        vendorCode: selectedVendor.code || "",
-        vendorType: selectedVendor.type || "",
-      } : {};
+      const vendorInfo = {
+        vendorName: selectedVendor?.name || formData.vendorName || "",
+        vendorCode: selectedVendor?.code || formData.vendorCode || "",
+        vendorType: selectedVendor?.type || formData.vendorType || "",
+      };
       
       const basePayload = {
         poNo: resolvedPoNo,
@@ -2538,6 +2520,7 @@ const POView = React.memo(() => {
             poType: formData.poType,
             projectId: selectedProjectId,
             vendorId: formData.vendorId,
+            vendorName: formData.vendorName || "",
             evaluatorName: creatorDisplayName || (creatorFirstName ? `${creatorFirstName} ${creatorLastName}` : (user?.email || "Unknown")),
             evaluationDate: new Date().toISOString(),
             scores: vendorEvalScoresRef.current,
@@ -2980,9 +2963,8 @@ const POView = React.memo(() => {
 
   const getPoCreatorDisplayName = useCallback((po) => {
     const nameFromFirstLast = [po.createdByFirstName, po.createdByLastName].filter(Boolean).join(" ");
-    const nameFromUidMap = po.createdByUid ? userNameByUid[po.createdByUid] : "";
-    return po.createdByName || nameFromFirstLast || nameFromUidMap || (po.createdByUid ? `${String(po.createdByUid).slice(0, 8)}…` : "—");
-  }, [userNameByUid]);
+    return po.createdByName || nameFromFirstLast || po.createdByEmail || (po.createdByUid ? `${String(po.createdByUid).slice(0, 8)}…` : "—");
+  }, []);
 
   const getFastPoPrNos = useCallback((po: any) => {
     const itemPrNos = Array.isArray(po.items)
@@ -3590,6 +3572,9 @@ const POView = React.memo(() => {
                                         receiveType: po.receiveType || "",
                                         inventoryType: po.inventoryType || "",
                                         vendorId: po.vendorId || "",
+                                        vendorName: po.vendorName || po.vendor || po.supplierName || "",
+                                        vendorCode: po.vendorCode || "",
+                                        vendorType: po.vendorType || "",
                                         requiredDate: po.requiredDate || "",
                                         poOpenDate: poOpenDateVal,
                                         vatType: po.vatType || "ex-vat",
@@ -3799,6 +3784,9 @@ const POView = React.memo(() => {
                                       receiveType: po.receiveType || "",
                                       inventoryType: po.inventoryType || "",
                                       vendorId: po.vendorId || "",
+                                      vendorName: po.vendorName || po.vendor || po.supplierName || "",
+                                      vendorCode: po.vendorCode || "",
+                                      vendorType: po.vendorType || "",
                                       requiredDate: po.requiredDate || "",
                                       poOpenDate: poOpenDateVal,
                                       vatType: po.vatType || "ex-vat",
@@ -4712,12 +4700,12 @@ const POView = React.memo(() => {
                                   placeholder="ค้นหา Vendor..."
                                   value={vendorSearchText}
                                   onChange={e => { setVendorSearchText(e.target.value); setVendorDropdownOpen(true); }}
-                                  onFocus={() => setVendorDropdownOpen(true)}
+                                  onFocus={() => { loadVendors(); setVendorDropdownOpen(true); }}
                                   onBlur={() => setTimeout(() => setVendorDropdownOpen(false), 180)}
                                 />
                                 <Building2 className="absolute left-3 top-2 text-red-400 pointer-events-none" size={14} />
                                 {formData.vendorId && (
-                                  <button type="button" className="absolute right-2 top-2 p-1 text-slate-400 hover:text-red-500" onClick={() => { setFormData(prev => ({ ...prev, vendorId: "" })); setVendorSearchText(""); }} title="ล้างการเลือก">
+                                  <button type="button" className="absolute right-2 top-2 p-1 text-slate-400 hover:text-red-500" onClick={() => { setFormData(prev => ({ ...prev, vendorId: "", vendorName: "", vendorCode: "", vendorType: "" })); setVendorSearchText(""); }} title="ล้างการเลือก">
                                     <XCircle size={12} />
                                   </button>
                                 )}
@@ -4727,7 +4715,7 @@ const POView = React.memo(() => {
                                       <div className="px-3 py-4 text-xs text-slate-500 text-center">ไม่พบ Vendor</div>
                                     ) : (
                                       vendorFilteredList.slice(0, 50).map((v: any) => (
-                                        <button key={v.id} type="button" className={`w-full text-left px-3 py-2 text-sm hover:bg-red-50 flex items-center justify-between ${formData.vendorId === v.id ? "bg-red-50 text-red-800" : "text-slate-700"}`} onMouseDown={(e) => { e.preventDefault(); setFormData(prev => ({ ...prev, vendorId: v.id })); setVendorSearchText(v.name || ""); setVendorDropdownOpen(false); }}>
+                                        <button key={v.id} type="button" className={`w-full text-left px-3 py-2 text-sm hover:bg-red-50 flex items-center justify-between ${formData.vendorId === v.id ? "bg-red-50 text-red-800" : "text-slate-700"}`} onMouseDown={(e) => { e.preventDefault(); setFormData(prev => ({ ...prev, vendorId: v.id, vendorName: v.name || "", vendorCode: v.code || "", vendorType: v.type || "" })); setVendorSearchText(v.name || ""); setVendorDropdownOpen(false); }}>
                                           <span className="font-medium truncate">{v.name}</span>
                                           {v.code && <span className="text-xs text-slate-500 shrink-0 ml-1">{v.code}</span>}
                                         </button>
@@ -4921,18 +4909,23 @@ const POView = React.memo(() => {
                             </div>
                           </div>
                           <div className="p-3 text-sm bg-white/90">
-                            {formData.vendorId && (() => {
-                              const v = vendors.find((x: any) => x.id === formData.vendorId);
-                              if (!v) return <p className="text-slate-400">กำลังโหลด...</p>;
-                              return (
-                                <div className="space-y-1.5 text-slate-700">
-                                  <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">ชื่อ:</span><span className="font-medium min-w-0 break-words">{v.name || "-"}</span></div>
-                                  {v.code && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">รหัส:</span><span className="min-w-0 break-words">{v.code}</span></div>}
-                                  {v.address && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">ที่อยู่:</span><span className="min-w-0 whitespace-pre-wrap break-words">{v.address}</span></div>}
-                                  {v.tel && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">โทร:</span><span className="min-w-0 break-words">{v.tel}</span></div>}
-                                  {(v.creditTerm != null && v.creditTerm !== "") && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">เครดิตเทอม:</span><span className="min-w-0">{v.creditTerm}</span></div>}
-                                  {v.type && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">ประเภท:</span><span className="min-w-0">{v.type}</span></div>}
-                                </div>
+                             {formData.vendorId && (() => {
+                               const v = vendors.find((x: any) => x.id === formData.vendorId);
+                               const vendorPreview = v || {
+                                 name: formData.vendorName,
+                                 code: formData.vendorCode,
+                                 type: formData.vendorType,
+                               };
+                               if (!vendorPreview.name) return <p className="text-slate-400">กดช่อง Vendor เพื่อโหลดข้อมูล</p>;
+                               return (
+                                 <div className="space-y-1.5 text-slate-700">
+                                   <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">ชื่อ:</span><span className="font-medium min-w-0 break-words">{vendorPreview.name || "-"}</span></div>
+                                   {vendorPreview.code && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">รหัส:</span><span className="min-w-0 break-words">{vendorPreview.code}</span></div>}
+                                   {vendorPreview.address && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">ที่อยู่:</span><span className="min-w-0 whitespace-pre-wrap break-words">{vendorPreview.address}</span></div>}
+                                   {vendorPreview.tel && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">โทร:</span><span className="min-w-0 break-words">{vendorPreview.tel}</span></div>}
+                                   {(vendorPreview.creditTerm != null && vendorPreview.creditTerm !== "") && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">เครดิตเทอม:</span><span className="min-w-0">{vendorPreview.creditTerm}</span></div>}
+                                   {vendorPreview.type && <div className="flex gap-2"><span className="font-semibold text-slate-500 shrink-0 w-[4.5rem]">ประเภท:</span><span className="min-w-0">{vendorPreview.type}</span></div>}
+                                 </div>
                               );
                             })()}
                             {!formData.vendorId && (
@@ -5113,6 +5106,7 @@ const POView = React.memo(() => {
                                         disabled={!isSelected || isPaidLocked}
                                         placeholder="ระบุ Material No."
                                         materials={materials}
+                                        onLookup={loadMaterials}
                                         onChange={(val) => handleItemChange(item.prId, item.prItemIndex, "materialNo", val)}
                                         onSelectMaterial={(mat) => handleItemSelectMaterial(item.prId, item.prItemIndex, mat)}
                                       />
@@ -5125,6 +5119,7 @@ const POView = React.memo(() => {
                                         disabled={!isSelected || isPaidLocked}
                                         placeholder="รายการสินค้า"
                                         materials={materials}
+                                        onLookup={loadMaterials}
                                         onChange={(val) => handleItemChange(item.prId, item.prItemIndex, "description", val)}
                                         onSelectMaterial={(mat) => handleItemSelectMaterial(item.prId, item.prItemIndex, mat)}
                                       />
@@ -5233,7 +5228,7 @@ const POView = React.memo(() => {
                                     </td>
                                     <td className="p-2.5"><span className="text-amber-600 text-[10px]">รายการเพิ่ม</span></td>
                                     <td className="p-2.5">
-                                      <MaterialAutoComplete value={freeItem.materialNo || ""} className={inputCls} disabled={isPaidLocked} placeholder="Material No." materials={materials} onChange={(val) => handleFreeItemChange(freeItem.id, "materialNo", val)} onSelectMaterial={(mat) => setFreeItemMaterial(freeItem.id, mat)} />
+                                      <MaterialAutoComplete value={freeItem.materialNo || ""} className={inputCls} disabled={isPaidLocked} placeholder="Material No." materials={materials} onLookup={loadMaterials} onChange={(val) => handleFreeItemChange(freeItem.id, "materialNo", val)} onSelectMaterial={(mat) => setFreeItemMaterial(freeItem.id, mat)} />
                                     </td>
                                     <td className="p-2.5">
                                       <input type="text" className={inputCls} disabled={isPaidLocked} placeholder="รายการ" value={freeItem.description || ""} onChange={e => handleFreeItemChange(freeItem.id, "description", e.target.value)} />
@@ -6172,7 +6167,7 @@ const POView = React.memo(() => {
           <VendorEvaluationModal
             isOpen={vendorEvalModalOpen}
             onClose={() => setVendorEvalModalOpen(false)}
-            vendorName={vendors.find((v: any) => v.id === formData.vendorId)?.name || ""}
+            vendorName={formData.vendorName || vendors.find((v: any) => v.id === formData.vendorId)?.name || ""}
             onSubmit={(scores: any, suggestion: string) => {
               vendorEvalScoresRef.current = { ...scores, suggestion };
               setVendorEvalModalOpen(false);

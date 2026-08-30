@@ -26,19 +26,19 @@ const AuthenticatedApp = () => {
   const userRole = userRoles[0] || "Staff";
 
   return (
-    <AppDataProvider
-      user={user}
-      userData={userData}
-      userRole={userRole}
-      userRoles={userRoles}
-      showAlert={showAlert}
-      openConfirm={openConfirm}
-      logAction={logAction}
-    >
-      <UIProvider logAction={logAction}>
+    <UIProvider logAction={logAction}>
+      <AppDataProvider
+        user={user}
+        userData={userData}
+        userRole={userRole}
+        userRoles={userRoles}
+        showAlert={showAlert}
+        openConfirm={openConfirm}
+        logAction={logAction}
+      >
         <AppShell />
-      </UIProvider>
-    </AppDataProvider>
+      </AppDataProvider>
+    </UIProvider>
   );
 };
 

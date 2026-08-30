@@ -396,11 +396,6 @@ const AppShell = () => {
     });
   }, [visibleProjects, activeMenu]);
 
-  // โหลด vendors เมื่อเข้าหน้า PO / ตาราง PO / Vendor (Billing/Pay ใช้ vendor จากรายการเอกสารเอง)
-  useEffect(() => {
-    if (activeMenu === "po" || activeMenu === "po-table" || activeMenu === "vendor") loadVendors();
-  }, [activeMenu, loadVendors]);
-
   useEffect(() => {
     closeMobileSidebar();
   }, [activeMenu, closeMobileSidebar]);
@@ -1911,10 +1906,10 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       // allow the user to skip Pay -> Billing -> Invoice -> Receive rollback.
       const basePath = ["artifacts", appId, "public", "data"] as const;
       const [invoiceSnapshot, billingSnapshot, paySnapshot, receiveSnapshot] = await Promise.all([
-        getDocs(collection(db, ...basePath, "invoices")),
-        getDocs(collection(db, ...basePath, "billings")),
-        getDocs(collection(db, ...basePath, "pays")),
-        getDocs(collection(db, ...basePath, "receives")),
+        getDocs(query(collection(db, ...basePath, "invoices"), where("projectId", "==", po.projectId))),
+        getDocs(query(collection(db, ...basePath, "billings"), where("projectId", "==", po.projectId))),
+        getDocs(query(collection(db, ...basePath, "pays"), where("projectId", "==", po.projectId))),
+        getDocs(query(collection(db, ...basePath, "receives"), where("projectId", "==", po.projectId))),
       ]);
       const fromSnapshot = (snapshot: any) => snapshot.docs.map((entry: any) => ({ id: entry.id, ...entry.data() }));
       const dependencies = getPoActiveDependencies({

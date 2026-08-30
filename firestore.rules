@@ -1,0 +1,244 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userProfile(appId) {
+      return get(/databases/$(database)/documents/artifacts/$(appId)/public/data/users/$(request.auth.uid));
+    }
+
+    function primaryRole(appId) {
+      return userProfile(appId).data.get('role', 'Staff');
+    }
+
+    function secondaryRoles(appId) {
+      return userProfile(appId).data.get('roles', []);
+    }
+
+    function isAdmin(appId) {
+      return signedIn() && (
+        primaryRole(appId) == 'Administrator' ||
+        secondaryRoles(appId).hasAny(['Administrator'])
+      );
+    }
+
+    function moduleAllowed(appId, moduleKey) {
+      let allowedRoles = get(
+        /databases/$(database)/documents/artifacts/$(appId)/public/data/settings/rolePermissions
+      ).data.get(moduleKey, []);
+      return isAdmin(appId) ||
+        primaryRole(appId) in allowedRoles ||
+        secondaryRoles(appId).hasAny(allowedRoles);
+    }
+
+    function assignedToProject(appId, projectId) {
+      return isAdmin(appId) ||
+        projectId in userProfile(appId).data.get('assignedProjectIds', []);
+    }
+
+    function canCreateInProject(appId) {
+      return signedIn() && assignedToProject(appId, request.resource.data.get('projectId', ''));
+    }
+
+    function canReadExistingProjectDoc(appId) {
+      return signedIn() && assignedToProject(appId, resource.data.get('projectId', ''));
+    }
+
+    function canUpdateExistingProjectDoc(appId) {
+      return canReadExistingProjectDoc(appId) &&
+        assignedToProject(appId, request.resource.data.get('projectId', ''));
+    }
+
+    match /artifacts/{appId}/public/data {
+      match /users/{uid} {
+        allow get: if signedIn() && (request.auth.uid == uid || isAdmin(appId));
+        allow list: if isAdmin(appId) && moduleAllowed(appId, 'admin');
+        allow create: if signedIn() && request.auth.uid == uid &&
+          request.resource.data.get('role', 'Staff') == 'Staff' &&
+          request.resource.data.get('roles', []).size() == 0 &&
+          request.resource.data.get('status', 'Pending') == 'Pending' &&
+          request.resource.data.get('assignedProjectIds', []).size() == 0;
+        allow update: if isAdmin(appId) || (signedIn() && request.auth.uid == uid &&
+          request.resource.data.get('role', 'Staff') == resource.data.get('role', 'Staff') &&
+          request.resource.data.get('roles', []) == resource.data.get('roles', []) &&
+          request.resource.data.get('status', '') == resource.data.get('status', '') &&
+          request.resource.data.get('assignedProjectIds', []) == resource.data.get('assignedProjectIds', [])
+        );
+        allow delete: if isAdmin(appId);
+      }
+
+      match /userSettings/{uid} {
+        allow read, create, update, delete: if signedIn() && request.auth.uid == uid;
+      }
+
+      match /settings/{settingDoc} {
+        allow read: if signedIn();
+        allow write: if isAdmin(appId);
+
+        match /{nestedPath=**} {
+          allow read: if signedIn();
+          allow write: if isAdmin(appId);
+        }
+      }
+
+      // Running-number counters must remain writable by users who create PR/PO.
+      match /settings/prRunningNo/prCountersByPrefix/{counterId} {
+        allow read, create, update: if signedIn() && moduleAllowed(appId, 'pr');
+      }
+
+      match /settings/poRunningNo/poCountersByPrefix/{counterId} {
+        allow read, create, update: if signedIn() && moduleAllowed(appId, 'po');
+      }
+
+      match /projects/{projectId} {
+        allow read: if signedIn() && assignedToProject(appId, projectId);
+        allow create: if signedIn() && moduleAllowed(appId, 'projects');
+        allow update, delete: if signedIn() && assignedToProject(appId, projectId) && moduleAllowed(appId, 'projects');
+      }
+
+      match /budgets/{documentId} {
+        allow read: if canReadExistingProjectDoc(appId) && (
+          moduleAllowed(appId, 'projects') || moduleAllowed(appId, 'budget') ||
+          moduleAllowed(appId, 'pr') || moduleAllowed(appId, 'po') ||
+          moduleAllowed(appId, 'budget-summary') || moduleAllowed(appId, 'project-spending')
+        );
+        allow create: if canCreateInProject(appId) && moduleAllowed(appId, 'budget');
+        allow update, delete: if canUpdateExistingProjectDoc(appId) && moduleAllowed(appId, 'budget');
+      }
+
+      match /prs/{documentId} {
+        allow read: if canReadExistingProjectDoc(appId) && (
+          moduleAllowed(appId, 'budget') || moduleAllowed(appId, 'pr') ||
+          moduleAllowed(appId, 'po') || moduleAllowed(appId, 'receive') ||
+          moduleAllowed(appId, 'invoice') || moduleAllowed(appId, 'billing') ||
+          moduleAllowed(appId, 'pay') || moduleAllowed(appId, 'budget-summary') ||
+          moduleAllowed(appId, 'project-spending')
+        );
+        allow create: if canCreateInProject(appId) && moduleAllowed(appId, 'pr');
+        allow update, delete: if canUpdateExistingProjectDoc(appId) && (
+          moduleAllowed(appId, 'pr') || moduleAllowed(appId, 'po') || moduleAllowed(appId, 'budget')
+        );
+      }
+
+      match /pos/{documentId} {
+        allow read: if canReadExistingProjectDoc(appId) && (
+          moduleAllowed(appId, 'budget') || moduleAllowed(appId, 'pr') ||
+          moduleAllowed(appId, 'po') || moduleAllowed(appId, 'payment-subcontract') ||
+          moduleAllowed(appId, 'receive') || moduleAllowed(appId, 'invoice') ||
+          moduleAllowed(appId, 'billing') || moduleAllowed(appId, 'pay') ||
+          moduleAllowed(appId, 'budget-summary') || moduleAllowed(appId, 'project-spending')
+        );
+        allow create: if canCreateInProject(appId) && moduleAllowed(appId, 'po');
+        allow update, delete: if canUpdateExistingProjectDoc(appId) && (
+          moduleAllowed(appId, 'po') || moduleAllowed(appId, 'payment-subcontract') ||
+          moduleAllowed(appId, 'receive') || moduleAllowed(appId, 'invoice') ||
+          moduleAllowed(appId, 'billing') || moduleAllowed(appId, 'pay') || moduleAllowed(appId, 'budget')
+        );
+      }
+
+      match /payments/{documentId} {
+        allow read: if canReadExistingProjectDoc(appId) && (
+          moduleAllowed(appId, 'budget') || moduleAllowed(appId, 'payment-subcontract') ||
+          moduleAllowed(appId, 'invoice') || moduleAllowed(appId, 'budget-summary') ||
+          moduleAllowed(appId, 'project-spending')
+        );
+        allow create: if canCreateInProject(appId) && moduleAllowed(appId, 'payment-subcontract');
+        allow update, delete: if canUpdateExistingProjectDoc(appId) && moduleAllowed(appId, 'payment-subcontract');
+      }
+
+      match /invoices/{documentId} {
+        allow read: if canReadExistingProjectDoc(appId) && (
+          moduleAllowed(appId, 'budget') || moduleAllowed(appId, 'po') ||
+          moduleAllowed(appId, 'payment-subcontract') || moduleAllowed(appId, 'receive') ||
+          moduleAllowed(appId, 'invoice') || moduleAllowed(appId, 'billing') ||
+          moduleAllowed(appId, 'pay') || moduleAllowed(appId, 'budget-summary') ||
+          moduleAllowed(appId, 'project-spending')
+        );
+        allow create: if canCreateInProject(appId) && (
+          moduleAllowed(appId, 'invoice') || moduleAllowed(appId, 'po') || moduleAllowed(appId, 'payment-subcontract')
+        );
+        allow update, delete: if canUpdateExistingProjectDoc(appId) && (
+          moduleAllowed(appId, 'invoice') || moduleAllowed(appId, 'billing') || moduleAllowed(appId, 'pay')
+        );
+      }
+
+      match /receives/{documentId} {
+        allow read: if canReadExistingProjectDoc(appId) && (
+          moduleAllowed(appId, 'budget') || moduleAllowed(appId, 'po') ||
+          moduleAllowed(appId, 'receive') || moduleAllowed(appId, 'invoice') ||
+          moduleAllowed(appId, 'billing') || moduleAllowed(appId, 'pay')
+        );
+        allow create: if canCreateInProject(appId) && (
+          moduleAllowed(appId, 'receive') || moduleAllowed(appId, 'po')
+        );
+        allow update, delete: if canUpdateExistingProjectDoc(appId) && moduleAllowed(appId, 'receive');
+      }
+
+      match /billings/{documentId} {
+        allow read: if canReadExistingProjectDoc(appId) && (
+          moduleAllowed(appId, 'billing') || moduleAllowed(appId, 'pay')
+        );
+        allow create: if canCreateInProject(appId) && moduleAllowed(appId, 'billing');
+        allow update, delete: if canUpdateExistingProjectDoc(appId) && moduleAllowed(appId, 'billing');
+      }
+
+      match /pays/{documentId} {
+        allow read: if canReadExistingProjectDoc(appId) && (
+          moduleAllowed(appId, 'billing') || moduleAllowed(appId, 'pay') || moduleAllowed(appId, 'po')
+        );
+        allow create: if canCreateInProject(appId) && moduleAllowed(appId, 'pay');
+        allow update, delete: if canUpdateExistingProjectDoc(appId) && moduleAllowed(appId, 'pay');
+      }
+
+      match /budgetRevisions/{documentId} {
+        allow read: if canReadExistingProjectDoc(appId) && moduleAllowed(appId, 'projects');
+        allow create: if canCreateInProject(appId) && moduleAllowed(appId, 'projects');
+        allow update, delete: if canUpdateExistingProjectDoc(appId) && moduleAllowed(appId, 'projects');
+      }
+
+      match /vendors/{documentId} {
+        allow read: if signedIn() && (
+          moduleAllowed(appId, 'vendor') || moduleAllowed(appId, 'po') ||
+          moduleAllowed(appId, 'invoice') || moduleAllowed(appId, 'receive')
+        );
+        allow write: if signedIn() && (moduleAllowed(appId, 'vendor') || moduleAllowed(appId, 'po'));
+      }
+
+      match /materials/{documentId} {
+        allow read: if signedIn() && (moduleAllowed(appId, 'material') || moduleAllowed(appId, 'po'));
+        allow write: if signedIn() && moduleAllowed(appId, 'material');
+      }
+
+      match /vendorEvaluations/{documentId} {
+        allow read: if signedIn() && moduleAllowed(appId, 'vendor');
+        allow create: if signedIn() && (
+          moduleAllowed(appId, 'vendor') || moduleAllowed(appId, 'po') ||
+          moduleAllowed(appId, 'receive') || moduleAllowed(appId, 'payment-subcontract')
+        );
+        allow update, delete: if signedIn() && (
+          moduleAllowed(appId, 'vendor') || moduleAllowed(appId, 'po')
+        );
+      }
+
+      match /poBudgetReturnJobs/{documentId} {
+        allow read, update: if canUpdateExistingProjectDoc(appId) && (
+          moduleAllowed(appId, 'budget') || moduleAllowed(appId, 'po') ||
+          moduleAllowed(appId, 'payment-subcontract')
+        );
+        allow create: if canCreateInProject(appId) && (
+          moduleAllowed(appId, 'budget') || moduleAllowed(appId, 'po') ||
+          moduleAllowed(appId, 'payment-subcontract')
+        );
+      }
+
+      match /logs/{documentId} {
+        allow create: if signedIn();
+        allow read: if signedIn() && isAdmin(appId) && moduleAllowed(appId, 'admin');
+        allow update, delete: if isAdmin(appId);
+      }
+    }
+  }
+}

@@ -10,8 +10,10 @@ import React, {
 import {
   collection, query, onSnapshot, doc, setDoc,
   addDoc, updateDoc, deleteDoc, getDocs, deleteField,
+  where, documentId,
 } from "firebase/firestore";
 import { db, appId } from "../lib/firebase";
+import { useUI } from "./UIContext";
 import {
   MODULE_ACCESS,
   USER_ROLES,
@@ -131,6 +133,17 @@ function deriveLogProjectId(collectionName, id, data, lists) {
   return source.find((item) => item.id === id)?.projectId || null;
 }
 
+const FIRESTORE_IN_QUERY_LIMIT = 30;
+
+function chunkValues(values, size = FIRESTORE_IN_QUERY_LIMIT) {
+  const unique = [...new Set((Array.isArray(values) ? values : []).map(String).filter(Boolean))];
+  const chunks = [];
+  for (let index = 0; index < unique.length; index += size) {
+    chunks.push(unique.slice(index, index + size));
+  }
+  return chunks;
+}
+
 // ─── Context Shape ────────────────────────────────────────────────────────────
 const AppDataContext = createContext(null);
 export const useAppData = () => useContext(AppDataContext);
@@ -146,6 +159,7 @@ export const AppDataProvider = ({
   openConfirm,
   logAction,
 }) => {
+  const { activeMenu } = useUI();
   const roles = Array.isArray(userRoles) && userRoles.length ? userRoles : (userRole ? [userRole] : ["Staff"]);
   // ── Firebase collections ──────────────────────────────────────────────────
   const [projects,  setProjects]  = useState([]);
@@ -157,6 +171,7 @@ export const AppDataProvider = ({
   const [invoices,  setInvoices]  = useState([]);
   const [payments,  setPayments]  = useState([]);
   const [paymentsReady, setPaymentsReady] = useState(false);
+  const [billings,  setBillings]  = useState([]);
   const [pays,      setPays]      = useState([]);
   const [receives,  setReceives]  = useState([]);
   const [vendorEvaluations, setVendorEvaluations] = useState([]);
@@ -170,12 +185,59 @@ export const AppDataProvider = ({
   );
   const [rolePermissionsReady, setRolePermissionsReady] = useState(false);
 
+  const assignedProjectIds = useMemo(
+    () => [...new Set((userData?.assignedProjectIds || []).map(String).filter(Boolean))],
+    [userData?.assignedProjectIds]
+  );
+  const canReadAllProjects = roles.includes("Administrator");
+
   const hasModuleAccessForCurrentRoles = useCallback((menuId) => {
     const allowed = rolePermissions[menuId];
     if (roles.includes("Administrator")) return true;
     if (!allowed || allowed.length === 0) return false;
     return roles.some((r) => allowed.includes(r));
   }, [roles, rolePermissions]);
+
+  const buildProjectScopedQueries = useCallback((collectionName) => {
+    const ref = collection(db, "artifacts", appId, "public", "data", collectionName);
+    if (canReadAllProjects) return [query(ref)];
+    return chunkValues(assignedProjectIds).map((ids) => query(ref, where("projectId", "in", ids)));
+  }, [canReadAllProjects, assignedProjectIds]);
+
+  const buildAssignedProjectQueries = useCallback(() => {
+    const ref = collection(db, "artifacts", appId, "public", "data", "projects");
+    if (canReadAllProjects) return [query(ref)];
+    return chunkValues(assignedProjectIds).map((ids) => query(ref, where(documentId(), "in", ids)));
+  }, [canReadAllProjects, assignedProjectIds]);
+
+  const subscribeMergedQueries = useCallback((queries, setter, collectionName, onReady = null) => {
+    if (!queries.length) {
+      setter([]);
+      onReady?.();
+      return () => {};
+    }
+
+    const rowsByQuery = queries.map(() => []);
+    const firstSnapshots = new Set();
+    const publish = () => {
+      const merged = new Map();
+      rowsByQuery.flat().forEach((row) => merged.set(row.id, row));
+      setter(Array.from(merged.values()));
+    };
+
+    const unsubs = queries.map((scopedQuery, queryIndex) => onSnapshot(
+      scopedQuery,
+      (snap) => {
+        rowsByQuery[queryIndex] = snap.docs.map((item) => ({ id: item.id, ...item.data() }));
+        firstSnapshots.add(queryIndex);
+        publish();
+        if (firstSnapshots.size === queries.length) onReady?.();
+      },
+      (err) => console.error(`Error syncing ${collectionName}:`, err)
+    ));
+
+    return () => unsubs.forEach((unsubscribe) => unsubscribe());
+  }, []);
 
   // ── Column widths (admin-controlled, synced to Firestore) ─────────────────
   const [columnWidths, setColumnWidths] = useState({});
@@ -195,7 +257,10 @@ export const AppDataProvider = ({
 
   const loadVendors = useCallback(async () => {
     if (!rolePermissionsReady) return;
-    if (!hasModuleAccessForCurrentRoles("vendor")) {
+    const canLookupVendor = ["vendor", "po", "invoice", "receive"].some(
+      (moduleKey) => hasModuleAccessForCurrentRoles(moduleKey)
+    );
+    if (!canLookupVendor) {
       vendorsLoadedRef.current = false;
       setVendors([]);
       return;
@@ -232,7 +297,7 @@ export const AppDataProvider = ({
 
   const loadMaterials = useCallback(async () => {
     if (!rolePermissionsReady) return;
-    if (!hasModuleAccessForCurrentRoles("material")) {
+    if (!hasModuleAccessForCurrentRoles("material") && !hasModuleAccessForCurrentRoles("po")) {
       materialsLoadedRef.current = false;
       setMaterials([]);
       return;
@@ -251,46 +316,10 @@ export const AppDataProvider = ({
     }
   }, [rolePermissionsReady, hasModuleAccessForCurrentRoles]);
 
-  // projects ใช้ onSnapshot (realtime) — sync ทันทีทุก tab/user โดยไม่ต้องรีเฟรช
-  // (ย้ายจาก getDocs one-shot เพื่อแก้ปัญหาหน้าโครงการไม่ realtime บน production)
-
-  const canSyncInvoice =
-    rolePermissionsReady &&
-    (hasModuleAccessForCurrentRoles("invoice") ||
-      hasModuleAccessForCurrentRoles("billing") ||
-      hasModuleAccessForCurrentRoles("pay"));
-  const canSyncPay = rolePermissionsReady && hasModuleAccessForCurrentRoles("pay");
-  const canSyncReceive = rolePermissionsReady && hasModuleAccessForCurrentRoles("receive");
-
-  // ── Firebase sync (realtime ผ่าน onSnapshot — แก้ไขที่ใดก็ตามจะอัปเดตทุกที่โดยไม่ต้องรีเฟรช) ─
+  // Settings + assigned projects are the only listeners opened for every signed-in user.
+  // Business collections are attached separately after permissions are ready and are
+  // always scoped to assigned projects for non-admin users.
   useEffect(() => {
-    setPaymentsReady(false);
-    const syncCollection = (collectionName, setter, onFirstSnapshot = null) => {
-      const ref = collection(db, "artifacts", appId, "public", "data", collectionName);
-      let gotFirstSnapshot = false;
-      return onSnapshot(
-        query(ref),
-        (snap) => {
-          setter(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-          if (!gotFirstSnapshot) {
-            gotFirstSnapshot = true;
-            onFirstSnapshot?.();
-          }
-        },
-        (err)  => console.error(`Error syncing ${collectionName}:`, err)
-      );
-    };
-    const stagedSync = (collectionName, setter, delayMs = 0, onFirstSnapshot = null) => {
-      let unsub = () => {};
-      const timer = setTimeout(() => {
-        unsub = syncCollection(collectionName, setter, onFirstSnapshot);
-      }, delayMs);
-      return () => {
-        clearTimeout(timer);
-        unsub();
-      };
-    };
-
     const colWidthsRef = doc(db, "artifacts", appId, "public", "data", "settings", "columnWidths");
     const unsubColWidths = onSnapshot(colWidthsRef, (snap) => {
       if (snap.exists()) setColumnWidths(snap.data());
@@ -318,29 +347,11 @@ export const AppDataProvider = ({
       setFunctionPermissions(mergeFunctionPermissionsWithDefaults(raw));
     });
 
-    // projects ใช้ onSnapshot realtime — sync ทันทีเมื่อมีการเปลี่ยนแปลงใด ๆ
-    const unsubProjects = syncCollection("projects", setProjects);
-
-    // vendors, materials ไม่ sync ที่นี่ — ใช้ loadVendors() / loadMaterials() เมื่อเข้าหน้าที่ใช้
-    // Staged subscriptions:
-    // prioritize PR first, then attach the heavier PO listener right after
-    // the first PR snapshot is rendered.
-    let posSyncStarted = false;
-    let unsubPos = () => {};
-    let posTimer = null;
-    const startPosSync = () => {
-      if (posSyncStarted) return;
-      posSyncStarted = true;
-      posTimer = setTimeout(() => {
-        unsubPos = syncCollection("pos", setPos);
-      }, 100);
-    };
-
-    const unsubs = [
-      syncCollection("budgets", setBudgets),
-      syncCollection("prs", setPrs, startPosSync),
-      stagedSync("payments", setPayments, 1500, () => setPaymentsReady(true)),
-    ];
+    const unsubProjects = subscribeMergedQueries(
+      buildAssignedProjectQueries(),
+      setProjects,
+      "projects"
+    );
 
     // Per-user column visibility
     let unsubColVis = () => {};
@@ -354,9 +365,6 @@ export const AppDataProvider = ({
     }
 
     return () => {
-      unsubs.forEach((u) => u());
-      if (posTimer) clearTimeout(posTimer);
-      unsubPos();
       unsubProjects();
       unsubColWidths();
       unsubRolePerms();
@@ -366,40 +374,81 @@ export const AppDataProvider = ({
       if (colSaveTimer.current) clearTimeout(colSaveTimer.current);
       if (colVisSaveTimer.current) clearTimeout(colVisSaveTimer.current);
     };
-  }, [user?.uid]);
+  }, [user?.uid, buildAssignedProjectQueries, subscribeMergedQueries]);
 
-  // Separate effect for conditional collections (invoices, receives) to avoid recreating all listeners
+  const canReadAnyModule = useCallback((moduleKeys) => (
+    rolePermissionsReady && moduleKeys.some((moduleKey) => hasModuleAccessForCurrentRoles(moduleKey))
+  ), [rolePermissionsReady, hasModuleAccessForCurrentRoles]);
+
+  const canSyncBudgets = canReadAnyModule([
+    "projects", "budget", "pr", "po", "budget-summary", "project-spending",
+  ]);
+  const canSyncPrs = canReadAnyModule([
+    "budget", "pr", "po", "receive", "invoice", "billing", "pay",
+    "budget-summary", "project-spending",
+  ]);
+  const canSyncPos = canReadAnyModule([
+    "budget", "pr", "po", "payment-subcontract", "receive", "invoice",
+    "billing", "pay", "budget-summary", "project-spending",
+  ]);
+  const canSyncPayments = canReadAnyModule([
+    "budget", "payment-subcontract", "invoice", "budget-summary", "project-spending",
+  ]);
+  const canSyncInvoice = [
+    "budget", "po", "payment-subcontract", "receive", "invoice", "billing", "pay",
+    "budget-summary", "project-spending",
+  ].includes(activeMenu) && canReadAnyModule([
+    "budget", "po", "payment-subcontract", "receive", "invoice", "billing", "pay",
+    "budget-summary", "project-spending",
+  ]);
+  const canSyncReceive = ["budget", "po", "receive", "invoice", "billing", "pay"].includes(activeMenu) &&
+    canReadAnyModule(["budget", "po", "receive", "invoice", "billing", "pay"]);
+  const canSyncBilling = ["billing", "pay"].includes(activeMenu) && canReadAnyModule(["billing", "pay"]);
+  const canSyncPay = ["po", "billing", "pay"].includes(activeMenu) && canReadAnyModule(["po", "billing", "pay"]);
+
+  // Business data stays realtime, but non-admin queries can only return documents
+  // whose projectId belongs to the current user's assignedProjectIds.
   useEffect(() => {
-    const syncCollection = (collectionName, setter) => {
-      const ref = collection(db, "artifacts", appId, "public", "data", collectionName);
-      return onSnapshot(
-        query(ref),
-        (snap) => setter(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-        (err)  => console.error(`Error syncing ${collectionName}:`, err)
-      );
+    const unsubs = [];
+    const attach = (enabled, collectionName, setter, onReady = null) => {
+      if (!enabled) {
+        setter([]);
+        onReady?.();
+        return;
+      }
+      unsubs.push(subscribeMergedQueries(
+        buildProjectScopedQueries(collectionName),
+        setter,
+        collectionName,
+        onReady
+      ));
     };
 
-    const unsubs = [];
-    if (canSyncInvoice) {
-      unsubs.push(syncCollection("invoices", setInvoices));
-    } else {
-      setInvoices([]);
-    }
-    if (canSyncReceive) {
-      unsubs.push(syncCollection("receives", setReceives));
-    } else {
-      setReceives([]);
-    }
-    if (canSyncPay) {
-      unsubs.push(syncCollection("pays", setPays));
-    } else {
-      setPays([]);
-    }
+    setPaymentsReady(false);
+    attach(canSyncBudgets, "budgets", setBudgets);
+    attach(canSyncPrs, "prs", setPrs);
+    attach(canSyncPos, "pos", setPos);
+    attach(canSyncPayments, "payments", setPayments, () => setPaymentsReady(true));
+    attach(canSyncInvoice, "invoices", setInvoices);
+    attach(canSyncReceive, "receives", setReceives);
+    attach(canSyncBilling, "billings", setBillings);
+    attach(canSyncPay, "pays", setPays);
 
     return () => {
       unsubs.forEach((u) => u());
     };
-  }, [canSyncInvoice, canSyncReceive, canSyncPay]);
+  }, [
+    buildProjectScopedQueries,
+    subscribeMergedQueries,
+    canSyncBudgets,
+    canSyncPrs,
+    canSyncPos,
+    canSyncPayments,
+    canSyncInvoice,
+    canSyncReceive,
+    canSyncBilling,
+    canSyncPay,
+  ]);
 
   // ── Column resize ──────────────────────────────────────────────────────────
   const handleColumnResize = useCallback((tableId, colKey, width) => {
@@ -987,7 +1036,7 @@ export const AppDataProvider = ({
   // ── Context value ──────────────────────────────────────────────────────────
   const value = useMemo(() => ({
     // collections
-    projects, budgets, vendors, materials, prs, pos, invoices, payments, paymentsReady, pays, receives, vendorEvaluations, vendorEvaluations,
+    projects, budgets, vendors, materials, prs, pos, invoices, payments, paymentsReady, billings, pays, receives, vendorEvaluations,
     // derived
     visibleProjects,
     // pending (global, for bell + sidebar badges)
@@ -1017,14 +1066,14 @@ export const AppDataProvider = ({
     // raw Firebase (for views that need direct Firestore access)
     db, appId,
   }), [
-    projects, budgets, vendors, materials, prs, pos, invoices, payments, paymentsReady, pays, receives,
+    projects, budgets, vendors, materials, prs, pos, invoices, payments, paymentsReady, billings, pays, receives,
     visibleProjects,
     pendingBudgetsGlobal, pendingSubItemsGlobal,
     pendingPRsGlobal, pendingPOsGlobal, pendingPaymentsGlobal,
     totalPendingCount, pendingByProject, pendingCountByMenu, pendingBudgetReturnByProject,
     addData, updateData, deleteData,
-    loadVendors, loadMaterials,
-    vendorsLoading, materialsLoading,
+    loadVendors, loadMaterials, loadVendorEvaluations,
+    vendorsLoading, materialsLoading, vendorEvaluationsLoading, vendorEvaluations,
     columnWidths, handleColumnResize,
     columnVisibility, saveColumnVisibility, isColumnVisible,
     handlePRAction, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,

@@ -5,7 +5,7 @@ import {
   createUserWithEmailAndPassword, signInWithPopup, GoogleAuthProvider,
   sendPasswordResetEmail, updateProfile,
 } from "firebase/auth";
-import { doc, getDoc, getDocs, setDoc, addDoc, updateDoc, collection } from "firebase/firestore";
+import { doc, getDoc, setDoc, addDoc, updateDoc, collection } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { auth, db, appId, storage } from "../lib/firebase";
 import { CustomAlert, CustomConfirmModal } from "../components/Dialogs";
@@ -249,18 +249,10 @@ export const AuthProvider = ({ children }) => {
       const userSnapshot = await getDoc(userDocRef);
 
       if (!userSnapshot.exists()) {
-        const usersRef = collection(
-          db,
-          "artifacts",
-          appId,
-          "public",
-          "data",
-          "users"
-        );
-        const snapshot = await getDocs(usersRef);
-        const isFirstUser = snapshot.empty;
-        const role = isFirstUser ? "Administrator" : "Staff";
-        const status = isFirstUser ? "Approved" : "Pending";
+        // Never list every user during registration. New accounts always start
+        // pending and are promoted by an existing administrator.
+        const role = "Staff";
+        const status = "Pending";
 
         const [firstName, ...lastNameParts] = (user.displayName || "").split(
           " "
@@ -318,20 +310,8 @@ export const AuthProvider = ({ children }) => {
     async (email, password, firstName, lastName, position) => {
       const res = await createUserWithEmailAndPassword(auth, email, password);
       const uid = res.user.uid;
-
-      const usersRef = collection(
-        db,
-        "artifacts",
-        appId,
-        "public",
-        "data",
-        "users"
-      );
-      const snapshot = await getDocs(usersRef);
-      const isFirstUser = snapshot.empty;
-
-      const role = isFirstUser ? "Administrator" : "Staff";
-      const status = isFirstUser ? "Approved" : "Pending";
+      const role = "Staff";
+      const status = "Pending";
 
       await setDoc(
         doc(db, "artifacts", appId, "public", "data", "users", uid),

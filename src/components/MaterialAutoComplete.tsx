@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 
-const MaterialAutoComplete = React.memo(({ value, onChange, onSelectMaterial, materials, disabled, className = "", placeholder }: any) => {
+const MaterialAutoComplete = React.memo(({ value, onChange, onSelectMaterial, onLookup, materials, disabled, className = "", placeholder }: any) => {
   const [open, setOpen] = useState(false);
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const debounceTimer = useRef(null);
@@ -29,6 +29,7 @@ const MaterialAutoComplete = React.memo(({ value, onChange, onSelectMaterial, ma
 
   const handleChange = useCallback((e: any) => {
     const val = e.target.value;
+    onLookup?.();
     onChange(val);
     updatePos();
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
@@ -39,7 +40,7 @@ const MaterialAutoComplete = React.memo(({ value, onChange, onSelectMaterial, ma
       setDebouncedQuery("");
       setOpen(false);
     }
-  }, [onChange, updatePos]);
+  }, [onChange, onLookup, updatePos]);
 
   const handleSelect = useCallback((mat: any) => {
     setOpen(false);
@@ -49,9 +50,10 @@ const MaterialAutoComplete = React.memo(({ value, onChange, onSelectMaterial, ma
   }, [onSelectMaterial]);
 
   const handleFocus = useCallback(() => {
+    onLookup?.();
     updatePos();
     if (debouncedQuery.trim() && filtered.length > 0) setOpen(true);
-  }, [debouncedQuery, filtered.length, updatePos]);
+  }, [debouncedQuery, filtered.length, onLookup, updatePos]);
 
   const handleBlur = useCallback(() => {
     setTimeout(() => setOpen(false), 160);
