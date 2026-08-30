@@ -94,7 +94,9 @@ service cloud.firestore {
       }
 
       match /projects/{projectId} {
-        allow read: if signedIn() && assignedToProject(appId, projectId);
+        // Public read is required by an external API-key-only application.
+        // The main application still limits its query to assignedProjectIds.
+        allow read: if true;
         allow create: if signedIn() && moduleAllowed(appId, 'projects');
         allow update, delete: if signedIn() && assignedToProject(appId, projectId) && moduleAllowed(appId, 'projects');
       }
