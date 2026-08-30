@@ -3,7 +3,7 @@ import React, { useState, useMemo } from "react";
 import ReactDOM from "react-dom";
 import {
   Search, CreditCard, FileSpreadsheet, Paperclip,
-  Trash2, Eye, Filter, FileText, ChevronLeft, ChevronRight, Wallet,
+  Trash2, Eye, Filter, FileText, ChevronLeft, ChevronRight, Wallet, CheckCircle,
 } from "lucide-react";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
@@ -11,6 +11,11 @@ import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 import { Card, Badge, formatCurrency } from "../components/ui";
 import { resolvePaymentSignatureImage } from "../lib/paymentSignatureStamps";
 import { buildPoBudgetReturnPlan, enqueuePoBudgetReturnJob } from "../lib/poBudgetReturn";
+import {
+  canCompletePaymentGroup,
+  isPaidPaymentStatus,
+  isPaymentJobCompleted,
+} from "../lib/paymentGroupCompletion";
 
 const BANK_ACCOUNT_OPTIONS = [
   "KBANK-4971008992",
@@ -63,7 +68,7 @@ const comparePaymentRows = (left: any, right: any): number => {
   );
 };
 
-const PaymentTableView = React.memo(() => {
+const PaymentTableView = React.memo(({ onRequestCompleteJob = null }: any) => {
   const {
     payments = [],
     paymentsReady,
@@ -233,7 +238,7 @@ const PaymentTableView = React.memo(() => {
   };
 
   const canBackfillPaymentInvoice = userRole === "Administrator" || canUseFunction?.("invoice", "add") !== false;
-  const isPaidPayment = (payment: any) => String(payment?.status || "").trim().toLowerCase() === "paid";
+  const isPaidPayment = (payment: any) => isPaidPaymentStatus(payment?.status);
   const openHistoricalInvoiceModal = (payment: any) => {
     setHistoricalPaymentType("เครดิต");
     setHistoricalBankAccountNo("");
@@ -387,9 +392,10 @@ const PaymentTableView = React.memo(() => {
     );
   };
 
-  // ใช้สิทธิ์เดียวกับปุ่มคืนยอดใน Log PO เพื่อให้ Administrator ตั้ง Role ได้จากจุดเดิม
+  // สิทธิ์ของปุ่มหน้า Log Payment กำหนดแยกได้จาก Set Role > Payment Subcontract
   const isAdministrator = userRole === "Administrator" || userRoles.includes("Administrator");
-  const canStartPoBudgetReturn = isAdministrator || canUseFunction?.("po-table", "returnBudget") === true;
+  const canCompleteJob = isAdministrator || canUseFunction?.("payment-subcontract", "completeJob") === true;
+  const canStartPoBudgetReturn = isAdministrator || canUseFunction?.("payment-subcontract", "returnBudget") === true;
 
   const handleStartPoBudgetReturn = React.useCallback((po: any) => {
     if (!po?.id || !canStartPoBudgetReturn) return;
@@ -410,6 +416,10 @@ const PaymentTableView = React.memo(() => {
     }
     if (!plan.latestPaymentId) {
       showAlert?.("ยังไม่มี Payment", "ฟังก์ชันนี้รองรับเฉพาะ PO ที่มี Payment เท่านั้น", "warning");
+      return;
+    }
+    if (plan.allocationValidationError) {
+      showAlert?.("คืน Budget ไม่ได้", plan.allocationValidationError, "warning");
       return;
     }
     if (!plan.latestPaymentJobCompleted && !po?.jobCompleted) {
@@ -691,17 +701,27 @@ const PaymentTableView = React.memo(() => {
       ) : (
         <div className="space-y-4">
           {visiblePaymentGroups.map((group: any) => {
+            // Use every period in the PO group, not only rows left by the current
+            // status/search filters, so filtering to Paid cannot expose the button early.
+            const allGroupPayments = (payments || [])
+              .filter((payment: any) => getPaymentGroupKeyForSort(payment) === group.key)
+              .sort(comparePaymentRows);
             const groupAmount = group.payments.reduce((sum: number, payment: any) => sum + (Number(payment.amount) || 0), 0);
             const poPlan = group.po ? buildPoBudgetReturnPlan({ po: group.po, payments, prs }) : null;
             const poAmountNoVat = poPlan ? Number(poPlan.poNetAmount) || 0 : null;
             const discountAmount = poPlan ? Number(poPlan.discountAmount) || 0 : 0;
             const balanceAmount = poPlan ? Number(poPlan.balanceBeforeRev) || 0 : null;
             const processStatus = String(group.po?.budgetReturnProcessStatus || "");
-            const completedPayment = [...group.payments].reverse().find((payment: any) => (
-              payment?.jobCompleted || payment?.status === "จบงาน"
-            ));
+            const completedPayment = [...allGroupPayments].reverse().find(isPaymentJobCompleted);
             const isCompletedGroup = !!completedPayment;
             const completedBy = completedPayment?.jobCompletedBy || completedPayment?.completedBy || "-";
+            const completionPayment = allGroupPayments[allGroupPayments.length - 1] || null;
+            const canCompleteGroup = Boolean(
+              canCompleteJob
+              && onRequestCompleteJob
+              && canCompletePaymentGroup(allGroupPayments)
+              && completionPayment
+            );
             const hasReturnBudgetPermission = canStartPoBudgetReturn
               && !!group.po
               && String(group.po?.poType || "").toUpperCase() === "SP";
@@ -713,12 +733,15 @@ const PaymentTableView = React.memo(() => {
               && balanceAmount !== null
               && balanceAmount > 0
               && poPlan
+              && !poPlan.allocationValidationError
               && !poPlan.paymentComplete
               && poPlan.returnableAmount > 0);
             const returnBudgetDisabledReason = !group.po
               ? "ไม่พบข้อมูล PO ที่เชื่อมกับ Payment"
               : !poPlan
                 ? "ยังคำนวณ Balance PO ไม่ได้"
+                : poPlan.allocationValidationError
+                  ? poPlan.allocationValidationError
                 : processInProgress
                   ? "มี Process คืน Budget กำลังดำเนินการอยู่"
                   : !isCompletedGroup
@@ -766,6 +789,20 @@ const PaymentTableView = React.memo(() => {
                     }`}>
                       {group.payments.length} งวด
                     </span>
+                    {canCompleteGroup && (
+                      <button
+                        type="button"
+                        className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-emerald-700 bg-emerald-600 px-3 py-1.5 text-[10px] font-bold text-white shadow-sm hover:bg-emerald-700"
+                        title="จบงาน (แสดงเมื่อ Payment ทุกงวดมีสถานะ Paid)"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onRequestCompleteJob(completionPayment);
+                        }}
+                      >
+                        <CheckCircle size={13} />
+                        จบงาน
+                      </button>
+                    )}
                     {hasReturnBudgetPermission && !processInProgress && (
                       <button
                         type="button"

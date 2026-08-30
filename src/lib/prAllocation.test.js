@@ -31,4 +31,16 @@ describe("PR activation balance", () => {
     expect(getAvailableBalanceForPR(pr, [])).toBe(0);
     expect(canActivatePR(pr, [])).toBe(false);
   });
+
+  it("does not expose pending Budget return as activatable PR balance", () => {
+    const pr = {
+      id: "pr-1",
+      totalAmount: 1_000,
+      pendingBudgetReturns: [{ requestId: "return-1", returnedAmount: 300 }],
+    };
+    const pos = [makePo(pr.id, 700)];
+
+    expect(getAvailableBalanceForPR(pr, pos)).toBe(0);
+    expect(canActivatePR(pr, pos)).toBe(false);
+  });
 });

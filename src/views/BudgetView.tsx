@@ -24,6 +24,12 @@ import { scalePrItemsToTotal, sumSubItemAmounts } from "../lib/prBudgetReturn";
 import { getInvoiceAmountForPo, isPaidStatus, isSpentInvoiceRecord } from "../lib/billingPayUtils";
 import { getPoAmountExVat, PO_DISCOUNT_ALLOCATION_VERSION } from "../lib/poDiscount";
 import { canDirectEditApprovedMainBudget } from "../lib/budgetEditPolicy";
+import {
+  buildAcceptedPendingReturnState,
+  getPendingBudgetReturnGroup,
+  getPendingBudgetReturns,
+  sumBudgetReturnNotifications,
+} from "../lib/pendingBudgetReturns";
 import { generatePRPdfBytes, generatePOPdfBytes, deleteGeneratedPdf } from "../lib/pdfForms";
 import { stampPoSignaturesToPdf } from "../lib/poSignatureStamps";
 import { getPreviousGeneratedPdfPath, removePreviousGeneratedPdf, uploadRevisionPdf } from "../lib/pdfReplacement";
@@ -2805,193 +2811,197 @@ const BudgetView = React.memo(() => {
 
   const handleAcceptBudgetReturnNotification = useCallback((budget, notification) => {
     if (!budget?.id || !notification?.id) return;
-    const sub = budget?.subItems?.find((s) => s.id === notification.subItemId);
-    const amount = Number(notification.amount || 0);
-    const reason = String(notification.reason || "-");
-    const createdAtText = notification.createdAt ? new Date(notification.createdAt).toLocaleString("th-TH") : "-";
+    const pendingNotifications = getPendingBudgetReturnGroup(
+      budget.budgetReturnNotifications || [],
+      notification
+    );
+    if (pendingNotifications.length === 0) return;
+    const selectedIds = new Set(pendingNotifications.map((row: any) => String(row.id)));
+    const amount = sumBudgetReturnNotifications(pendingNotifications);
+    const sub = budget?.subItems?.find((row: any) => row.id === notification.subItemId);
+    const detailLines = pendingNotifications.map((row: any, index: number) => (
+      `${index + 1}. ${row.prNo || row.prId || "-"}${row.poNo ? ` / ${row.poNo}` : ""}: ${formatCurrency(row.amount)}`
+    ));
 
     openConfirm(
-      "รับยอด Budget คืนจาก PR",
-      `PR: ${notification.prNo || notification.prId || "-"}\nยอดคืน: ${formatCurrency(amount)}\nเหตุผล: ${reason}\nเวลาแจ้งคืน: ${createdAtText}\n\nกด "ยืนยัน" เพื่อรับยอดคืนเข้ารายการ Budget`,
+      "รับยอด Budget คืน",
+      `รายการ: ${sub?.description || budget.description || budget.code}\nจำนวน ${pendingNotifications.length} รายการ\n${detailLines.join("\n")}\n\nยอดรวมรอรับ: ${formatCurrency(amount)}\n\nกด "ยืนยัน" เพื่อรับทุกรายการของ Budget/Sub-item นี้พร้อมกัน`,
       async () => {
-        const latestBudget = budgets.find((b) => b.id === budget.id);
+        const latestBudget = budgets.find((row) => row.id === budget.id);
         if (!latestBudget) {
           showAlert("ไม่พบข้อมูล", "ไม่พบ Budget ล่าสุด", "warning");
           return;
         }
 
-        const latestNotifications = Array.isArray(latestBudget.budgetReturnNotifications) ? latestBudget.budgetReturnNotifications : [];
-        const latestNotification = latestNotifications.find((n: any) => n?.id === notification.id);
-        if (!latestNotification || (latestNotification?.status || "pending") === "accepted") {
-          showAlert("รายการไม่พร้อมใช้งาน", "รายการนี้ถูกรับยอดแล้วหรือไม่พบข้อมูลล่าสุด", "info");
-          return;
-        }
-
         const acceptedBy = userData ? `${userData.firstName || ""} ${userData.lastName || ""}`.trim() : (userRole || "Unknown");
         const acceptedAt = new Date().toISOString();
-        let acceptedPrForPdf: any = null;
-        let acceptedPrRevisionNo = 0;
-        const acceptedPoId = String(latestNotification.poId || latestNotification.poRefId || "");
-        let pdfWarnings: string[] = [];
+        const acceptedPrPdfs: any[] = [];
+        const acceptedPoIds = new Set<string>();
+        const pdfWarnings: string[] = [];
+        let acceptedNotifications: any[] = [];
+        const revisionNoByRequestId = new Map<string, number>();
         try {
           await runTransaction(db, async (transaction) => {
+            // Firestore may retry this callback; reset post-transaction work
+            // so PDFs are generated once from the committed attempt only.
+            acceptedPrPdfs.length = 0;
+            acceptedPoIds.clear();
+            acceptedNotifications = [];
+            revisionNoByRequestId.clear();
             const budgetRef = doc(db, "artifacts", appId, "public", "data", "budgets", latestBudget.id);
             const budgetSnap = await transaction.get(budgetRef);
             if (!budgetSnap.exists()) throw new Error("ไม่พบ Budget ล่าสุด");
-
             const currentBudget = budgetSnap.data() || {};
             const currentNotifications = Array.isArray(currentBudget.budgetReturnNotifications)
               ? currentBudget.budgetReturnNotifications
               : [];
-            const currentNotification = currentNotifications.find((n: any) => n?.id === latestNotification.id);
-            if (!currentNotification || (currentNotification.status || "pending") === "accepted") {
-              throw new Error("รายการนี้ถูกรับยอดแล้วหรือไม่พบข้อมูลล่าสุด");
+            acceptedNotifications = currentNotifications.filter((row: any) => (
+              selectedIds.has(String(row?.id || "")) && (row?.status || "pending") !== "accepted"
+            ));
+            if (acceptedNotifications.length !== selectedIds.size) {
+              throw new Error("บางรายการถูกรับไปแล้วหรือข้อมูลเปลี่ยนแปลง กรุณาเปิดรายการใหม่");
             }
 
-            const budgetPayload: any = {
-              budgetReturnNotifications: currentNotifications.map((n: any) =>
-                n?.id === currentNotification.id
-                  ? { ...n, status: "accepted", acceptedAt, acceptedBy: acceptedBy || "Unknown" }
-                  : n
-              ),
-            };
-
-            if (currentNotification.applyOnAccept) {
-              const prId = currentNotification.prId;
+            const notificationsByPr = new Map<string, any[]>();
+            acceptedNotifications.forEach((row: any) => {
+              if (!row.applyOnAccept || !row.prId) return;
+              const key = String(row.prId);
+              notificationsByPr.set(key, [...(notificationsByPr.get(key) || []), row]);
+            });
+            const prEntries: any[] = [];
+            for (const [prId, rows] of notificationsByPr.entries()) {
               const prRef = doc(db, "artifacts", appId, "public", "data", "prs", prId);
               const prSnap = await transaction.get(prRef);
-              if (!prSnap.exists()) throw new Error("ไม่พบ PR ล่าสุดสำหรับคำขอคืนยอดนี้");
+              if (!prSnap.exists()) throw new Error(`ไม่พบ PR ${prId}`);
+              prEntries.push({ prId, rows, prRef, currentPr: prSnap.data() || {} });
+            }
 
-              const processJobId = currentNotification.poBudgetReturnJobId || null;
-              const processJobRef = processJobId
-                ? doc(db, "artifacts", appId, "public", "data", "poBudgetReturnJobs", processJobId)
-                : null;
-              const processPoId = currentNotification.poId || currentNotification.poRefId || null;
-              const processPoRef = processJobId && processPoId
-                ? doc(db, "artifacts", appId, "public", "data", "pos", processPoId)
-                : null;
-              const processJobSnap = processJobRef ? await transaction.get(processJobRef) : null;
-              const processPoSnap = processPoRef ? await transaction.get(processPoRef) : null;
-              if (processJobId && processJobRef && !processJobSnap?.exists()) {
-                throw new Error("ไม่พบ Process คืนยอด PO ล่าสุด");
+            const jobIds = [...new Set(acceptedNotifications.map((row: any) => row.poBudgetReturnJobId).filter(Boolean).map(String))];
+            const jobEntries: any[] = [];
+            for (const jobId of jobIds) {
+              const jobRef = doc(db, "artifacts", appId, "public", "data", "poBudgetReturnJobs", jobId);
+              const jobSnap = await transaction.get(jobRef);
+              if (!jobSnap.exists()) throw new Error(`ไม่พบ Process คืนยอด ${jobId}`);
+              jobEntries.push({ jobId, jobRef, currentJob: jobSnap.data() || {} });
+            }
+
+            const poIds = [...new Set(acceptedNotifications.filter((row: any) => row.poBudgetReturnJobId).map((row: any) => row.poId || row.poRefId).filter(Boolean).map(String))];
+            const poEntries: any[] = [];
+            for (const poId of poIds) {
+              const poRef = doc(db, "artifacts", appId, "public", "data", "pos", poId);
+              const poSnap = await transaction.get(poRef);
+              if (poSnap.exists()) poEntries.push({ poId, poRef });
+            }
+
+            for (const { prId, rows, prRef, currentPr } of prEntries) {
+              const requestIds = new Set(rows.map((row: any) => String(row.id)));
+              const allPendingReturns = getPendingBudgetReturns(currentPr);
+              const selectedPendingReturns = allPendingReturns.filter((row: any) => requestIds.has(String(row.requestId)));
+              if (selectedPendingReturns.length !== requestIds.size) {
+                throw new Error(`รายการรอรับของ PR ${currentPr.prNo || prId} ไม่ตรงกับคำขอ`);
               }
-
-              const currentPr = prSnap.data() || {};
-              const pendingReturn = currentPr.pendingBudgetReturn;
-              if (!pendingReturn || pendingReturn.requestId !== currentNotification.id) {
-                throw new Error("คำขอคืนยอดนี้ไม่ตรงกับข้อมูล PR ล่าสุด");
-              }
-
-              const currentPrTotal = Number(currentPr.totalAmount ?? currentPr.amount ?? 0);
-              const oldPrTotal = Number(pendingReturn.oldTotalAmount ?? currentNotification.oldPrTotal ?? currentPrTotal);
-              if (Math.abs(currentPrTotal - oldPrTotal) > 0.01) {
-                throw new Error("PR ถูกแก้ไขระหว่างรอรับยอด กรุณาตรวจสอบรายการก่อนรับยอด");
-              }
-
-              const history = Array.isArray(currentPr.budgetReturnRevisions)
-                ? currentPr.budgetReturnRevisions
-                : [];
-              const {
-                requestId,
-                newItems,
-                newStatus,
-                ...revision
-              } = pendingReturn;
-              const revisedTotal = Number(pendingReturn.newTotalAmount ?? currentNotification.newPrTotal ?? 0);
-              const revisionToStore = {
-                ...revision,
-                revNo: history.length + 1,
+              const acceptedState = buildAcceptedPendingReturnState(
+                currentPr,
+                requestIds,
                 acceptedAt,
-                acceptedBy: acceptedBy || "Unknown",
-              };
-              const appliedItems = Array.isArray(newItems)
-                ? newItems
-                : scalePrItemsToTotal(currentPr.items || [], revisedTotal);
-
-              // ใช้ snapshot หลัง Rev นี้สร้าง PDF ใหม่หลัง transaction สำเร็จ
-              acceptedPrForPdf = {
-                ...currentPr,
-                id: prId,
-                items: appliedItems,
-                totalAmount: revisedTotal,
-                amount: revisedTotal,
-                pendingBudgetReturn: null,
-              };
-              acceptedPrRevisionNo = Number(revisionToStore.revNo || 0);
-
-              transaction.update(prRef, {
-                items: appliedItems,
-                totalAmount: revisedTotal,
-                amount: revisedTotal,
-                status: newStatus || (revisedTotal <= 0 ? "Closed PR Auto" : currentPr.status || "Approved"),
-                budgetReturnRevisions: [...history, revisionToStore],
-                budgetReturnRevNo: revisionToStore.revNo,
-                lastBudgetReturnAt: revisionToStore.at,
-                lastBudgetReturnAmount: revisionToStore.returnedAmount,
-                lastBudgetReturnReason: revisionToStore.returnReason,
-                pendingBudgetReturn: deleteField(),
+                acceptedBy || "Unknown"
+              );
+              const lastRevision = acceptedState.revisions[acceptedState.revisions.length - 1];
+              Object.entries(acceptedState.revisionNoByRequestId).forEach(([requestId, revNo]) => {
+                revisionNoByRequestId.set(requestId, Number(revNo));
               });
+              const legacyRequestId = currentPr.pendingBudgetReturn?.requestId;
+              const finalStatus = acceptedState.totalAmount <= 0 ? "Closed PR Auto" : (currentPr.status || "Approved");
+              transaction.update(prRef, {
+                items: acceptedState.items,
+                totalAmount: acceptedState.totalAmount,
+                amount: acceptedState.totalAmount,
+                status: finalStatus,
+                budgetReturnRevisions: acceptedState.history,
+                budgetReturnRevNo: lastRevision.revNo,
+                lastBudgetReturnAt: lastRevision.at,
+                lastBudgetReturnAmount: lastRevision.returnedAmount,
+                lastBudgetReturnReason: lastRevision.returnReason,
+                pendingBudgetReturns: acceptedState.remainingPendingReturns,
+                ...(legacyRequestId && requestIds.has(String(legacyRequestId)) ? { pendingBudgetReturn: deleteField() } : {}),
+              });
+              acceptedPrPdfs.push({
+                pr: { ...currentPr, id: prId, items: acceptedState.items, totalAmount: acceptedState.totalAmount, amount: acceptedState.totalAmount, status: finalStatus, pendingBudgetReturns: acceptedState.remainingPendingReturns },
+                revisionNo: lastRevision.revNo,
+              });
+            }
 
-              if (processJobId && processJobRef && processJobSnap?.exists()) {
-                const currentJob = processJobSnap.data() || {};
-                const linkedPrIds = Array.isArray(currentJob.linkedPrs)
-                  ? currentJob.linkedPrs.map((row: any) => String(row?.prId || "")).filter(Boolean)
-                  : [];
-                const acceptedPrIds = [...new Set([
-                  ...(Array.isArray(currentJob.acceptedPrIds) ? currentJob.acceptedPrIds.map((id: any) => String(id)) : []),
-                  String(prId),
-                ])];
-                const processComplete = linkedPrIds.length === 0 || linkedPrIds.every((id: string) => acceptedPrIds.includes(id));
-                transaction.update(processJobRef, {
-                  acceptedPrIds,
-                  acceptedLastAt: acceptedAt,
-                  acceptedLastBy: acceptedBy || "Unknown",
-                  status: processComplete ? "Completed" : "Waiting Budget Approval",
-                  currentStep: processComplete ? "FINALIZE" : "WAITING_BUDGET_APPROVAL",
-                  ...(processComplete ? { completedAt: acceptedAt } : {}),
+            for (const { jobId, jobRef, currentJob } of jobEntries) {
+              const acceptedForJob = acceptedNotifications.filter((row: any) => String(row.poBudgetReturnJobId || "") === jobId);
+              const acceptedPrIds = [...new Set([
+                ...(Array.isArray(currentJob.acceptedPrIds) ? currentJob.acceptedPrIds.map(String) : []),
+                ...acceptedForJob.map((row: any) => String(row.prId || "")).filter(Boolean),
+              ])];
+              const linkedPrIds = Array.isArray(currentJob.linkedPrs)
+                ? currentJob.linkedPrs.map((row: any) => String(row?.prId || "")).filter(Boolean)
+                : [];
+              const processComplete = linkedPrIds.length === 0 || linkedPrIds.every((id: string) => acceptedPrIds.includes(id));
+              transaction.update(jobRef, {
+                acceptedPrIds,
+                acceptedLastAt: acceptedAt,
+                acceptedLastBy: acceptedBy || "Unknown",
+                status: processComplete ? "Completed" : "Waiting Budget Approval",
+                currentStep: processComplete ? "FINALIZE" : "WAITING_BUDGET_APPROVAL",
+                ...(processComplete ? { completedAt: acceptedAt } : {}),
+                updatedAt: acceptedAt,
+              });
+              for (const { poId, poRef } of poEntries) {
+                if (!acceptedForJob.some((row: any) => String(row.poId || row.poRefId || "") === poId)) continue;
+                transaction.update(poRef, {
+                  budgetReturnProcessStatus: processComplete ? "Completed" : "Waiting Budget Approval",
+                  budgetReturnProcessStep: processComplete ? "FINALIZE" : "WAITING_BUDGET_APPROVAL",
+                  ...(processComplete ? { budgetReturnProcessCompletedAt: acceptedAt, budgetReturnProcessCompletedBy: acceptedBy || "Unknown" } : {}),
                   updatedAt: acceptedAt,
                 });
-                if (processPoRef && processPoSnap?.exists()) {
-                  transaction.update(processPoRef, {
-                    budgetReturnProcessStatus: processComplete ? "Completed" : "Waiting Budget Approval",
-                    budgetReturnProcessStep: processComplete ? "FINALIZE" : "WAITING_BUDGET_APPROVAL",
-                    ...(processComplete ? { budgetReturnProcessCompletedAt: acceptedAt, budgetReturnProcessCompletedBy: acceptedBy || "Unknown" } : {}),
-                    updatedAt: acceptedAt,
-                  });
-                }
-              }
-
-              const currentUsedAmount = Number(currentBudget.usedAmount);
-              if (Number.isFinite(currentUsedAmount)) {
-                budgetPayload.usedAmount = Math.max(0, currentUsedAmount - Number(currentNotification.amount || 0));
+                acceptedPoIds.add(poId);
               }
             }
 
-            transaction.update(budgetRef, budgetPayload);
+            const acceptedAmount = sumBudgetReturnNotifications(
+              acceptedNotifications.filter((row: any) => row.applyOnAccept)
+            );
+            const currentUsedAmount = Number(currentBudget.usedAmount);
+            transaction.update(budgetRef, {
+              budgetReturnNotifications: currentNotifications.map((row: any) => (
+                selectedIds.has(String(row?.id || ""))
+                  ? {
+                    ...row,
+                    status: "accepted",
+                    acceptedAt,
+                    acceptedBy: acceptedBy || "Unknown",
+                    revNo: revisionNoByRequestId.get(String(row.id)) || row.revNo,
+                  }
+                  : row
+              )),
+              ...(Number.isFinite(currentUsedAmount) ? { usedAmount: Math.max(0, currentUsedAmount - acceptedAmount) } : {}),
+            });
           });
 
-          // สร้าง PDF ใหม่ที่ path ใหม่ก่อน เปลี่ยน URL ใน Firestore แล้วจึงลบไฟล์เดิม
-          if (acceptedPrForPdf) {
+          for (const { pr, revisionNo } of acceptedPrPdfs) {
             try {
-              await replacePrPdfAfterRevision(acceptedPrForPdf, acceptedPrRevisionNo);
+              await replacePrPdfAfterRevision(pr, revisionNo);
             } catch (pdfError: any) {
               console.warn("[PR Rev PDF] update failed:", pdfError);
-              pdfWarnings.push(`PR PDF: ${pdfError?.message || "สร้าง/เปลี่ยนไฟล์ไม่สำเร็จ"}`);
+              pdfWarnings.push(`PR ${pr.prNo || pr.id}: ${pdfError?.message || "สร้าง/เปลี่ยนไฟล์ไม่สำเร็จ"}`);
             }
           }
-          if (acceptedPoId && latestNotification.poBudgetReturnJobId) {
+          for (const poId of acceptedPoIds) {
             try {
-              const poSnap = await getDoc(doc(db, "artifacts", appId, "public", "data", "pos", acceptedPoId));
-              if (poSnap.exists()) {
-                const latestPo = { id: poSnap.id, ...poSnap.data() };
-                const poRevisionNo = Number(latestPo.poBudgetReturnRevNo || latestPo.poBudgetReturnRevisions?.length || 0);
-                if (poRevisionNo > 0 && Number(latestPo.poPdfRevisionNo || 0) < poRevisionNo) {
-                  await replacePoPdfAfterRevision(latestPo, poRevisionNo);
-                }
+              const poSnap = await getDoc(doc(db, "artifacts", appId, "public", "data", "pos", poId));
+              if (!poSnap.exists()) continue;
+              const latestPo: any = { id: poSnap.id, ...poSnap.data() };
+              const poRevisionNo = Number(latestPo.poBudgetReturnRevNo || latestPo.poBudgetReturnRevisions?.length || 0);
+              if (poRevisionNo > 0 && Number(latestPo.poPdfRevisionNo || 0) < poRevisionNo) {
+                await replacePoPdfAfterRevision(latestPo, poRevisionNo);
               }
             } catch (pdfError: any) {
               console.warn("[PO Rev PDF] update failed:", pdfError);
-              pdfWarnings.push(`PO PDF: ${pdfError?.message || "สร้าง/เปลี่ยนไฟล์ไม่สำเร็จ"}`);
+              pdfWarnings.push(`PO ${poId}: ${pdfError?.message || "สร้าง/เปลี่ยนไฟล์ไม่สำเร็จ"}`);
             }
           }
         } catch (error: any) {
@@ -2999,20 +3009,21 @@ const BudgetView = React.memo(() => {
           return;
         }
 
+        const acceptedAmount = sumBudgetReturnNotifications(acceptedNotifications);
         await logAction?.(
           "Accept Budget Return",
-          `รับยอดคืน Budget ${latestBudget.code} จาก PR ${latestNotification.prNo || latestNotification.prId}: ${formatCurrency(amount)} | เหตุผล: ${reason}`,
+          `รับยอดคืน Budget ${latestBudget.code} จำนวน ${acceptedNotifications.length} รายการ รวม ${formatCurrency(acceptedAmount)}`,
           latestBudget.projectId || selectedProjectId
         );
         showAlert(
           pdfWarnings.length > 0 ? "รับยอดสำเร็จ แต่ PDF ต้องตรวจสอบ" : "รับยอดสำเร็จ",
-          `รับยอดคืน ${formatCurrency(amount)} เข้างบประมาณเรียบร้อย${pdfWarnings.length > 0 ? `\n${pdfWarnings.join("\n")}` : ""}`,
+          `รับยอดคืน ${acceptedNotifications.length} รายการ รวม ${formatCurrency(acceptedAmount)} เข้างบประมาณเรียบร้อย${pdfWarnings.length > 0 ? `\n${pdfWarnings.join("\n")}` : ""}`,
           pdfWarnings.length > 0 ? "warning" : "success"
         );
       },
       "warning"
     );
-  }, [budgets, logAction, openConfirm, selectedProjectId, showAlert, updateData, userData, userRole]);
+  }, [budgets, logAction, openConfirm, replacePoPdfAfterRevision, replacePrPdfAfterRevision, selectedProjectId, showAlert, userData, userRole]);
 
   const handleApproveSubItem = async (budgetId, subItemId) => {
     if (!canApproveSubItem) {
@@ -4324,6 +4335,7 @@ const BudgetView = React.memo(() => {
                     const hasSubItems = b.subItems && b.subItems.length > 0;
                     const sumSubItems = hasSubItems ? sumSubItemAmounts(b.subItems) : 0;
                     const pendingReturnNotifications = getPendingBudgetReturnNotifications(b);
+                    const pendingReturnTotal = sumBudgetReturnNotifications(pendingReturnNotifications);
                     const hasPendingBudgetReturn = pendingReturnNotifications.length > 0;
                     const stats = budgetStatsById.get(b.id) || { prTotal: 0, poTotal: 0, invoiceTotal: 0, relatedPRs: [], relatedPOs: [] };
                     // Calculate balance based on whether budget has subitems
@@ -4422,7 +4434,7 @@ const BudgetView = React.memo(() => {
                                     }}
                                     title="คลิกเพื่อดูรายละเอียดและกดรับยอดคืน"
                                   >
-                                    แจ้งเตือนคืน Budget {pendingReturnNotifications.length} รายการ
+                                    รอรับ Budget {pendingReturnNotifications.length} รายการ · {formatCurrency(pendingReturnTotal)}
                                   </button>
                                 )}
                               </div>
@@ -4603,6 +4615,7 @@ const BudgetView = React.memo(() => {
                               (() => {
                                 const pendingSubReturns = getPendingSubBudgetReturnNotifications(b, sub.id);
                                 const hasPendingSubReturn = pendingSubReturns.length > 0;
+                                const pendingSubReturnTotal = sumBudgetReturnNotifications(pendingSubReturns);
                                 const subPrUsed = getSubItemPrUsed(b, sub);
                                 const subBalance = getSubItemAmount(sub) - subPrUsed;
                                 return (
@@ -4640,7 +4653,7 @@ const BudgetView = React.memo(() => {
                                           }}
                                           title="คลิกเพื่อดูรายละเอียดและกดรับยอดคืน"
                                         >
-                                          รอรับยอดคืน {pendingSubReturns.length}
+                                          รอรับ {pendingSubReturns.length} · {formatCurrency(pendingSubReturnTotal)}
                                         </button>
                                       )}
                                     </div>

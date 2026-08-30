@@ -179,8 +179,9 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
     { key: "approvePeriod",   label: "อนุมัติงวดงาน" },
     { key: "pay",             label: "จ่ายเงิน (Pay)" },
     { key: "hold",            label: "Hold Payment" },
-    { key: "completeJob",     label: "จบงาน" },
+    { key: "completeJob",     label: "จบงาน (Payment / Log Payment)" },
     { key: "startNextPeriod", label: "เปิดงวดถัดไป" },
+    { key: "returnBudget",    label: "คืน Budget (หน้า Log Payment)" },
   ],
   "budget-summary": [
     { key: "export", label: "Export Budget Summary" },
@@ -290,6 +291,7 @@ export function mergeFunctionPermissionsWithDefaults(
     },
     "payment-subcontract": {
       completeJob: ["PM", "CM"],
+      returnBudget: ["PCM", "GM", "MD"],
     },
     invoice: {
       edit: ["Administrator"],
@@ -345,8 +347,13 @@ export function mergeFunctionPermissionsWithDefaults(
     out[moduleKey] = {};
     if (rawMod == null || typeof rawMod !== "object") {
       funcList.forEach(({ key }) => {
+        const legacyCrossModuleFallback = moduleKey === "payment-subcontract" && key === "returnBudget"
+          ? pickFallbackRoles("po-table", ["returnBudget"])
+          : undefined;
         const defaultRoles = defaultByModuleAndKey[moduleKey]?.[key] || MODULE_ACCESS[moduleKey] || [];
-        out[moduleKey][key] = [...defaultRoles];
+        out[moduleKey][key] = Array.isArray(legacyCrossModuleFallback)
+          ? [...legacyCrossModuleFallback]
+          : [...defaultRoles];
       });
       return;
     }
@@ -356,8 +363,17 @@ export function mergeFunctionPermissionsWithDefaults(
         out[moduleKey][key] = Array.isArray(v) ? [...v] : [];
       } else {
         const fallback = pickFallbackRoles(moduleKey, fallbackKeyByModuleAndKey[moduleKey]?.[key] || []);
+        // The Log Payment button originally shared po-table.returnBudget.
+        // Preserve that configured role list until the new Payment-specific key is saved.
+        const legacyCrossModuleFallback = moduleKey === "payment-subcontract" && key === "returnBudget"
+          ? pickFallbackRoles("po-table", ["returnBudget"])
+          : undefined;
         const defaultRoles = defaultByModuleAndKey[moduleKey]?.[key] || MODULE_ACCESS[moduleKey] || [];
-        out[moduleKey][key] = Array.isArray(fallback) ? [...fallback] : [...defaultRoles];
+        out[moduleKey][key] = Array.isArray(fallback)
+          ? [...fallback]
+          : Array.isArray(legacyCrossModuleFallback)
+            ? [...legacyCrossModuleFallback]
+            : [...defaultRoles];
       }
     });
   });

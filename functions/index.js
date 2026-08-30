@@ -75,6 +75,50 @@ const paymentActual = (payment) => {
   return money(Math.max(0, gross - applied));
 };
 
+const lineAmount = (item) => {
+  const explicit = Number(item?.amount);
+  return Number.isFinite(explicit)
+    ? Math.max(0, explicit)
+    : Math.max(0, n(item?.quantity) * n(item?.price ?? item?.unitPrice));
+};
+
+const allocateTargetByWeight = (targetAmount, rows) => {
+  const target = Math.max(0, money(targetAmount));
+  const result = rows.map(() => 0);
+  let remaining = target;
+  let active = rows
+    .map((row, index) => ({ index, weight: Math.max(0, n(row?.weight)), capacity: Math.max(0, n(row?.capacity)) }))
+    .filter((row) => row.capacity > 0.000001);
+
+  for (let pass = 0; pass < rows.length + 2 && remaining > 0.000001 && active.length > 0; pass += 1) {
+    const positiveWeightTotal = active.reduce((sum, row) => sum + row.weight, 0);
+    const fallbackWeightTotal = active.reduce((sum, row) => sum + Math.max(0, row.capacity - result[row.index]), 0);
+    let assignedThisPass = 0;
+    active.forEach((row) => {
+      const available = Math.max(0, row.capacity - result[row.index]);
+      const weight = positiveWeightTotal > 0 ? row.weight : available;
+      const weightTotal = positiveWeightTotal > 0 ? positiveWeightTotal : fallbackWeightTotal;
+      const take = Math.min(available, weightTotal > 0 ? remaining * (weight / weightTotal) : 0);
+      result[row.index] += take;
+      assignedThisPass += take;
+    });
+    remaining = Math.max(0, target - result.reduce((sum, value) => sum + value, 0));
+    active = active.filter((row) => row.capacity - result[row.index] > 0.000001);
+    if (assignedThisPass <= 0.000001) break;
+  }
+
+  const rounded = result.map(money);
+  const drift = money(target - rounded.reduce((sum, value) => sum + value, 0));
+  if (Math.abs(drift) > 0 && rounded.length > 0) {
+    const index = [...rounded.keys()].reverse().find((candidate) => (
+      rounded[candidate] + drift >= -0.001
+      && rounded[candidate] + drift <= Math.max(0, n(rows[candidate]?.capacity)) + 0.001
+    ));
+    if (index != null) rounded[index] = money(rounded[index] + drift);
+  }
+  return rounded;
+};
+
 const linkedPrIds = (po) => {
   const ids = new Set();
   if (po?.prRefId) ids.add(String(po.prRefId));
@@ -86,6 +130,126 @@ const linkedPrIds = (po) => {
     });
   });
   return [...ids];
+};
+
+const paymentAllocationPlan = (po, payment) => {
+  const poItems = Array.isArray(po?.items) ? po.items : [];
+  const paymentItems = Array.isArray(payment?.items) ? payment.items : [];
+  const paymentByPoItemIndex = new Map();
+  paymentItems.forEach((item, fallbackIndex) => {
+    const explicitIndex = Number(item?.prItemIndex);
+    const index = Number.isInteger(explicitIndex) && explicitIndex >= 0 ? explicitIndex : fallbackIndex;
+    paymentByPoItemIndex.set(index, item);
+  });
+
+  const allLinkedPrIds = linkedPrIds(po);
+  const hasMultiplePrs = allLinkedPrIds.length > 1;
+  const lines = poItems.map((item, poItemIndex) => {
+    const allocations = Array.isArray(item?.disPrAllocations) && item.disPrAllocations.length > 0
+      ? item.disPrAllocations
+        .map((allocation, allocationIndex) => ({
+          ...allocation,
+          allocationIndex,
+          prId: String(allocation?.prId || ""),
+          amount: Math.max(0, n(allocation?.amount)),
+        }))
+        .filter((allocation) => allocation.prId && allocation.amount > 0)
+      : (item?.prId ? [{
+        prId: String(item.prId),
+        prItemIndex: item?.prItemIndex,
+        allocationIndex: -1,
+        amount: lineAmount(item),
+      }] : []);
+    const grossAmount = lineAmount(item);
+    const allocationTotal = allocations.reduce((sum, allocation) => sum + allocation.amount, 0);
+    const paymentItem = paymentByPoItemIndex.get(poItemIndex);
+    const paidGrossAmount = Math.min(
+      grossAmount,
+      Math.max(0, n(paymentItem?.prevAccumAmount) + n(paymentItem?.thisPeriodAmount))
+    );
+    const progressRatio = grossAmount > 0 ? Math.min(1, paidGrossAmount / grossAmount) : 0;
+    return { item, poItemIndex, grossAmount, allocations, allocationTotal, progressRatio, desiredActual: allocationTotal * progressRatio };
+  });
+
+  if (hasMultiplePrs) {
+    const ambiguousLine = lines.find((line) => (
+      line.grossAmount > 0.01
+      && (
+        line.allocations.length === 0
+        || !Array.isArray(line.item?.disPrAllocations)
+        || line.allocations.some((allocation) => (
+          allocation?.prItemIndex == null || !Number.isInteger(Number(allocation.prItemIndex))
+        ))
+      )
+    ));
+    if (ambiguousLine) {
+      throw new Error(`PO หลาย PR มีรายการที่ระบุ PR item ต้นทางไม่ครบ: ${ambiguousLine.item?.description || `รายการ ${ambiguousLine.poItemIndex + 1}`}`);
+    }
+  }
+
+  const poNetAmount = poNet(po);
+  const hasExplicitAllocations = lines.some((line) => Array.isArray(line.item?.disPrAllocations) && line.item.disPrAllocations.length > 0);
+  if (!hasExplicitAllocations) {
+    const rawTotal = lines.reduce((sum, line) => sum + line.allocationTotal, 0);
+    const netRatio = rawTotal > 0 ? poNetAmount / rawTotal : 0;
+    lines.forEach((line) => {
+      line.allocations = line.allocations.map((allocation) => ({ ...allocation, amount: Math.max(0, allocation.amount * netRatio) }));
+      line.allocationTotal = line.allocations.reduce((sum, allocation) => sum + allocation.amount, 0);
+      line.desiredActual = line.allocationTotal * line.progressRatio;
+    });
+  }
+
+  const actualUsed = paymentActual(payment);
+  const contractNet = money(lines.reduce((sum, line) => sum + line.allocationTotal, 0));
+  if (hasMultiplePrs && Math.abs(contractNet - poNetAmount) > 0.05) {
+    throw new Error(`Allocation ของ PO ไม่ตรงกับยอดสุทธิ (${contractNet.toFixed(2)} / ${poNetAmount.toFixed(2)})`);
+  }
+  const actualByLine = allocateTargetByWeight(Math.min(actualUsed, contractNet || poNetAmount), lines.map((line) => ({
+    weight: line.desiredActual,
+    capacity: line.allocationTotal,
+  })));
+  const perPr = new Map();
+  const revisedItems = lines.map((line, lineIndex) => {
+    const actualLineAmount = actualByLine[lineIndex] || 0;
+    const actualByAllocation = allocateTargetByWeight(actualLineAmount, line.allocations.map((allocation) => ({
+      weight: allocation.amount,
+      capacity: allocation.amount,
+    })));
+    line.allocations.forEach((allocation, allocationIndex) => {
+      const current = perPr.get(allocation.prId) || { prId: allocation.prId, poNetAllocation: 0, actualUsed: 0, routes: [] };
+      const actualAmount = actualByAllocation[allocationIndex] || 0;
+      current.poNetAllocation = money(current.poNetAllocation + allocation.amount);
+      current.actualUsed = money(current.actualUsed + actualAmount);
+      current.routes.push({
+        poItemIndex: line.poItemIndex,
+        prItemIndex: Number.isInteger(Number(allocation?.prItemIndex)) ? Number(allocation.prItemIndex) : null,
+        amount: money(allocation.amount),
+        actualUsed: money(actualAmount),
+        returnableAmount: money(Math.max(0, allocation.amount - actualAmount)),
+      });
+      perPr.set(allocation.prId, current);
+    });
+
+    const lineDiscount = Math.max(0, money(line.grossAmount - line.allocationTotal));
+    const nextGross = money(actualLineAmount + lineDiscount);
+    const unitPrice = n(line.item?.price ?? line.item?.unitPrice);
+    const nextQty = unitPrice > 0 ? quantity(nextGross / unitPrice) : quantity(line.item?.quantity);
+    let nextAllocations = line.item?.disPrAllocations;
+    if (Array.isArray(nextAllocations) && nextAllocations.length > 0) {
+      const actualByOriginalIndex = new Map(line.allocations.map((allocation, index) => [allocation.allocationIndex, actualByAllocation[index] || 0]));
+      nextAllocations = nextAllocations.map((allocation, index) => ({ ...allocation, amount: money(actualByOriginalIndex.get(index) || 0) }));
+    }
+    return {
+      ...line.item,
+      amount: nextGross,
+      quantity: nextQty,
+      ...(Object.prototype.hasOwnProperty.call(line.item || {}, "price") ? { price: unitPrice } : {}),
+      ...(Object.prototype.hasOwnProperty.call(line.item || {}, "unitPrice") ? { unitPrice } : {}),
+      ...(Array.isArray(nextAllocations) ? { disPrAllocations: nextAllocations } : {}),
+    };
+  });
+
+  return { actualUsed, poNetAmount, contractNet, perPr, revisedItems, linkedPrIds: allLinkedPrIds };
 };
 
 const allocationForPr = (po, prId, ids) => {
@@ -153,20 +317,50 @@ const scalePoItemsToNet = (po, targetNet) => {
   });
 };
 
-const budgetRefForPr = (appId, pr) => {
+const pendingBudgetReturnsForPr = (pr) => {
+  const rows = Array.isArray(pr?.pendingBudgetReturns) ? pr.pendingBudgetReturns : [];
+  const legacy = pr?.pendingBudgetReturn?.requestId ? [pr.pendingBudgetReturn] : [];
+  const seen = new Set();
+  return [...legacy, ...rows].filter((row) => {
+    const id = String(row?.requestId || "");
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+};
+
+const pendingReturnDeduction = (row) => money(
+  Math.max(0, n(row?.returnedAmount)) + Math.max(0, n(row?.procurementSavingAmount))
+);
+
+const budgetRefForPr = (appId, pr, routes = []) => {
+  const routedBudgetIds = new Set();
+  (Array.isArray(routes) ? routes : []).forEach((route) => {
+    if (route?.prItemIndex == null) return;
+    const budgetId = pr?.items?.[route.prItemIndex]?.budgetId;
+    if (budgetId) routedBudgetIds.add(String(budgetId));
+  });
+  if (routedBudgetIds.size > 1) {
+    throw new Error(`PR ${pr?.prNo || pr?.id} มี Allocation ข้ามหลาย Budget ใน Process เดียว`);
+  }
+  const routedBudgetId = [...routedBudgetIds][0];
+  if (routedBudgetId) return root(appId, "budgets", routedBudgetId);
   if (pr?.budgetId) return root(appId, "budgets", pr.budgetId);
   return null;
 };
 
-const findBudgetRefForPr = async (appId, pr) => {
-  const direct = budgetRefForPr(appId, pr);
+const findBudgetRefForPr = async (appId, pr, routes = []) => {
+  const direct = budgetRefForPr(appId, pr, routes);
   if (direct) return direct;
   if (!pr?.projectId || !pr?.costCode) return null;
   const snap = await root(appId, "budgets")
     .where("projectId", "==", pr.projectId)
     .get();
-  const match = snap.docs.find((doc) => String(doc.data()?.code || "") === String(pr.costCode));
-  return match ? root(appId, "budgets", match.id) : null;
+  const matches = snap.docs.filter((doc) => String(doc.data()?.code || "") === String(pr.costCode));
+  if (matches.length > 1) {
+    throw new Error(`PR ${pr.prNo || pr.id} ไม่มี budgetId และพบ CostCode ${pr.costCode} มากกว่า 1 Budget`);
+  }
+  return matches.length === 1 ? root(appId, "budgets", matches[0].id) : null;
 };
 
 exports.processPoBudgetReturn = onDocumentWritten("artifacts/{appId}/public/data/poBudgetReturnJobs/{jobId}", async (event) => {
@@ -248,7 +442,6 @@ exports.processPoBudgetReturn = onDocumentWritten("artifacts/{appId}/public/data
     const actualUsed = paymentActual(latestPayment);
     const poNetAmount = poNet(po);
     const discountAmount = poDiscount(po);
-    const ids = linkedPrIds(po);
 
     if (actualUsed >= Math.max(0, poNetAmount - 0.01)) {
       const completedAt = new Date().toISOString();
@@ -280,33 +473,39 @@ exports.processPoBudgetReturn = onDocumentWritten("artifacts/{appId}/public/data
       return;
     }
 
-    const prRefs = ids.map((id) => root(appId, "prs", id));
+    const tracedAllocationPlan = paymentAllocationPlan(po, latestPayment);
+    const ids = tracedAllocationPlan.linkedPrIds;
+    const fundedPrIds = [...tracedAllocationPlan.perPr.keys()];
+
+    const prRefs = fundedPrIds.map((id) => root(appId, "prs", id));
     const budgetRefs = [];
     const prSnapshots = [];
     for (const ref of prRefs) {
       const snap = await ref.get();
-      if (!snap.exists) continue;
+      if (!snap.exists) throw new Error(`ไม่พบ PR ต้นทางของ Allocation ${ref.id}`);
       const pr = { id: snap.id, ...snap.data() };
-      const budgetRef = await findBudgetRefForPr(appId, pr);
+      const traced = tracedAllocationPlan.perPr.get(String(pr.id));
+      const budgetRef = await findBudgetRefForPr(appId, pr, traced?.routes || []);
       if (!budgetRef) throw new Error(`ไม่พบ Budget ของ PR ${pr.prNo || pr.id}`);
       budgetRefs.push(budgetRef);
       prSnapshots.push({ pr: { ...pr, __budgetId: budgetRef.id }, snap, budgetRef });
     }
-    const baseTotal = ids.reduce((sum, id) => sum + allocationForPr(po, id, ids), 0) || poNetAmount;
     const rows = prSnapshots.map(({ pr }) => {
-      const base = allocationForPr(po, pr.id, ids);
-      const actualForPr = money(actualUsed * (base / Math.max(0.01, baseTotal)));
+      const traced = tracedAllocationPlan.perPr.get(String(pr.id));
+      const base = money(n(traced?.poNetAllocation));
+      const actualForPr = money(n(traced?.actualUsed));
       const returnable = money(Math.max(0, base - actualForPr));
       const saving = discountForPr(po, pr.id, ids);
       const currentPrTotal = money(n(pr.totalAmount ?? pr.amount));
       const newPrTotal = money(Math.max(0, currentPrTotal - returnable - saving));
-      return { pr, base, actualForPr, returnable, saving, currentPrTotal, newPrTotal };
+      return { pr, base, actualForPr, returnable, saving, currentPrTotal, newPrTotal, routes: traced?.routes || [] };
     });
     const returnableAmount = money(rows.reduce((sum, row) => sum + row.returnable, 0));
     const savingAmount = money(rows.reduce((sum, row) => sum + row.saving, 0) || discountAmount);
     if (returnableAmount <= 0) throw new Error("ไม่มียอดที่สามารถคืน Budget ได้");
+    const affectedRows = rows.filter((row) => row.returnable > 0.005 || row.saving > 0.005);
 
-    const revisedItems = scalePoItemsToNet(po, actualUsed);
+    const revisedItems = tracedAllocationPlan.revisedItems;
     const completedAt = new Date().toISOString();
     await db.runTransaction(async (transaction) => {
       const currentPoSnap = await transaction.get(poRef);
@@ -319,7 +518,7 @@ exports.processPoBudgetReturn = onDocumentWritten("artifacts/{appId}/public/data
       const originalPoNo = currentPo.originalPoNo || String(currentPo.poNo || currentPo.id);
       const revisedPoNo = `${originalPoNo}_R.${revNo}`;
       const currentPrRows = [];
-      for (const row of rows) {
+      for (const row of affectedRows) {
         const prRef = root(appId, "prs", row.pr.id);
         const budgetRef = row.pr.__budgetId ? root(appId, "budgets", row.pr.__budgetId) : null;
         if (!budgetRef) throw new Error(`ไม่พบ Budget ล่าสุดของ PR ${row.pr.prNo || row.pr.id}`);
@@ -327,10 +526,56 @@ exports.processPoBudgetReturn = onDocumentWritten("artifacts/{appId}/public/data
         const budgetSnap = await transaction.get(budgetRef);
         if (!prSnap.exists || !budgetSnap.exists) throw new Error(`ไม่พบ PR/Budget ล่าสุดของ ${row.pr.prNo || row.pr.id}`);
         const currentPr = prSnap.data() || {};
-        if (currentPr.pendingBudgetReturn?.requestId) throw new Error(`PR ${row.pr.prNo || row.pr.id} มีคำขอคืน Budget รออยู่แล้ว`);
         const currentPrTotal = money(n(currentPr.totalAmount ?? currentPr.amount));
         if (Math.abs(currentPrTotal - row.currentPrTotal) > 0.01) throw new Error(`PR ${row.pr.prNo || row.pr.id} ถูกแก้ไขระหว่างเริ่ม Process กรุณาสร้างรายการใหม่`);
-        currentPrRows.push({ row, prRef, budgetRef, currentPr, budget: budgetSnap.data() || {} });
+        const pendingReturns = pendingBudgetReturnsForPr(currentPr);
+        if (pendingReturns.some((pending) => pending?.poBudgetReturnJobId === jobId)) {
+          throw new Error(`PR ${row.pr.prNo || row.pr.id} มีรายการคืนจาก Process นี้อยู่แล้ว`);
+        }
+        const pendingDeduction = money(pendingReturns.reduce((sum, pending) => sum + pendingReturnDeduction(pending), 0));
+        const nextDeduction = money(row.returnable + row.saving);
+        if (pendingDeduction + nextDeduction > currentPrTotal + 0.01) {
+          throw new Error(`ยอดคืนรวมของ PR ${row.pr.prNo || row.pr.id} เกินยอด PR ปัจจุบัน`);
+        }
+        const routedSubItemIds = new Set();
+        const relevantRoutes = row.routes.filter((route) => route.returnableAmount > 0.005);
+        (relevantRoutes.length > 0 ? relevantRoutes : row.routes).forEach((route) => {
+          if (route.prItemIndex == null) return;
+          const prItem = currentPr.items?.[route.prItemIndex];
+          if (!prItem) {
+            throw new Error(`Allocation ของ PR ${row.pr.prNo || row.pr.id} อ้าง PR item ที่ไม่มีอยู่`);
+          }
+          const subItemId = prItem?.budgetSubItemId || prItem?.subItemId || null;
+          if (subItemId) routedSubItemIds.add(String(subItemId));
+        });
+        if (routedSubItemIds.size > 1) {
+          throw new Error(`PR ${row.pr.prNo || row.pr.id} คืนข้ามหลาย Budget Subitem ในรายการเดียว กรุณาแยก PR/PO route ก่อนคืน`);
+        }
+        const budget = budgetSnap.data() || {};
+        const resolvedSubItemId = [...routedSubItemIds][0]
+          || currentPr.selectedSubItemId
+          || currentPr.subItemId
+          || currentPr.items?.[0]?.budgetSubItemId
+          || currentPr.items?.[0]?.subItemId
+          || null;
+        if (Array.isArray(budget.subItems) && budget.subItems.length > 0) {
+          if (!resolvedSubItemId || !budget.subItems.some((subItem) => String(subItem?.id || "") === String(resolvedSubItemId))) {
+            throw new Error(`ไม่สามารถระบุ Budget Subitem ของ PR ${row.pr.prNo || row.pr.id} ได้อย่างถูกต้อง`);
+          }
+        }
+        currentPrRows.push({
+          row: {
+            ...row,
+            newPrTotal: money(Math.max(0, currentPrTotal - pendingDeduction - nextDeduction)),
+            effectiveOldPrTotal: money(Math.max(0, currentPrTotal - pendingDeduction)),
+          },
+          prRef,
+          budgetRef,
+          currentPr,
+          pendingReturns,
+          budget,
+          resolvedSubItemId,
+        });
       }
       const poRevision = {
         revNo,
@@ -374,23 +619,26 @@ exports.processPoBudgetReturn = onDocumentWritten("artifacts/{appId}/public/data
         updatedAt: completedAt,
       });
 
-      for (const { row, prRef, budgetRef, currentPr, budget } of currentPrRows) {
+      const notificationsByBudgetId = new Map();
+      for (const { row, prRef, budgetRef, currentPr, pendingReturns, budget, resolvedSubItemId } of currentPrRows) {
         const history = Array.isArray(currentPr.budgetReturnRevisions) ? currentPr.budgetReturnRevisions : [];
         const requestId = `${jobId}-${row.pr.id}`;
         const revision = {
-          revNo: history.length + 1,
+          revNo: history.length + pendingReturns.length + 1,
           at: completedAt,
           by: initialJob.requestedBy || "System",
           oldStatus: currentPr.status || null,
-          oldTotalAmount: row.currentPrTotal,
+          oldTotalAmount: row.effectiveOldPrTotal,
           newTotalAmount: row.newPrTotal,
           oldItems: Array.isArray(currentPr.items) ? currentPr.items : [],
           poGrandTotalUsed: row.base,
           returnedAmount: row.returnable,
           procurementSavingAmount: row.saving,
           returnReason: `คืนยอดจาก PO ${po.poNo || po.id} หลัง Payment จบงาน`,
-          budgetId: currentPr.budgetId || null,
+          budgetId: budgetRef.id,
           costCode: currentPr.costCode || null,
+          subItemId: resolvedSubItemId,
+          allocationRoutes: row.routes,
           poRefs: [po.poNo || po.id],
           source: "PO_PAYMENT_BUDGET_RETURN",
           poBudgetReturnJobId: jobId,
@@ -408,8 +656,9 @@ exports.processPoBudgetReturn = onDocumentWritten("artifacts/{appId}/public/data
           revNo: revision.revNo,
           amount: row.returnable,
           reason: revision.returnReason,
-          subItemId: currentPr.selectedSubItemId || currentPr.subItemId || currentPr.items?.[0]?.budgetSubItemId || currentPr.items?.[0]?.subItemId || null,
-          oldPrTotal: row.currentPrTotal,
+          budgetId: budgetRef.id,
+          subItemId: resolvedSubItemId,
+          oldPrTotal: row.effectiveOldPrTotal,
           newPrTotal: row.newPrTotal,
           procurementSavingAmount: row.saving,
           poBudgetReturnJobId: jobId,
@@ -420,9 +669,15 @@ exports.processPoBudgetReturn = onDocumentWritten("artifacts/{appId}/public/data
           newItems: scalePrItems(currentPr.items || [], row.newPrTotal),
           newStatus: row.newPrTotal <= 0 ? "Closed PR Auto" : (currentPr.status || "Approved"),
         };
-        const notifications = Array.isArray(budget.budgetReturnNotifications) ? budget.budgetReturnNotifications : [];
-        transaction.update(prRef, { pendingBudgetReturn });
-        transaction.update(budgetRef, { budgetReturnNotifications: [...notifications, notification] });
+        transaction.update(prRef, { pendingBudgetReturns: [...pendingReturns, pendingBudgetReturn] });
+        const budgetId = budgetRef.id;
+        const notifications = notificationsByBudgetId.get(budgetId)
+          || (Array.isArray(budget.budgetReturnNotifications) ? [...budget.budgetReturnNotifications] : []);
+        notifications.push(notification);
+        notificationsByBudgetId.set(budgetId, notifications);
+      }
+      for (const [budgetId, notifications] of notificationsByBudgetId.entries()) {
+        transaction.update(root(appId, "budgets", budgetId), { budgetReturnNotifications: notifications });
       }
       transaction.update(jobRef, {
         status: "Waiting Budget Approval",
@@ -433,7 +688,7 @@ exports.processPoBudgetReturn = onDocumentWritten("artifacts/{appId}/public/data
         revisedPoNetAmount: actualUsed,
         returnableAmount,
         procurementSaving: savingAmount,
-        linkedPrs: rows.map((row) => ({ prId: row.pr.id, prNo: row.pr.prNo || row.pr.id, actualUsed: row.actualForPr, returnableAmount: row.returnable, newPrTotal: row.newPrTotal, procurementSaving: row.saving })),
+        linkedPrs: currentPrRows.map(({ row }) => ({ prId: row.pr.id, prNo: row.pr.prNo || row.pr.id, actualUsed: row.actualForPr, returnableAmount: row.returnable, newPrTotal: row.newPrTotal, procurementSaving: row.saving })),
         updatedAt: completedAt,
       });
     });

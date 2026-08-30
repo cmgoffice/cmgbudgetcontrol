@@ -168,7 +168,10 @@ const PaymentStatusBadge = ({ status, jobCompleted = false }: { status: string; 
 
 
 // ─── Component ────────────────────────────────────────────────────────────────
-const PaymentView = React.memo(() => {
+const PaymentView = React.memo(({
+  requestedCompletionPayment = null,
+  onCompletionRequestHandled = null,
+}: any) => {
   const {
     prs, pos, payments = [], invoices = [], vendors, projects, addData, updateData, deleteData, loadVendors,
     showAlert, openConfirm, logAction, userData, user, userRoles, canUseFunction, functionPermissions,
@@ -407,6 +410,17 @@ const PaymentView = React.memo(() => {
       evaluatorName: userData?.name || user?.email || "",
     }));
   };
+
+  React.useEffect(() => {
+    if (!requestedCompletionPayment) return;
+    const latestPayment = (payments || []).find(
+      (payment: any) => String(payment.id) === String(requestedCompletionPayment.id)
+    ) || requestedCompletionPayment;
+    if (!latestPayment.jobCompleted && latestPayment.status !== "จบงาน") {
+      openJobEvaluation(withLatestPo(latestPayment));
+    }
+    onCompletionRequestHandled?.();
+  }, [requestedCompletionPayment]); // eslint-disable-line react-hooks/exhaustive-deps
   // ── aliases ที่ชัดเจนเพื่อส่งให้ ResizableTh (ใช้ handleColumnResize จาก AppDataContext)
   const handlePaymentMainColResize = handleColumnResize;
   const handlePayItemColResize = handleColumnResize;

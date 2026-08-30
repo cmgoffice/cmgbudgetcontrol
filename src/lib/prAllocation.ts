@@ -1,3 +1,5 @@
+import { getPendingReturnDeductionTotal } from "./pendingBudgetReturns";
+
 const isCommittedPoForPr = (po: any) => {
   if (!po) return false;
   const status = po?.status || "";
@@ -93,7 +95,7 @@ export const getResumeStatusForPR = (pr: any, pos: any[]) => {
 
 export const getAvailableBalanceForPR = (pr: any, pos: any[]) => {
   const { totalAmount, usedAmount } = getResumeStatusForPR(pr, pos);
-  return Math.max(0, totalAmount - usedAmount);
+  return Math.max(0, totalAmount - usedAmount - getPendingReturnDeductionTotal(pr));
 };
 
 export const canActivatePR = (pr: any, pos: any[]) => (

@@ -22,6 +22,11 @@ import { uploadAttachment } from "../lib/uploadAttachment";
 import { getUserIdentity, resolveCurrentUserSignatureImage } from "../lib/poSignatureStamps";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
 import { computeBudgetUsedAfterPrRevision, getLinkedPoRefsForPr, getPrBudgetReturnInfo, restorePrItemsFromRevision, scalePrItemsToTotal } from "../lib/prBudgetReturn";
+import {
+  getPendingBudgetReturns,
+  getPendingReturnDeductionTotal,
+  getPrReturnAvailability,
+} from "../lib/pendingBudgetReturns";
 import { motion, AnimatePresence } from "framer-motion";
 import { doc, runTransaction } from "firebase/firestore";
 import { ref, getDownloadURL } from "firebase/storage";
@@ -269,19 +274,9 @@ const PRView = React.memo(() => {
       return;
     }
 
-    const hasPendingReturn = budgets.some((budget: any) =>
-      Array.isArray(budget?.budgetReturnNotifications) &&
-      budget.budgetReturnNotifications.some((notification: any) =>
-        notification?.prId === pr.id && (notification?.status || "pending") !== "accepted"
-      )
-    );
-    if (hasPendingReturn) {
-      showAlert("มีคำขอรอรับอยู่แล้ว", "PR นี้มีรายการคืน Budget ที่ยังไม่ได้รับยอด กรุณารอผลรายการเดิมก่อน", "info");
-      return;
-    }
-
     const info = getPrBudgetReturnInfo(pr, pos);
-    if (info.returnAmount <= 0) {
+    const availability = getPrReturnAvailability(pr, info);
+    if (availability.availableReturnAmount <= 0) {
       showAlert("ไม่มี Balance ให้คืน", "ยอด PR ปัจจุบันไม่มากกว่า PO Sub Total ที่ใช้ไปแล้ว", "info");
       return;
     }
@@ -291,16 +286,16 @@ const PRView = React.memo(() => {
       `PR: ${prNo}\n` +
       `ยอด PR ปัจจุบัน: ${formatCurrency(info.currentTotal)}\n` +
       `PO Sub Total ที่ใช้ไปแล้ว: ${formatCurrency(info.poSubTotalUsed ?? info.poGrandTotalUsed)}\n` +
-      `ยอดที่จะคืน Budget: ${formatCurrency(info.returnAmount)}\n` +
-      `ยอด PR หลัง Rev: ${formatCurrency(info.revisedTotal)}\n\n` +
-      "ระบบจะคง PR ID / PR No. เดิม และแก้เฉพาะยอดตัวเลขกับประวัติ Rev ของ PR นี้";
+      `ยอดรอรับเดิม: ${formatCurrency(availability.pendingReturnedAmount)}\n` +
+      `ยอดที่จะคืนเพิ่มได้: ${formatCurrency(availability.availableReturnAmount)}\n\n` +
+      "ยอดที่รอรับจะยังไม่สามารถใช้งานได้จนกว่าจะกดรับในหน้า Budget";
 
     openConfirm(
       "คืน Balance PR กลับ Budget",
       confirmMessage,
       () => {
         setReturnBalanceContext({ prId: pr.id });
-        setReturnBalanceValue(formatReturnBalanceFixed2(Math.round(info.returnAmount * 100) / 100));
+        setReturnBalanceValue(formatReturnBalanceFixed2(availability.availableReturnAmount));
         setReturnBalanceReason("");
         setIsReturnBalanceModalOpen(true);
       },
@@ -317,8 +312,8 @@ const PRView = React.memo(() => {
       return;
     }
     const latestInfo = getPrBudgetReturnInfo(latestPr, pos);
-    const maxReturnRaw = Number(latestInfo.returnAmount || 0);
-    const maxReturn = Math.max(0, Math.round(maxReturnRaw * 100) / 100);
+    const availability = getPrReturnAvailability(latestPr, latestInfo);
+    const maxReturn = availability.availableReturnAmount;
     if (maxReturn <= 0) {
       showAlert("ไม่มี Balance ให้คืน", "ข้อมูลล่าสุดไม่มียอดคงเหลือที่สามารถคืน Budget ได้", "info");
       setIsReturnBalanceModalOpen(false);
@@ -341,22 +336,23 @@ const PRView = React.memo(() => {
       return showAlert("กรุณาระบุเหตุผล", "กรุณากรอกเหตุผลการคืน Budget จาก PR", "warning");
     }
 
-    const revisedTotalRaw = Math.max(0, latestInfo.currentTotal - requested - Number(latestInfo.procurementSavingAmount || 0));
+    const pendingDeduction = getPendingReturnDeductionTotal(latestPr);
+    const revisedTotalRaw = Math.max(0, latestInfo.currentTotal - pendingDeduction - requested - availability.savingToReserve);
     const revisedTotal = Math.round(revisedTotalRaw * 100) / 100;
     const nextStatus = revisedTotal <= 0 ? "Closed PR Auto" : (latestPr.status || "Approved");
     const history = Array.isArray(latestPr.budgetReturnRevisions) ? latestPr.budgetReturnRevisions : [];
     const byName = userData ? `${userData.firstName || ""} ${userData.lastName || ""}`.trim() : "";
     const revision = {
-      revNo: history.length + 1,
+      revNo: history.length + getPendingBudgetReturns(latestPr).length + 1,
       at: new Date().toISOString(),
       by: byName || user?.email || userRole || "Unknown",
       oldStatus: latestPr.status || null,
-      oldTotalAmount: latestInfo.currentTotal,
+      oldTotalAmount: Math.max(0, latestInfo.currentTotal - pendingDeduction),
       newTotalAmount: revisedTotal,
       oldItems: Array.isArray(latestPr.items) ? latestPr.items : [],
       poGrandTotalUsed: latestInfo.poSubTotalUsed ?? latestInfo.poGrandTotalUsed,
       returnedAmount: requested,
-      procurementSavingAmount: Number(latestInfo.procurementSavingAmount || 0),
+      procurementSavingAmount: availability.savingToReserve,
       returnReason: reason,
       budgetId: latestPr.budgetId || null,
       costCode: latestPr.costCode || null,
@@ -409,19 +405,20 @@ const PRView = React.memo(() => {
 
         const currentPr = prSnap.data() || {};
         const currentBudget = budgetSnap.data() || {};
-        if (currentPr.pendingBudgetReturn?.requestId) {
-          throw new Error("PR นี้มีคำขอคืน Budget ที่รอรับอยู่แล้ว");
+        const currentPrTotal = Number(currentPr.totalAmount ?? currentPr.amount ?? 0);
+        if (Math.abs(currentPrTotal - latestInfo.currentTotal) > 0.01) {
+          throw new Error("ยอด PR เปลี่ยนแปลง กรุณาคำนวณและส่งคำขอใหม่");
+        }
+        const currentPendingReturns = getPendingBudgetReturns(currentPr);
+        if (getPendingReturnDeductionTotal(currentPr) !== pendingDeduction) {
+          throw new Error("รายการรอรับของ PR เปลี่ยนแปลง กรุณาคำนวณและส่งคำขอใหม่");
         }
         const currentNotifications = Array.isArray(currentBudget.budgetReturnNotifications)
           ? currentBudget.budgetReturnNotifications
           : [];
-        if (currentNotifications.some((item: any) =>
-          item?.prId === latestPr.id && (item?.status || "pending") !== "accepted"
-        )) {
-          throw new Error("PR นี้มีรายการคืน Budget ที่รอรับอยู่แล้ว");
-        }
-
-        transaction.update(prRef, { pendingBudgetReturn });
+        transaction.update(prRef, {
+          pendingBudgetReturns: [...currentPendingReturns, pendingBudgetReturn],
+        });
         transaction.update(budgetRef, {
           budgetReturnNotifications: [...currentNotifications, notification],
         });
