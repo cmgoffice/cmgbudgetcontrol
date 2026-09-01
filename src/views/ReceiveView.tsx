@@ -25,6 +25,7 @@ import {
 } from "../lib/systemLogDetails";
 import { resolveCurrentUserSignatureImage } from "../lib/poSignatureStamps";
 import { getPoAmountExVat } from "../lib/poDiscount";
+import { getPoDisplayStatus } from "../lib/constants";
 import {
   getCmgStoreTargetProjectCode,
   isCmgStoreEligibleInventoryStatus,
@@ -126,11 +127,15 @@ const ReceiveView = React.memo(() => {
 
   const currentProject = projects.find((p) => p.id === selectedProjectId);
 
-  // Approved POs for selected project
+  // POs that still have receiveable quantities for the selected project.
+  // Partial Receive is kept in this tab so users can continue receiving the
+  // remaining quantity; older records may expose it through statusNow.
   const approvedPOs = useMemo(() => {
     if (!selectedProjectId) return [];
     return pos.filter(
-      (po) => po.projectId === selectedProjectId && po.status === "Approved" && po.poType !== "SP" && po.poType !== "DC"
+      (po) => po.projectId === selectedProjectId &&
+        ["Approved", "Partial Receive"].includes(getPoDisplayStatus(po)) &&
+        po.poType !== "SP" && po.poType !== "DC"
     );
   }, [pos, selectedProjectId]);
 
@@ -1439,7 +1444,7 @@ const ReceiveView = React.memo(() => {
       {activeTab === "po" && (approvedPOs.length === 0 ? (
         <Card className="p-8 text-center text-slate-400">
           <Package size={40} className="mx-auto mb-3 opacity-40" />
-          <p className="font-medium">ไม่มี PO ที่ Approved ในโครงการนี้</p>
+          <p className="font-medium">ไม่มี PO ที่พร้อมรับของในโครงการนี้</p>
         </Card>
       ) : (
         <div className="space-y-3">

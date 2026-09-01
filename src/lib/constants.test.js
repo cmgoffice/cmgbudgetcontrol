@@ -1,4 +1,15 @@
-import { mergeFunctionPermissionsWithDefaults, MODULE_FUNCTIONS } from "./constants";
+import { mergeFunctionPermissionsWithDefaults, MODULE_ACCESS, MODULE_FUNCTIONS } from "./constants";
+
+describe("Admin Site Receive access", () => {
+  it("can read Receive and history without gaining write defaults", () => {
+    const permissions = mergeFunctionPermissionsWithDefaults({});
+
+    expect(MODULE_ACCESS.receive).toContain("Admin Site");
+    expect(permissions.receive.viewHistory).toContain("Admin Site");
+    expect(permissions.receive.receive).not.toContain("Admin Site");
+    expect(permissions.receive.delete).not.toContain("Admin Site");
+  });
+});
 
 describe("Log Payment return Budget permission", () => {
   it("is configurable under Payment Subcontract", () => {
@@ -29,5 +40,25 @@ describe("Log Payment return Budget permission", () => {
     const permissions = mergeFunctionPermissionsWithDefaults({});
 
     expect(permissions["payment-subcontract"].returnBudget).toEqual(["PCM", "GM", "MD"]);
+  });
+});
+
+describe("Budget return acceptance permission", () => {
+  it("allows PM to accept a pending Budget return by default", () => {
+    const permissions = mergeFunctionPermissionsWithDefaults({});
+
+    expect(MODULE_FUNCTIONS.budget).toContainEqual({
+      key: "acceptBudgetReturn",
+      label: "รับยอดคืนเข้า Budget",
+    });
+    expect(permissions.budget.acceptBudgetReturn).toContain("PM");
+  });
+
+  it("keeps an explicitly configured acceptance role list", () => {
+    const permissions = mergeFunctionPermissionsWithDefaults({
+      budget: { acceptBudgetReturn: ["MD"] },
+    });
+
+    expect(permissions.budget.acceptBudgetReturn).toEqual(["MD"]);
   });
 });

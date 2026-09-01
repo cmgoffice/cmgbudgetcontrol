@@ -42,8 +42,10 @@ service cloud.firestore {
               ? ['Administrator', 'MD', 'GM', 'PM', 'PCM', 'PD', 'CM', 'Procurement', 'Staff']
               : moduleKey == 'vendor' || moduleKey == 'material'
                 ? ['Administrator', 'MD', 'GM', 'PM', 'PCM', 'Procurement', 'Staff']
-                : moduleKey == 'invoice' || moduleKey == 'receive'
+                : moduleKey == 'invoice'
                   ? ['Administrator', 'MD', 'GM', 'PM', 'PCM', 'Staff']
+                  : moduleKey == 'receive'
+                    ? ['Administrator', 'MD', 'GM', 'PM', 'PCM', 'Staff', 'Admin Site']
                   : moduleKey == 'billing' || moduleKey == 'pay' ||
                       moduleKey == 'payment-subcontract'
                     ? ['Administrator', 'MD', 'GM', 'PM', 'PCM', 'PD', 'CM', 'Procurement', 'Staff']
@@ -64,6 +66,20 @@ service cloud.firestore {
       return isAdmin(appId) ||
         primaryRole(appId) in allowedRoles ||
         secondaryRoles(appId).hasAny(allowedRoles);
+    }
+
+    // Budget Return approval is a cross-document transaction. Keep PM in this
+    // narrow server-side allow-list even when an older rolePermissions document
+    // does not contain the new budget.acceptBudgetReturn action yet.
+    function isBudgetReturnApprover(appId) {
+      return signedIn() && (
+        primaryRole(appId) in ['Administrator', 'MD', 'GM', 'PM', 'PCM'] ||
+        secondaryRoles(appId).hasAny(['Administrator', 'MD', 'GM', 'PM', 'PCM'])
+      );
+    }
+
+    function changesOnlyBudgetReturnFields(fields) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(fields);
     }
 
     function assignedToProject(appId, projectId) {
@@ -140,7 +156,10 @@ service cloud.firestore {
           moduleAllowed(appId, 'budget-summary') || moduleAllowed(appId, 'project-spending')
         );
         allow create: if canCreateInProject(appId) && moduleAllowed(appId, 'budget');
-        allow update: if canUpdateExistingProjectDoc(appId) && moduleAllowed(appId, 'budget');
+        allow update: if canUpdateExistingProjectDoc(appId) && (
+          moduleAllowed(appId, 'budget') ||
+          (isBudgetReturnApprover(appId) && changesOnlyBudgetReturnFields(['budgetReturnNotifications', 'usedAmount', 'updatedAt']))
+        );
         allow delete: if canReadExistingProjectDoc(appId) && moduleAllowed(appId, 'budget');
       }
 
@@ -154,7 +173,12 @@ service cloud.firestore {
         );
         allow create: if canCreateInProject(appId) && moduleAllowed(appId, 'pr');
         allow update: if canUpdateExistingProjectDoc(appId) && (
-          moduleAllowed(appId, 'pr') || moduleAllowed(appId, 'po') || moduleAllowed(appId, 'budget')
+          moduleAllowed(appId, 'pr') || moduleAllowed(appId, 'po') || moduleAllowed(appId, 'budget') ||
+          (isBudgetReturnApprover(appId) && changesOnlyBudgetReturnFields([
+            'items', 'totalAmount', 'amount', 'status', 'budgetReturnRevisions',
+            'budgetReturnRevNo', 'lastBudgetReturnAt', 'lastBudgetReturnAmount',
+            'lastBudgetReturnReason', 'pendingBudgetReturns', 'pendingBudgetReturn', 'updatedAt'
+          ]))
         );
         allow delete: if canReadExistingProjectDoc(appId) && (
           moduleAllowed(appId, 'pr') || moduleAllowed(appId, 'po') || moduleAllowed(appId, 'budget')
@@ -173,7 +197,11 @@ service cloud.firestore {
         allow update: if canUpdateExistingProjectDoc(appId) && (
           moduleAllowed(appId, 'po') || moduleAllowed(appId, 'payment-subcontract') ||
           moduleAllowed(appId, 'receive') || moduleAllowed(appId, 'invoice') ||
-          moduleAllowed(appId, 'billing') || moduleAllowed(appId, 'pay') || moduleAllowed(appId, 'budget')
+          moduleAllowed(appId, 'billing') || moduleAllowed(appId, 'pay') || moduleAllowed(appId, 'budget') ||
+          (isBudgetReturnApprover(appId) && changesOnlyBudgetReturnFields([
+            'budgetReturnProcessStatus', 'budgetReturnProcessStep',
+            'budgetReturnProcessCompletedAt', 'budgetReturnProcessCompletedBy', 'updatedAt'
+          ]))
         );
         allow delete: if canReadExistingProjectDoc(appId) && (
           moduleAllowed(appId, 'po') || moduleAllowed(appId, 'payment-subcontract') ||
@@ -275,9 +303,17 @@ service cloud.firestore {
       }
 
       match /poBudgetReturnJobs/{documentId} {
-        allow read, update: if canUpdateExistingProjectDoc(appId) && (
+        allow read: if canReadExistingProjectDoc(appId) && (
           moduleAllowed(appId, 'budget') || moduleAllowed(appId, 'po') ||
           moduleAllowed(appId, 'payment-subcontract')
+        );
+        allow update: if canUpdateExistingProjectDoc(appId) && (
+          moduleAllowed(appId, 'budget') || moduleAllowed(appId, 'po') ||
+          moduleAllowed(appId, 'payment-subcontract') ||
+          (isBudgetReturnApprover(appId) && changesOnlyBudgetReturnFields([
+            'acceptedPrIds', 'acceptedLastAt', 'acceptedLastBy', 'status',
+            'currentStep', 'completedAt', 'updatedAt'
+          ]))
         );
         allow create: if canCreateInProject(appId) && (
           moduleAllowed(appId, 'budget') || moduleAllowed(appId, 'po') ||

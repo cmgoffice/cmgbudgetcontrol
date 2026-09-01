@@ -420,7 +420,7 @@ const PaymentView = React.memo(({
       openJobEvaluation(withLatestPo(latestPayment));
     }
     onCompletionRequestHandled?.();
-  }, [requestedCompletionPayment]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [requestedCompletionPayment]);
   // ── aliases ที่ชัดเจนเพื่อส่งให้ ResizableTh (ใช้ handleColumnResize จาก AppDataContext)
   const handlePaymentMainColResize = handleColumnResize;
   const handlePayItemColResize = handleColumnResize;

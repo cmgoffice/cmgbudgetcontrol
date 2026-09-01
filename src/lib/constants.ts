@@ -79,6 +79,7 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
     { key: "reject", label: "ปฏิเสธงบประมาณ" },
     { key: "allowEdit", label: "อนุญาตแก้ไขงบ" },
     { key: "rejectRevision", label: "ปฏิเสธคำขอแก้ไขงบ" },
+    { key: "acceptBudgetReturn", label: "รับยอดคืนเข้า Budget" },
     { key: "addSubItem", label: "เพิ่มรายการย่อย" },
     { key: "editSubItem", label: "แก้ไขรายการย่อย" },
     { key: "deleteSubItem", label: "ลบรายการย่อย" },
@@ -234,7 +235,7 @@ export const MODULE_ACCESS: Record<string, string[]> = {
   vendor: ["Administrator", "MD", "GM", "PM", "PCM", "Procurement", "Staff"],
   material: ["Administrator", "MD", "GM", "PM", "PCM", "Procurement", "Staff"],
   invoice: ["Administrator", "MD", "GM", "PM", "PCM", "Staff"],
-  receive: ["Administrator", "MD", "GM", "PM", "PCM", "Staff"],
+  receive: ["Administrator", "MD", "GM", "PM", "PCM", "Staff", "Admin Site"],
   billing: ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff"],
   pay: ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff"],
   "payment-subcontract": ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff"],
@@ -270,6 +271,16 @@ export function mergeFunctionPermissionsWithDefaults(
     return undefined;
   };
   const defaultByModuleAndKey: Record<string, Record<string, string[]>> = {
+    budget: {
+      acceptBudgetReturn: ["PM", "PCM", "GM", "MD"],
+    },
+    // Admin Site needs read access to the Receive workspace, but should not
+    // receive or delete documents unless an administrator explicitly grants it.
+    receive: {
+      receive: ["Administrator", "MD", "GM", "PM", "PCM", "Staff"],
+      viewHistory: ["Administrator", "MD", "GM", "PM", "PCM", "Staff", "Admin Site"],
+      delete: ["Administrator", "MD", "GM", "PM", "PCM", "Staff"],
+    },
     pr: {
       viewBalance: ["PCM", "GM", "MD"],
       returnBalance: ["PCM", "GM", "MD"],

@@ -71,6 +71,7 @@ const BudgetView = React.memo(() => {
   const canRequestBudgetRevision = canUseFunction("budget", "requestRevision");
   const canApproveBudget = canUseFunction("budget", "approve");
   const canRejectBudget = canUseFunction("budget", "reject");
+  const canAcceptBudgetReturn = canUseFunction("budget", "acceptBudgetReturn");
   const canAllowEditBudget = canUseFunction("budget", "allowEdit");
   const canRejectBudgetRevision = canUseFunction("budget", "rejectRevision");
   const canAddSubItem = canUseFunction("budget", "addSubItem");
@@ -84,8 +85,8 @@ const BudgetView = React.memo(() => {
   const canRejectSubItemRevision = canUseFunction("budget", "rejectRevisionSubItem");
   const canClearAllBudgets = canUseFunction("budget", "clearAll");
   const canRecalculateBudget = canUseFunction("budget", "recalculate");
-  const canApprovePoFromBudget = canUseFunction("po", "approve");
   const canExportBudget = canUseFunction("budget", "export");
+  const canApprovePoFromBudget = canUseFunction("po", "approve");
   const canRejectPoFromBudget = canUseFunction("po", "reject");
   const canAllowPoRevisionFromBudget = canUseFunction("po", "allowRevision");
   const canDenyPoRevisionFromBudget = canUseFunction("po", "denyRevision");
@@ -99,9 +100,9 @@ const BudgetView = React.memo(() => {
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
   const [isSubItemModalOpen, setIsSubItemModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [importData, setImportData] = useState({});
   const [isExportDetailModalOpen, setIsExportDetailModalOpen] = useState(false);
   const [exportDetailType, setExportDetailType] = useState<"PO" | "INV">("PO");
+  const [importData, setImportData] = useState({});
   const [importFile, setImportFile] = useState(null);
   const [selectedImportCategories, setSelectedImportCategories] = useState(
     []
@@ -328,7 +329,6 @@ const BudgetView = React.memo(() => {
       }
     });
 
-    uniqueInvoices.forEach((invoice: any) => {
     const appendEntry = (poNo: string, invoice: any, amount: number) => {
       if (!poNo) return;
       const entries = map.get(poNo) || [];
@@ -336,6 +336,7 @@ const BudgetView = React.memo(() => {
       map.set(poNo, entries);
     };
 
+    uniqueInvoices.forEach((invoice: any) => {
       const amount = Number(invoice.amount) || (Number(invoice.invoiceQty || 0) * Number(invoice.price || 0)) || 0;
       if (invoice.sourceType === "payment") {
         const payment = paymentById.get(String(invoice.paymentId || invoice.poId || ""));
@@ -1558,8 +1559,8 @@ const BudgetView = React.memo(() => {
         poBudgetSubtotal = po.items.reduce((iSum, i) => {
           return iSum + getBudgetItemAmount(i);
         }, 0);
-      }
         poSubtotal = po.items.reduce((sum, item) => sum + getItemAmount(item), 0);
+      }
 
       const fallbackBudgetRatio = (!po.items || po.items.length === 0)
         ? 1
@@ -1638,8 +1639,8 @@ const BudgetView = React.memo(() => {
     const invoiceTotal = invoiceDetails.reduce((sum, detail) => sum + detail.amount, 0);
 
     const seenSpDocNos = new Set();
-    const spTotal = (spPaymentsForProject || []).reduce((sum, sp) => {
     const spInvoiceDetails = [];
+    const spTotal = (spPaymentsForProject || []).reduce((sum, sp) => {
       // If SP has PO reference, it is already handled by invoiceTotal via relatedPOs loop
       if (sp.poRef || sp.poNo) return sum;
       
@@ -1686,8 +1687,8 @@ const BudgetView = React.memo(() => {
           amount: detailAmount,
         });
       }
-    }, 0);
       return sum + detailAmount;
+    }, 0);
 
     const poExcessAmount = Math.max(0, poTotal - prTotal);
 
@@ -1697,9 +1698,9 @@ const BudgetView = React.memo(() => {
       invoiceTotal: invoiceTotal + spTotal,
       relatedPRs,
       relatedPOs,
-      // Read-only audit flag. This intentionally does not modify Firestore.
       poDetails,
       invoiceDetails: [...invoiceDetails, ...spInvoiceDetails],
+      // Read-only audit flag. This intentionally does not modify Firestore.
       poExceedsPr: poExcessAmount > 0.01,
       poExcessAmount,
     };
@@ -1713,7 +1714,6 @@ const BudgetView = React.memo(() => {
     return statsMap;
   }, [selectedProjectBudgets, getBudgetStats]);
 
-  const getMinimumBudgetAmountForNonNegativeBalance = (budget) => {
   const handleExportProjectBudget = useCallback(async () => {
     if (!selectedProjectId || !selectedProject) {
       showAlert("กรุณาเลือกโครงการ", "เลือกโครงการที่ต้องการ Export ก่อน", "warning");
@@ -1862,6 +1862,7 @@ const BudgetView = React.memo(() => {
     showAlert,
   ]);
 
+  const getMinimumBudgetAmountForNonNegativeBalance = (budget) => {
     if (!budget) return 0;
     const hasSubItems = Array.isArray(budget.subItems) && budget.subItems.length > 0;
     if (hasSubItems) {
@@ -3075,6 +3076,10 @@ const BudgetView = React.memo(() => {
 
   const handleAcceptBudgetReturnNotification = useCallback((budget, notification) => {
     if (!budget?.id || !notification?.id) return;
+    if (!canAcceptBudgetReturn) {
+      showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์รับยอดคืนเข้า Budget", "warning");
+      return;
+    }
     const pendingNotifications = getPendingBudgetReturnGroup(
       budget.budgetReturnNotifications || [],
       notification
@@ -3287,7 +3292,7 @@ const BudgetView = React.memo(() => {
       },
       "warning"
     );
-  }, [budgets, logAction, openConfirm, replacePoPdfAfterRevision, replacePrPdfAfterRevision, selectedProjectId, showAlert, userData, userRole]);
+  }, [budgets, canAcceptBudgetReturn, logAction, openConfirm, replacePoPdfAfterRevision, replacePrPdfAfterRevision, selectedProjectId, showAlert, userData, userRole]);
 
   const handleApproveSubItem = async (budgetId, subItemId) => {
     if (!canApproveSubItem) {
@@ -3719,11 +3724,6 @@ const BudgetView = React.memo(() => {
         </div>
 
         <div className="flex items-center gap-2 w-full md:w-auto justify-end">
-          <ColumnVisibilityToggle tableId="budget" />
-        </div>
-      </div>
-
-      {budgetCategory === "OVERVIEW" ? (
           {canExportBudget && budgetCategory !== "OVERVIEW" && (
             <Button
               variant="outline"
@@ -3749,6 +3749,11 @@ const BudgetView = React.memo(() => {
               <FileSpreadsheet size={14} /> Export Excel
             </Button>
           )}
+          <ColumnVisibilityToggle tableId="budget" />
+        </div>
+      </div>
+
+      {budgetCategory === "OVERVIEW" ? (
         <>
           <Card className="overflow-x-auto w-full min-w-0">
             <div className="p-3 bg-slate-50 border-b">
@@ -4713,7 +4718,7 @@ const BudgetView = React.memo(() => {
                                     เหตุผลปฏิเสธ: {b.rejectReason}
                                   </span>
                                 )}
-                                {hasPendingBudgetReturn && (
+                                {hasPendingBudgetReturn && canAcceptBudgetReturn && (
                                   <button
                                     type="button"
                                     className="mt-1 w-fit text-[10px] px-1.5 py-0.5 rounded border border-orange-300 bg-orange-100 text-orange-800 hover:bg-orange-200"
@@ -4932,7 +4937,7 @@ const BudgetView = React.memo(() => {
                                           ({sub.rejectReason})
                                         </span>
                                       )}
-                                      {hasPendingSubReturn && (
+                                      {hasPendingSubReturn && canAcceptBudgetReturn && (
                                         <button
                                           type="button"
                                           className="text-[9px] px-1.5 py-0.5 rounded border border-orange-300 bg-orange-100 text-orange-800 hover:bg-orange-200"
@@ -5115,11 +5120,6 @@ const BudgetView = React.memo(() => {
         onChange={handleAttachmentFilesSelected}
       />
       {/* Modals - Same as previous version, condensed for brevity */}
-      {isImportModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
-          <Card className="w-full max-w-2xl p-6">
-            <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-              <FileSpreadsheet size={20} /> นำเข้าข้อมูลงบประมาณ
       {isExportDetailModalOpen && (
         <div
           className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200 p-4"
@@ -5175,6 +5175,11 @@ const BudgetView = React.memo(() => {
           </Card>
         </div>
       )}
+      {isImportModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
+          <Card className="w-full max-w-2xl p-6">
+            <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+              <FileSpreadsheet size={20} /> นำเข้าข้อมูลงบประมาณ
             </h3>
             <div className="min-h-[150px] max-h-80 overflow-y-auto border border-slate-200 rounded-lg p-2 bg-slate-50 mb-4">
               {Object.keys(importData).length === 0 ? (
