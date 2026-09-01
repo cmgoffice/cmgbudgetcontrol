@@ -25,10 +25,42 @@ service cloud.firestore {
       );
     }
 
+    // Keep the server-side fallback in sync with MODULE_ACCESS in
+    // src/lib/constants.ts. The client falls back to these roles when the
+    // rolePermissions document (or an individual module key) does not exist.
+    // Without the same fallback here, the UI can show an allowed action while
+    // Firestore rejects it with "Missing or insufficient permissions".
+    function defaultModuleRoles(moduleKey) {
+      return moduleKey == 'dashboard'
+        ? ['Administrator', 'MD', 'GM', 'PM', 'PCM', 'PD', 'CM', 'Procurement', 'Staff', 'Admin Site']
+        : moduleKey == 'projects'
+          ? ['Administrator', 'MD', 'GM', 'PM', 'PCM', 'PD', 'CM', 'Admin Site']
+          : moduleKey == 'budget'
+            ? ['Administrator', 'MD', 'GM', 'PM', 'PCM', 'PD', 'CM', 'Procurement', 'Staff', 'Admin Site']
+            : moduleKey == 'pr' || moduleKey == 'pr-table' ||
+                moduleKey == 'po' || moduleKey == 'po-table'
+              ? ['Administrator', 'MD', 'GM', 'PM', 'PCM', 'PD', 'CM', 'Procurement', 'Staff']
+              : moduleKey == 'vendor' || moduleKey == 'material'
+                ? ['Administrator', 'MD', 'GM', 'PM', 'PCM', 'Procurement', 'Staff']
+                : moduleKey == 'invoice' || moduleKey == 'receive'
+                  ? ['Administrator', 'MD', 'GM', 'PM', 'PCM', 'Staff']
+                  : moduleKey == 'billing' || moduleKey == 'pay' ||
+                      moduleKey == 'payment-subcontract'
+                    ? ['Administrator', 'MD', 'GM', 'PM', 'PCM', 'PD', 'CM', 'Procurement', 'Staff']
+                    : moduleKey == 'profile' || moduleKey == 'user-manual'
+                      ? ['Administrator', 'MD', 'GM', 'PM', 'PCM', 'PD', 'CM', 'Procurement', 'Staff', 'Admin Site']
+                      : moduleKey == 'admin'
+                        ? ['Administrator']
+                        : moduleKey == 'budget-summary' || moduleKey == 'project-spending'
+                          ? ['Administrator', 'MD', 'GM']
+                          : [];
+    }
+
     function moduleAllowed(appId, moduleKey) {
-      let allowedRoles = get(
-        /databases/$(database)/documents/artifacts/$(appId)/public/data/settings/rolePermissions
-      ).data.get(moduleKey, []);
+      let permissionsPath = /databases/$(database)/documents/artifacts/$(appId)/public/data/settings/rolePermissions;
+      let allowedRoles = exists(permissionsPath)
+        ? get(permissionsPath).data.get(moduleKey, defaultModuleRoles(moduleKey))
+        : defaultModuleRoles(moduleKey);
       return isAdmin(appId) ||
         primaryRole(appId) in allowedRoles ||
         secondaryRoles(appId).hasAny(allowedRoles);
@@ -108,7 +140,8 @@ service cloud.firestore {
           moduleAllowed(appId, 'budget-summary') || moduleAllowed(appId, 'project-spending')
         );
         allow create: if canCreateInProject(appId) && moduleAllowed(appId, 'budget');
-        allow update, delete: if canUpdateExistingProjectDoc(appId) && moduleAllowed(appId, 'budget');
+        allow update: if canUpdateExistingProjectDoc(appId) && moduleAllowed(appId, 'budget');
+        allow delete: if canReadExistingProjectDoc(appId) && moduleAllowed(appId, 'budget');
       }
 
       match /prs/{documentId} {
@@ -120,7 +153,10 @@ service cloud.firestore {
           moduleAllowed(appId, 'project-spending')
         );
         allow create: if canCreateInProject(appId) && moduleAllowed(appId, 'pr');
-        allow update, delete: if canUpdateExistingProjectDoc(appId) && (
+        allow update: if canUpdateExistingProjectDoc(appId) && (
+          moduleAllowed(appId, 'pr') || moduleAllowed(appId, 'po') || moduleAllowed(appId, 'budget')
+        );
+        allow delete: if canReadExistingProjectDoc(appId) && (
           moduleAllowed(appId, 'pr') || moduleAllowed(appId, 'po') || moduleAllowed(appId, 'budget')
         );
       }
@@ -134,7 +170,12 @@ service cloud.firestore {
           moduleAllowed(appId, 'budget-summary') || moduleAllowed(appId, 'project-spending')
         );
         allow create: if canCreateInProject(appId) && moduleAllowed(appId, 'po');
-        allow update, delete: if canUpdateExistingProjectDoc(appId) && (
+        allow update: if canUpdateExistingProjectDoc(appId) && (
+          moduleAllowed(appId, 'po') || moduleAllowed(appId, 'payment-subcontract') ||
+          moduleAllowed(appId, 'receive') || moduleAllowed(appId, 'invoice') ||
+          moduleAllowed(appId, 'billing') || moduleAllowed(appId, 'pay') || moduleAllowed(appId, 'budget')
+        );
+        allow delete: if canReadExistingProjectDoc(appId) && (
           moduleAllowed(appId, 'po') || moduleAllowed(appId, 'payment-subcontract') ||
           moduleAllowed(appId, 'receive') || moduleAllowed(appId, 'invoice') ||
           moduleAllowed(appId, 'billing') || moduleAllowed(appId, 'pay') || moduleAllowed(appId, 'budget')
@@ -148,7 +189,8 @@ service cloud.firestore {
           moduleAllowed(appId, 'project-spending')
         );
         allow create: if canCreateInProject(appId) && moduleAllowed(appId, 'payment-subcontract');
-        allow update, delete: if canUpdateExistingProjectDoc(appId) && moduleAllowed(appId, 'payment-subcontract');
+        allow update: if canUpdateExistingProjectDoc(appId) && moduleAllowed(appId, 'payment-subcontract');
+        allow delete: if canReadExistingProjectDoc(appId) && moduleAllowed(appId, 'payment-subcontract');
       }
 
       match /invoices/{documentId} {
@@ -162,7 +204,10 @@ service cloud.firestore {
         allow create: if canCreateInProject(appId) && (
           moduleAllowed(appId, 'invoice') || moduleAllowed(appId, 'po') || moduleAllowed(appId, 'payment-subcontract')
         );
-        allow update, delete: if canUpdateExistingProjectDoc(appId) && (
+        allow update: if canUpdateExistingProjectDoc(appId) && (
+          moduleAllowed(appId, 'invoice') || moduleAllowed(appId, 'billing') || moduleAllowed(appId, 'pay')
+        );
+        allow delete: if canReadExistingProjectDoc(appId) && (
           moduleAllowed(appId, 'invoice') || moduleAllowed(appId, 'billing') || moduleAllowed(appId, 'pay')
         );
       }
@@ -176,7 +221,8 @@ service cloud.firestore {
         allow create: if canCreateInProject(appId) && (
           moduleAllowed(appId, 'receive') || moduleAllowed(appId, 'po')
         );
-        allow update, delete: if canUpdateExistingProjectDoc(appId) && moduleAllowed(appId, 'receive');
+        allow update: if canUpdateExistingProjectDoc(appId) && moduleAllowed(appId, 'receive');
+        allow delete: if canReadExistingProjectDoc(appId) && moduleAllowed(appId, 'receive');
       }
 
       match /billings/{documentId} {
@@ -184,7 +230,8 @@ service cloud.firestore {
           moduleAllowed(appId, 'billing') || moduleAllowed(appId, 'pay')
         );
         allow create: if canCreateInProject(appId) && moduleAllowed(appId, 'billing');
-        allow update, delete: if canUpdateExistingProjectDoc(appId) && moduleAllowed(appId, 'billing');
+        allow update: if canUpdateExistingProjectDoc(appId) && moduleAllowed(appId, 'billing');
+        allow delete: if canReadExistingProjectDoc(appId) && moduleAllowed(appId, 'billing');
       }
 
       match /pays/{documentId} {
@@ -192,13 +239,15 @@ service cloud.firestore {
           moduleAllowed(appId, 'billing') || moduleAllowed(appId, 'pay') || moduleAllowed(appId, 'po')
         );
         allow create: if canCreateInProject(appId) && moduleAllowed(appId, 'pay');
-        allow update, delete: if canUpdateExistingProjectDoc(appId) && moduleAllowed(appId, 'pay');
+        allow update: if canUpdateExistingProjectDoc(appId) && moduleAllowed(appId, 'pay');
+        allow delete: if canReadExistingProjectDoc(appId) && moduleAllowed(appId, 'pay');
       }
 
       match /budgetRevisions/{documentId} {
         allow read: if canReadExistingProjectDoc(appId) && moduleAllowed(appId, 'projects');
         allow create: if canCreateInProject(appId) && moduleAllowed(appId, 'projects');
-        allow update, delete: if canUpdateExistingProjectDoc(appId) && moduleAllowed(appId, 'projects');
+        allow update: if canUpdateExistingProjectDoc(appId) && moduleAllowed(appId, 'projects');
+        allow delete: if canReadExistingProjectDoc(appId) && moduleAllowed(appId, 'projects');
       }
 
       match /vendors/{documentId} {
