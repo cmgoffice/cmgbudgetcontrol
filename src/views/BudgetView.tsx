@@ -40,6 +40,27 @@ import {
   buildDeleteLogDetails,
   buildRecordSummary,
 } from "../lib/systemLogDetails";
+import {
+  buildProjectBudgetExportSheets,
+} from "../lib/projectBudgetExport";
+import {
+  createProjectBudgetDetailWorkbook,
+  createProjectBudgetWorkbook,
+} from "../lib/projectBudgetWorkbook";
+
+const downloadXlsxBytes = (bytes: Uint8Array, fileName: string) => {
+  const blob = new Blob([bytes], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const downloadUrl = URL.createObjectURL(blob);
+  const downloadLink = document.createElement("a");
+  downloadLink.href = downloadUrl;
+  downloadLink.download = fileName;
+  document.body.appendChild(downloadLink);
+  downloadLink.click();
+  downloadLink.remove();
+  setTimeout(() => URL.revokeObjectURL(downloadUrl), 0);
+};
 
 const BudgetView = React.memo(() => {
   const { budgets, projects, prs, pos, vendors = [], invoices, receives, payments = [], addData, updateData, deleteData,
@@ -64,6 +85,7 @@ const BudgetView = React.memo(() => {
   const canClearAllBudgets = canUseFunction("budget", "clearAll");
   const canRecalculateBudget = canUseFunction("budget", "recalculate");
   const canApprovePoFromBudget = canUseFunction("po", "approve");
+  const canExportBudget = canUseFunction("budget", "export");
   const canRejectPoFromBudget = canUseFunction("po", "reject");
   const canAllowPoRevisionFromBudget = canUseFunction("po", "allowRevision");
   const canDenyPoRevisionFromBudget = canUseFunction("po", "denyRevision");
@@ -78,6 +100,8 @@ const BudgetView = React.memo(() => {
   const [isSubItemModalOpen, setIsSubItemModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [importData, setImportData] = useState({});
+  const [isExportDetailModalOpen, setIsExportDetailModalOpen] = useState(false);
+  const [exportDetailType, setExportDetailType] = useState<"PO" | "INV">("PO");
   const [importFile, setImportFile] = useState(null);
   const [selectedImportCategories, setSelectedImportCategories] = useState(
     []
@@ -281,8 +305,8 @@ const BudgetView = React.memo(() => {
         .map(([code]) => code)
     );
   }, [selectedProjectBudgets]);
-  const invoiceAmountByPoRef = useMemo(() => {
-    const map = new Map<string, number>();
+  const projectInvoiceEntriesByPoRef = useMemo(() => {
+    const map = new Map<string, any[]>();
     const uniqueInvoices = new Map();
     
     const projectPoNos = new Set(
@@ -292,18 +316,26 @@ const BudgetView = React.memo(() => {
       (payments || []).map((payment: any) => [String(payment.id), payment])
     );
 
-    invoices.forEach((invoice: any) => {
+    invoices.forEach((invoice: any, invoiceIndex: number) => {
       const belongsToProject = 
         invoice.projectId === selectedProjectId || 
         projectPoNos.has(invoice?.poRef) || 
         projectPoNos.has(invoice?.poNo);
 
       if (belongsToProject && isSpentInvoiceRecord(invoice)) {
-        uniqueInvoices.set(invoice.id, invoice);
+        const invoiceIdentity = invoice.id || invoice.invNo || invoice.docNo || `invoice-${invoiceIndex}`;
+        uniqueInvoices.set(invoiceIdentity, invoice);
       }
     });
 
     uniqueInvoices.forEach((invoice: any) => {
+    const appendEntry = (poNo: string, invoice: any, amount: number) => {
+      if (!poNo) return;
+      const entries = map.get(poNo) || [];
+      entries.push({ invoice, amount: Number(amount) || 0 });
+      map.set(poNo, entries);
+    };
+
       const amount = Number(invoice.amount) || (Number(invoice.invoiceQty || 0) * Number(invoice.price || 0)) || 0;
       if (invoice.sourceType === "payment") {
         const payment = paymentById.get(String(invoice.paymentId || invoice.poId || ""));
@@ -319,15 +351,18 @@ const BudgetView = React.memo(() => {
         if (sourcePoNos.length > 0) {
           const allocatedAmount = amount / sourcePoNos.length;
           sourcePoNos.forEach((poNo: string) => {
-            map.set(poNo, (map.get(poNo) || 0) + allocatedAmount);
+            appendEntry(poNo, invoice, allocatedAmount);
           });
           return;
         }
       }
-      if (invoice.poRef && projectPoNos.has(invoice.poRef)) {
-        map.set(invoice.poRef, (map.get(invoice.poRef) || 0) + amount);
+      const directPo = projectPos.find((po: any) => String(po.id) === String(invoice?.poId || ""));
+      if (directPo?.poNo) {
+        appendEntry(directPo.poNo, invoice, amount);
+      } else if (invoice.poRef && projectPoNos.has(invoice.poRef)) {
+        appendEntry(invoice.poRef, invoice, amount);
       } else if (invoice.poNo && projectPoNos.has(invoice.poNo)) {
-        map.set(invoice.poNo, (map.get(invoice.poNo) || 0) + amount);
+        appendEntry(invoice.poNo, invoice, amount);
       }
     });
 
@@ -690,13 +725,13 @@ const BudgetView = React.memo(() => {
   };
 
   useEffect(() => {
-    const shouldHideShellChrome = isModalOpen || isSubItemModalOpen;
+    const shouldHideShellChrome = isModalOpen || isSubItemModalOpen || isExportDetailModalOpen;
     setIsFullScreenModalOpen(shouldHideShellChrome);
 
     return () => {
       setIsFullScreenModalOpen(false);
     };
-  }, [isModalOpen, isSubItemModalOpen, setIsFullScreenModalOpen]);
+  }, [isModalOpen, isSubItemModalOpen, isExportDetailModalOpen, setIsFullScreenModalOpen]);
 
   const onModalMainPendingFilesSelected = (e: any) => {
     const files: File[] = Array.from(e?.target?.files || []);
@@ -1465,12 +1500,7 @@ const BudgetView = React.memo(() => {
     // PO numbers are human-readable and can be duplicated in legacy data.
     // The Firestore document ID is the unique record identity; deduplicating
     // by poNo can silently remove a real PO from a Budget total.
-    const seenPoIdsForPO = new Set();
-    const poTotal = relatedPOs.reduce((sum, po) => {
-      const poIdentity = po.id || po.poNo;
-      if (poIdentity && seenPoIdsForPO.has(poIdentity)) return sum;
-      if (poIdentity) seenPoIdsForPO.add(poIdentity);
-
+    const getPoAmountForBudget = (po) => {
       let subtotal = 0;
       if (po.items && po.items.length > 0) {
         subtotal = po.items.reduce((iSum, i) => {
@@ -1488,50 +1518,128 @@ const BudgetView = React.memo(() => {
               const proportionalDiscount = discount * itemRatio;
               return Math.max(0, subtotal - proportionalDiscount);
             })();
-        return sum + poAmount;
+        return poAmount;
       }
       
       if (!po.items || po.items.length === 0) {
-         return sum + getPoAmountExVat(po);
+        return getPoAmountExVat(po);
       }
-      return sum;
-    }, 0);
+      return 0;
+    };
+
+    const seenPoIdsForPO = new Set();
+    const poDetails = relatedPOs.reduce((details, po) => {
+      const poIdentity = po.id || po.poNo;
+      if (poIdentity && seenPoIdsForPO.has(poIdentity)) return details;
+      if (poIdentity) seenPoIdsForPO.add(poIdentity);
+      const amount = getPoAmountForBudget(po);
+      if (amount > 0) {
+        details.push({
+          id: poIdentity,
+          documentNo: po.poNo || po.id || "-",
+          amount,
+        });
+      }
+      return details;
+    }, []);
+    const poTotal = poDetails.reduce((sum, detail) => sum + detail.amount, 0);
 
     const seenPoIdsForInvoice = new Set();
-    const invoiceTotal = relatedPOs.reduce((sum, po) => {
-      if (po.status === "Rejected") return sum;
+    const invoiceDetails = relatedPOs.reduce((details, po) => {
+      if (po.status === "Rejected") return details;
       
       const poIdentity = po.id || po.poNo || "";
-      if (poIdentity && seenPoIdsForInvoice.has(poIdentity)) return sum;
+      if (poIdentity && seenPoIdsForInvoice.has(poIdentity)) return details;
       if (poIdentity) seenPoIdsForInvoice.add(poIdentity);
 
-      const invAmt = getInvoiceAmountForPo(
-        { amount: invoiceAmountByPoRef.get(po.poNo) || 0 },
-        po
-      );
-      if (invAmt === 0) return sum;
-
-      let subtotal = 0;
+      let poBudgetSubtotal = 0;
+      let poSubtotal = 0;
       if (po.items && po.items.length > 0) {
-        subtotal = po.items.reduce((iSum, i) => {
+        poBudgetSubtotal = po.items.reduce((iSum, i) => {
           return iSum + getBudgetItemAmount(i);
         }, 0);
       }
-      
-      if (subtotal > 0) {
-        const poSubtotal = po.items.reduce((s, i) => s + getItemAmount(i), 0);
-        const itemRatio = poSubtotal > 0 ? subtotal / poSubtotal : 1;
-        return sum + (invAmt * itemRatio);
-      }
-      
-      if (!po.items || po.items.length === 0) {
-         return sum + invAmt;
-      }
-      return sum;
-    }, 0);
+        poSubtotal = po.items.reduce((sum, item) => sum + getItemAmount(item), 0);
+
+      const fallbackBudgetRatio = (!po.items || po.items.length === 0)
+        ? 1
+        : (poSubtotal > 0 ? poBudgetSubtotal / poSubtotal : 0);
+      const entries = projectInvoiceEntriesByPoRef.get(po.poNo) || [];
+
+      entries.forEach(({ invoice, amount: invoiceAmount }) => {
+        const netInvoiceAmount = getInvoiceAmountForPo({ amount: invoiceAmount }, po);
+        if (netInvoiceAmount === 0) return;
+
+        let budgetRatio = fallbackBudgetRatio;
+        const invoiceItems = Array.isArray(invoice?.items) ? invoice.items : [];
+        const canUseItemLevelAllocation = invoice?.sourceType !== "payment" &&
+          invoiceItems.length > 0 && Array.isArray(po.items) && po.items.length > 0;
+
+        if (canUseItemLevelAllocation) {
+          const resolvedItems = invoiceItems.map((invoiceItem, invoiceItemIndex) => {
+            const explicitIndex = Number(invoiceItem?.poItemIndex);
+            if (Number.isInteger(explicitIndex) && po.items[explicitIndex]) {
+              return { invoiceItem, poItem: po.items[explicitIndex] };
+            }
+            const matchedPoItem = po.items.find((poItem) =>
+              String(poItem?.materialNo || "") === String(invoiceItem?.materialNo || "") &&
+              String(poItem?.description || "") === String(invoiceItem?.description || "")
+            );
+            return { invoiceItem, poItem: matchedPoItem || null, invoiceItemIndex };
+          });
+
+          if (resolvedItems.every(({ poItem }) => Boolean(poItem))) {
+            const invoiceItemsTotal = resolvedItems.reduce(
+              (sum, { invoiceItem }) => sum + getItemAmount(invoiceItem),
+              0
+            );
+            const budgetInvoiceSubtotal = resolvedItems.reduce((sum, { invoiceItem, poItem }) => {
+              const allocations = Array.isArray(poItem?.disPrAllocations)
+                ? poItem.disPrAllocations
+                : [];
+              let poItemBudgetShare = itemBelongsToBudget(poItem)
+                ? 1
+                : 0;
+              if (allocations.length > 0) {
+                const allAllocationsTotal = allocations.reduce(
+                  (allocationSum, allocation) => allocationSum + (Number(allocation?.amount) || 0),
+                  0
+                );
+                const budgetAllocationsTotal = allocations.reduce(
+                  (allocationSum, allocation) => allocationBelongsToBudget(poItem, allocation)
+                    ? allocationSum + (Number(allocation?.amount) || 0)
+                    : allocationSum,
+                  0
+                );
+                poItemBudgetShare = allAllocationsTotal > 0
+                  ? budgetAllocationsTotal / allAllocationsTotal
+                  : 0;
+              }
+              return sum + (getItemAmount(invoiceItem) * poItemBudgetShare);
+            }, 0);
+            budgetRatio = invoiceItemsTotal > 0
+              ? budgetInvoiceSubtotal / invoiceItemsTotal
+              : fallbackBudgetRatio;
+          }
+        }
+
+        const detailAmount = netInvoiceAmount * budgetRatio;
+        if (detailAmount > 0) {
+          details.push({
+            id: invoice?.id || invoice?.invNo || invoice?.docNo,
+            documentNo: invoice?.invNo || invoice?.invoiceNo || invoice?.docNo || invoice?.id || "-",
+            amount: detailAmount,
+          });
+        }
+      });
+
+      return details;
+    }, []);
+    const invoiceTotal = invoiceDetails.reduce((sum, detail) => sum + detail.amount, 0);
 
     const seenSpDocNos = new Set();
     const spTotal = (spPaymentsForProject || []).reduce((sum, sp) => {
+    const spInvoiceDetails = [];
       // If SP has PO reference, it is already handled by invoiceTotal via relatedPOs loop
       if (sp.poRef || sp.poNo) return sum;
       
@@ -1566,14 +1674,20 @@ const BudgetView = React.memo(() => {
       }
       
       const spAmt = Number(sp.amount) || 0;
-      
+      let detailAmount = spAmt;
       if (totalPrSubtotal > 0) {
         const itemRatio = budgetSubtotal / totalPrSubtotal;
-        return sum + (spAmt * itemRatio);
-      } else {
-        return sum + spAmt;
+        detailAmount = spAmt * itemRatio;
+      }
+      if (detailAmount > 0) {
+        spInvoiceDetails.push({
+          id: sp.id || docNo,
+          documentNo: sp.invNo || sp.invoiceNo || sp.docNo || sp.paymentNo || sp.id || "-",
+          amount: detailAmount,
+        });
       }
     }, 0);
+      return sum + detailAmount;
 
     const poExcessAmount = Math.max(0, poTotal - prTotal);
 
@@ -1584,10 +1698,12 @@ const BudgetView = React.memo(() => {
       relatedPRs,
       relatedPOs,
       // Read-only audit flag. This intentionally does not modify Firestore.
+      poDetails,
+      invoiceDetails: [...invoiceDetails, ...spInvoiceDetails],
       poExceedsPr: poExcessAmount > 0.01,
       poExcessAmount,
     };
-  }, [duplicateBudgetCodeSet, invoiceAmountByPoRef, projectPos, projectPrById, projectPrs, getItemAmount, spPaymentsForProject]);
+  }, [duplicateBudgetCodeSet, projectInvoiceEntriesByPoRef, projectPos, projectPrById, projectPrs, getItemAmount, spPaymentsForProject]);
 
   const budgetStatsById = useMemo(() => {
     const statsMap = new Map();
@@ -1598,6 +1714,154 @@ const BudgetView = React.memo(() => {
   }, [selectedProjectBudgets, getBudgetStats]);
 
   const getMinimumBudgetAmountForNonNegativeBalance = (budget) => {
+  const handleExportProjectBudget = useCallback(async () => {
+    if (!selectedProjectId || !selectedProject) {
+      showAlert("กรุณาเลือกโครงการ", "เลือกโครงการที่ต้องการ Export ก่อน", "warning");
+      return;
+    }
+    if (selectedProjectBudgets.length === 0) {
+      showAlert("ไม่มีข้อมูล", "โครงการนี้ยังไม่มีรายการ Budget สำหรับ Export", "warning");
+      return;
+    }
+
+    try {
+      const rowsByCategory = buildProjectBudgetExportSheets(
+        selectedProjectBudgets,
+        budgetStatsById
+      );
+
+      const projectLabel = String(
+        selectedProject.jobNo || selectedProject.name || selectedProjectId
+      )
+        .trim()
+        .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
+        .replace(/\s+/g, "_")
+        .slice(0, 80) || "Project";
+      const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      const fileName = `Project_Budget_${projectLabel}_${dateStamp}.xlsx`;
+
+      const workbookBytes = createProjectBudgetWorkbook(
+        rowsByCategory,
+        String(selectedProject.name || selectedProject.jobNo || selectedProjectId)
+      );
+      downloadXlsxBytes(workbookBytes, fileName);
+      try {
+        await logAction(
+          "Export",
+          `Exported Project Budget by CostCode to ${fileName}`,
+          selectedProjectId
+        );
+      } catch (logError) {
+        console.warn("[Project Budget Export] Could not write audit log", logError);
+      }
+    } catch (error: any) {
+      console.error("[Project Budget Export]", error);
+      showAlert(
+        "Export ไม่สำเร็จ",
+        error?.message || "ไม่สามารถสร้างไฟล์ Excel ได้",
+        "error"
+      );
+    }
+  }, [
+    budgetStatsById,
+    logAction,
+    selectedProject,
+    selectedProjectBudgets,
+    selectedProjectId,
+    showAlert,
+  ]);
+
+  const handleExportCategoryDetail = useCallback(async () => {
+    if (!selectedProjectId || !selectedProject || budgetCategory === "OVERVIEW") {
+      showAlert("กรุณาเลือกหมวด", "เลือกหน้า CostCode 001-009 ก่อน Export", "warning");
+      return;
+    }
+
+    try {
+      const groupedRows = new Map<string, any>();
+      selectedProjectBudgets
+        .filter((budget) => String(budget?.code || "").startsWith(budgetCategory))
+        .forEach((budget) => {
+          const costCode = String(budget?.code || "").trim();
+          const stats = budgetStatsById.get(budget.id) || {};
+          const details = exportDetailType === "PO"
+            ? (stats.poDetails || [])
+            : (stats.invoiceDetails || []);
+
+          details.forEach((detail) => {
+            const documentNo = String(detail?.documentNo || "-").trim() || "-";
+            const key = `${costCode}::${documentNo}`;
+            const current = groupedRows.get(key) || { costCode, documentNo, amount: 0 };
+            current.amount += Number(detail?.amount) || 0;
+            groupedRows.set(key, current);
+          });
+        });
+
+      const rows = Array.from(groupedRows.values())
+        .map((row) => ({
+          ...row,
+          amount: Math.round((Number(row.amount) + Number.EPSILON) * 100) / 100,
+        }))
+        .filter((row) => row.amount > 0)
+        .sort((left, right) => {
+          const codeCompare = left.costCode.localeCompare(right.costCode, undefined, { numeric: true });
+          return codeCompare || left.documentNo.localeCompare(right.documentNo, undefined, { numeric: true });
+        });
+
+      if (rows.length === 0) {
+        showAlert(
+          "ไม่มีข้อมูลสำหรับ Export",
+          `ไม่พบรายการ ${exportDetailType} ใน CostCode ${budgetCategory}`,
+          "warning"
+        );
+        return;
+      }
+
+      const projectName = String(selectedProject.name || selectedProject.jobNo || selectedProjectId);
+      const projectLabel = String(selectedProject.jobNo || selectedProject.name || selectedProjectId)
+        .trim()
+        .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
+        .replace(/\s+/g, "_")
+        .slice(0, 80) || "Project";
+      const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      const fileName = `Project_Budget_${projectLabel}_${budgetCategory}_${exportDetailType}_${dateStamp}.xlsx`;
+      const workbookBytes = createProjectBudgetDetailWorkbook(
+        rows,
+        projectName,
+        budgetCategory,
+        exportDetailType
+      );
+
+      downloadXlsxBytes(workbookBytes, fileName);
+      setIsExportDetailModalOpen(false);
+      try {
+        await logAction(
+          "Export",
+          `Exported CostCode ${budgetCategory} + ${exportDetailType} detail to ${fileName}`,
+          selectedProjectId
+        );
+      } catch (logError) {
+        console.warn("[Project Budget Detail Export] Could not write audit log", logError);
+      }
+    } catch (error: any) {
+      console.error("[Project Budget Detail Export]", error);
+      showAlert(
+        "Export ไม่สำเร็จ",
+        error?.message || "ไม่สามารถสร้างไฟล์รายละเอียดได้",
+        "error"
+      );
+    }
+  }, [
+    budgetCategory,
+    budgetStatsById,
+    exportDetailType,
+    logAction,
+    selectedProject,
+    selectedProjectBudgets,
+    selectedProjectId,
+    showAlert,
+  ]);
+
     if (!budget) return 0;
     const hasSubItems = Array.isArray(budget.subItems) && budget.subItems.length > 0;
     if (hasSubItems) {
@@ -3460,6 +3724,31 @@ const BudgetView = React.memo(() => {
       </div>
 
       {budgetCategory === "OVERVIEW" ? (
+          {canExportBudget && budgetCategory !== "OVERVIEW" && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                setExportDetailType("PO");
+                setIsExportDetailModalOpen(true);
+              }}
+              disabled={!selectedProjectId || currentBudgets.length === 0}
+              className="h-9 px-3 border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
+              title={`Export รายละเอียด CostCode ${budgetCategory}`}
+            >
+              <FileOutput size={14} /> Export Detail {budgetCategory}
+            </Button>
+          )}
+          {canExportBudget && (
+            <Button
+              variant="outline"
+              onClick={handleExportProjectBudget}
+              disabled={!selectedProjectId || selectedProjectBudgets.length === 0}
+              className="h-9 px-3 border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+              title="Export Budget, PO และ Invoice แยก Sheet 001-009"
+            >
+              <FileSpreadsheet size={14} /> Export Excel
+            </Button>
+          )}
         <>
           <Card className="overflow-x-auto w-full min-w-0">
             <div className="p-3 bg-slate-50 border-b">
@@ -4831,6 +5120,61 @@ const BudgetView = React.memo(() => {
           <Card className="w-full max-w-2xl p-6">
             <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
               <FileSpreadsheet size={20} /> นำเข้าข้อมูลงบประมาณ
+      {isExportDetailModalOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200 p-4"
+          onClick={() => setIsExportDetailModalOpen(false)}
+        >
+          <Card
+            className="w-full max-w-md p-6"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+              <FileOutput size={20} className="text-blue-600" />
+              Export Detail CostCode {budgetCategory}
+            </h3>
+            <p className="mt-1 mb-5 text-xs text-slate-500">
+              เลือกข้อมูลที่ต้องการ Export สำหรับหมวด {budgetCategory}
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                className={`rounded-xl border p-4 text-left transition-all ${exportDetailType === "PO"
+                  ? "border-blue-500 bg-blue-50 ring-2 ring-blue-100"
+                  : "border-slate-200 bg-white hover:border-blue-200 hover:bg-slate-50"
+                }`}
+                onClick={() => setExportDetailType("PO")}
+              >
+                <ShoppingCart size={20} className="text-blue-600 mb-2" />
+                <div className="text-sm font-bold text-slate-800">CostCode + PO</div>
+                <div className="mt-1 text-[11px] text-slate-500">CostCode · PO · Amount</div>
+              </button>
+              <button
+                type="button"
+                className={`rounded-xl border p-4 text-left transition-all ${exportDetailType === "INV"
+                  ? "border-emerald-500 bg-emerald-50 ring-2 ring-emerald-100"
+                  : "border-slate-200 bg-white hover:border-emerald-200 hover:bg-slate-50"
+                }`}
+                onClick={() => setExportDetailType("INV")}
+              >
+                <FileText size={20} className="text-emerald-600 mb-2" />
+                <div className="text-sm font-bold text-slate-800">CostCode + INV</div>
+                <div className="mt-1 text-[11px] text-slate-500">CostCode · INV · Amount</div>
+              </button>
+            </div>
+
+            <div className="flex justify-end gap-2 mt-6">
+              <Button variant="secondary" onClick={() => setIsExportDetailModalOpen(false)}>
+                ยกเลิก
+              </Button>
+              <Button onClick={handleExportCategoryDetail}>
+                <Download size={14} /> Export {exportDetailType}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
             </h3>
             <div className="min-h-[150px] max-h-80 overflow-y-auto border border-slate-200 rounded-lg p-2 bg-slate-50 mb-4">
               {Object.keys(importData).length === 0 ? (

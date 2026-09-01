@@ -71,6 +71,7 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
     { key: "delete", label: "ลบงบประมาณ" },
     { key: "clearAll", label: "ล้างงบทั้งหมวด" },
     { key: "import", label: "Import CSV" },
+    { key: "export", label: "Export Excel" },
     { key: "recalculate", label: "คำนวณยอดใหม่" },
     { key: "submit", label: "ส่งขออนุมัติ" },
     { key: "requestRevision", label: "ขอแก้ไข (Revise)" },
