@@ -23,7 +23,10 @@ import { uploadAttachment } from "../lib/uploadAttachment";
 import { scalePrItemsToTotal, sumSubItemAmounts } from "../lib/prBudgetReturn";
 import { getInvoiceAmountForPo, isPaidStatus, isSpentInvoiceRecord } from "../lib/billingPayUtils";
 import { getPoAmountExVat, PO_DISCOUNT_ALLOCATION_VERSION } from "../lib/poDiscount";
-import { canDirectEditApprovedMainBudget } from "../lib/budgetEditPolicy";
+import {
+  canDirectEditApprovedMainBudget,
+  canDirectEditApprovedSubItemBudget,
+} from "../lib/budgetEditPolicy";
 import {
   buildAcceptedPendingReturnState,
   getPendingBudgetReturnGroup,
@@ -3557,6 +3560,12 @@ const BudgetView = React.memo(() => {
     }
     if (!subItemData.description.trim()) return showAlert("ข้อมูลไม่ครบ", "กรุณากรอกชื่อรายการ", "warning");
     const amountToAdd = Number(subItemData.quantity) * Number(subItemData.unitPrice);
+    const isDirectPrepareSubEdit = Boolean(editingSubItem) && canDirectEditApprovedSubItemBudget(
+      selectedProject?.status,
+      selectedBudget.status,
+      editingSubItem?.status,
+      budgetCategory
+    );
     
     if (editingSubItem) {
       const subPrUsed = getSubItemPrUsed(selectedBudget, editingSubItem);
@@ -3576,7 +3585,9 @@ const BudgetView = React.memo(() => {
       unit: subItemData.unit || "งาน",
       unitPrice: Number(subItemData.unitPrice),
       amount: amountToAdd,
-      status: editingSubItem?.status === "Rejected" ? "Rejected" : "Draft",
+      status: isDirectPrepareSubEdit
+        ? "Approved"
+        : editingSubItem?.status === "Rejected" ? "Rejected" : "Draft",
       rejectReason: editingSubItem?.status === "Rejected" ? (editingSubItem.rejectReason || "") : ""
     };
     let updatedSubItems;
@@ -3602,18 +3613,95 @@ const BudgetView = React.memo(() => {
     }
 
     // Rule 4: Do NOT update main budget amount.
-    await updateDoc(
-      doc(
-        db,
-        "artifacts",
-        appId,
-        "public",
-        "data",
-        "budgets",
-        selectedBudget.id
-      ),
-      { subItems: updatedSubItems }
-    );
+    if (isDirectPrepareSubEdit) {
+      const budgetRef = doc(db, "artifacts", appId, "public", "data", "budgets", selectedBudget.id);
+      const projectRef = doc(db, "artifacts", appId, "public", "data", "projects", selectedProjectId);
+      try {
+        await runTransaction(db, async (transaction) => {
+          const [projectSnapshot, budgetSnapshot] = await Promise.all([
+            transaction.get(projectRef),
+            transaction.get(budgetRef),
+          ]);
+          const latestBudget = budgetSnapshot.data();
+          const latestSubItems = Array.isArray(latestBudget?.subItems) ? latestBudget.subItems : [];
+          const latestSubItem = latestSubItems.find((sub) => sub.id === editingSubItem.id);
+
+          if (
+            !projectSnapshot.exists() ||
+            !budgetSnapshot.exists() ||
+            !latestSubItem ||
+            !canDirectEditApprovedSubItemBudget(
+              projectSnapshot.data()?.status,
+              latestBudget?.status,
+              latestSubItem?.status,
+              budgetCategory
+            )
+          ) {
+            throw Object.assign(new Error("Direct sub-item edit is no longer available"), {
+              guardCode: "DIRECT_SUB_EDIT_NOT_ALLOWED",
+            });
+          }
+
+          const latestUpdatedSubItems = latestSubItems.map((sub) =>
+            sub.id === editingSubItem.id
+              ? {
+                ...sub,
+                description: subItemData.description,
+                quantity: Number(subItemData.quantity),
+                unit: subItemData.unit || "งาน",
+                unitPrice: Number(subItemData.unitPrice),
+                amount: amountToAdd,
+                status: "Approved",
+                rejectReason: "",
+              }
+              : sub
+          );
+          const latestSubTotal = sumSubItemAmounts(latestUpdatedSubItems);
+          const latestMainAmount = Number(latestBudget?.amount) || 0;
+          if (latestSubTotal > latestMainAmount + 0.005) {
+            throw Object.assign(new Error("Sub-items exceed main budget"), {
+              guardCode: "SUB_TOTAL_EXCEEDS_MAIN",
+              mainAmount: latestMainAmount,
+              subTotal: latestSubTotal,
+            });
+          }
+
+          transaction.update(budgetRef, { subItems: latestUpdatedSubItems });
+        });
+      } catch (error) {
+        if (error?.guardCode === "DIRECT_SUB_EDIT_NOT_ALLOWED") {
+          showAlert(
+            "ไม่สามารถแก้ไข Sub-item โดยตรงได้",
+            "สถานะ Project, Main Budget หรือ Sub-item มีการเปลี่ยนแปลง กรุณาโหลดข้อมูลใหม่แล้วตรวจสอบอีกครั้ง",
+            "warning"
+          );
+          return;
+        }
+        if (error?.guardCode === "SUB_TOTAL_EXCEEDS_MAIN") {
+          showAlert(
+            "ยอดเงินเกินกำหนด",
+            `ยอดรวมรายการย่อยล่าสุด (${formatCurrency(error.subTotal)}) ห้ามเกิน Main Budget (${formatCurrency(error.mainAmount)})`,
+            "error"
+          );
+          return;
+        }
+        showAlert("Error", error?.message || "บันทึก Sub-item ไม่สำเร็จ", "error");
+        return;
+      }
+    } else {
+      await updateDoc(
+        doc(
+          db,
+          "artifacts",
+          appId,
+          "public",
+          "data",
+          "budgets",
+          selectedBudget.id
+        ),
+        { subItems: updatedSubItems }
+      );
+    }
     if (pendingSubAttachments.length > 0 && !editingSubItem) {
       try {
         await appendSubItemAttachments(
@@ -4912,6 +5000,12 @@ const BudgetView = React.memo(() => {
                                 const pendingSubReturnTotal = sumBudgetReturnNotifications(pendingSubReturns);
                                 const subPrUsed = getSubItemPrUsed(b, sub);
                                 const subBalance = getSubItemAmount(sub) - subPrUsed;
+                                const isDirectPrepareSubEdit = canDirectEditApprovedSubItemBudget(
+                                  selectedProject?.status,
+                                  b.status,
+                                  sub.status,
+                                  budgetCategory
+                                );
                                 return (
                               <tr
                                 key={sub.id}
@@ -5017,6 +5111,15 @@ const BudgetView = React.memo(() => {
                                 {(() => { const cnt = [isColumnVisible("budget", "prTotal"), isColumnVisible("budget", "poTotal")].filter(Boolean).length; return cnt > 0 ? <td colSpan={cnt} className="budget-col-pr-po-placeholder border-b border-slate-100"></td> : null; })()}
                                 {isColumnVisible("budget", "actions") && <td className="budget-col-actions py-0.5 px-3 text-right border-b border-slate-100">
                                   <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    {isDirectPrepareSubEdit && canEditSubItem && (
+                                      <button
+                                        className="text-blue-500 hover:text-blue-700 p-1 hover:bg-blue-50 rounded"
+                                        title="แก้ไขโดยตรง (Prepare Budget)"
+                                        onClick={(e) => { e.stopPropagation(); openEditSubItemModal(b, sub); }}
+                                      >
+                                        <Edit size={14} />
+                                      </button>
+                                    )}
                                     {(sub.status === "Rejected" && canEditSubItem && (userRole === "PM" || userRole === "CM" || userRole === "MD" || userRole === "Administrator")) && (
                                       <button
                                         className="text-blue-500 hover:text-blue-700 p-1 hover:bg-blue-50 rounded"
@@ -5057,7 +5160,7 @@ const BudgetView = React.memo(() => {
                                         )}
                                       </>
                                     )}
-                                    {canRequestSubItemRevision && sub.status === "Approved" && (
+                                    {canRequestSubItemRevision && sub.status === "Approved" && !isDirectPrepareSubEdit && (
                                       <button
                                         className="text-orange-500 hover:text-orange-700 p-1 hover:bg-orange-50 rounded"
                                         title="ขอแก้ไข (Revise)"

@@ -135,6 +135,31 @@ function deriveLogProjectId(collectionName, id, data, lists) {
 
 const FIRESTORE_IN_QUERY_LIMIT = 30;
 
+// Collections are loaded only while the active menu actually needs them.
+// Menus that are designed as company/assigned-project reports keep their
+// assigned-project scope; operational menus use the single selected project.
+const MENU_COLLECTION_DEPENDENCIES = {
+  projects: ["budgets"],
+  budget: ["budgets", "prs", "pos", "payments", "invoices", "receives"],
+  pr: ["budgets", "prs", "pos"],
+  po: ["budgets", "prs", "pos", "payments", "invoices", "receives", "pays"],
+  "payment-subcontract": ["prs", "pos", "payments", "invoices"],
+  receive: ["prs", "pos", "invoices", "receives"],
+  invoice: ["prs", "pos", "payments", "invoices", "receives"],
+  billing: ["prs", "pos", "invoices", "receives", "billings", "pays"],
+  pay: ["prs", "pos", "invoices", "receives", "billings", "pays"],
+  "budget-summary": ["budgets", "prs", "pos", "payments", "invoices"],
+  "project-spending": ["budgets", "prs", "pos", "payments", "invoices"],
+};
+
+const ASSIGNED_PROJECT_SCOPE_MENUS = new Set([
+  "projects",
+  "billing",
+  "pay",
+  "budget-summary",
+  "project-spending",
+]);
+
 function chunkValues(values, size = FIRESTORE_IN_QUERY_LIMIT) {
   const unique = [...new Set((Array.isArray(values) ? values : []).map(String).filter(Boolean))];
   const chunks = [];
@@ -142,6 +167,71 @@ function chunkValues(values, size = FIRESTORE_IN_QUERY_LIMIT) {
     chunks.push(unique.slice(index, index + size));
   }
   return chunks;
+}
+
+function useScopedCollectionListener({
+  enabled,
+  collectionName,
+  setter,
+  onReady = null,
+  scopeMode,
+  selectedProjectId,
+  buildQueries,
+  subscribe,
+}) {
+  useEffect(() => {
+    if (!enabled) {
+      setter([]);
+      onReady?.();
+      return undefined;
+    }
+
+    return subscribe(
+      buildQueries(collectionName, scopeMode, selectedProjectId),
+      setter,
+      collectionName,
+      onReady
+    );
+  }, [
+    enabled,
+    collectionName,
+    setter,
+    onReady,
+    scopeMode,
+    selectedProjectId,
+    buildQueries,
+    subscribe,
+  ]);
+}
+
+function usePendingStatusListener({
+  enabled,
+  collectionName,
+  statuses,
+  setter,
+  buildQueries,
+  subscribe,
+}) {
+  useEffect(() => {
+    if (!enabled || statuses.length === 0) {
+      setter([]);
+      return undefined;
+    }
+
+    return subscribe(
+      buildQueries(collectionName, statuses),
+      setter,
+      `${collectionName}:pending`
+    );
+  }, [enabled, collectionName, statuses, setter, buildQueries, subscribe]);
+}
+
+function mergeRowsById(...groups) {
+  const merged = new Map();
+  groups.flat().forEach((row) => {
+    if (row?.id) merged.set(row.id, row);
+  });
+  return Array.from(merged.values());
 }
 
 // ─── Context Shape ────────────────────────────────────────────────────────────
@@ -159,7 +249,7 @@ export const AppDataProvider = ({
   openConfirm,
   logAction,
 }) => {
-  const { activeMenu } = useUI();
+  const { activeMenu, selectedProjectId } = useUI();
   const roles = Array.isArray(userRoles) && userRoles.length ? userRoles : (userRole ? [userRole] : ["Staff"]);
   // ── Firebase collections ──────────────────────────────────────────────────
   const [projects,  setProjects]  = useState([]);
@@ -174,6 +264,10 @@ export const AppDataProvider = ({
   const [billings,  setBillings]  = useState([]);
   const [pays,      setPays]      = useState([]);
   const [receives,  setReceives]  = useState([]);
+  const [pendingBudgetDocs, setPendingBudgetDocs] = useState([]);
+  const [pendingPrDocs, setPendingPrDocs] = useState([]);
+  const [pendingPoDocs, setPendingPoDocs] = useState([]);
+  const [pendingPaymentDocs, setPendingPaymentDocs] = useState([]);
   const [vendorEvaluations, setVendorEvaluations] = useState([]);
   const [availableRoles, setAvailableRoles] = useState<string[]>(() => normalizeRoleNames(USER_ROLES));
 
@@ -198,10 +292,17 @@ export const AppDataProvider = ({
     return roles.some((r) => allowed.includes(r));
   }, [roles, rolePermissions]);
 
-  const buildProjectScopedQueries = useCallback((collectionName) => {
+  const buildProjectScopedQueries = useCallback((collectionName, scopeMode, requestedProjectId) => {
     const ref = collection(db, "artifacts", appId, "public", "data", collectionName);
-    if (canReadAllProjects) return [query(ref)];
-    return chunkValues(assignedProjectIds).map((ids) => query(ref, where("projectId", "in", ids)));
+    if (scopeMode === "assigned") {
+      if (canReadAllProjects) return [query(ref)];
+      return chunkValues(assignedProjectIds).map((ids) => query(ref, where("projectId", "in", ids)));
+    }
+
+    const projectId = String(requestedProjectId || "").trim();
+    if (!projectId) return [];
+    if (!canReadAllProjects && !assignedProjectIds.includes(projectId)) return [];
+    return [query(ref, where("projectId", "==", projectId))];
   }, [canReadAllProjects, assignedProjectIds]);
 
   const buildAssignedProjectQueries = useCallback(() => {
@@ -238,6 +339,17 @@ export const AppDataProvider = ({
 
     return () => unsubs.forEach((unsubscribe) => unsubscribe());
   }, []);
+
+  const buildPendingStatusQueries = useCallback((collectionName, statuses) => {
+    const ref = collection(db, "artifacts", appId, "public", "data", collectionName);
+    if (!statuses.length) return [];
+    if (canReadAllProjects) return [query(ref, where("status", "in", statuses))];
+    return assignedProjectIds.map((projectId) => query(
+      ref,
+      where("projectId", "==", projectId),
+      where("status", "in", statuses)
+    ));
+  }, [canReadAllProjects, assignedProjectIds]);
 
   // ── Column widths (admin-controlled, synced to Firestore) ─────────────────
   const [columnWidths, setColumnWidths] = useState({});
@@ -380,75 +492,212 @@ export const AppDataProvider = ({
     rolePermissionsReady && moduleKeys.some((moduleKey) => hasModuleAccessForCurrentRoles(moduleKey))
   ), [rolePermissionsReady, hasModuleAccessForCurrentRoles]);
 
-  const canSyncBudgets = canReadAnyModule([
-    "projects", "budget", "pr", "po", "budget-summary", "project-spending",
+  const roleKey = [...new Set(roles)].sort().join("|");
+  const pendingStatuses = useMemo(() => {
+    const currentRoles = new Set(roleKey.split("|").filter(Boolean));
+    const isAdministrator = currentRoles.has("Administrator");
+    const budgets = isAdministrator || currentRoles.has("MD")
+      ? ["Wait MD Approve", "Revision Pending"]
+      : [];
+    const prs = [];
+    const pos = [];
+    const payments = [];
+
+    if (isAdministrator || currentRoles.has("CM")) prs.push("Pending CM");
+    if (isAdministrator || currentRoles.has("PM")) prs.push("Pending PM");
+    if (isAdministrator || currentRoles.has("GM")) prs.push("Pending GM");
+    if (isAdministrator || currentRoles.has("MD")) prs.push("Pending MD");
+    if (isAdministrator || currentRoles.has("PCM")) prs.push(PR_PENDING_ACTIVE);
+    if (isAdministrator || ["CM", "PM", "Procurement", "PCM"].some((role) => currentRoles.has(role))) {
+      prs.push("Edit Budget");
+    }
+    if (isAdministrator) prs.push("Pending Close");
+
+    if (isAdministrator || currentRoles.has("PCM")) pos.push("Pending PCM", PO_REVISION_PENDING_PCM);
+    if (isAdministrator || currentRoles.has("GM")) pos.push("Pending GM", PO_REVISION_PENDING_GM);
+    if (isAdministrator) pos.push("Pending Close PO");
+
+    if (isAdministrator || currentRoles.has("CM")) payments.push("Pending CM", "งวดงาน Pending CM");
+    if (isAdministrator || currentRoles.has("PM") || currentRoles.has("PCM")) {
+      payments.push("Pending PM", "งวดงาน Pending PM");
+    }
+    if (isAdministrator || currentRoles.has("MD") || currentRoles.has("GM")) payments.push("Pending MD");
+    if (isAdministrator || currentRoles.has("Procurement")) payments.push("Pending Procurement", "Wait Pay");
+
+    return {
+      budgets: [...new Set(budgets)],
+      prs: [...new Set(prs)],
+      pos: [...new Set(pos)],
+      payments: [...new Set(payments)],
+    };
+  }, [roleKey]);
+
+  const canSyncPendingBudgets = pendingStatuses.budgets.length > 0 && canReadAnyModule([
+    "projects", "budget", "budget-summary", "project-spending",
   ]);
-  const canSyncPrs = canReadAnyModule([
+  const canSyncPendingPrs = pendingStatuses.prs.length > 0 && canReadAnyModule([
     "budget", "pr", "po", "receive", "invoice", "billing", "pay",
     "budget-summary", "project-spending",
   ]);
-  const canSyncPos = canReadAnyModule([
+  const canSyncPendingPos = pendingStatuses.pos.length > 0 && canReadAnyModule([
     "budget", "pr", "po", "payment-subcontract", "receive", "invoice",
     "billing", "pay", "budget-summary", "project-spending",
   ]);
-  const canSyncPayments = canReadAnyModule([
+  const canSyncPendingPayments = pendingStatuses.payments.length > 0 && canReadAnyModule([
     "budget", "payment-subcontract", "invoice", "budget-summary", "project-spending",
   ]);
-  const canSyncInvoice = [
-    "budget", "po", "payment-subcontract", "receive", "invoice", "billing", "pay",
+
+  // The bell uses small status-filtered listeners across assigned projects.
+  // It no longer depends on loading every historical document at login.
+  usePendingStatusListener({
+    enabled: canSyncPendingBudgets,
+    collectionName: "budgets",
+    statuses: pendingStatuses.budgets,
+    setter: setPendingBudgetDocs,
+    buildQueries: buildPendingStatusQueries,
+    subscribe: subscribeMergedQueries,
+  });
+  usePendingStatusListener({
+    enabled: canSyncPendingPrs,
+    collectionName: "prs",
+    statuses: pendingStatuses.prs,
+    setter: setPendingPrDocs,
+    buildQueries: buildPendingStatusQueries,
+    subscribe: subscribeMergedQueries,
+  });
+  usePendingStatusListener({
+    enabled: canSyncPendingPos,
+    collectionName: "pos",
+    statuses: pendingStatuses.pos,
+    setter: setPendingPoDocs,
+    buildQueries: buildPendingStatusQueries,
+    subscribe: subscribeMergedQueries,
+  });
+  usePendingStatusListener({
+    enabled: canSyncPendingPayments,
+    collectionName: "payments",
+    statuses: pendingStatuses.payments,
+    setter: setPendingPaymentDocs,
+    buildQueries: buildPendingStatusQueries,
+    subscribe: subscribeMergedQueries,
+  });
+
+  const activeCollections = useMemo(
+    () => new Set(MENU_COLLECTION_DEPENDENCIES[activeMenu] || []),
+    [activeMenu]
+  );
+  const dataScopeMode = ASSIGNED_PROJECT_SCOPE_MENUS.has(activeMenu) ? "assigned" : "selected";
+  // Assigned-scope screens do not need to restart when the header's selected
+  // project changes. Operational screens use this exact project as query key.
+  const scopedProjectId = dataScopeMode === "selected" ? selectedProjectId : null;
+  const needsCollection = useCallback(
+    (collectionName) => activeCollections.has(collectionName),
+    [activeCollections]
+  );
+
+  const canSyncBudgets = needsCollection("budgets") && canReadAnyModule([
+    "projects", "budget", "pr", "po", "budget-summary", "project-spending",
+  ]);
+  const canSyncPrs = needsCollection("prs") && canReadAnyModule([
+    "budget", "pr", "po", "payment-subcontract", "receive", "invoice", "billing", "pay",
     "budget-summary", "project-spending",
-  ].includes(activeMenu) && canReadAnyModule([
+  ]);
+  const canSyncPos = needsCollection("pos") && canReadAnyModule([
+    "budget", "pr", "po", "payment-subcontract", "receive", "invoice",
+    "billing", "pay", "budget-summary", "project-spending",
+  ]);
+  const canSyncPayments = needsCollection("payments") && canReadAnyModule([
+    "budget", "payment-subcontract", "invoice", "budget-summary", "project-spending",
+  ]);
+  const canSyncInvoice = needsCollection("invoices") && canReadAnyModule([
     "budget", "po", "payment-subcontract", "receive", "invoice", "billing", "pay",
     "budget-summary", "project-spending",
   ]);
-  const canSyncReceive = ["budget", "po", "receive", "invoice", "billing", "pay"].includes(activeMenu) &&
+  const canSyncReceive = needsCollection("receives") &&
     canReadAnyModule(["budget", "po", "receive", "invoice", "billing", "pay"]);
-  const canSyncBilling = ["billing", "pay"].includes(activeMenu) && canReadAnyModule(["billing", "pay"]);
-  const canSyncPay = ["po", "billing", "pay"].includes(activeMenu) && canReadAnyModule(["po", "billing", "pay"]);
+  const canSyncBilling = needsCollection("billings") && canReadAnyModule(["billing", "pay"]);
+  const canSyncPay = needsCollection("pays") && canReadAnyModule(["po", "billing", "pay"]);
+  const markPaymentsReady = useCallback(() => setPaymentsReady(true), []);
 
-  // Business data stays realtime, but non-admin queries can only return documents
-  // whose projectId belongs to the current user's assignedProjectIds.
   useEffect(() => {
-    const unsubs = [];
-    const attach = (enabled, collectionName, setter, onReady = null) => {
-      if (!enabled) {
-        setter([]);
-        onReady?.();
-        return;
-      }
-      unsubs.push(subscribeMergedQueries(
-        buildProjectScopedQueries(collectionName),
-        setter,
-        collectionName,
-        onReady
-      ));
-    };
+    setPaymentsReady(!canSyncPayments);
+  }, [canSyncPayments, dataScopeMode, scopedProjectId]);
 
-    setPaymentsReady(false);
-    attach(canSyncBudgets, "budgets", setBudgets);
-    attach(canSyncPrs, "prs", setPrs);
-    attach(canSyncPos, "pos", setPos);
-    attach(canSyncPayments, "payments", setPayments, () => setPaymentsReady(true));
-    attach(canSyncInvoice, "invoices", setInvoices);
-    attach(canSyncReceive, "receives", setReceives);
-    attach(canSyncBilling, "billings", setBillings);
-    attach(canSyncPay, "pays", setPays);
-
-    return () => {
-      unsubs.forEach((u) => u());
-    };
-  }, [
-    buildProjectScopedQueries,
-    subscribeMergedQueries,
-    canSyncBudgets,
-    canSyncPrs,
-    canSyncPos,
-    canSyncPayments,
-    canSyncInvoice,
-    canSyncReceive,
-    canSyncBilling,
-    canSyncPay,
-  ]);
+  // Each collection owns its listener lifecycle. A menu change now restarts
+  // only the collections whose enabled state or project query actually changed.
+  useScopedCollectionListener({
+    enabled: canSyncBudgets,
+    collectionName: "budgets",
+    setter: setBudgets,
+    scopeMode: dataScopeMode,
+    selectedProjectId: scopedProjectId,
+    buildQueries: buildProjectScopedQueries,
+    subscribe: subscribeMergedQueries,
+  });
+  useScopedCollectionListener({
+    enabled: canSyncPrs,
+    collectionName: "prs",
+    setter: setPrs,
+    scopeMode: dataScopeMode,
+    selectedProjectId: scopedProjectId,
+    buildQueries: buildProjectScopedQueries,
+    subscribe: subscribeMergedQueries,
+  });
+  useScopedCollectionListener({
+    enabled: canSyncPos,
+    collectionName: "pos",
+    setter: setPos,
+    scopeMode: dataScopeMode,
+    selectedProjectId: scopedProjectId,
+    buildQueries: buildProjectScopedQueries,
+    subscribe: subscribeMergedQueries,
+  });
+  useScopedCollectionListener({
+    enabled: canSyncPayments,
+    collectionName: "payments",
+    setter: setPayments,
+    onReady: markPaymentsReady,
+    scopeMode: dataScopeMode,
+    selectedProjectId: scopedProjectId,
+    buildQueries: buildProjectScopedQueries,
+    subscribe: subscribeMergedQueries,
+  });
+  useScopedCollectionListener({
+    enabled: canSyncInvoice,
+    collectionName: "invoices",
+    setter: setInvoices,
+    scopeMode: dataScopeMode,
+    selectedProjectId: scopedProjectId,
+    buildQueries: buildProjectScopedQueries,
+    subscribe: subscribeMergedQueries,
+  });
+  useScopedCollectionListener({
+    enabled: canSyncReceive,
+    collectionName: "receives",
+    setter: setReceives,
+    scopeMode: dataScopeMode,
+    selectedProjectId: scopedProjectId,
+    buildQueries: buildProjectScopedQueries,
+    subscribe: subscribeMergedQueries,
+  });
+  useScopedCollectionListener({
+    enabled: canSyncBilling,
+    collectionName: "billings",
+    setter: setBillings,
+    scopeMode: dataScopeMode,
+    selectedProjectId: scopedProjectId,
+    buildQueries: buildProjectScopedQueries,
+    subscribe: subscribeMergedQueries,
+  });
+  useScopedCollectionListener({
+    enabled: canSyncPay,
+    collectionName: "pays",
+    setter: setPays,
+    scopeMode: dataScopeMode,
+    selectedProjectId: scopedProjectId,
+    buildQueries: buildProjectScopedQueries,
+    subscribe: subscribeMergedQueries,
+  });
 
   // ── Column resize ──────────────────────────────────────────────────────────
   const handleColumnResize = useCallback((tableId, colKey, width) => {
@@ -665,17 +914,34 @@ export const AppDataProvider = ({
   }, [projects, userData, roles]);
 
   // ── Pending approval counts — GLOBAL (for Bell badge) ─────────────────────
+  const notificationBudgetSource = useMemo(
+    () => mergeRowsById(pendingBudgetDocs, budgets),
+    [pendingBudgetDocs, budgets]
+  );
+  const notificationPrSource = useMemo(
+    () => mergeRowsById(pendingPrDocs, prs),
+    [pendingPrDocs, prs]
+  );
+  const notificationPoSource = useMemo(
+    () => mergeRowsById(pendingPoDocs, pos),
+    [pendingPoDocs, pos]
+  );
+  const notificationPaymentSource = useMemo(
+    () => mergeRowsById(pendingPaymentDocs, payments),
+    [pendingPaymentDocs, payments]
+  );
+
   const pendingBudgetsGlobal = useMemo(() => {
     if (!roles.includes("MD") && !roles.includes("Administrator")) return [];
-    return budgets.filter(
+    return notificationBudgetSource.filter(
       (b) => b.status === "Wait MD Approve" || b.status === "Revision Pending"
     );
-  }, [budgets, roles]);
+  }, [notificationBudgetSource, roles]);
 
   const pendingSubItemsGlobal = useMemo(() => {
     if (!roles.includes("MD") && !roles.includes("Administrator")) return [];
     const pendingSubs = [];
-    budgets.forEach((b) => {
+    notificationBudgetSource.forEach((b) => {
       (b.subItems || []).forEach((sub) => {
         if (sub.status === "Wait MD Approve" || sub.status === "Revision Pending") {
           pendingSubs.push({ ...sub, budgetId: b.id, budgetCode: b.code });
@@ -683,9 +949,9 @@ export const AppDataProvider = ({
       });
     });
     return pendingSubs;
-  }, [budgets, roles]);
+  }, [notificationBudgetSource, roles]);
 
-  const pendingPRsGlobal = useMemo(() => prs.filter((pr) => {
+  const pendingPRsGlobal = useMemo(() => notificationPrSource.filter((pr) => {
     if (roles.includes("Administrator") && (
       pr.status?.startsWith("Pending") || pr.status === PR_PENDING_ACTIVE
     )) return true;
@@ -702,9 +968,9 @@ export const AppDataProvider = ({
     // PCM รับแจ้งเตือนเมื่อมีคำขอ Active PR
     if (pr.status === PR_PENDING_ACTIVE && (roles.includes("PCM") || roles.includes("Administrator"))) return true;
     return false;
-  }), [prs, roles]);
+  }), [notificationPrSource, roles]);
 
-  const pendingPOsGlobal = useMemo(() => pos.filter((po) => {
+  const pendingPOsGlobal = useMemo(() => notificationPoSource.filter((po) => {
     // A PO whose displayed workflow status is already paid/settled must not
     // remain in the close-PO task list, even if an old Pending Close PO value
     // is still stored in the legacy `status` field.
@@ -720,9 +986,9 @@ export const AppDataProvider = ({
     if (roles.includes("PCM") && (po.status === "Pending PCM" || po.status === PO_REVISION_PENDING_PCM)) return true;
     if (roles.includes("GM") && (po.status === "Pending GM" || po.status === PO_REVISION_PENDING_GM)) return true;
     return false;
-  }), [pos, roles]);
+  }), [notificationPoSource, roles]);
 
-  const pendingPaymentsGlobal = useMemo(() => payments.filter((p: any) => {
+  const pendingPaymentsGlobal = useMemo(() => notificationPaymentSource.filter((p: any) => {
     const s = p.status || "";
     if (roles.includes("Administrator")) return s.startsWith("Pending") || s === "Wait Pay" || s.startsWith("งวดงาน Pending");
     if (roles.includes("CM")  && (s === "Pending CM"  || s === "งวดงาน Pending CM"))  return true;
@@ -731,7 +997,7 @@ export const AppDataProvider = ({
     if ((roles.includes("MD") || roles.includes("GM")) && s === "Pending MD") return true;
     if (roles.includes("Procurement") && (s === "Pending Procurement" || s === "Wait Pay")) return true;
     return false;
-  }), [payments, roles]);
+  }), [notificationPaymentSource, roles]);
 
   // ── Pending Budget return requests — used to highlight project badges ──────
   // Keep this separate from approval tasks so the existing bell/sidebar counts
@@ -740,7 +1006,7 @@ export const AppDataProvider = ({
     const counts = {};
     const visibleProjectIds = new Set(visibleProjects.map((project) => project.id));
 
-    budgets.forEach((budget) => {
+    notificationBudgetSource.forEach((budget) => {
       if (!budget?.projectId || !visibleProjectIds.has(budget.projectId)) return;
       const pendingCount = Array.isArray(budget.budgetReturnNotifications)
         ? budget.budgetReturnNotifications.filter((notification) => (
@@ -751,20 +1017,20 @@ export const AppDataProvider = ({
     });
 
     return Object.entries(counts).map(([projectId, count]) => ({ projectId, count }));
-  }, [budgets, visibleProjects]);
+  }, [notificationBudgetSource, visibleProjects]);
 
   const totalPendingCount = useMemo(() => {
     const visibleProjectIds = visibleProjects.map(p => p.id);
     const visibleBudgets = pendingBudgetsGlobal.filter(b => visibleProjectIds.includes(b.projectId));
     const visibleSubItems = pendingSubItemsGlobal.filter(s => {
-      const b = budgets.find(x => x.id === s.budgetId);
+      const b = notificationBudgetSource.find(x => x.id === s.budgetId);
       return b && visibleProjectIds.includes(b.projectId);
     });
     const visiblePRs = pendingPRsGlobal.filter(pr => visibleProjectIds.includes(pr.projectId));
     const visiblePOs = pendingPOsGlobal.filter(po => visibleProjectIds.includes(po.projectId));
     const visiblePayments = pendingPaymentsGlobal.filter(p => visibleProjectIds.includes(p.projectId));
     return visibleBudgets.length + visibleSubItems.length + visiblePRs.length + visiblePOs.length + visiblePayments.length;
-  }, [pendingBudgetsGlobal, pendingSubItemsGlobal, pendingPRsGlobal, pendingPOsGlobal, pendingPaymentsGlobal, visibleProjects, budgets]);
+  }, [pendingBudgetsGlobal, pendingSubItemsGlobal, pendingPRsGlobal, pendingPOsGlobal, pendingPaymentsGlobal, visibleProjects, notificationBudgetSource]);
 
   const pendingCountByMenu = useMemo(() => ({
     budget:               pendingBudgetsGlobal.length + pendingSubItemsGlobal.length,
@@ -785,7 +1051,7 @@ export const AppDataProvider = ({
     };
     pendingBudgetsGlobal.forEach((b) => inc(b.projectId, "budgets"));
     pendingSubItemsGlobal.forEach((s) => {
-      const b = budgets.find((x) => x.id === s.budgetId);
+      const b = notificationBudgetSource.find((x) => x.id === s.budgetId);
       if (b) inc(b.projectId, "subItems");
     });
     pendingPRsGlobal.forEach((pr) => inc(pr.projectId, "prs"));
@@ -800,7 +1066,7 @@ export const AppDataProvider = ({
         total: counts.budgets + counts.prs + counts.pos + counts.subItems + counts.payments,
       };
     });
-  }, [pendingBudgetsGlobal, pendingSubItemsGlobal, pendingPRsGlobal, pendingPOsGlobal, pendingPaymentsGlobal, projects, budgets, visibleProjects]);
+  }, [pendingBudgetsGlobal, pendingSubItemsGlobal, pendingPRsGlobal, pendingPOsGlobal, pendingPaymentsGlobal, projects, notificationBudgetSource, visibleProjects]);
 
   // ── PR / PO approval handlers ──────────────────────────────────────────────
   const handlePRAction = useCallback(async (id, action) => {

@@ -25,7 +25,7 @@ import {
 } from "../lib/systemLogDetails";
 import { resolveCurrentUserSignatureImage } from "../lib/poSignatureStamps";
 import { getPoAmountExVat } from "../lib/poDiscount";
-import { getPoDisplayStatus } from "../lib/constants";
+import { isPoReadyForManualReceive } from "../lib/constants";
 import {
   getCmgStoreTargetProjectCode,
   isCmgStoreEligibleInventoryStatus,
@@ -130,12 +130,11 @@ const ReceiveView = React.memo(() => {
   // POs that still have receiveable quantities for the selected project.
   // Partial Receive is kept in this tab so users can continue receiving the
   // remaining quantity; older records may expose it through statusNow.
-  const approvedPOs = useMemo(() => {
+  const receiveCandidatePOs = useMemo(() => {
     if (!selectedProjectId) return [];
     return pos.filter(
       (po) => po.projectId === selectedProjectId &&
-        ["Approved", "Partial Receive"].includes(getPoDisplayStatus(po)) &&
-        po.poType !== "SP" && po.poType !== "DC"
+        isPoReadyForManualReceive(po)
     );
   }, [pos, selectedProjectId]);
 
@@ -171,6 +170,13 @@ const ReceiveView = React.memo(() => {
       return { totalOrdered, totalReceived, done: totalOrdered > 0 && totalReceived >= totalOrdered };
     },
     [receiveSummary]
+  );
+
+  // A PO can retain an old receiveable status even when its Receive documents
+  // already total 100%. Never offer a completed PO for receiving again.
+  const approvedPOs = useMemo(
+    () => receiveCandidatePOs.filter((po) => !getReceiveProgress(po).done),
+    [receiveCandidatePOs, getReceiveProgress]
   );
 
   const getVendorName = useCallback(

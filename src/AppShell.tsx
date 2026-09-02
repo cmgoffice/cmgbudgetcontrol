@@ -409,6 +409,7 @@ const AppShell = () => {
   }, [handleMenuChange, isCompactViewport, setIsBellOpen]);
 
   const sidebarDense = isCompactViewport || isNarrowSidebarViewport;
+  const shouldStackProjectSwitcher = isCompactViewport || isNarrowSidebarViewport;
   const collapsedSidebarWidth = isNarrowSidebarViewport ? "w-16" : "w-[4.5rem]";
   const shouldShowSidebar = !isFullScreenModalOpen;
   const moduleMenus = ["budget", "pr", "po", "payment-subcontract", "invoice", "billing", "pay", "receive"].includes(activeMenu);
@@ -759,8 +760,8 @@ const AppShell = () => {
                 : visibleProjects.filter((p) => (p.status || "Active") === "Active");
               return moduleMenus && !["invoice", "billing", "pay"].includes(activeMenu) && selectableProjects.length > 0;
             })() && (
-              <div className={`${isCompactViewport ? "order-3 flex w-full overflow-x-auto overflow-y-visible no-scrollbar pt-1 pb-1" : "flex items-center gap-1.5 shrink-0"}`}>
-                <div className={`${isCompactViewport ? "flex min-w-max items-center gap-1.5" : "flex items-center gap-1.5 shrink-0"}`}>
+              <div className={`${shouldStackProjectSwitcher ? "order-3 flex w-full min-w-0 overflow-x-auto overflow-y-visible no-scrollbar pt-1 pb-1" : "flex items-center gap-1.5 shrink-0"}`}>
+                <div className={`${shouldStackProjectSwitcher ? "flex min-w-max items-center gap-1.5 px-0.5" : "flex items-center gap-1.5 shrink-0"}`}>
                   {(activeMenu === "projects" || activeMenu === "budget"
                     ? visibleProjects.filter((p) => p.status !== "Close")
                     : visibleProjects.filter((p) => (p.status || "Active") === "Active")
@@ -775,7 +776,7 @@ const AppShell = () => {
                         type="button"
                         onClick={() => setSelectedProjectId(p.id)}
                         title={p.name}
-                        className={`relative flex-shrink-0 rounded-lg font-extrabold transition-all text-center flex items-center justify-center break-all ${isCompactViewport ? "w-8 h-8 px-0.5 text-[9px]" : "w-9 h-9 px-0.5 text-[10px]"
+                        className={`relative flex-shrink-0 rounded-lg font-extrabold transition-all text-center flex items-center justify-center break-all ${shouldStackProjectSwitcher ? "w-8 h-8 px-0.5 text-[9px]" : "w-9 h-9 px-0.5 text-[10px]"
                           } ${selectedProjectId === p.id || hasPendingBudgetReturn
                             ? "bg-orange-500 text-white shadow-md scale-105"
                             : "bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200"

@@ -25,6 +25,13 @@ service cloud.firestore {
       );
     }
 
+    function isAdminSite(appId) {
+      return signedIn() && (
+        primaryRole(appId) == 'Admin Site' ||
+        secondaryRoles(appId).hasAny(['Admin Site'])
+      );
+    }
+
     // Keep the server-side fallback in sync with MODULE_ACCESS in
     // src/lib/constants.ts. The client falls back to these roles when the
     // rolePermissions document (or an individual module key) does not exist.
@@ -158,7 +165,12 @@ service cloud.firestore {
         allow create: if canCreateInProject(appId) && moduleAllowed(appId, 'budget');
         allow update: if canUpdateExistingProjectDoc(appId) && (
           moduleAllowed(appId, 'budget') ||
-          (isBudgetReturnApprover(appId) && changesOnlyBudgetReturnFields(['budgetReturnNotifications', 'usedAmount', 'updatedAt']))
+          (isBudgetReturnApprover(appId) && changesOnlyBudgetReturnFields(['budgetReturnNotifications', 'usedAmount', 'updatedAt'])) ||
+          // PR creation keeps this derived cache in sync. PR-only roles may
+          // update the cache fields, but cannot change any budget details.
+          (moduleAllowed(appId, 'pr') &&
+            request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['usedAmount', 'updatedAt']))
         );
         allow delete: if canReadExistingProjectDoc(appId) && moduleAllowed(appId, 'budget');
       }
@@ -187,6 +199,10 @@ service cloud.firestore {
 
       match /pos/{documentId} {
         allow read: if canReadExistingProjectDoc(appId) && (
+          // Admin Site needs PO data as the source of the Receive workspace.
+          // This grants data read only; PO menu visibility remains controlled
+          // by rolePermissions in Set Role.
+          isAdminSite(appId) ||
           moduleAllowed(appId, 'budget') || moduleAllowed(appId, 'pr') ||
           moduleAllowed(appId, 'po') || moduleAllowed(appId, 'payment-subcontract') ||
           moduleAllowed(appId, 'receive') || moduleAllowed(appId, 'invoice') ||

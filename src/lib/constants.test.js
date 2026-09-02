@@ -1,13 +1,31 @@
 import { mergeFunctionPermissionsWithDefaults, MODULE_ACCESS, MODULE_FUNCTIONS } from "./constants";
 
 describe("Admin Site Receive access", () => {
-  it("can read Receive and history without gaining write defaults", () => {
+  it("can open Receive and view history without gaining write defaults", () => {
     const permissions = mergeFunctionPermissionsWithDefaults({});
 
     expect(MODULE_ACCESS.receive).toContain("Admin Site");
     expect(permissions.receive.viewHistory).toContain("Admin Site");
     expect(permissions.receive.receive).not.toContain("Admin Site");
     expect(permissions.receive.delete).not.toContain("Admin Site");
+  });
+
+  it("uses the Admin Site Receive permission configured in Set Role", () => {
+    const permissions = mergeFunctionPermissionsWithDefaults({
+      receive: {
+        receive: ["Staff", "Admin Site"],
+      },
+    });
+
+    expect(permissions.receive.receive).toEqual(["Staff", "Admin Site"]);
+  });
+
+  it("does not add Admin Site when Set Role excludes it", () => {
+    const permissions = mergeFunctionPermissionsWithDefaults({
+      receive: { receive: ["Staff"] },
+    });
+
+    expect(permissions.receive.receive).toEqual(["Staff"]);
   });
 });
 

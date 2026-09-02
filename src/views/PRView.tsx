@@ -47,11 +47,21 @@ const PRView = React.memo(() => {
    * จากนั้น save ค่า usedAmount ลงบน budget document (คล้าย statusNow บน PO)
    * เรียกหลัง PR save / reject / edit เพื่อให้ยอดคงเหลือใน dropdown ตรงเสมอ
    */
-  const recomputeBudgetUsed = useCallback(async (budgetId: string, costCode: string, projectId: string) => {
+  const recomputeBudgetUsed = useCallback(async (
+    budgetId: string,
+    costCode: string,
+    projectId: string,
+    prOverride: any = null
+  ) => {
     if (!budgetId && !costCode) return;
     const seen = new Set<string>();
     let total = 0;
-    for (const p of prs) {
+    // Firestore listeners update on a later render. Replace/add the PR that
+    // triggered this calculation so usedAmount is correct immediately.
+    const sourcePrs = prOverride?.id
+      ? [...prs.filter((p) => p.id !== prOverride.id), prOverride]
+      : prs;
+    for (const p of sourcePrs) {
       if (p.projectId !== projectId || p.status === "Rejected") continue;
       // A Cost Code can contain multiple Budget documents (for example
       // Head Office and Workshop). Once a PR has budgetId, Cost Code alone
@@ -64,7 +74,7 @@ const PRView = React.memo(() => {
       }
     }
     if (budgetId) {
-      await updateData("budgets", budgetId, { usedAmount: total });
+      await updateData("budgets", budgetId, { usedAmount: total }, { skipLog: true });
     }
   }, [prs, updateData]);
 
@@ -232,18 +242,24 @@ const PRView = React.memo(() => {
       showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธ PR", "warning");
       return;
     }
-    await updateData("prs", selectedPrForReject.id, {
+    const rejectedPr = {
+      ...selectedPrForReject,
       status: "Rejected",
       rejectReason: prRejectReason,
+    };
+    const success = await updateData("prs", selectedPrForReject.id, {
+      status: rejectedPr.status,
+      rejectReason: rejectedPr.rejectReason,
     });
     // Rejected PR ไม่นับงบ → recompute และ save กลับ budget document
-    setTimeout(() => {
-      recomputeBudgetUsed(
+    if (success) {
+      await recomputeBudgetUsed(
         selectedPrForReject.budgetId || "",
         selectedPrForReject.costCode || "",
-        selectedPrForReject.projectId || ""
+        selectedPrForReject.projectId || "",
+        rejectedPr
       );
-    }, 1500);
+    }
     setIsPrRejectModalOpen(false);
     setPrRejectReason("");
     setSelectedPrForReject(null);
@@ -1127,14 +1143,13 @@ const PRView = React.memo(() => {
 
     if (success) {
       // อัปเดต usedAmount บน budget document (เหมือน statusNow บน PO) ให้ยอดคงเหลือ dropdown ตรงเสมอ
-      // ต้องรอ Firestore listener อัปเดต prs ก่อนถึงจะ count รายการใหม่ถูก
-      setTimeout(() => {
-        recomputeBudgetUsed(
-          headerData.selectedBudgetId || prPayload.budgetId || "",
-          headerData.costCode || prPayload.costCode || "",
-          selectedProjectId
-        );
-      }, 1500);
+      // ส่ง PR ที่เพิ่งบันทึกเข้าไปโดยตรง ไม่ต้องรอ Firestore listener ซึ่ง callback เดิมอาจเห็น state เก่า
+      await recomputeBudgetUsed(
+        headerData.selectedBudgetId || prPayload.budgetId || "",
+        headerData.costCode || prPayload.costCode || "",
+        selectedProjectId,
+        { ...prPayload, id: editingPRId || prPayload.prNo }
+      );
 
       setProgress(100, "เสร็จสิ้น!");
       await new Promise(r => setTimeout(r, 600));

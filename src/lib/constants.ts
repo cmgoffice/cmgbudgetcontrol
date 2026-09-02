@@ -46,6 +46,28 @@ export const getPoDisplayStatus = (po: any) => {
   return statusNow || status || "Draft";
 };
 
+/** PO ที่ยังเปิดให้ทำ Receive ด้วยมือได้ */
+export const isPoReadyForManualReceive = (po: any) => {
+  if (!po || ["SP", "DC"].includes(String(po.poType || "").trim().toUpperCase())) {
+    return false;
+  }
+
+  const displayStatus = getPoDisplayStatus(po);
+  if (["Approved", "Approve", "Partial Receive"].includes(displayStatus)) {
+    return true;
+  }
+
+  // Pay-before-receive uses lowercase `paid` while payment is complete but
+  // receiving is still pending. Uppercase `Paid` is the terminal status after
+  // Receive is complete and must not return to the pending list.
+  const receiveType = String(po.receiveType || "").trim().toLowerCase();
+  const isPayBeforeReceive =
+    Boolean(po.payBeforeReceiveChecked) ||
+    receiveType.includes("pay before") ||
+    String(po.invoiceMode || "").trim().toLowerCase() === "pay_before_receive";
+  return displayStatus === "paid" && isPayBeforeReceive;
+};
+
 /** PR ขอ Active คืน — รอ PCM อนุมัติ */
 export const PR_PENDING_ACTIVE = "Pending Active PR";
 
@@ -274,8 +296,8 @@ export function mergeFunctionPermissionsWithDefaults(
     budget: {
       acceptBudgetReturn: ["PM", "PCM", "GM", "MD"],
     },
-    // Admin Site needs read access to the Receive workspace, but should not
-    // receive or delete documents unless an administrator explicitly grants it.
+    // These are fallback permissions only. Once Set Role has been saved, the
+    // configured functionPermissions from Firestore remain authoritative.
     receive: {
       receive: ["Administrator", "MD", "GM", "PM", "PCM", "Staff"],
       viewHistory: ["Administrator", "MD", "GM", "PM", "PCM", "Staff", "Admin Site"],
