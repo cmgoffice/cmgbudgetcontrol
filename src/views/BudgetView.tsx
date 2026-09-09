@@ -2255,9 +2255,8 @@ const BudgetView = React.memo(() => {
   const getBudgetFilterText = useCallback((budget) => {
     const totalBudget = Number(calculateTotalBudget(budget)) || 0;
     const hasSubItems = Array.isArray(budget.subItems) && budget.subItems.length > 0;
-    const sumSubItemsAmount = hasSubItems ? sumSubItemAmounts(budget.subItems) : 0;
     const stats = budgetStatsById.get(budget.id) || { prTotal: 0, poTotal: 0, invoiceTotal: 0, relatedPRs: [], relatedPOs: [] };
-    const budgetBalance = hasSubItems ? totalBudget - sumSubItemsAmount : totalBudget - stats.invoiceTotal;
+    const budgetBalance = hasSubItems ? totalBudget - stats.prTotal : totalBudget - stats.invoiceTotal;
     const subItems = Array.isArray(budget.subItems) ? budget.subItems : [];
     const mainAttachments = Array.isArray(budget.attachments) ? budget.attachments : [];
     const subAttachments = subItems.flatMap((sub) => Array.isArray(sub.attachments) ? sub.attachments : []);
@@ -2309,7 +2308,7 @@ const BudgetView = React.memo(() => {
       }),
       ...subAttachments.map((att) => att?.name || att?.url || "file"),
     ].join(" ");
-  }, [budgetStatsById, getNowStatus, getSubItemAmount, getSubItemPrUsed, normalizeBudgetFilterText, pickLatestNowStatus, sumSubItemAmounts]);
+  }, [budgetStatsById, getNowStatus, getSubItemAmount, getSubItemPrUsed, normalizeBudgetFilterText, pickLatestNowStatus]);
 
   const filteredBudgets = useMemo(() => {
     if (!hasBudgetTableFilter) return sortedBudgets;
@@ -2331,9 +2330,8 @@ const BudgetView = React.memo(() => {
       (acc, b) => {
         const totalBudget = Number(calculateTotalBudget(b)) || 0;
         const hasSubItems = Array.isArray(b.subItems) && b.subItems.length > 0;
-        const sumSubItemsAmount = hasSubItems ? sumSubItemAmounts(b.subItems) : 0;
         const stats = budgetStatsById.get(b.id) || { prTotal: 0, poTotal: 0, invoiceTotal: 0 };
-        const budgetBalance = hasSubItems ? totalBudget - sumSubItemsAmount : totalBudget - stats.invoiceTotal;
+        const budgetBalance = hasSubItems ? totalBudget - stats.prTotal : totalBudget - stats.invoiceTotal;
 
         acc.budget += totalBudget;
         acc.prTotal += stats.prTotal || 0;
@@ -2343,7 +2341,7 @@ const BudgetView = React.memo(() => {
       },
       { budget: 0, prTotal: 0, poTotal: 0, balance: 0 }
     );
-  }, [filteredBudgets, budgetStatsById, sumSubItemAmounts]);
+  }, [filteredBudgets, budgetStatsById]);
 
   const getBudgetReturnNotifications = (budget) => {
     if (!budget || !Array.isArray(budget.budgetReturnNotifications)) return [];
@@ -2366,10 +2364,9 @@ const BudgetView = React.memo(() => {
         const totalBudget = Number(calculateTotalBudget(b)) || 0;
         const stats = budgetStatsById.get(b.id) || { prTotal: 0, poTotal: 0, invoiceTotal: 0 };
         const hasSubItems = Array.isArray(b.subItems) && b.subItems.length > 0;
-        const sumSubItems = hasSubItems ? sumSubItemAmounts(b.subItems) : 0;
         // ใช้สูตรเดียวกับหน้า category ของแถว Main
         const balance = hasSubItems
-          ? totalBudget - sumSubItems
+          ? totalBudget - (Number(stats.prTotal) || 0)
           : totalBudget - (Number(stats.invoiceTotal) || 0);
 
         return {
@@ -3931,7 +3928,7 @@ const BudgetView = React.memo(() => {
                       categorySummaryTotals.pr
                     )}
                   </td>
-                  <td className="py-2 px-3 text-right">
+                  <td className={`py-2 px-3 text-right ${categorySummaryTotals.balance < 0 ? "text-red-300" : "text-white"}`}>
                     {formatCurrency(
                       categorySummaryTotals.balance
                     )}
@@ -4705,7 +4702,21 @@ const BudgetView = React.memo(() => {
                     {isColumnVisible("budget", "budget") && <ResizableTh tableId="budget" colKey="budget" className="budget-col-budget py-3 px-4 text-right bg-blue-100" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.budget}>Budget<span className="block mt-1 text-[15px] font-black text-blue-700 tracking-tight opacity-100 drop-shadow-sm">{formatCurrency(headerTotals.budget)}</span></ResizableTh>}
                     {isColumnVisible("budget", "status") && <ResizableTh tableId="budget" colKey="status" className="budget-col-status py-3 px-4 text-center" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.status}>สถานะ</ResizableTh>}
                     {isColumnVisible("budget", "attachment") && <ResizableTh tableId="budget" colKey="attachment" className="budget-col-attachment py-3 px-4 text-center" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.attachment}>Attachment</ResizableTh>}
-                    {isColumnVisible("budget", "balance") && <ResizableTh tableId="budget" colKey="balance" className="budget-col-balance py-3 px-4 text-right text-green-800 font-bold border-r" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.balance}>Balance<span className="block mt-1 text-[15px] font-black text-green-700 tracking-tight opacity-100 drop-shadow-sm">{formatCurrency(headerTotals.balance)}</span></ResizableTh>}
+                    {isColumnVisible("budget", "balance") && (
+                      <ResizableTh
+                        tableId="budget"
+                        colKey="balance"
+                        className={`budget-col-balance py-3 px-4 text-right font-bold border-r ${headerTotals.balance < 0 ? "text-red-800" : "text-green-800"}`}
+                        isAdmin={userRole === "Administrator"}
+                        onResize={onBudgetViewColumnResize}
+                        currentWidth={budgetMainLayout.scaled.balance}
+                      >
+                        Balance
+                        <span className={`block mt-1 text-[15px] font-black tracking-tight opacity-100 drop-shadow-sm ${headerTotals.balance < 0 ? "text-red-700" : "text-green-700"}`}>
+                          {formatCurrency(headerTotals.balance)}
+                        </span>
+                      </ResizableTh>
+                    )}
                     {isColumnVisible("budget", "prTotal") && <ResizableTh tableId="budget" colKey="prTotal" className="budget-col-pr-total py-3 px-4 text-right text-slate-600" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.prTotal}>PR Total<span className="block mt-1 text-[15px] font-black text-slate-800 tracking-tight opacity-100 drop-shadow-sm">{formatCurrency(headerTotals.prTotal)}</span></ResizableTh>}
                     {isColumnVisible("budget", "poTotal") && <ResizableTh tableId="budget" colKey="poTotal" className="budget-col-po-total py-3 px-4 text-right text-slate-600" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={budgetMainLayout.scaled.poTotal}>PO Total (Ex VAT)<span className="block mt-1 text-[15px] font-black text-slate-800 tracking-tight opacity-100 drop-shadow-sm">{formatCurrency(headerTotals.poTotal)}</span></ResizableTh>}
                     {isColumnVisible("budget", "actions") && <th className="budget-col-actions py-3 px-4 text-right" style={{ width: budgetMainLayout.scaled.actions, minWidth: budgetMainLayout.scaled.actions }}>Actions</th>}
@@ -4715,15 +4726,13 @@ const BudgetView = React.memo(() => {
                   {filteredBudgets.map((b) => {
                     const totalBudget = calculateTotalBudget(b);
                     const hasSubItems = b.subItems && b.subItems.length > 0;
-                    const sumSubItems = hasSubItems ? sumSubItemAmounts(b.subItems) : 0;
                     const pendingReturnNotifications = getPendingBudgetReturnNotifications(b);
                     const pendingReturnTotal = sumBudgetReturnNotifications(pendingReturnNotifications);
                     const hasPendingBudgetReturn = pendingReturnNotifications.length > 0;
                     const stats = budgetStatsById.get(b.id) || { prTotal: 0, poTotal: 0, invoiceTotal: 0, relatedPRs: [], relatedPOs: [] };
-                    // Calculate balance based on whether budget has subitems
-                    // For budgets with subitems: Balance = Budget Total - Sum of Subitems
-                    // For budgets without subitems: Balance = Budget Total - Invoice Total
-                    const budgetBalance = hasSubItems ? totalBudget - sumSubItems : totalBudget - stats.invoiceTotal;
+                    // Main rows with sub-items reserve budget at PR creation, matching
+                    // the PR-based balance shown by each expanded Sub-item row.
+                    const budgetBalance = hasSubItems ? totalBudget - stats.prTotal : totalBudget - stats.invoiceTotal;
                     const isLocked =
                       b.status === "Approved" || b.status === "Wait MD Approve";
                     const isDirectPrepareEdit = canDirectEditApprovedMainBudget(

@@ -78,6 +78,9 @@ const getDefaultPoFormData = () => ({
   vendorName: "",
   vendorCode: "",
   vendorType: "",
+  vendorAddress: "",
+  vendorTel: "",
+  vendorCreditTerm: "",
   requiredDate: "",
   poOpenDate: new Date().toISOString().split("T")[0],
   vatType: "ex-vat",
@@ -1786,6 +1789,9 @@ const POView = React.memo(() => {
         vendorName: formData.vendorName || "",
         vendorCode: formData.vendorCode || "",
         vendorType: formData.vendorType || "",
+        vendorAddress: formData.vendorAddress || "",
+        vendorTel: formData.vendorTel || "",
+        vendorCreditTerm: formData.vendorCreditTerm ?? "",
         requiredDate: formData.requiredDate || "",
         vatType: formData.vatType || "ex-vat",
         items: itemsDraft,
@@ -2263,6 +2269,9 @@ const POView = React.memo(() => {
           vendorName: formData.vendorName || vendor?.name || "",
           vendorCode: formData.vendorCode || vendor?.code || "",
           vendorType: formData.vendorType || vendor?.type || "",
+          vendorAddress: formData.vendorAddress ?? vendor?.address ?? "",
+          vendorTel: formData.vendorTel ?? vendor?.tel ?? "",
+          vendorCreditTerm: formData.vendorCreditTerm ?? vendor?.creditTerm ?? "",
           requiredDate: formData.requiredDate, vatType: formData.vatType,
           items: itemsWithAllocations, amount: totals.total,
           discount: formData.discount || 0,
@@ -2316,6 +2325,9 @@ const POView = React.memo(() => {
         vendorName: selectedVendor?.name || formData.vendorName || "",
         vendorCode: selectedVendor?.code || formData.vendorCode || "",
         vendorType: selectedVendor?.type || formData.vendorType || "",
+        vendorAddress: formData.vendorAddress ?? selectedVendor?.address ?? "",
+        vendorTel: formData.vendorTel ?? selectedVendor?.tel ?? "",
+        vendorCreditTerm: formData.vendorCreditTerm ?? selectedVendor?.creditTerm ?? "",
       };
       
       const basePayload = {
@@ -3575,6 +3587,9 @@ const POView = React.memo(() => {
                                         vendorName: po.vendorName || po.vendor || po.supplierName || "",
                                         vendorCode: po.vendorCode || "",
                                         vendorType: po.vendorType || "",
+                                        vendorAddress: po.vendorAddress || "",
+                                        vendorTel: po.vendorTel || "",
+                                        vendorCreditTerm: po.vendorCreditTerm ?? "",
                                         requiredDate: po.requiredDate || "",
                                         poOpenDate: poOpenDateVal,
                                         vatType: po.vatType || "ex-vat",
@@ -3787,6 +3802,9 @@ const POView = React.memo(() => {
                                       vendorName: po.vendorName || po.vendor || po.supplierName || "",
                                       vendorCode: po.vendorCode || "",
                                       vendorType: po.vendorType || "",
+                                      vendorAddress: po.vendorAddress || "",
+                                      vendorTel: po.vendorTel || "",
+                                      vendorCreditTerm: po.vendorCreditTerm ?? "",
                                       requiredDate: po.requiredDate || "",
                                       poOpenDate: poOpenDateVal,
                                       vatType: po.vatType || "ex-vat",
@@ -4705,7 +4723,7 @@ const POView = React.memo(() => {
                                 />
                                 <Building2 className="absolute left-3 top-2 text-red-400 pointer-events-none" size={14} />
                                 {formData.vendorId && (
-                                  <button type="button" className="absolute right-2 top-2 p-1 text-slate-400 hover:text-red-500" onClick={() => { setFormData(prev => ({ ...prev, vendorId: "", vendorName: "", vendorCode: "", vendorType: "" })); setVendorSearchText(""); }} title="ล้างการเลือก">
+                                  <button type="button" className="absolute right-2 top-2 p-1 text-slate-400 hover:text-red-500" onClick={() => { setFormData(prev => ({ ...prev, vendorId: "", vendorName: "", vendorCode: "", vendorType: "", vendorAddress: "", vendorTel: "", vendorCreditTerm: "" })); setVendorSearchText(""); }} title="ล้างการเลือก">
                                     <XCircle size={12} />
                                   </button>
                                 )}
@@ -4715,7 +4733,7 @@ const POView = React.memo(() => {
                                       <div className="px-3 py-4 text-xs text-slate-500 text-center">ไม่พบ Vendor</div>
                                     ) : (
                                       vendorFilteredList.slice(0, 50).map((v: any) => (
-                                        <button key={v.id} type="button" className={`w-full text-left px-3 py-2 text-sm hover:bg-red-50 flex items-center justify-between ${formData.vendorId === v.id ? "bg-red-50 text-red-800" : "text-slate-700"}`} onMouseDown={(e) => { e.preventDefault(); setFormData(prev => ({ ...prev, vendorId: v.id, vendorName: v.name || "", vendorCode: v.code || "", vendorType: v.type || "" })); setVendorSearchText(v.name || ""); setVendorDropdownOpen(false); }}>
+                                        <button key={v.id} type="button" className={`w-full text-left px-3 py-2 text-sm hover:bg-red-50 flex items-center justify-between ${formData.vendorId === v.id ? "bg-red-50 text-red-800" : "text-slate-700"}`} onMouseDown={(e) => { e.preventDefault(); setFormData(prev => ({ ...prev, vendorId: v.id, vendorName: v.name || "", vendorCode: v.code || "", vendorType: v.type || "", vendorAddress: v.address || "", vendorTel: v.tel || "", vendorCreditTerm: v.creditTerm ?? "" })); setVendorSearchText(v.name || ""); setVendorDropdownOpen(false); }}>
                                           <span className="font-medium truncate">{v.name}</span>
                                           {v.code && <span className="text-xs text-slate-500 shrink-0 ml-1">{v.code}</span>}
                                         </button>
@@ -4915,6 +4933,9 @@ const POView = React.memo(() => {
                                  name: formData.vendorName,
                                  code: formData.vendorCode,
                                  type: formData.vendorType,
+                                 address: formData.vendorAddress,
+                                 tel: formData.vendorTel,
+                                 creditTerm: formData.vendorCreditTerm,
                                };
                                if (!vendorPreview.name) return <p className="text-slate-400">กดช่อง Vendor เพื่อโหลดข้อมูล</p>;
                                return (

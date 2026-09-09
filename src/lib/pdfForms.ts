@@ -576,12 +576,14 @@ export async function generatePRPdfBytes(pr: any, { projectName = "", budgetDesc
 export async function generatePOPdfBytes(po: any, { vendor = null, project = null }: { vendor?: any; project?: any } = {}) {
   const { pdfDoc: initialDoc, hasForm, customFont, templateBytes } = await loadTemplate("po");
 
-  const vendorCode    = vendor?.code    || po.vendorCode    || "";
-  const vendorName    = vendor?.name    || po.vendorName    || "";
-  const vendorAddress = vendor?.address || po.vendorAddress || "";
-  const vendorTel     = vendor?.tel     || po.vendorTel     || "";
+  // PO keeps a Vendor snapshot so an issued document does not change when the
+  // Vendor master is edited later. The master is only a fallback for legacy PO.
+  const vendorCode    = po.vendorCode    || vendor?.code    || "";
+  const vendorName    = po.vendorName    || vendor?.name    || "";
+  const vendorAddress = po.vendorAddress ?? vendor?.address ?? "";
+  const vendorTel     = po.vendorTel     ?? vendor?.tel     ?? "";
   // vendor_credit_term — ส่งเฉพาะตัวเลข ตัดคำว่า "วัน" หรือหน่วยอื่นออก
-  const rawCredit     = vendor?.creditTerm ?? po.vendorCreditTerm ?? "";
+  const rawCredit     = po.vendorCreditTerm ?? vendor?.creditTerm ?? "";
   const vendorCredit  = rawCredit !== "" ? String(rawCredit).replace(/[^\d.]/g, "").replace(/\.$/, "") : "";
 
   // vendor_address = ที่อยู่ + โทร รวมในฟิลด์เดียว

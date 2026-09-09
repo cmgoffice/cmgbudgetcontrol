@@ -1386,8 +1386,14 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   }, [debouncedSearchTerm]);
   const [filterStatus, setFilterStatus] = React.useState("all");
   const [filterProject, setFilterProject] = React.useState(selectedProjectId || "all");
+  const [startDate, setStartDate] = React.useState("");
+  const [endDate, setEndDate] = React.useState("");
   const [activeTypeTab, setActiveTypeTab] = React.useState("");
   const [currentPage, setCurrentPage] = React.useState(1);
+  const [tableSortConfig, setTableSortConfig] = React.useState<{
+    key: "prNo" | "poNo" | "costCode" | null;
+    direction: "asc" | "desc";
+  }>({ key: null, direction: "asc" });
   const isDesktopTable = useMediaQuery("(min-width: 768px)");
   // Keep the dense Log tables readable while the surrounding layout is responsive.
   const isResponsiveLog = useMediaQuery("(max-width: 1279px)");
@@ -1775,12 +1781,55 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
         setRunningProgress(completedUnits, "เตรียมข้อมูล PO...");
         const safePONo = String(poNo).replace(/[^a-zA-Z0-9\-_]/g, "_");
         const safeProjId = po.projectId || "unknown";
-        const vendor = vendors?.find((v: any) => v.id === po.vendorId) || null;
+        const hasOwn = (key: string) => Object.prototype.hasOwnProperty.call(po, key);
+        const hasSnapshotField = (key: string) => hasOwn(key) && po[key] !== null && po[key] !== undefined;
+        const missingVendorSnapshot = ["vendorAddress", "vendorTel", "vendorCreditTerm"]
+          .some((key) => !hasSnapshotField(key));
+        const normalizedVendorCode = String(po.vendorCode || "").trim().toLocaleLowerCase();
+        let vendor = missingVendorSnapshot
+          ? vendors?.find((v: any) => String(v.code || "").trim().toLocaleLowerCase() === normalizedVendorCode) || null
+          : null;
+        if (missingVendorSnapshot && !normalizedVendorCode) {
+          throw new Error("PO เก่าไม่มีข้อมูล Vendor snapshot และไม่มี vendorCode สำหรับค้นหา Vendor master");
+        }
+        // The Vendor page is lazy-loaded, so its in-memory list may still be empty.
+        // Query the one Vendor needed by Recreate directly from Firestore.
+        if (missingVendorSnapshot && !vendor) {
+          setRunningProgress(completedUnits, `กำลังค้นหา Vendor รหัส ${po.vendorCode}...`);
+          const vendorQuery = query(
+            collection(db, "artifacts", appId, "public", "data", "vendors"),
+            where("code", "==", String(po.vendorCode || "").trim()),
+            limit(10)
+          );
+          const vendorQuerySnapshot = await getDocs(vendorQuery);
+          if (!vendorQuerySnapshot.empty) {
+            // Duplicate Vendor codes can exist in legacy data. Prefer the
+            // original vendorId stored on the PO, then fall back to the first match.
+            const vendorDoc = vendorQuerySnapshot.docs.find((item) => item.id === po.vendorId)
+              || vendorQuerySnapshot.docs[0];
+            vendor = { id: vendorDoc.id, ...vendorDoc.data() };
+          }
+        }
+        if (missingVendorSnapshot && !vendor) {
+          throw new Error(`ไม่พบ Vendor master ที่มีรหัส ${po.vendorCode}`);
+        }
+        const vendorSnapshot = missingVendorSnapshot ? {
+          ...(!hasSnapshotField("vendorAddress") ? { vendorAddress: vendor?.address || "" } : {}),
+          ...(!hasSnapshotField("vendorTel") ? { vendorTel: vendor?.tel || "" } : {}),
+          ...(!hasSnapshotField("vendorCreditTerm") ? { vendorCreditTerm: vendor?.creditTerm ?? "" } : {}),
+        } : {};
+        if (missingVendorSnapshot) {
+          setRunningProgress(completedUnits, "กำลังบันทึกข้อมูล Vendor ลงใน PO...");
+          if (!updateData) throw new Error("ไม่พบฟังก์ชันบันทึกข้อมูล PO");
+          const snapshotSaved = await updateData("pos", poId, vendorSnapshot);
+          if (snapshotSaved === false) throw new Error("บันทึกข้อมูล Vendor snapshot ลงใน PO ไม่สำเร็จ");
+        }
         const project = projects?.find((p: any) => p.id === po.projectId) || null;
         const pcmdate = po.pcmApprovedAt ? new Date(po.pcmApprovedAt).toLocaleDateString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric" }) : "";
         const gmdate = po.gmApprovedAt ? new Date(po.gmApprovedAt).toLocaleDateString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric" }) : "";
         const poDataForPdf = {
           ...po,
+          ...vendorSnapshot,
           pcmdate,
           gmdate,
           reason: po.reason || "",
@@ -1789,7 +1838,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
         completeUnit("เตรียมข้อมูล PO เสร็จ");
 
         setRunningProgress(completedUnits, "กำลังสร้าง PDF จากแบบฟอร์ม...");
-        let bytes = await generatePOPdfBytes(poDataForPdf, { vendor, project });
+        let bytes = await generatePOPdfBytes(poDataForPdf, { project });
         completeUnit("สร้าง PDF เสร็จ");
 
         setRunningProgress(completedUnits, "กำลังตรวจและปั๊มลายเซ็น...");
@@ -1838,6 +1887,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
             pdfUrl: updatedPdfUrl,
             pdfPath: updatedPdfPath,
             pdfUpdatedAt: new Date().toISOString(),
+            ...vendorSnapshot,
             ...(po.poBudgetReturnRevNo || po.poBudgetReturnRevisions?.length
               ? { poPdfRevisionNo: Number(po.poBudgetReturnRevNo || po.poBudgetReturnRevisions?.length || 0) }
               : {}),
@@ -1855,6 +1905,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
               pdfUrl: updatedPdfUrl,
               pdfPath: updatedPdfPath,
               pdfUpdatedAt: new Date().toISOString(),
+              ...vendorSnapshot,
               ...(po.poBudgetReturnRevNo || po.poBudgetReturnRevisions?.length
                 ? { poPdfRevisionNo: Number(po.poBudgetReturnRevNo || po.poBudgetReturnRevisions?.length || 0) }
                 : {}),
@@ -2064,6 +2115,50 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   const getPoLinkedPrMeta = useCallback((po: any) => (
     prPoIndexes.poMetaById.get(String(po?.id || "")) || EMPTY_PO_META
   ), [prPoIndexes]);
+
+  const getTableSortValue = React.useCallback((row: any, key: "prNo" | "poNo" | "costCode") => {
+    if (key === "poNo") return String(row?.poNo || row?.id || "");
+
+    if (isPR) {
+      return key === "prNo"
+        ? String(row?.prNo || row?.id || "")
+        : String(row?.costCode || "");
+    }
+
+    const linkedMeta = getPoLinkedPrMeta(row);
+    return key === "prNo"
+      ? linkedMeta.prNos.join(", ")
+      : linkedMeta.costCodes.join(", ");
+  }, [getPoLinkedPrMeta, isPR]);
+
+  const requestTableSort = React.useCallback((key: "prNo" | "poNo" | "costCode") => {
+    setTableSortConfig((previous) => ({
+      key,
+      direction: previous.key === key && previous.direction === "asc" ? "desc" : "asc",
+    }));
+  }, []);
+
+  const getTableSortIndicator = React.useCallback((key: "prNo" | "poNo" | "costCode") => {
+    if (tableSortConfig.key !== key) return "↕";
+    return tableSortConfig.direction === "asc" ? "▲" : "▼";
+  }, [tableSortConfig]);
+
+  const sortTableRows = React.useCallback((list: any[]) => {
+    const { key, direction } = tableSortConfig;
+    return [...list].sort((a, b) => {
+      // Keep actionable rows at the top, then sort the remaining rows by the
+      // selected column so sorting does not hide the existing workflow cue.
+      const notificationOrder = Number(isNotificationRow(b)) - Number(isNotificationRow(a));
+      if (notificationOrder !== 0) return notificationOrder;
+      if (!key) return 0;
+
+      const left = getTableSortValue(a, key);
+      const right = getTableSortValue(b, key);
+      return direction === "asc"
+        ? left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" })
+        : right.localeCompare(left, undefined, { numeric: true, sensitivity: "base" });
+    });
+  }, [getTableSortValue, isNotificationRow, tableSortConfig]);
 
   const getPrBalanceAmount = React.useCallback((pr: any) => {
     const linkedPos = prPoIndexes.financialPosByPrId.get(String(pr?.id || "")) || [];
@@ -2591,13 +2686,42 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
   const rows = isPR ? prs : pos;
 
+  const getRowDateKey = React.useCallback((row: any) => {
+    let rawDate = isPR ? row?.requestDate : (row?.poDate || row?.createdDate);
+    if (rawDate?.toDate instanceof Function) rawDate = rawDate.toDate();
+
+    if (rawDate instanceof Date && !Number.isNaN(rawDate.getTime())) {
+      const year = rawDate.getFullYear();
+      const month = String(rawDate.getMonth() + 1).padStart(2, "0");
+      const day = String(rawDate.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+
+    const rawText = String(rawDate || "").trim();
+    const isoDate = rawText.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+    if (isoDate) return `${isoDate[1]}-${isoDate[2].padStart(2, "0")}-${isoDate[3].padStart(2, "0")}`;
+
+    const dayFirstDate = rawText.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+    if (dayFirstDate) return `${dayFirstDate[3]}-${dayFirstDate[2].padStart(2, "0")}-${dayFirstDate[1].padStart(2, "0")}`;
+
+    const parsedDate = new Date(rawText);
+    if (Number.isNaN(parsedDate.getTime())) return "";
+    const year = parsedDate.getFullYear();
+    const month = String(parsedDate.getMonth() + 1).padStart(2, "0");
+    const day = String(parsedDate.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }, [isPR]);
+
   // ตัดข้อมูลด้วยเงื่อนไขราคาถูกก่อนสร้าง Ref/Search
   const scopedRows = React.useMemo(() => rows.filter((r: any) => {
     if (filterProject !== "all" && r.projectId !== filterProject) return false;
+    const rowDate = getRowDateKey(r);
+    if (startDate && (!rowDate || rowDate < startDate)) return false;
+    if (endDate && (!rowDate || rowDate > endDate)) return false;
     if (filterStatus === "all") return true;
     const rowStatus = getRowStatus(r);
     return rowStatus === filterStatus || (!isPR && (r.status === filterStatus || r.statusNow === filterStatus));
-  }), [filterProject, filterStatus, getRowStatus, isPR, rows]);
+  }), [endDate, filterProject, filterStatus, getRowDateKey, getRowStatus, isPR, rows, startDate]);
 
   const lowerSearch = (effectiveSearchTerm || "").toLowerCase();
   const filtered = React.useMemo(() => {
@@ -2649,10 +2773,8 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       });
 
     // ให้รายการที่ผู้ใช้ต้องดำเนินการขึ้นก่อนเสมอ ก่อนแบ่งหน้าและแบ่งแท็บ Type
-    return matchedRows.sort((a: any, b: any) =>
-      Number(isNotificationRow(b)) - Number(isNotificationRow(a))
-    );
-  }, [getPoLinkedPrMeta, getProjectName, getRowStatus, isNotificationRow, isPR, lowerSearch, prPoIndexes, scopedRows, vendorById]);
+    return sortTableRows(matchedRows);
+  }, [getPoLinkedPrMeta, getProjectName, getRowStatus, isPR, lowerSearch, prPoIndexes, scopedRows, sortTableRows, vendorById]);
 
   const getShortTypeLabel = React.useCallback((typeValue: any) => {
     const raw = String(typeValue || "").trim();
@@ -2694,7 +2816,11 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
   React.useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, filterStatus, filterProject, mode]);
+  }, [endDate, filterProject, filterStatus, mode, searchTerm, startDate]);
+
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [tableSortConfig]);
 
   const activeTypeGroup = React.useMemo(
     () => typeTabs.find((tab) => tab.key === activeTypeTab) || typeTabs[0] || null,
@@ -2882,6 +3008,30 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
         {/* Filters */}
         <div className="flex w-full shrink-0 flex-wrap gap-2 xl:w-auto">
+          <div className="flex w-full items-center gap-1 sm:w-auto">
+            <label className="text-[10px] font-semibold text-slate-500" htmlFor={`${tblId}-start-date`}>Start</label>
+            <input
+              id={`${tblId}-start-date`}
+              type="date"
+              value={startDate}
+              max={endDate || undefined}
+              onChange={(e) => setStartDate(e.target.value)}
+              aria-label="วันที่เริ่มต้น"
+              title="วันที่เริ่มต้น"
+              className="min-w-0 flex-1 rounded-lg border border-slate-200 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 sm:w-[8.5rem] sm:flex-none"
+            />
+            <label className="ml-1 text-[10px] font-semibold text-slate-500" htmlFor={`${tblId}-end-date`}>End</label>
+            <input
+              id={`${tblId}-end-date`}
+              type="date"
+              value={endDate}
+              min={startDate || undefined}
+              onChange={(e) => setEndDate(e.target.value)}
+              aria-label="วันที่สิ้นสุด"
+              title="วันที่สิ้นสุด"
+              className="min-w-0 flex-1 rounded-lg border border-slate-200 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 sm:w-[8.5rem] sm:flex-none"
+            />
+          </div>
           <div className="relative w-full sm:w-auto">
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
@@ -2948,13 +3098,13 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
               <tr className="bg-slate-800 text-white">
                 {!isDesktopTable && isColumnVisible(tblId, "action") && <th className="px-2 py-0.5 font-semibold text-left" style={{ width: prPoScaled.action }}>Action</th>}
                 {isColumnVisible(tblId, "rowNum") && <th className="px-2 py-0.5 font-semibold" style={{ width: prPoScaled.rowNum }}>#</th>}
-                {isColumnVisible(tblId, "no") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="no" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.no}>{isPR ? "PR No." : "PO No."}</ResizableTh>}
+                {isColumnVisible(tblId, "no") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="no" className="px-2 py-0.5 font-semibold cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.no} onClick={() => requestTableSort(isPR ? "prNo" : "poNo")} aria-sort={tableSortConfig.key === (isPR ? "prNo" : "poNo") ? (tableSortConfig.direction === "asc" ? "ascending" : "descending") : "none"}>{isPR ? "PR No." : "PO No."} <span className="text-[10px] ml-1 opacity-70">{getTableSortIndicator(isPR ? "prNo" : "poNo")}</span></ResizableTh>}
                 {isColumnVisible(tblId, "project") && (isPR || !isResponsiveLog) && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="project" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.project}>โครงการ</ResizableTh>}
-                {isPR && isColumnVisible("pr-table", "costCode") && <ResizableTh tableId="pr-table" colKey="costCode" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.costCode}>Cost Code</ResizableTh>}
+                {isPR && isColumnVisible("pr-table", "costCode") && <ResizableTh tableId="pr-table" colKey="costCode" className="px-2 py-0.5 font-semibold cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.costCode} onClick={() => requestTableSort("costCode")} aria-sort={tableSortConfig.key === "costCode" ? (tableSortConfig.direction === "asc" ? "ascending" : "descending") : "none"}>Cost Code <span className="text-[10px] ml-1 opacity-70">{getTableSortIndicator("costCode")}</span></ResizableTh>}
                 {isPR && isColumnVisible("pr-table", "description") && <ResizableTh tableId="pr-table" colKey="description" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.description}>รายการงบ</ResizableTh>}
-                {!isPR && isColumnVisible("po-table", "costCode") && <ResizableTh tableId="po-table" colKey="costCode" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.costCode}>Cost Code</ResizableTh>}
+                {!isPR && isColumnVisible("po-table", "costCode") && <ResizableTh tableId="po-table" colKey="costCode" className="px-2 py-0.5 font-semibold cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.costCode} onClick={() => requestTableSort("costCode")} aria-sort={tableSortConfig.key === "costCode" ? (tableSortConfig.direction === "asc" ? "ascending" : "descending") : "none"}>Cost Code <span className="text-[10px] ml-1 opacity-70">{getTableSortIndicator("costCode")}</span></ResizableTh>}
                 {!isPR && isColumnVisible("po-table", "vendor") && <ResizableTh tableId="po-table" colKey="vendor" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.vendor}>Vendor</ResizableTh>}
-                {!isPR && !isResponsiveLog && isColumnVisible("po-table", "prRef") && <ResizableTh tableId="po-table" colKey="prRef" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.prRef}>Ref PR No.</ResizableTh>}
+                {!isPR && !isResponsiveLog && isColumnVisible("po-table", "prRef") && <ResizableTh tableId="po-table" colKey="prRef" className="px-2 py-0.5 font-semibold cursor-pointer select-none" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={poTableLayout.scaled.prRef} onClick={() => requestTableSort("prNo")} aria-sort={tableSortConfig.key === "prNo" ? (tableSortConfig.direction === "asc" ? "ascending" : "descending") : "none"}>Ref PR No. <span className="text-[10px] ml-1 opacity-70">{getTableSortIndicator("prNo")}</span></ResizableTh>}
                 {isColumnVisible(tblId, "date") && <ResizableTh tableId={isPR ? "pr-table" : "po-table"} colKey="date" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prPoScaled.date}>วันที่</ResizableTh>}
                 {isPR && isColumnVisible("pr-table", "requestor") && <ResizableTh tableId="pr-table" colKey="requestor" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.requestor}>ผู้ขอ</ResizableTh>}
                 {isPR && isColumnVisible("pr-table", "type") && <ResizableTh tableId="pr-table" colKey="type" className="px-2 py-0.5 font-semibold" isAdmin={userRole === "Administrator"} onResize={onPrPoTableResize} currentWidth={prTableLayout.scaled.type}>ประเภท</ResizableTh>}
@@ -2988,7 +3138,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                   const statusClass = statusColors[displayStatus] || "bg-slate-50 text-slate-500 border-slate-200";
                   const isEven = idx % 2 === 0;
                   const vendorName = !isPR
-                    ? (r.vendor || vendorById.get(r.vendorId)?.name || "-")
+                    ? (r.vendorName || r.vendor || r.supplierName || vendorById.get(r.vendorId)?.name || "-")
                     : "";
                   const poLinkedMeta = !isPR ? getPoLinkedPrMeta(r) : { prNos: [], costCodes: [] };
                   const poRefNos = isPR
