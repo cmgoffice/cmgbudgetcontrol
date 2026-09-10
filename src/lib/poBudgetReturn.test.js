@@ -1,5 +1,5 @@
 import { buildPoBudgetReturnPlan, isPaymentJobCompleted, scalePoItemsToNetAmount } from "./poBudgetReturn";
-import { getPrBudgetReturnInfo } from "./prBudgetReturn";
+import { buildPrPoUsageIndex, getPoNetAmountAllocatedToPr, getPrBudgetReturnInfo } from "./prBudgetReturn";
 
 const makePayment = (used) => ({
   id: "pay-1",
@@ -247,4 +247,140 @@ test("blocks an ambiguous legacy multi-PR PO instead of guessing a Budget", () =
   });
   expect(plan.canStart).toBe(false);
   expect(plan.allocationValidationError).toContain("ระบุ PR item ต้นทางไม่ครบ");
+});
+
+test("calculates a current multi-PR PO from disPrAllocations", () => {
+  const po = {
+    id: "po-current-multi",
+    discountAllocationVersion: 1,
+    selectedPrIds: ["pr-a", "pr-b"],
+    items: [{
+      amount: 1_000,
+      disPrAllocations: [
+        { prId: "pr-a", amount: 400 },
+        { prId: "pr-b", amount: 600 },
+      ],
+    }],
+  };
+
+  expect(getPoNetAmountAllocatedToPr(po, "pr-a")).toBe(400);
+  expect(getPoNetAmountAllocatedToPr(po, "pr-b")).toBe(600);
+});
+
+test("calculates a legacy multi-PR PO from item prId and applies its discount once", () => {
+  const po = {
+    id: "po-legacy-multi",
+    selectedPrIds: ["pr-a", "pr-b"],
+    discount: 100,
+    items: [
+      { prId: "pr-a", amount: 400 },
+      { prId: "pr-b", amount: 600 },
+    ],
+  };
+
+  expect(getPoNetAmountAllocatedToPr(po, "pr-a")).toBe(360);
+  expect(getPoNetAmountAllocatedToPr(po, "pr-b")).toBe(540);
+  expect(getPrBudgetReturnInfo({ id: "pr-a", totalAmount: 1_000 }, [po])).toMatchObject({
+    poSubTotalUsed: 360,
+    returnAmount: 640,
+  });
+});
+
+test("shares a fully unallocated legacy PO instead of charging the whole PO to every PR", () => {
+  const po = {
+    id: "po-legacy-unallocated",
+    selectedPrIds: ["pr-a", "pr-b"],
+    items: [{ amount: 1_000 }],
+  };
+
+  expect(getPoNetAmountAllocatedToPr(po, "pr-a")).toBe(500);
+  expect(getPoNetAmountAllocatedToPr(po, "pr-b")).toBe(500);
+});
+
+test("shows the reported legacy PR balance from its actual linked PO amount", () => {
+  const pr = { id: "pr-002014", totalAmount: 46_579.81 };
+  const po = {
+    id: "po-002014",
+    selectedPrIds: [pr.id],
+    items: [{ prId: pr.id, amount: 40_518.49 }],
+  };
+
+  expect(getPrBudgetReturnInfo(pr, [po])).toMatchObject({
+    poSubTotalUsed: 40_518.49,
+    returnAmount: 6_061.32,
+  });
+});
+
+test("keeps a PO line with its source prId when conflicting allocations omit that PR", () => {
+  const sourcePr = { id: "pr-wa-044", totalAmount: 252.336 };
+  const po = {
+    id: "po-ca-0078",
+    discountAllocationVersion: 1,
+    selectedPrIds: [sourcePr.id, "pr-pt-026"],
+    items: [{
+      prId: sourcePr.id,
+      amount: 254.21,
+      disPrAllocations: [{ prId: "pr-pt-026", amount: 254.21 }],
+    }],
+  };
+
+  expect(getPoNetAmountAllocatedToPr(po, sourcePr.id)).toBe(254.21);
+  expect(getPoNetAmountAllocatedToPr(po, "pr-pt-026")).toBe(0);
+  expect(getPrBudgetReturnInfo(sourcePr, [po]).returnAmount).toBe(0);
+});
+
+test("uses valid split allocations when they include the source prId", () => {
+  const po = {
+    id: "po-valid-split",
+    discountAllocationVersion: 1,
+    selectedPrIds: ["pr-a", "pr-b"],
+    items: [{
+      prId: "pr-a",
+      amount: 254.21,
+      disPrAllocations: [
+        { prId: "pr-a", amount: 252.34 },
+        { prId: "pr-b", amount: 1.87 },
+      ],
+    }],
+  };
+
+  expect(getPoNetAmountAllocatedToPr(po, "pr-a")).toBe(252.34);
+  expect(getPoNetAmountAllocatedToPr(po, "pr-b")).toBe(1.87);
+});
+
+test("memoized PR to PO usage index preserves the direct calculation", () => {
+  const prs = [
+    { id: "pr-a", totalAmount: 1_000 },
+    { id: "pr-b", totalAmount: 1_000 },
+  ];
+  const pos = [
+    {
+      id: "po-split",
+      discountAllocationVersion: 1,
+      items: [{
+        prId: "pr-a",
+        amount: 700,
+        disPrAllocations: [
+          { prId: "pr-a", amount: 400 },
+          { prId: "pr-b", amount: 300 },
+        ],
+      }],
+    },
+    {
+      id: "po-locked",
+      lockedPrAllocations: { "pr-a": 125 },
+      items: [{ prId: "pr-a", amount: 200 }],
+    },
+    {
+      id: "po-rejected",
+      status: "Rejected",
+      items: [{ prId: "pr-a", amount: 999 }],
+    },
+  ];
+  const index = buildPrPoUsageIndex(pos);
+
+  prs.forEach((pr) => {
+    expect(getPrBudgetReturnInfo(pr, pos, index)).toEqual(getPrBudgetReturnInfo(pr, pos));
+  });
+  expect(index.posByPrId.get("pr-a").map((po) => po.id)).toEqual(["po-split", "po-locked"]);
 });

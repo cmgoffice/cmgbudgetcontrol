@@ -21,7 +21,7 @@ import { db, appId, storage, FORM_TEMPLATE_PATHS } from "./lib/firebase";
 import { generatePRPdfBytes, generatePOPdfBytes, downloadBytes, uploadGeneratedPdf, deleteGeneratedPdf } from "./lib/pdfForms";
 import { stampPoSignaturesToPdf } from "./lib/poSignatureStamps";
 import { canActivatePR, getResumeStatusForPR } from "./lib/prAllocation";
-import { computeBudgetUsedAfterPrRevision, getLinkedPoRefsForPr, getPrBudgetReturnInfo, scalePrItemsToTotal } from "./lib/prBudgetReturn";
+import { buildPrPoUsageIndex, computeBudgetUsedAfterPrRevision, getLinkedPoRefsForPr, getPrBudgetReturnInfo, scalePrItemsToTotal } from "./lib/prBudgetReturn";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "./components/ui";
 import ResizableTh from "./components/ResizableTh";
 import { useProportionalTableLayout, chainTableResizeHandlers } from "./hooks/useProportionalTableLayout";
@@ -1578,6 +1578,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     () => buildPrPoIndexes(pos, prById),
     [pos, prById]
   );
+  const prPoUsageIndex = React.useMemo(() => buildPrPoUsageIndex(pos), [pos]);
 
   const handleStartPoBudgetReturn = React.useCallback((po: any) => {
     if (!po?.id || isPR || !canStartPoBudgetReturn) return;
@@ -2161,9 +2162,8 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   }, [getTableSortValue, isNotificationRow, tableSortConfig]);
 
   const getPrBalanceAmount = React.useCallback((pr: any) => {
-    const linkedPos = prPoIndexes.financialPosByPrId.get(String(pr?.id || "")) || [];
-    return getPrBudgetReturnInfo(pr, linkedPos).returnAmount;
-  }, [prPoIndexes]);
+    return getPrBudgetReturnInfo(pr, pos, prPoUsageIndex).returnAmount;
+  }, [pos, prPoUsageIndex]);
 
   const handleReturnPrBalanceToBudget = React.useCallback((pr: any) => {
     if (!pr?.id) return;
@@ -2172,7 +2172,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       return;
     }
 
-    const info = getPrBudgetReturnInfo(pr, pos);
+    const info = getPrBudgetReturnInfo(pr, pos, prPoUsageIndex);
     const availability = getPrReturnAvailability(pr, info);
     if (availability.availableReturnAmount <= 0) {
       showAlert?.("ไม่มี Balance ให้คืน", "ยอด PR ปัจจุบันไม่มากกว่า PO Sub Total ที่ใช้ไปแล้ว", "info");
@@ -2539,7 +2539,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
           </ActionMenuItem>
         )}
         {!actionTask && canReturnPrBalance && isPR && (() => {
-          const info = getPrBudgetReturnInfo(r, pos);
+          const info = getPrBudgetReturnInfo(r, pos, prPoUsageIndex);
           if (info.returnAmount <= 0) return null;
           return (
             <ActionMenuItem
@@ -2744,6 +2744,15 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
         const poDateText = !isPR ? String(r.poDate || r.createdDate || "") : "";
         const poItemCountText = !isPR ? String(r.items?.length || (r.selectedPrIds?.length || 0)) : "";
         const poAmountText = !isPR ? String(getPoAmountExVat(r)) : "";
+        const prBudgetItemText = isPR
+          ? [
+            getPrBudgetItemName(r),
+            getBudgetDesc(r.costCode, r.projectId),
+            ...(Array.isArray(r.items) ? r.items.map((item: any) => item?.description) : []),
+          ]
+            .filter(Boolean)
+            .join(" ")
+          : "";
         const poSearchBlob = !isPR
           ? [
             noField,
@@ -2767,6 +2776,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
           (noField || "").toLowerCase().includes(lowerSearch) ||
           (r.costCode || "").toLowerCase().includes(lowerSearch) ||
           (r.requestor || r.vendor || "").toLowerCase().includes(lowerSearch) ||
+          prBudgetItemText.toLowerCase().includes(lowerSearch) ||
           (poRefText || "").toLowerCase().includes(lowerSearch) ||
           (!isPR && poSearchBlob.includes(lowerSearch))
         );
@@ -2774,7 +2784,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
     // ให้รายการที่ผู้ใช้ต้องดำเนินการขึ้นก่อนเสมอ ก่อนแบ่งหน้าและแบ่งแท็บ Type
     return sortTableRows(matchedRows);
-  }, [getPoLinkedPrMeta, getProjectName, getRowStatus, isPR, lowerSearch, prPoIndexes, scopedRows, sortTableRows, vendorById]);
+  }, [getBudgetDesc, getPrBudgetItemName, getPoLinkedPrMeta, getProjectName, getRowStatus, isPR, lowerSearch, prPoIndexes, scopedRows, sortTableRows, vendorById]);
 
   const getShortTypeLabel = React.useCallback((typeValue: any) => {
     const raw = String(typeValue || "").trim();
@@ -3036,7 +3046,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
-              placeholder={isPR ? "ค้นหา PR No., Cost Code, Ref PO..." : "ค้นหา PO ได้ทุกคอลัมน์ (PO, Vendor, Cost Code, Ref PR...)"}
+              placeholder={isPR ? "ค้นหา PR No., Cost Code, รายการงบ, Ref PO..." : "ค้นหา PO ได้ทุกคอลัมน์ (PO, Vendor, Cost Code, Ref PR...)"}
               value={searchTerm}
               onChange={(e) => {
                 const value = e.target.value;
@@ -3354,7 +3364,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                             </button>
                           )}
                           {canReturnPrBalance && isPR && (() => {
-                            const info = getPrBudgetReturnInfo(r, pos);
+                            const info = getPrBudgetReturnInfo(r, pos, prPoUsageIndex);
                             if (info.returnAmount <= 0) return null;
                             return (
                               <button
@@ -3526,7 +3536,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
       {isReturnBalanceModalOpen && (() => {
         const latestPr = prs.find((p: any) => p.id === returnBalanceContext?.prId);
-        const latestInfo = latestPr ? getPrBudgetReturnInfo(latestPr, pos) : null;
+        const latestInfo = latestPr ? getPrBudgetReturnInfo(latestPr, pos, prPoUsageIndex) : null;
         const maxReturn = Math.max(0, Math.round(Number(latestInfo?.returnAmount || 0) * 100) / 100);
         const requested = Math.round(parseReturnBalanceInput(returnBalanceValue) * 100) / 100;
         const isRequestedValid = Number.isFinite(requested) && requested > 0 && requested <= maxReturn;

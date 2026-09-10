@@ -20,9 +20,10 @@ import {
 } from "../lib/constants";
 import { canActivatePR, getResumeStatusForPR } from "../lib/prAllocation";
 import { uploadAttachment } from "../lib/uploadAttachment";
-import { scalePrItemsToTotal, sumSubItemAmounts } from "../lib/prBudgetReturn";
+import { getPoNetPrAllocations, scalePrItemsToTotal, sumSubItemAmounts } from "../lib/prBudgetReturn";
 import { getInvoiceAmountForPo, isPaidStatus, isSpentInvoiceRecord } from "../lib/billingPayUtils";
 import { getPoAmountExVat, PO_DISCOUNT_ALLOCATION_VERSION } from "../lib/poDiscount";
+import { getBudgetAmountFromPoPrAllocations, getBudgetPrTotal } from "../lib/budgetPrUsage";
 import {
   canDirectEditApprovedMainBudget,
   canDirectEditApprovedSubItemBudget,
@@ -297,6 +298,14 @@ const BudgetView = React.memo(() => {
     projectPrs.forEach((pr) => map.set(pr.id, pr));
     return map;
   }, [projectPrs]);
+
+  // Canonical PO allocations are independent of the Budget row. Calculate
+  // each PO once, then reuse the result for all Budget totals and filters.
+  const poNetPrAllocationsByPo = useMemo(() => {
+    const index = new Map();
+    projectPos.forEach((po) => index.set(po, getPoNetPrAllocations(po)));
+    return index;
+  }, [projectPos]);
   const duplicateBudgetCodeSet = useMemo(() => {
     const counts = new Map<string, number>();
     selectedProjectBudgets.forEach((budget) => {
@@ -1377,6 +1386,16 @@ const BudgetView = React.memo(() => {
         // Check if item has budgetSubItemId that matches one of our sub-items
         if (matchesCurrentSubItem(item)) return true;
 
+        // Older PR items can have their exact Budget ID only at the PR header.
+        // Respect explicit item IDs first, then the parent PR ID. This cannot
+        // mix Workshop into Head Office even when both use Cost Code 002014.
+        if (parentDoc) {
+          const itemBudgetId = item?.budgetId || item?.selectedBudgetId || "";
+          if (itemBudgetId) return itemBudgetId === budgetDocId;
+          const parentBudgetId = parentDoc?.budgetId || parentDoc?.selectedBudgetId || "";
+          if (parentBudgetId) return parentBudgetId === budgetDocId;
+        }
+
         // A stale sub-item ID must not be accepted only because its old
         // budgetId still points to this Budget document. Keep the budgetId
         // fallback only for legacy records that have no sub-item reference.
@@ -1439,6 +1458,9 @@ const BudgetView = React.memo(() => {
     const relatedPRs = projectPrs.filter((pr) => {
       if (pr.status === "Rejected") return false;
 
+      const headerBudgetId = pr.budgetId || pr.selectedBudgetId || "";
+      if (headerBudgetId === budgetDocId) return true;
+
       // For budgets with sub-items, only include PRs that have items belonging to this budget
       if (hasSubItems) {
         if (!pr.items || pr.items.length === 0) return false;
@@ -1455,8 +1477,32 @@ const BudgetView = React.memo(() => {
       return false;
     });
 
+    const canonicalPoBudgetAmountCache = new Map();
+    const getCanonicalPoBudgetAmount = (po) => {
+      if (canonicalPoBudgetAmountCache.has(po)) {
+        return canonicalPoBudgetAmountCache.get(po);
+      }
+      const allocations = poNetPrAllocationsByPo.get(po) || [];
+      if (allocations.length === 0) {
+        canonicalPoBudgetAmountCache.set(po, null);
+        return null;
+      }
+      const amount = getBudgetAmountFromPoPrAllocations({
+        allocations,
+        prs: projectPrs,
+        prById: projectPrById,
+        budget,
+        hasDuplicateCostCode,
+      });
+      canonicalPoBudgetAmountCache.set(po, amount);
+      return amount;
+    };
+
     const relatedPOs = projectPos.filter((po) => {
       if (po.status === "Rejected") return false;
+
+      const canonicalBudgetAmount = getCanonicalPoBudgetAmount(po);
+      if (canonicalBudgetAmount !== null) return canonicalBudgetAmount > 0;
 
       // For budgets with sub-items, only include POs that have items belonging to this budget
       if (hasSubItems) {
@@ -1471,40 +1517,20 @@ const BudgetView = React.memo(() => {
       return false;
     });
 
-    // PR document IDs are unique. Legacy data can contain duplicate PR numbers,
-    // so deduplicating by prNo incorrectly removes real PR amounts.
-    const seenPrIds = new Set();
-    const prTotal = relatedPRs.reduce((sum, pr) => {
-      if (pr.id && seenPrIds.has(pr.id)) return sum;
-      if (pr.id) seenPrIds.add(pr.id);
-
-      let subtotal = 0;
-      if (pr.items && pr.items.length > 0) {
-        subtotal = pr.items.reduce((iSum, i) => {
-          return iSum + getBudgetItemAmount(i, pr);
-        }, 0);
-      }
-
-      if (subtotal > 0) {
-        const prSubtotal = pr.items.reduce((s, i) => s + getItemAmount(i), 0);
-        const itemRatio = prSubtotal > 0 ? subtotal / prSubtotal : 0;
-        const discount = Number(pr.discount || 0);
-        const proportionalDiscount = discount * itemRatio;
-        const prAmount = Math.max(0, subtotal - proportionalDiscount);
-        return sum + prAmount;
-      }
-
-      // Fallback for legacy PRs without items
-      if (!pr.items || pr.items.length === 0) {
-        return sum + Number(pr.totalAmount || 0);
-      }
-      return sum;
-    }, 0);
+    const prTotal = getBudgetPrTotal({
+      prs: projectPrs,
+      budget,
+      projectId: selectedProjectId,
+      hasDuplicateCostCode,
+    });
 
     // PO numbers are human-readable and can be duplicated in legacy data.
     // The Firestore document ID is the unique record identity; deduplicating
     // by poNo can silently remove a real PO from a Budget total.
     const getPoAmountForBudget = (po) => {
+      const canonicalBudgetAmount = getCanonicalPoBudgetAmount(po);
+      if (canonicalBudgetAmount !== null) return canonicalBudgetAmount;
+
       let subtotal = 0;
       if (po.items && po.items.length > 0) {
         subtotal = po.items.reduce((iSum, i) => {
@@ -1556,9 +1582,10 @@ const BudgetView = React.memo(() => {
       if (poIdentity && seenPoIdsForInvoice.has(poIdentity)) return details;
       if (poIdentity) seenPoIdsForInvoice.add(poIdentity);
 
-      let poBudgetSubtotal = 0;
-      let poSubtotal = 0;
-      if (po.items && po.items.length > 0) {
+      const canonicalPoBudgetSubtotal = getCanonicalPoBudgetAmount(po);
+      let poBudgetSubtotal = canonicalPoBudgetSubtotal ?? 0;
+      let poSubtotal = canonicalPoBudgetSubtotal !== null ? getPoAmountExVat(po) : 0;
+      if (canonicalPoBudgetSubtotal === null && po.items && po.items.length > 0) {
         poBudgetSubtotal = po.items.reduce((iSum, i) => {
           return iSum + getBudgetItemAmount(i);
         }, 0);
@@ -1576,7 +1603,8 @@ const BudgetView = React.memo(() => {
 
         let budgetRatio = fallbackBudgetRatio;
         const invoiceItems = Array.isArray(invoice?.items) ? invoice.items : [];
-        const canUseItemLevelAllocation = invoice?.sourceType !== "payment" &&
+        const canUseItemLevelAllocation = canonicalPoBudgetSubtotal === null &&
+          invoice?.sourceType !== "payment" &&
           invoiceItems.length > 0 && Array.isArray(po.items) && po.items.length > 0;
 
         if (canUseItemLevelAllocation) {
@@ -1707,7 +1735,7 @@ const BudgetView = React.memo(() => {
       poExceedsPr: poExcessAmount > 0.01,
       poExcessAmount,
     };
-  }, [duplicateBudgetCodeSet, projectInvoiceEntriesByPoRef, projectPos, projectPrById, projectPrs, getItemAmount, spPaymentsForProject]);
+  }, [duplicateBudgetCodeSet, poNetPrAllocationsByPo, projectInvoiceEntriesByPoRef, projectPos, projectPrById, projectPrs, getItemAmount, spPaymentsForProject]);
 
   const budgetStatsById = useMemo(() => {
     const statsMap = new Map();

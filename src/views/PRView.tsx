@@ -21,7 +21,8 @@ import { PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, PURCHA
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { getUserIdentity, resolveCurrentUserSignatureImage } from "../lib/poSignatureStamps";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
-import { computeBudgetUsedAfterPrRevision, getLinkedPoRefsForPr, getPrBudgetReturnInfo, restorePrItemsFromRevision, scalePrItemsToTotal } from "../lib/prBudgetReturn";
+import { buildPrPoUsageIndex, computeBudgetUsedAfterPrRevision, getLinkedPoRefsForPr, getPrBudgetReturnInfo, restorePrItemsFromRevision, scalePrItemsToTotal } from "../lib/prBudgetReturn";
+import { getExactBudgetSearchTargets, isPrLinkedToExactBudgetTarget } from "../lib/budgetPrUsage";
 import {
   getPendingBudgetReturns,
   getPendingReturnDeductionTotal,
@@ -41,6 +42,7 @@ const PRView = React.memo(() => {
   const canEditBudgetPR = canUseFunction("pr", "editBudget");
   const canViewPrBalance = canUseFunction("pr", "viewBalance");
   const canReturnPrBalance = canUseFunction("pr", "returnBalance");
+  const prPoUsageIndex = useMemo(() => buildPrPoUsageIndex(pos), [pos]);
 
   /**
    * คำนวณยอดใช้งานทั้งหมดของ budget จาก PRs ที่ตรงกันทั้ง budgetId หรือ costCode
@@ -290,7 +292,7 @@ const PRView = React.memo(() => {
       return;
     }
 
-    const info = getPrBudgetReturnInfo(pr, pos);
+    const info = getPrBudgetReturnInfo(pr, pos, prPoUsageIndex);
     const availability = getPrReturnAvailability(pr, info);
     if (availability.availableReturnAmount <= 0) {
       showAlert("ไม่มี Balance ให้คืน", "ยอด PR ปัจจุบันไม่มากกว่า PO Sub Total ที่ใช้ไปแล้ว", "info");
@@ -327,7 +329,7 @@ const PRView = React.memo(() => {
       showAlert("ไม่พบ PR", "ไม่พบข้อมูล PR ล่าสุด", "warning");
       return;
     }
-    const latestInfo = getPrBudgetReturnInfo(latestPr, pos);
+    const latestInfo = getPrBudgetReturnInfo(latestPr, pos, prPoUsageIndex);
     const availability = getPrReturnAvailability(latestPr, latestInfo);
     const maxReturn = availability.availableReturnAmount;
     if (maxReturn <= 0) {
@@ -922,6 +924,19 @@ const PRView = React.memo(() => {
       subItemId: selectedSubItemIdForItems,
       budgetSubItemId: selectedSubItemIdForItems,
     }));
+
+    // Domain invariant: one PR can fund many lines, but every line must belong
+    // to the single Budget selected at the PR header. Keep this guard close to
+    // persistence so future UI changes cannot create a multi-Budget PR.
+    if (!selectedBudgetIdForItems || lineItemsForSave.some(
+      (item) => String(item.budgetId || "") !== String(selectedBudgetIdForItems)
+    )) {
+      return showAlert(
+        "Budget ของ PR ไม่ถูกต้อง",
+        "PR หนึ่งใบต้องเลือก Budget ได้เพียงรายการเดียว และสินค้าทุกบรรทัดต้องใช้ Budget เดียวกับหัว PR",
+        "error"
+      );
+    }
 
     // ตรวจสอบว่า Sub-item ที่เลือกยังคง Approved อยู่ และยอดไม่เกิน (กรณีที่ budget มี sub-items)
     if (budgetItem.subItems && budgetItem.subItems.length > 0) {
@@ -1618,12 +1633,12 @@ const PRView = React.memo(() => {
       case "requestor": return String(pr.requestor || "");
       case "items": return Number(pr.items?.length || 0);
       case "amount": return Number(pr.totalAmount || pr.amount || 0);
-      case "balance": return getPrBudgetReturnInfo(pr, pos).returnAmount;
+      case "balance": return getPrBudgetReturnInfo(pr, pos, prPoUsageIndex).returnAmount;
       case "status": return String(pr.status || "");
       case "refDoc": return String(getRefDocInfo(pr)?.docNo || "");
       default: return "";
     }
-  }, [getPrBudgetItemName, getRefDocInfo, pos]);
+  }, [getPrBudgetItemName, getRefDocInfo, pos, prPoUsageIndex]);
 
   const requestPrSort = useCallback((key) => {
     setPrSortConfig((prev) => ({
@@ -1655,9 +1670,16 @@ const PRView = React.memo(() => {
     return sorted;
   }, [prSortConfig, getPrSortValue]);
 
+  const exactBudgetSearchTargets = useMemo(() => (
+    getExactBudgetSearchTargets(budgets, selectedProjectId, prTableSearchText)
+  ), [budgets, selectedProjectId, prTableSearchText]);
+
   const isPrMatchSearch = useCallback((pr) => {
     const q = (prTableSearchText || "").trim().toLowerCase();
     if (!q) return true;
+    if (exactBudgetSearchTargets.length > 0) {
+      return exactBudgetSearchTargets.some((target) => isPrLinkedToExactBudgetTarget(pr, target));
+    }
     const budgetName = getPrBudgetItemName(pr);
     const itemDescs = pr.items?.map((it) => it.description).filter(Boolean).join(", ") || "";
     const refDoc = getRefDocInfo(pr);
@@ -1676,7 +1698,7 @@ const PRView = React.memo(() => {
       refDoc?.docNo,
     ].filter(Boolean).join(" ").toLowerCase();
     return blob.includes(q);
-  }, [prTableSearchText, getPrBudgetItemName, getRefDocInfo]);
+  }, [prTableSearchText, exactBudgetSearchTargets, getPrBudgetItemName, getRefDocInfo]);
 
   /** ตารางบนสุด: รายการรอ Action (รอ Approve หรือ รอแก้ไข หรือ รอปิด) */
   const pendingActionStatuses = ["Pending CM", "Pending PM", "Pending GM", "Pending MD", "Edit Budget", "Rejected", "Pending Close"];
@@ -1770,7 +1792,7 @@ const PRView = React.memo(() => {
       const itemDescriptions = pr.items?.map((it) => it.description).filter(Boolean).join(", ") || "";
       const descriptionText = itemDescriptions || budgetItemName || "-";
       map.set(pr.id, {
-        balanceAmount: getPrBudgetReturnInfo(pr, pos).returnAmount,
+        balanceAmount: getPrBudgetReturnInfo(pr, pos, prPoUsageIndex).returnAmount,
         budgetItemName,
         itemDescriptions,
         descriptionText,
@@ -1779,7 +1801,7 @@ const PRView = React.memo(() => {
       });
     });
     return map;
-  }, [tablePrs, getPrBudgetItemName, getRefDocInfo, pos]);
+  }, [tablePrs, getPrBudgetItemName, getRefDocInfo, pos, prPoUsageIndex]);
 
   const renderPrHeaderCells = () => (
     <>
@@ -1846,7 +1868,7 @@ const PRView = React.memo(() => {
               </button>
             )}
             {canReturnPrBalance && (() => {
-              const returnAmount = rowDisplayData?.balanceAmount ?? getPrBudgetReturnInfo(pr, pos).returnAmount;
+              const returnAmount = rowDisplayData?.balanceAmount ?? getPrBudgetReturnInfo(pr, pos, prPoUsageIndex).returnAmount;
               if (returnAmount <= 0) return null;
               return (
                 <button
@@ -1919,7 +1941,7 @@ const PRView = React.memo(() => {
       <React.Fragment key={pr.id}>
         {(() => {
           const rowDisplayData = prRowDisplayDataById.get(pr.id) || {};
-          const balanceAmount = rowDisplayData.balanceAmount ?? getPrBudgetReturnInfo(pr, pos).returnAmount;
+          const balanceAmount = rowDisplayData.balanceAmount ?? getPrBudgetReturnInfo(pr, pos, prPoUsageIndex).returnAmount;
           return (
         <tr className={dataRowClass} onClick={() => setViewingPR(pr)}>
           {renderPrActionCell(pr, "md:hidden", rowDisplayData)}
@@ -2597,7 +2619,7 @@ const PRView = React.memo(() => {
                 </button>
                 <div className="flex items-center gap-2">
                   {canReturnPrBalance && (() => {
-                    const info = getPrBudgetReturnInfo(prLive, pos);
+                    const info = getPrBudgetReturnInfo(prLive, pos, prPoUsageIndex);
                     if (info.returnAmount <= 0) return null;
                     return (
                       <Button variant="success" className="px-4 py-2 text-sm" onClick={() => handleReturnPrBalanceToBudget(prLive)}>
@@ -2713,7 +2735,7 @@ const PRView = React.memo(() => {
       )}
       {isReturnBalanceModalOpen && (() => {
         const latestPr = prs.find((p: any) => p.id === returnBalanceContext?.prId);
-        const latestInfo = latestPr ? getPrBudgetReturnInfo(latestPr, pos) : null;
+        const latestInfo = latestPr ? getPrBudgetReturnInfo(latestPr, pos, prPoUsageIndex) : null;
         const maxReturn = Math.max(0, Math.round(Number(latestInfo?.returnAmount || 0) * 100) / 100);
         const requested = Math.round(parseReturnBalanceInput(returnBalanceValue) * 100) / 100;
         const isRequestedValid = Number.isFinite(requested) && requested > 0 && requested <= maxReturn;

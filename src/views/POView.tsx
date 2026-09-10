@@ -66,6 +66,7 @@ import {
   getPoAmountExVat,
 } from "../lib/poDiscount";
 import { getPoNumberVariants } from "../lib/poPaymentBalance";
+import { getPoLinkedAmountForPr as getSharedPoLinkedAmountForPr } from "../lib/prAllocation";
 import { getPreviousGeneratedPdfPath, removePreviousGeneratedPdf, uploadRevisionPdf } from "../lib/pdfReplacement";
 import RelatedDocumentDetailModal from "../components/RelatedDocumentDetailModal";
 
@@ -785,35 +786,7 @@ const POView = React.memo(() => {
   // รองรับ lockedPrAllocations — ถ้ากรณี "ไม่คืนยอด PR" จะมี field นี้เก็บยอดเดิมไว้ล็อก
   const getUsedAmountByPR = (prId, excludePoId) => {
     const relevantPOs = pos.filter(po => po.status !== "Rejected" && po.id !== excludePoId);
-    let total = 0;
-    relevantPOs.forEach(po => {
-      // ถ้ามี lockedPrAllocations — ใช้ยอดที่ล็อกไว้แทน (กรณีเลือก "ไม่คืนยอด PR")
-      // แต่ต้องตรวจก่อนว่า PO ยังมี items อ้างอิง PR นี้จริงๆ อยู่
-      // ถ้า items ถูกตัดออกหมดแล้ว = lockedPrAllocations ค่าล้าสมัย → ข้าม
-      if (po.lockedPrAllocations && po.lockedPrAllocations[prId] != null) {
-        const hasActiveItemsForPr = Array.isArray(po.items) && po.items.some((item: any) => {
-          if (Array.isArray(item?.disPrAllocations) && item.disPrAllocations.length > 0) {
-            return item.disPrAllocations.some((a: any) => a?.prId === prId);
-          }
-          return item?.prId === prId;
-        });
-        if (!hasActiveItemsForPr) return; // lock ล้าสมัย — ข้ามโดยไม่นับ
-        total += Number(po.lockedPrAllocations[prId]) || 0;
-        return;
-      }
-      if (po.items) {
-        po.items.forEach(item => {
-          if (Array.isArray(item.disPrAllocations) && item.disPrAllocations.length > 0) {
-            item.disPrAllocations.forEach((a: any) => {
-              if (a?.prId === prId) total += Number(a.amount) || 0;
-            });
-            return;
-          }
-          if (item.prId === prId) total += Number(item.amount) || 0;
-        });
-      }
-    });
-    return total;
+    return relevantPOs.reduce((total, po) => total + getSharedPoLinkedAmountForPr(po, prId), 0);
   };
 
   // Resolve the PR item represented by a PO allocation. New allocations carry
