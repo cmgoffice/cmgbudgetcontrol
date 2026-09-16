@@ -1008,12 +1008,7 @@ const AppShell = () => {
                         </span>
                       </button>
                     </div>
-                    {prTab === "system" && (
-                      <PRView
-                        onRecreatePR={handleRecreatePR}
-                        recreatePoInFlightId={recreatePoInFlightId}
-                      />
-                    )}
+                    {prTab === "system" && <PRView />}
                     {prTab === "table" && (
                       <PRPOTableView
                         mode="pr"
@@ -1074,12 +1069,7 @@ const AppShell = () => {
                         </span>
                       </button>
                     </div>
-                    {poTab === "system" && (
-                      <POView
-                        onRecreatePO={handleRecreatePO}
-                        recreatePoInFlightId={recreatePoInFlightId}
-                      />
-                    )}
+                    {poTab === "system" && <POView />}
                     {poTab === "table" && (
                       <PRPOTableView
                         mode="po"
