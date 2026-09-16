@@ -7,8 +7,9 @@ import {
   PlusCircle, Briefcase, Calendar, MapPin, DollarSign, Info, FileOutput, Search, ListFilter,
   Truck, Package, Paperclip, Clock, Hash, Tag, ClipboardList,
   Mail, Flame, MapPinned, CircleDot, Zap, Building2, UserCircle, AtSign,
-  FileSpreadsheet, Wallet, ShoppingCart, Settings, Upload, CheckSquare, Square
+  FileSpreadsheet, Wallet, ShoppingCart, Settings, Upload, CheckSquare, Square, RefreshCw
 } from "lucide-react";
+import { getPreviousGeneratedPdfPath, removePreviousGeneratedPdf, uploadRevisionPdf } from "../lib/pdfReplacement";
 import { generatePRPdfBytes, uploadGeneratedPdf, stampSignatureToField, deleteGeneratedPdf, stampTextToFieldRect } from "../lib/pdfForms";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
@@ -32,7 +33,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { doc, runTransaction } from "firebase/firestore";
 import { ref, getDownloadURL } from "firebase/storage";
 import { appId, db, storage } from "../lib/firebase";
-const PRView = React.memo(() => {
+const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => {
   const { prs, pos, projects, budgets, vendors, materials, addData, updateData, deleteData,
     showAlert, openConfirm, logAction, userRole, userRoles, userData, user, columnWidths, handleColumnResize,
     visibleProjects, handlePRAction, canUseFunction, isColumnVisible, getAllowedPRTypes } = useAppData();
@@ -567,6 +568,50 @@ const PRView = React.memo(() => {
       window.open(prPdfReadyUrl, "_blank", "noopener,noreferrer");
     }
   }, [prPdfReadyUrl]);
+  const [localRecreatePrInFlight, setLocalRecreatePrInFlight] = useState(false);
+  const isRecreatingPr = Boolean(recreatePoInFlightId && (recreatePoInFlightId === viewingPR?.id)) || localRecreatePrInFlight;
+
+  const handleRecreatePRClick = useCallback(async (pr: any) => {
+    if (!pr?.id) return;
+    if (onRecreatePR) {
+      await onRecreatePR(pr);
+      return;
+    }
+    setLocalRecreatePrInFlight(true);
+    try {
+      const safePRNo = String(pr.prNo || pr.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
+      const safeProjId = pr.projectId || "unknown";
+      const project = projects?.find((p: any) => p.id === pr.projectId);
+      const budget = budgets?.find((b: any) => (b.id === pr.budgetId || b.code === pr.costCode) && b.projectId === pr.projectId);
+      const projName = project?.name || "";
+      const budgetDesc = budget?.description || budget?.name || "";
+      const previousPdfPath = getPreviousGeneratedPdfPath(pr, "pr");
+      const bytes = await generatePRPdfBytes(pr, { projectName: projName, budgetDesc });
+      const uploaded = await uploadRevisionPdf({
+        bytes,
+        kind: "pr",
+        projectId: safeProjId,
+        docNo: safePRNo,
+        revisionNo: pr.pdfRevisionNo || "manual",
+      });
+      await updateData("prs", pr.id, {
+        pdfUrl: uploaded.url,
+        pdfPath: uploaded.path,
+        pdfUpdatedAt: new Date().toISOString(),
+      });
+      await removePreviousGeneratedPdf(previousPdfPath, uploaded.path);
+      setViewingPR((prev: any) => prev?.id === pr.id ? { ...prev, pdfUrl: uploaded.url, pdfPath: uploaded.path, pdfUpdatedAt: new Date().toISOString() } : prev);
+      setPrPdfReadyUrl(uploaded.url);
+      logAction?.("Recreate PR", `Recreate PR PDF ${pr.prNo || pr.id}`, pr.projectId);
+      showAlert?.("สำเร็จ", "สร้าง PDF ใหม่เรียบร้อยแล้ว", "success");
+    } catch (err: any) {
+      console.error("Recreate PR failed:", err);
+      showAlert?.("ผิดพลาด", err.message || "สร้าง PDF ไม่สำเร็จ", "error");
+    } finally {
+      setLocalRecreatePrInFlight(false);
+    }
+  }, [onRecreatePR, projects, budgets, updateData, logAction, showAlert]);
+
   const [headerData, setHeaderData] = useState({
     prNo: "",
     subCode: "",
@@ -2329,46 +2374,63 @@ const PRView = React.memo(() => {
               {/* Body */}
               <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
                 {/* PDF Preview — iframe thumbnail ใช้ fresh URL (bypass CDN cache) */}
-                {(prLive.pdfUrl || prLive.pdfPath) && (() => {
+                {(() => {
+                  const hasPdf = Boolean(prLive.pdfUrl || prLive.pdfPath);
                   const ready = !!prPdfReadyUrl;
                   return (
                     <div className="mb-4">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">เอกสาร PDF</span>
-                        {!ready && <span className="text-[10px] text-slate-400 animate-pulse">กำลังโหลด...</span>}
+                        {hasPdf && !ready && <span className="text-[10px] text-slate-400 animate-pulse">กำลังโหลด...</span>}
                       </div>
                       <div
                         className={`relative w-48 h-64 border rounded-xl overflow-hidden bg-slate-50 shadow-sm transition-all ${ready ? "border-slate-200" : "border-slate-100"}`}
                       >
-                        {ready ? (
-                          <>
-                            <iframe
-                              key={prPdfReadyUrl}
-                              src={`${prPdfReadyUrl}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`}
-                              className="w-full h-full pointer-events-none"
-                              title="PR PDF Preview"
-                            />
-                            {/* Overlay กดเปิดแท็บใหม่ */}
-                            <button
-                              type="button"
-                              onClick={openLatestPrPdf}
-                              className="absolute inset-0 w-full h-full flex items-end justify-center pb-3 bg-transparent hover:bg-black/10 transition-colors group"
-                              title="คลิกเพื่อเปิด PDF ในแท็บใหม่"
-                            >
-                              <span className="opacity-0 group-hover:opacity-100 transition-opacity bg-white/90 backdrop-blur-sm text-blue-600 px-3 py-1.5 rounded-lg text-xs font-semibold shadow flex items-center gap-1.5 translate-y-1 group-hover:translate-y-0 transition-transform">
-                                <FileOutput size={13} /> เปิดดูเต็มหน้าจอ
-                              </span>
-                            </button>
-                          </>
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-slate-400">
-                            <div className="text-center">
-                              <FileText size={28} className="mx-auto mb-2 opacity-40" />
-                              <div className="text-[11px] animate-pulse">กำลังโหลด...</div>
+                        {hasPdf ? (
+                          ready ? (
+                            <>
+                              <iframe
+                                key={prPdfReadyUrl}
+                                src={`${prPdfReadyUrl}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`}
+                                className="w-full h-full pointer-events-none"
+                                title="PR PDF Preview"
+                              />
+                              {/* Overlay กดเปิดแท็บใหม่ */}
+                              <button
+                                type="button"
+                                onClick={openLatestPrPdf}
+                                className="absolute inset-0 w-full h-full flex items-end justify-center pb-3 bg-transparent hover:bg-black/10 transition-colors group"
+                                title="คลิกเพื่อเปิด PDF ในแท็บใหม่"
+                              >
+                                <span className="opacity-0 group-hover:opacity-100 transition-opacity bg-white/90 backdrop-blur-sm text-blue-600 px-3 py-1.5 rounded-lg text-xs font-semibold shadow flex items-center gap-1.5 translate-y-1 group-hover:translate-y-0 transition-transform">
+                                  <FileOutput size={13} /> เปิดดูเต็มหน้าจอ
+                                </span>
+                              </button>
+                            </>
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-slate-400">
+                              <div className="text-center">
+                                <FileText size={28} className="mx-auto mb-2 opacity-40" />
+                                <div className="text-[11px] animate-pulse">กำลังโหลด...</div>
+                              </div>
                             </div>
+                          )
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-xs font-semibold text-slate-400 border border-dashed border-slate-200 rounded-xl">
+                            ไม่มี PDF
                           </div>
                         )}
                       </div>
+                      <button
+                        type="button"
+                        disabled={isRecreatingPr}
+                        onClick={() => handleRecreatePRClick(prLive)}
+                        className="mt-2 w-48 py-2 px-3 bg-white hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 border border-slate-300 shadow-sm transition-all hover:border-blue-400 hover:text-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="สร้างหรือ Recreate ไฟล์ PDF ของ PR ใหม่"
+                      >
+                        <RefreshCw size={13} className={isRecreatingPr ? "animate-spin text-blue-600" : "text-slate-500"} />
+                        <span>{isRecreatingPr ? "กำลัง Create PDF..." : "Create PDF"}</span>
+                      </button>
                     </div>
                   );
                 })()}

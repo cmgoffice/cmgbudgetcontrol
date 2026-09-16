@@ -68,6 +68,8 @@ import ProjectSpendingView from "./views/ProjectSpendingView";
 import UserManualView from "./views/UserManualView";
 import ColumnVisibilityToggle from "./components/ColumnVisibilityToggle";
 import PoRevisionHistory from "./components/PoRevisionHistory";
+import { TableCsvExportModal } from "./components/TableCsvExportModal";
+import { generateCsvString, downloadCsv, buildExportFileName, ExportColumnDef } from "./lib/csvExportUtils";
 
 /** รูปโปรไฟล์ — ถ้าโหลดไม่สำเร็จ (ลิงก์หมดอายุ/ถูกบล็อก) จะแสดง fallback แทนไอคอนรูปพัง */
 const ProfileAvatar = ({ src, className, fallback }) => {
@@ -1006,7 +1008,12 @@ const AppShell = () => {
                         </span>
                       </button>
                     </div>
-                    {prTab === "system" && <PRView />}
+                    {prTab === "system" && (
+                      <PRView
+                        onRecreatePR={handleRecreatePR}
+                        recreatePoInFlightId={recreatePoInFlightId}
+                      />
+                    )}
                     {prTab === "table" && (
                       <PRPOTableView
                         mode="pr"
@@ -1067,7 +1074,12 @@ const AppShell = () => {
                         </span>
                       </button>
                     </div>
-                    {poTab === "system" && <POView />}
+                    {poTab === "system" && (
+                      <POView
+                        onRecreatePO={handleRecreatePO}
+                        recreatePoInFlightId={recreatePoInFlightId}
+                      />
+                    )}
                     {poTab === "table" && (
                       <PRPOTableView
                         mode="po"
@@ -1413,8 +1425,19 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   const [returnBalanceContext, setReturnBalanceContext] = React.useState<any>(null);
   const [returnBalanceValue, setReturnBalanceValue] = React.useState("");
   const [returnBalanceReason, setReturnBalanceReason] = React.useState("");
-  const [recreatePoProgress, setRecreatePoProgress] = React.useState({
+  const [isExportModalOpen, setIsExportModalOpen] = React.useState(false);
+  const [recreatePoProgress, setRecreatePoProgress] = React.useState<{
+    show: boolean;
+    docType?: "PR" | "PO";
+    poId: string;
+    poNo: string;
+    pct: number;
+    step: string;
+    status: string;
+    error: string;
+  }>({
     show: false,
+    docType: "PO",
     poId: "",
     poNo: "",
     pct: 0,
@@ -1721,13 +1744,10 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   }, [db, showAlert, user, userData, userRole]);
 
   const handleRecreatePO = React.useCallback((po: any) => {
-    if (isPR || !canUseFunction("po-table", "recreate")) {
-      showAlert?.("ไม่มีสิทธิ์", "Role นี้ไม่มีสิทธิ์ Recreate PO", "warning");
-      return;
-    }
     if (!po?.id) {
       setRecreatePoProgress({
         show: true,
+        docType: "PO",
         poId: "",
         poNo: "-",
         pct: 0,
@@ -1760,6 +1780,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     const setRunningProgress = (units: number, step: string) => {
       setRecreatePoProgress({
         show: true,
+        docType: "PO",
         poId,
         poNo,
         pct: toPct(units),
@@ -1921,6 +1942,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
         completedUnits = totalUnits;
         setRecreatePoProgress({
           show: true,
+          docType: "PO",
           poId,
           poNo,
           pct: 100,
@@ -1941,6 +1963,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
         setRecreatePoProgress((prev) => ({
           ...prev,
           show: true,
+          docType: "PO",
           poId,
           poNo,
           status: "error",
@@ -2430,6 +2453,161 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     showAlert?.("เตรียมอีเมลแล้ว", "เปิดหน้าส่งเมลให้แล้ว และคัดลอกลิงก์ PDF เรียบร้อย", "success");
   };
 
+  const handleRecreatePR = React.useCallback((pr: any) => {
+    if (!pr?.id) {
+      setRecreatePoProgress({
+        show: true,
+        docType: "PR",
+        poId: "",
+        poNo: "-",
+        pct: 0,
+        step: "Create PDF ไม่สำเร็จ",
+        status: "error",
+        error: "ไม่พบ ID ของ PR",
+      });
+      return;
+    }
+
+    if (recreatePoInFlightId) return;
+
+    const prId = pr.id;
+    const prNo = pr.prNo || pr.id;
+    const totalUnits = 4;
+    let completedUnits = 0;
+
+    const toPct = (units: number) => Math.max(0, Math.min(99, Math.round((units / totalUnits) * 100)));
+    const formatBytes = (bytes: number) => {
+      const n = Number(bytes || 0);
+      if (!Number.isFinite(n) || n <= 0) return "0 KB";
+      if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+      return `${(n / 1024 / 1024).toFixed(2)} MB`;
+    };
+    const getErrorMessage = (e: any) => {
+      if (!e) return "เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ";
+      if (typeof e === "string") return e;
+      return e.message || e.code || String(e);
+    };
+    const setRunningProgress = (units: number, step: string) => {
+      setRecreatePoProgress({
+        show: true,
+        docType: "PR",
+        poId: prId,
+        poNo: prNo,
+        pct: toPct(units),
+        step,
+        status: "running",
+        error: "",
+      });
+    };
+    const completeUnit = (step: string) => {
+      completedUnits = Math.min(totalUnits, completedUnits + 1);
+      setRunningProgress(completedUnits, step);
+    };
+
+    setRunningProgress(0, "เริ่มต้น Create PDF (PR)...");
+
+    (async () => {
+      try {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+        setRunningProgress(completedUnits, "เตรียมข้อมูล PR...");
+        const safePRNo = String(prNo).replace(/[^a-zA-Z0-9\-_]/g, "_");
+        const safeProjId = pr.projectId || selectedProjectId || "unknown";
+        const projName = getProjectName ? getProjectName(pr.projectId) : "";
+        const budgetDesc = getBudgetDesc ? getBudgetDesc(pr.costCode, pr.projectId) : "";
+        const previousPdfPath = getPreviousGeneratedPdfPath(pr, "pr");
+        completeUnit("เตรียมข้อมูล PR เสร็จ");
+
+        setRunningProgress(completedUnits, "กำลังสร้าง PDF จากแบบฟอร์ม...");
+        const bytes = await generatePRPdfBytes(pr, { projectName: projName, budgetDesc });
+        completeUnit("สร้าง PDF เสร็จ");
+
+        setRunningProgress(completedUnits, "อัปโหลด PDF ใหม่ 0%...");
+        const uploadBaseUnits = completedUnits;
+        const revisionNo = pr.pdfRevisionNo || "manual";
+        const uploadedRevision = await uploadRevisionPdf({
+          bytes,
+          kind: "pr",
+          projectId: safeProjId,
+          docNo: safePRNo,
+          revisionNo,
+          onProgress: ({ bytesTransferred, totalBytes, pct }) => {
+            const ratio = totalBytes > 0 ? bytesTransferred / totalBytes : Math.max(0, Math.min(100, pct || 0)) / 100;
+            const uploadPct = Math.max(0, Math.min(100, pct || Math.round(ratio * 100)));
+            setRunningProgress(
+              uploadBaseUnits + Math.max(0, Math.min(1, ratio)),
+              `อัปโหลด PDF ใหม่ ${uploadPct}% (${formatBytes(bytesTransferred)} / ${formatBytes(totalBytes)})`
+            );
+          },
+        });
+        const updatedPdfUrl = uploadedRevision.url;
+        const updatedPdfPath = uploadedRevision.path;
+        completedUnits = uploadBaseUnits + 1;
+        setRunningProgress(completedUnits, "อัปโหลด PDF สำเร็จ");
+
+        setRunningProgress(completedUnits, "บันทึกลิงก์ PDF ในระบบ...");
+        if (!updateData) throw new Error("ไม่พบฟังก์ชันบันทึกข้อมูล PR");
+        try {
+          const updated = await updateData("prs", prId, {
+            pdfUrl: updatedPdfUrl,
+            pdfPath: updatedPdfPath,
+            pdfUpdatedAt: new Date().toISOString(),
+          });
+          if (updated === false) throw new Error("บันทึกลิงก์ PDF ในระบบไม่สำเร็จ");
+        } catch (saveError) {
+          await deleteGeneratedPdf(updatedPdfPath);
+          throw saveError;
+        }
+        await removePreviousGeneratedPdf(previousPdfPath, updatedPdfPath);
+        setViewingPR((current: any) => current?.id === prId
+          ? {
+              ...current,
+              pdfUrl: updatedPdfUrl,
+              pdfPath: updatedPdfPath,
+              pdfUpdatedAt: new Date().toISOString(),
+            }
+          : current);
+        completeUnit("บันทึกลิงก์ PDF เสร็จ");
+
+        setRunningProgress(completedUnits, "บันทึก System Log...");
+        if (logAction) {
+          await logAction("Recreate PR", `Recreate PR PDF ${prNo}`, pr.projectId || selectedProjectId);
+        }
+        completedUnits = totalUnits;
+        setRecreatePoProgress({
+          show: true,
+          docType: "PR",
+          poId: prId,
+          poNo: prNo,
+          pct: 100,
+          step: "Create PDF สำเร็จ",
+          status: "success",
+          error: "",
+        });
+        window.setTimeout(() => {
+          setRecreatePoProgress((prev) =>
+            prev.poId === prId && prev.status === "success"
+              ? { ...prev, show: false, status: "idle" }
+              : prev
+          );
+        }, 1200);
+      } catch (e: any) {
+        const message = getErrorMessage(e);
+        console.error("Create PR PDF failed:", e);
+        setRecreatePoProgress((prev) => ({
+          ...prev,
+          show: true,
+          docType: "PR",
+          poId: prId,
+          poNo: prNo,
+          status: "error",
+          step: "Create PDF ไม่สำเร็จ",
+          error: message,
+        }));
+      }
+    })();
+  }, [recreatePoInFlightId, selectedProjectId, getProjectName, getBudgetDesc, updateData, logAction]);
+
   // การเปิดรายละเอียดเป็นสิทธิ์อ่านอย่างเดียว ไม่ควรทำให้เกิดการ Recreate PO
   // หรือเขียนข้อมูลอัตโนมัติเมื่อผู้ใช้กดแถว
   const openLogDetail = React.useCallback((row: any) => {
@@ -2474,6 +2652,15 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
             onClick={() => isPR ? handlePRDownloadPDF(r) : handlePODownloadPDF(r)}
           >
             ดาวน์โหลด PDF
+          </ActionMenuItem>
+        )}
+        {!actionTask && isPR && (
+          <ActionMenuItem
+            icon={<RefreshCw size={14} className={recreatePoInFlightId === r.id ? "animate-spin" : ""} />}
+            disabled={Boolean(recreatePoInFlightId)}
+            onClick={() => handleRecreatePR(r)}
+          >
+            {recreatePoInFlightId === r.id ? "กำลัง Create PDF..." : "Create PDF"}
           </ActionMenuItem>
         )}
         {!actionTask && canUseFunction(tableModule, "requestClosePR") && isPR && r.status !== "Closed PR" && r.status !== "Closed PR Auto" && r.status !== "Pending Close" && r.status !== "Pending Active PR" && (
@@ -2645,7 +2832,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
             Active PO
           </ActionMenuItem>
         )}
-        {!actionTask && !isPR && canUseFunction(tableModule, "recreate") && (
+        {!actionTask && !isPR && (
           <ActionMenuItem
             icon={<RefreshCw size={14} className={recreatePoInFlightId === r.id ? "animate-spin" : ""} />}
             disabled={Boolean(recreatePoInFlightId)}
@@ -2887,6 +3074,67 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
   const pageTo = Math.min(pageStart + PAGE_SIZE, activeRows.length);
 
   const allProjects = Array.from(new Set(rows.map((r: any) => r.projectId))).filter(Boolean);
+  const canExport = userRole === "Administrator" || canUseFunction(tableModule, "export");
+
+  const poExportColumns = React.useMemo<ExportColumnDef[]>(() => [
+    { key: "rowNum", label: "ลำดับ (#)", defaultSelected: true, getValue: (_r, idx) => idx + 1 },
+    { key: "no", label: "เลขที่ PO", defaultSelected: true, getValue: (r) => r.poNo || r.id || "-" },
+    { key: "project", label: "โครงการ", defaultSelected: true, getValue: (r) => getProjectName(r.projectId) },
+    { key: "poType", label: "ประเภท PO", defaultSelected: true, getValue: (r) => r.poType || "-" },
+    { key: "costCode", label: "Cost Code", defaultSelected: true, getValue: (r) => getPoLinkedPrMeta(r).costCodes.join(", ") || "-" },
+    { key: "vendor", label: "ผู้ขาย (Vendor)", defaultSelected: true, getValue: (r) => r.vendorName || r.vendor || r.supplierName || vendorById.get(r.vendorId)?.name || "-" },
+    { key: "vendorCode", label: "รหัสผู้ขาย", defaultSelected: true, getValue: (r) => r.vendorCode || "-" },
+    { key: "prRef", label: "Ref PR No.", defaultSelected: true, getValue: (r) => getPoLinkedPrMeta(r).prNos.join(", ") || "-" },
+    { key: "date", label: "วันที่เปิด PO", defaultSelected: true, getValue: (r) => { const d = r.poDate || r.createdDate; if (!d) return "-"; return d.includes("T") ? d.split("T")[0] : d; } },
+    { key: "itemsCount", label: "จำนวนรายการ", defaultSelected: true, getValue: (r) => (r.items?.length || r.selectedPrIds?.length || 0) },
+    { key: "itemsDetail", label: "รายละเอียดสินค้า/บริการ", defaultSelected: true, getValue: (r) => (r.items || []).map((it: any) => it.description || it.materialName).filter(Boolean).join("; ") || "-" },
+    { key: "amount", label: "ยอดรวม (Ex VAT)", defaultSelected: true, getValue: (r) => Number(getPoAmountExVat(r) || 0).toFixed(2) },
+    { key: "vatType", label: "ประเภท VAT", defaultSelected: false, getValue: (r) => r.vatType || "ex-vat" },
+    { key: "grandTotal", label: "ยอดรวมสุทธิ", defaultSelected: false, getValue: (r) => Number(r.grandTotal ?? r.totalAmount ?? r.amount ?? 0).toFixed(2) },
+    { key: "status", label: "สถานะ", defaultSelected: true, getValue: (r) => getRowStatus(r) },
+    { key: "creator", label: "ผู้เปิด/สร้าง PO", defaultSelected: true, getValue: (r) => r.createdByName || r.creator || r.createdBy || "-" },
+    { key: "deliveryDate", label: "กำหนดส่งของ", defaultSelected: false, getValue: (r) => r.deliveryDate || r.requiredDate || "-" },
+    { key: "creditTerm", label: "เครดิตเทอม", defaultSelected: false, getValue: (r) => r.vendorCreditTerm || r.creditTerm || r.paymentTerm || "-" },
+    { key: "jobCompleted", label: "สถานะจบงาน", defaultSelected: false, getValue: (r) => (r.jobCompleted ? `จบงาน (${r.jobCompletedBy || "-"})` : "ยังไม่จบงาน") },
+    { key: "reason", label: "หมายเหตุ / วัตถุประสงค์", defaultSelected: false, getValue: (r) => r.reason || r.note || "-" },
+  ], [getPoLinkedPrMeta, getProjectName, getRowStatus, vendorById]);
+
+  const prExportColumns = React.useMemo<ExportColumnDef[]>(() => [
+    { key: "rowNum", label: "ลำดับ (#)", defaultSelected: true, getValue: (_r, idx) => idx + 1 },
+    { key: "no", label: "เลขที่ PR", defaultSelected: true, getValue: (r) => r.prNo || r.id || "-" },
+    { key: "project", label: "โครงการ", defaultSelected: true, getValue: (r) => getProjectName(r.projectId) },
+    { key: "costCode", label: "Cost Code", defaultSelected: true, getValue: (r) => r.costCode || "-" },
+    { key: "description", label: "รายการงบ", defaultSelected: true, getValue: (r) => getPrBudgetItemName(r) || getBudgetDesc(r.costCode, r.projectId) || "-" },
+    { key: "type", label: "ประเภท PR", defaultSelected: true, getValue: (r) => r.purchaseType || "-" },
+    { key: "requestor", label: "ผู้ขอซื้อ", defaultSelected: true, getValue: (r) => r.requestor || "-" },
+    { key: "date", label: "วันที่ขอซื้อ", defaultSelected: true, getValue: (r) => { const d = r.requestDate; if (!d) return "-"; return d.includes("T") ? d.split("T")[0] : d; } },
+    { key: "itemsCount", label: "จำนวนรายการ", defaultSelected: true, getValue: (r) => (r.items?.length || 0) },
+    { key: "itemsDetail", label: "รายละเอียดสินค้า/บริการ", defaultSelected: true, getValue: (r) => (r.items || []).map((it: any) => it.description).filter(Boolean).join("; ") || "-" },
+    { key: "amount", label: "ยอดรวม", defaultSelected: true, getValue: (r) => Number(r.totalAmount || r.amount || 0).toFixed(2) },
+    { key: "balance", label: "Balance", defaultSelected: true, getValue: (r) => Number(getPrBalanceAmount(r) || 0).toFixed(2) },
+    { key: "status", label: "สถานะ", defaultSelected: true, getValue: (r) => getRowStatus(r) },
+    { key: "poRef", label: "Ref PO", defaultSelected: true, getValue: (r) => (prPoIndexes.displayPoRefsByPrId.get(String(r.id)) || []).map((ref: any) => ref.poNo).filter(Boolean).join(", ") || "-" },
+    { key: "reason", label: "หมายเหตุ", defaultSelected: false, getValue: (r) => r.reason || "-" },
+  ], [getBudgetDesc, getPrBalanceAmount, getPrBudgetItemName, getProjectName, getRowStatus, prPoIndexes]);
+
+  const exportColumns = isPR ? prExportColumns : poExportColumns;
+
+  const handleExportCsv = React.useCallback((selectedCols: ExportColumnDef[]) => {
+    if (!activeRows || activeRows.length === 0) {
+      showAlert?.("ไม่มีข้อมูล", "ไม่พบรายการข้อมูลที่จะส่งออกในแท็บนี้", "info");
+      return;
+    }
+    const currentTabLabel = activeTypeGroup?.label || "All";
+    const filename = buildExportFileName(isPR ? "Log_PR" : "Log_PO", currentTabLabel);
+    const csvContent = generateCsvString(selectedCols, activeRows);
+    downloadCsv(filename, csvContent);
+    showAlert?.("ส่งออกข้อมูลสำเร็จ", `ดาวน์โหลดไฟล์ ${filename} เรียบร้อยแล้ว (${activeRows.length.toLocaleString()} รายการ, ${selectedCols.length} คอลัมน์)`, "success");
+    logAction?.(
+      "Export CSV",
+      `ส่งออก CSV ตาราง ${isPR ? "Log PR" : "Log PO"} แท็บ [${currentTabLabel}] จำนวน ${activeRows.length} รายการ (${selectedCols.length} คอลัมน์)`,
+      filterProject !== "all" ? filterProject : undefined
+    );
+  }, [activeRows, activeTypeGroup, filterProject, isPR, logAction, showAlert]);
 
   return (
     <div className="space-y-4">
@@ -2917,10 +3165,14 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
               <div>
                 <div className="text-base font-bold text-slate-800">
-                  {recreatePoProgress.status === "error" ? "Recreate PO ไม่สำเร็จ" : recreatePoProgress.status === "success" ? "Recreate PO สำเร็จ" : "กำลัง Recreate PO"}
+                  {recreatePoProgress.status === "error"
+                    ? (recreatePoProgress.docType === "PR" ? "Create PDF ไม่สำเร็จ" : "Recreate PO ไม่สำเร็จ")
+                    : recreatePoProgress.status === "success"
+                    ? (recreatePoProgress.docType === "PR" ? "Create PDF สำเร็จ" : "Recreate PO สำเร็จ")
+                    : (recreatePoProgress.docType === "PR" ? "กำลัง Create PDF" : "กำลัง Recreate PO")}
                 </div>
                 <div className="mt-1 text-xs font-semibold text-slate-500">
-                  PO: {recreatePoProgress.poNo || "-"}
+                  {recreatePoProgress.docType === "PR" ? "PR" : "PO"}: {recreatePoProgress.poNo || "-"}
                 </div>
               </div>
 
@@ -2975,6 +3227,17 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                 {isPR ? "Log PR" : "Log PO"}
               </h2>
               <ColumnVisibilityToggle tableId={tblId} />
+              {canExport && (
+                <button
+                  type="button"
+                  onClick={() => setIsExportModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-400 shadow-sm transition-all active:scale-95"
+                  title={`ส่งออก CSV (${activeTypeGroup?.label || "All"})`}
+                >
+                  <FileSpreadsheet size={14} className="text-emerald-600" />
+                  <span>Export CSV</span>
+                </button>
+              )}
             </div>
             <p className="text-xs text-slate-500">
               {activeRows.length} รายการในแท็บนี้ / {filtered.length} รายการทั้งหมด {filterStatus !== "all" ? `(${filterStatus})` : ""}
@@ -3449,7 +3712,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                               <CheckCircle size={14} />
                             </button>
                           )}
-                          {!isPR && canUseFunction(tableModule, "recreate") && (
+                          {!isPR && (
                             <button
                               type="button"
                               disabled={Boolean(recreatePoInFlightId)}
@@ -3458,6 +3721,20 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleRecreatePO(r);
+                              }}
+                            >
+                              <RefreshCw size={14} className={recreatePoInFlightId === r.id ? "animate-spin" : ""} />
+                            </button>
+                          )}
+                          {isPR && (
+                            <button
+                              type="button"
+                              disabled={Boolean(recreatePoInFlightId)}
+                              className="p-1.5 rounded hover:bg-blue-100 text-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+                              title={recreatePoInFlightId === r.id ? "กำลัง Create PDF..." : "Create PDF"}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRecreatePR(r);
                               }}
                             >
                               <RefreshCw size={14} className={recreatePoInFlightId === r.id ? "animate-spin" : ""} />
@@ -3654,7 +3931,10 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
 
       {/* PR Detail Modal for Log PR */}
       {viewingPR && (() => {
-        const pr = prs.find((item: any) => item.id === viewingPR.id) || viewingPR;
+        const livePr = prs.find((item: any) => item.id === viewingPR.id) || viewingPR;
+        const pr = viewingPR?.pdfUpdatedAt && (!livePr?.pdfUpdatedAt || new Date(viewingPR.pdfUpdatedAt) >= new Date(livePr.pdfUpdatedAt))
+          ? { ...livePr, ...viewingPR }
+          : livePr;
         const items = Array.isArray(pr.items) ? pr.items : [];
         const itemTotal = items.reduce((sum: number, item: any) => {
           const qty = Number(item?.quantity ?? item?.qty ?? 0);
@@ -3663,6 +3943,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
         }, 0);
         const totalAmount = Number(pr.totalAmount ?? pr.amount ?? itemTotal);
         const pdfUrl = pr.pdfUrl || "";
+        const pdfUrlWithCacheBuster = pdfUrl ? `${pdfUrl}${pdfUrl.includes("?") ? "&" : "?"}t=${pr.pdfUpdatedAt ? new Date(pr.pdfUpdatedAt).getTime() : Date.now()}` : "";
         const attachments = Array.isArray(pr.attachments)
           ? pr.attachments.filter((attachment: any) => attachment?.url)
           : (pr.attachmentUrl ? [{ url: pr.attachmentUrl, name: pr.attachmentName || "ไฟล์แนบจาก PR" }] : []);
@@ -3704,24 +3985,38 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
               </div>
 
               <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-                {pdfUrl && (
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">เอกสาร PDF</span>
-                      <a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-blue-600 hover:underline flex items-center gap-1">
+                <div>
+                  <div className="flex items-center justify-between mb-2 w-48">
+                    <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">เอกสาร PDF</span>
+                    {pdfUrl && (
+                      <a href={pdfUrlWithCacheBuster} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-blue-600 hover:underline flex items-center gap-1">
                         <FileOutput size={13} /> เปิด PDF
                       </a>
-                    </div>
-                    <a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="group relative block w-48 h-64 border border-slate-200 rounded-xl overflow-hidden bg-slate-50 hover:border-blue-400 hover:shadow-md transition-all" title="คลิกเพื่อเปิด PDF ในแท็บใหม่">
-                      <iframe src={`${pdfUrl}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`} className="w-full h-full pointer-events-none opacity-80 group-hover:opacity-100 transition-opacity" title="PR PDF Thumbnail" />
+                    )}
+                  </div>
+                  {pdfUrl ? (
+                    <a href={pdfUrlWithCacheBuster} target="_blank" rel="noopener noreferrer" className="group relative block w-48 h-64 border border-slate-200 rounded-xl overflow-hidden bg-slate-50 hover:border-blue-400 hover:shadow-md transition-all" title="คลิกเพื่อเปิด PDF ในแท็บใหม่">
+                      <iframe key={pdfUrlWithCacheBuster} src={`${pdfUrlWithCacheBuster}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`} className="w-full h-full pointer-events-none opacity-80 group-hover:opacity-100 transition-opacity" title="PR PDF Thumbnail" />
                       <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors flex items-center justify-center">
                         <span className="bg-white/90 text-blue-600 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5">
                           <FileOutput size={14} /> เปิดดู PDF
                         </span>
                       </div>
                     </a>
-                  </div>
-                )}
+                  ) : (
+                    <div className="w-48 h-64 border border-dashed border-slate-200 rounded-xl bg-slate-50 flex items-center justify-center text-xs font-semibold text-slate-400">ไม่มี PDF</div>
+                  )}
+                  <button
+                    type="button"
+                    disabled={Boolean(recreatePoInFlightId)}
+                    onClick={() => handleRecreatePR(pr)}
+                    className="mt-2 w-48 py-2 px-3 bg-white hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 border border-slate-300 shadow-sm transition-all hover:border-blue-400 hover:text-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="สร้างหรือ Recreate ไฟล์ PDF ของ PR ใหม่"
+                  >
+                    <RefreshCw size={13} className={recreatePoInFlightId === pr.id ? "animate-spin text-blue-600" : "text-slate-500"} />
+                    <span>{recreatePoInFlightId === pr.id ? "กำลัง Create PDF..." : "Create PDF"}</span>
+                  </button>
+                </div>
 
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
                   {fields.map(({ label, value }) => (
@@ -3940,10 +4235,15 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">เอกสาร PDF</span>
+                      {pdfUrl && (
+                        <a href={pdfUrlWithCacheBuster} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-blue-600 hover:underline flex items-center gap-1">
+                          <FileOutput size={13} /> เปิด PDF
+                        </a>
+                      )}
                     </div>
                     {pdfUrl ? (
                       <a href={pdfUrlWithCacheBuster} target="_blank" rel="noopener noreferrer" className="group relative block w-48 h-64 border border-slate-200 rounded-xl overflow-hidden bg-slate-50 hover:border-blue-400 hover:shadow-md transition-all" title="คลิกเพื่อเปิด PDF ในแท็บใหม่">
-                        <iframe src={`${pdfUrlWithCacheBuster}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`} className="w-full h-full pointer-events-none opacity-80 group-hover:opacity-100 transition-opacity" title="PO PDF Thumbnail" />
+                        <iframe key={pdfUrlWithCacheBuster} src={`${pdfUrlWithCacheBuster}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`} className="w-full h-full pointer-events-none opacity-80 group-hover:opacity-100 transition-opacity" title="PO PDF Thumbnail" />
                         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors flex items-center justify-center">
                           <div className="bg-white/90 backdrop-blur-sm text-blue-600 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5 transform translate-y-2 group-hover:translate-y-0">
                             <FileOutput size={14} /> เปิดดู PDF
@@ -3953,6 +4253,16 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                     ) : (
                       <div className="w-48 h-64 border border-dashed border-slate-200 rounded-xl bg-slate-50 flex items-center justify-center text-xs font-semibold text-slate-400">ไม่มี PDF</div>
                     )}
+                    <button
+                      type="button"
+                      disabled={Boolean(recreatePoInFlightId)}
+                      onClick={() => handleRecreatePO(po)}
+                      className="mt-2 w-48 py-2 px-3 bg-white hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 border border-slate-300 shadow-sm transition-all hover:border-blue-400 hover:text-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Recreate ไฟล์ PDF ของ PO ใหม่"
+                    >
+                      <RefreshCw size={13} className={recreatePoInFlightId === po.id ? "animate-spin text-blue-600" : "text-slate-500"} />
+                      <span>{recreatePoInFlightId === po.id ? "กำลัง Create PDF..." : "Create PDF"}</span>
+                    </button>
                   </div>
 
                   <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-3 self-start">
@@ -4100,6 +4410,16 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
           </div>
         </div>
       )}
+
+      <TableCsvExportModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        title={`ส่งออกข้อมูล ${isPR ? "Log PR" : "Log PO"} (Export CSV)`}
+        tabLabel={activeTypeGroup?.label || "All"}
+        totalRows={activeRows.length}
+        defaultColumns={exportColumns}
+        onExport={handleExportCsv}
+      />
     </div>
   );
 };

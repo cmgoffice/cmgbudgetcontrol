@@ -133,6 +133,7 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
     { key: "requestClosePR", label: "ขอปิด PR" },
     { key: "requestActivePR", label: "ขอ Active PR" },
     { key: "approveActivePR", label: "อนุมัติ Active PR" },
+    { key: "recreate", label: "Create PDF" },
   ],
   po: [
     { key: "create",  label: "สร้าง PO" },
@@ -307,20 +308,25 @@ export function mergeFunctionPermissionsWithDefaults(
       viewBalance: ["PCM", "GM", "MD"],
       returnBalance: ["PCM", "GM", "MD"],
       closePR: ["PCM"],
+      recreate: ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff", "Admin Site", "Admin Center"],
     },
     "pr-table": {
+      export: ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff"],
       viewBalance: ["PCM", "GM", "MD"],
       returnBalance: ["PCM", "GM", "MD"],
       requestClosePR: ["Procurement"],
       requestActivePR: ["Procurement", "PCM"],
       approveActivePR: ["PCM"],
+      recreate: ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff", "Admin Site", "Admin Center"],
     },
     po: {
       closePO: ["PCM"],
+      recreate: ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff", "Admin Site", "Admin Center"],
     },
     "po-table": {
+      export: ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff"],
       returnBudget: ["PCM", "GM", "MD"],
-      recreate: ["Administrator"],
+      recreate: ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff", "Admin Site", "Admin Center"],
       requestClosePO: ["Procurement"],
     },
     "payment-subcontract": {

@@ -142,7 +142,7 @@ const formatNumericInput = (value: unknown) => {
   return `${sign}${formattedInteger}${decimal !== undefined ? `.${decimal}` : ""}`;
 };
 
-const POView = React.memo(() => {
+const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => {
   const L = {
     docName: "PO",
     docNo: "PO No.",
@@ -268,6 +268,71 @@ const POView = React.memo(() => {
     setViewingPO(po);
     void refreshPoRevisionPdf(po);
   }, [refreshPoRevisionPdf]);
+  const [localRecreatePoInFlight, setLocalRecreatePoInFlight] = useState(false);
+  const isRecreatingPo = Boolean(recreatePoInFlightId && (recreatePoInFlightId === viewingPO?.id)) || localRecreatePoInFlight;
+
+  // Sync viewingPO with pos collection
+  useEffect(() => {
+    if (!viewingPO?.id) return;
+    const latest = pos.find((p: any) => p.id === viewingPO.id);
+    if (latest && (latest.pdfUpdatedAt !== viewingPO.pdfUpdatedAt || latest.pdfUrl !== viewingPO.pdfUrl)) {
+      setViewingPO((prev: any) => prev ? { ...prev, ...latest } : null);
+    }
+  }, [pos, viewingPO?.id, viewingPO?.pdfUpdatedAt, viewingPO?.pdfUrl]);
+
+  const handleRecreatePOClick = useCallback(async (poDoc: any) => {
+    if (!poDoc?.id) return;
+    if (onRecreatePO) {
+      await onRecreatePO(poDoc);
+      return;
+    }
+    setLocalRecreatePoInFlight(true);
+    try {
+      const safePONo = String(poDoc.poNo || poDoc.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
+      const safeProjId = poDoc.projectId || "unknown";
+      const project = projects?.find((item: any) => item.id === poDoc.projectId) || null;
+      const vendor = vendors?.find((item: any) => item.id === poDoc.vendorId) || null;
+      const pcmdate = poDoc.pcmApprovedAt ? new Date(poDoc.pcmApprovedAt).toLocaleDateString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric" }) : "";
+      const gmdate = poDoc.gmApprovedAt ? new Date(poDoc.gmApprovedAt).toLocaleDateString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric" }) : "";
+      const poData = {
+        ...poDoc,
+        pcmdate,
+        gmdate,
+        reason: poDoc.reason || "",
+      };
+      let bytes = await generatePOPdfBytes(poData, { vendor, project });
+      bytes = await stampPoSignaturesToPdf(bytes, poData, {
+        currentUserData: userData,
+        currentAuthUser: user,
+        requireApprovedSignatures: true,
+        logPrefix: "[PO Recreate]",
+      });
+      const previousPath = getPreviousGeneratedPdfPath(poDoc, "po");
+      const revisionNo = poDoc.poBudgetReturnRevNo || poDoc.poBudgetReturnRevisions?.length || "manual";
+      const uploaded = await uploadRevisionPdf({
+        bytes,
+        kind: "po",
+        projectId: safeProjId,
+        docNo: safePONo,
+        revisionNo,
+      });
+      await updateData("pos", poDoc.id, {
+        pdfUrl: uploaded.url,
+        pdfPath: uploaded.path,
+        pdfUpdatedAt: new Date().toISOString(),
+      });
+      await removePreviousGeneratedPdf(previousPath, uploaded.path);
+      setViewingPO((prev: any) => prev?.id === poDoc.id ? { ...prev, pdfUrl: uploaded.url, pdfPath: uploaded.path, pdfUpdatedAt: new Date().toISOString() } : prev);
+      logAction?.("Recreate PO", `Recreate PO PDF ${poDoc.poNo || poDoc.id}`, poDoc.projectId);
+      showAlert?.("สำเร็จ", "สร้าง PDF ใหม่เรียบร้อยแล้ว", "success");
+    } catch (err: any) {
+      console.error("Recreate PO failed:", err);
+      showAlert?.("ผิดพลาด", err.message || "สร้าง PDF ไม่สำเร็จ", "error");
+    } finally {
+      setLocalRecreatePoInFlight(false);
+    }
+  }, [onRecreatePO, projects, vendors, userData, user, updateData, logAction, showAlert]);
+
 
   // Prevent double-click on "บันทึกดราฟ" / "ส่งขออนุมัติ" (avoid duplicate PO/PR records)
   const poDraftInFlightRef = useRef(false);
@@ -4020,7 +4085,7 @@ const POView = React.memo(() => {
                     {(() => {
                       const basePdfUrl = viewingPO.pdfUrl || "";
                       const pdfUrlWithCacheBuster = basePdfUrl ? `${basePdfUrl}${basePdfUrl.includes("?") ? "&" : "?"}t=${Date.now()}` : "";
-                      const iframeKey = `po-pdf-${viewingPO.id}-${viewingPO.status}`;
+                      const iframeKey = `po-pdf-${viewingPO.id}-${viewingPO.status}-${viewingPO.pdfUpdatedAt || viewingPO.pdfUrl || ""}`;
                       return (
                         <div className="mb-4 grid grid-cols-1 md:grid-cols-[12rem_1fr] gap-4 items-stretch">
                           <div>
@@ -4052,6 +4117,16 @@ const POView = React.memo(() => {
                                 ไม่มี PDF
                               </div>
                             )}
+                            <button
+                              type="button"
+                              disabled={isRecreatingPo}
+                              onClick={() => handleRecreatePOClick(viewingPO)}
+                              className="mt-2 w-48 py-2 px-3 bg-white hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 border border-slate-300 shadow-sm transition-all hover:border-blue-400 hover:text-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                              title="Recreate ไฟล์ PDF ของ PO ใหม่"
+                            >
+                              <RefreshCw size={13} className={isRecreatingPo ? "animate-spin text-blue-600" : "text-slate-500"} />
+                              <span>{isRecreatingPo ? "กำลัง Create PDF..." : "Create PDF"}</span>
+                            </button>
                           </div>
 
                           <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-3 self-start">
