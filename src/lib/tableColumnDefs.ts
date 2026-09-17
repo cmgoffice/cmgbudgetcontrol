@@ -199,7 +199,6 @@ export const TABLE_COLUMN_DEFS: Record<string, ColumnDef[]> = {
     { key: "poNo",        label: "PO No.",       defaultVisible: true },
     { key: "vendor",      label: "Vendor",       defaultVisible: true },
     { key: "description", label: "รายละเอียด",    defaultVisible: true },
-    { key: "amount",      label: "ยอดรวม (Ex VAT)", defaultVisible: true },
     { key: "progress",    label: "สถานะรับของ",  defaultVisible: true },
     { key: "actions",     label: "Actions",      defaultVisible: true, locked: true },
   ],

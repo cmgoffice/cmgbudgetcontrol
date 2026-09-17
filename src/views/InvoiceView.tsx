@@ -15,7 +15,7 @@ import {
 } from "firebase/firestore";
 import {
   ChevronDown, ChevronRight, FileText, Eye, X, Search, Trash2,
-  DollarSign, Calendar, CreditCard, Package, Check, AlertCircle, Pencil, Paperclip,
+  DollarSign, Calendar, CreditCard, Package, Check, AlertCircle, Pencil, Paperclip, ExternalLink,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAppData } from "../contexts/AppDataContext";
@@ -41,6 +41,8 @@ import {
   truncateLogText,
 } from "../lib/systemLogDetails";
 import { uploadAttachment } from "../lib/uploadAttachment";
+import { generatePOPdfBytes } from "../lib/pdfForms";
+import { stampPoSignaturesToPdf } from "../lib/poSignatureStamps";
 import { validateInvoiceAmountForPo } from "../lib/billingPayUtils";
 import {
   PO_DISCOUNT_ALLOCATION_VERSION,
@@ -73,6 +75,7 @@ const BANK_ACCOUNT_OPTIONS = [
 
 const HISTORY_PAGE_SIZE_OPTIONS = [50, 100, 150, 200];
 const HISTORY_INVOICE_STATUSES = ["Deposit", "Inpay", "Invcredit", "paid", "Paid", "Pending PM", "Approved"];
+const PO_PDF_OPEN_COUNTDOWN_SECONDS = 6;
 
 // Alternating pastel group colors
 const GROUP_COLORS = [
@@ -198,6 +201,8 @@ const InvoiceView = React.memo(() => {
   const [historyTotalCount, setHistoryTotalCount] = useState(0);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyLoadError, setHistoryLoadError] = useState("");
+  const [openingPoPdfId, setOpeningPoPdfId] = useState("");
+  const [openingPoPdfRemainingSeconds, setOpeningPoPdfRemainingSeconds] = useState(PO_PDF_OPEN_COUNTDOWN_SECONDS);
   const historyRequestIdRef = useRef(0);
   const historyPageCursorsRef = useRef<Record<number, any>>({});
 
@@ -1077,6 +1082,79 @@ const InvoiceView = React.memo(() => {
     },
     [buildInvoiceItemsForForm, getInvoiceSource]
   );
+
+  const handleOpenAmountHiddenPoPdf = useCallback(async (invoice: any) => {
+    const poReference = invoice?.poNo || invoice?.poRef || "";
+    const po = (pos || []).find((candidate: any) => (
+      String(candidate?.id || "") === String(invoice?.poId || "") ||
+      String(candidate?.poNo || "") === String(poReference)
+    ));
+
+    if (!po) {
+      showAlert?.("ไม่พบ PO", `ไม่พบข้อมูล PO สำหรับ Ref. PO ${poReference || "-"}`, "warning");
+      return;
+    }
+
+    const popup = window.open("", "_blank");
+    if (!popup) {
+      showAlert?.("เปิด PDF ไม่สำเร็จ", "กรุณาอนุญาต Popup ของเว็บไซต์ แล้วลองใหม่อีกครั้ง", "warning");
+      return;
+    }
+
+    setOpeningPoPdfId(String(invoice?.id || po.id));
+    setOpeningPoPdfRemainingSeconds(PO_PDF_OPEN_COUNTDOWN_SECONDS);
+    popup.document.title = "กำลังเปิด PDF PO";
+    popup.document.body.innerHTML = `
+      <div style="font-family: sans-serif; padding: 32px; color: #475569;">
+        กำลังเปิด PDF PO (${PO_PDF_OPEN_COUNTDOWN_SECONDS} วินาที)
+      </div>
+    `;
+
+    const startedAt = Date.now();
+    const updateLoadingTimer = () => {
+      const remainingSeconds = Math.max(
+        0,
+        PO_PDF_OPEN_COUNTDOWN_SECONDS - Math.floor((Date.now() - startedAt) / 1000)
+      );
+      setOpeningPoPdfRemainingSeconds(remainingSeconds);
+      if (!popup.closed) {
+        popup.document.body.innerHTML = `
+          <div style="font-family: sans-serif; padding: 32px; color: #475569;">
+            กำลังเปิด PDF PO (${remainingSeconds} วินาที)
+          </div>
+        `;
+      }
+    };
+    const loadingTimer = window.setInterval(updateLoadingTimer, 250);
+
+    try {
+      const project = projectById.get(String(po.projectId || getInvoiceProjectId(invoice))) || null;
+      const vendor = (vendors || []).find((candidate: any) => (
+        String(candidate?.id || "") === String(po.vendorId || invoice?.vendorId || "")
+      )) || null;
+      let pdfBytes = await generatePOPdfBytes(po, {
+        vendor,
+        project,
+        hideAmounts: true,
+      });
+      pdfBytes = await stampPoSignaturesToPdf(pdfBytes, po, {
+        currentUserData: userData,
+        currentAuthUser: user,
+        logPrefix: "[InvoiceView Temporary PO]",
+      });
+
+      const objectUrl = URL.createObjectURL(new Blob([pdfBytes], { type: "application/pdf" }));
+      popup.location.href = objectUrl;
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    } catch (error: any) {
+      popup.close();
+      console.warn("[InvoiceView] Failed to generate temporary amount-hidden PO PDF:", error);
+      showAlert?.("เปิด PDF ไม่สำเร็จ", error?.message || "ไม่สามารถสร้าง PDF PO ฉบับไม่แสดงยอดเงินได้", "warning");
+    } finally {
+      window.clearInterval(loadingTimer);
+      setOpeningPoPdfId("");
+    }
+  }, [getInvoiceProjectId, pos, projectById, showAlert, user, userData, vendors]);
 
   const openDepositSettlement = useCallback(
     (invoice: any) => {
@@ -2289,7 +2367,21 @@ const InvoiceView = React.memo(() => {
                         {inv.invNo}
                       </td>
                       <td className="py-1.5 px-3 font-medium text-violet-600">
-                        {inv.poNo || inv.poRef || "-"}
+                        {(inv.poNo || inv.poRef) ? (
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 text-violet-600 underline decoration-violet-200 underline-offset-2 transition-colors hover:text-violet-800 hover:decoration-violet-500 disabled:cursor-wait disabled:opacity-60"
+                            onClick={() => handleOpenAmountHiddenPoPdf(inv)}
+                            disabled={openingPoPdfId === String(inv.id)}
+                            title="เปิด PDF PO ฉบับไม่แสดงยอดเงิน"
+                            aria-label={`เปิด PDF PO ${inv.poNo || inv.poRef} ฉบับไม่แสดงยอดเงิน`}
+                          >
+                            {openingPoPdfId === String(inv.id)
+                              ? `กำลังเปิด PDF PO (${openingPoPdfRemainingSeconds} วินาที)`
+                              : (inv.poNo || inv.poRef)}
+                            <ExternalLink size={11} aria-hidden="true" />
+                          </button>
+                        ) : "-"}
                       </td>
                       <td className="py-1.5 px-3 max-w-[180px] truncate" title={getProjectLabel(getInvoiceProjectId(inv))}>
                         {getProjectLabel(getInvoiceProjectId(inv))}

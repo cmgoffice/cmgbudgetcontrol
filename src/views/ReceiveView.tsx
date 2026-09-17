@@ -23,8 +23,7 @@ import {
   formatLogCurrency,
   truncateLogText,
 } from "../lib/systemLogDetails";
-import { resolveCurrentUserSignatureImage } from "../lib/poSignatureStamps";
-import { getPoAmountExVat } from "../lib/poDiscount";
+import { resolveCurrentUserSignatureImage, stampPoSignaturesToPdf } from "../lib/poSignatureStamps";
 import { isPoReadyForManualReceive } from "../lib/constants";
 import {
   getCmgStoreTargetProjectCode,
@@ -46,6 +45,7 @@ const PO_TYPE_LABELS = {
 };
 
 const RECEIVE_HISTORY_PAGE_SIZE = 100;
+const PO_PDF_OPEN_COUNTDOWN_SECONDS = 6;
 
 const getReceiveLogSummary = (receive: any, patch: any = null) =>
   buildRecordSummary("receives", patch ? { ...receive, ...patch } : receive, receive?.id);
@@ -107,6 +107,9 @@ const ReceiveView = React.memo(() => {
   const [viewingRcv, setViewingRcv] = useState(null);
   const [uploadingPhotos, setUploadingPhotos] = useState({});
   const [cmgStoreRetryingId, setCmgStoreRetryingId] = useState<string | null>(null);
+  const [receiveSafePoPdfUrl, setReceiveSafePoPdfUrl] = useState<string | null>(null);
+  const [receiveSafePoPdfLoading, setReceiveSafePoPdfLoading] = useState(false);
+  const [receiveSafePoPdfRemainingSeconds, setReceiveSafePoPdfRemainingSeconds] = useState(PO_PDF_OPEN_COUNTDOWN_SECONDS);
 
   // Receive Evaluation state
   const [receiveEvalModalOpen, setReceiveEvalModalOpen] = useState(false);
@@ -126,6 +129,65 @@ const ReceiveView = React.memo(() => {
   }, [activeTab, canViewReceiveHistory]);
 
   const currentProject = projects.find((p) => p.id === selectedProjectId);
+
+  // Generate a temporary PO PDF for Receive without prices or monetary totals.
+  // It is kept as a browser Blob URL only and is never uploaded to Storage.
+  useEffect(() => {
+    let disposed = false;
+    let objectUrl = "";
+
+    setReceiveSafePoPdfUrl(null);
+    setReceiveSafePoPdfLoading(false);
+    setReceiveSafePoPdfRemainingSeconds(PO_PDF_OPEN_COUNTDOWN_SECONDS);
+
+    if (!viewingPO || receiveMode || !viewingPO.pdfUrl) {
+      return () => {};
+    }
+
+    const vendorObj = vendors.find((v) => v.id === viewingPO.vendorId);
+    setReceiveSafePoPdfLoading(true);
+    const startedAt = Date.now();
+    const loadingTimer = window.setInterval(() => {
+      setReceiveSafePoPdfRemainingSeconds(Math.max(
+        0,
+        PO_PDF_OPEN_COUNTDOWN_SECONDS - Math.floor((Date.now() - startedAt) / 1000)
+      ));
+    }, 250);
+
+    generatePOPdfBytes(viewingPO, {
+      vendor: vendorObj,
+      project: currentProject,
+      hideAmounts: true,
+    })
+      .then((pdfBytes) => {
+        if (disposed) return;
+        return stampPoSignaturesToPdf(pdfBytes, viewingPO, {
+          currentUserData: userData,
+          currentAuthUser: user,
+          logPrefix: "[ReceiveView Temporary PO]",
+        });
+      })
+      .then((signedPdfBytes) => {
+        if (disposed || !signedPdfBytes) return;
+        objectUrl = URL.createObjectURL(new Blob([signedPdfBytes], { type: "application/pdf" }));
+        setReceiveSafePoPdfUrl(objectUrl);
+      })
+      .catch((error) => {
+        if (!disposed) {
+          console.warn("[ReceiveView] Failed to generate temporary amount-hidden PO PDF:", error);
+        }
+      })
+      .finally(() => {
+        window.clearInterval(loadingTimer);
+        if (!disposed) setReceiveSafePoPdfLoading(false);
+      });
+
+    return () => {
+      disposed = true;
+      window.clearInterval(loadingTimer);
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [currentProject, receiveMode, vendors, viewingPO]);
 
   // POs that still have receiveable quantities for the selected project.
   // Partial Receive is kept in this tab so users can continue receiving the
@@ -595,14 +657,28 @@ const ReceiveView = React.memo(() => {
         };
 
         const signatureUrl = await resolveCurrentUserSignatureImage(userData, user);
-        let rpPdfBytes = await generateRPPdfBytes(rpData, { signatureUrl });
+        let rpPdfBytes = await generateRPPdfBytes(rpData, {
+          signatureUrl,
+          hideAmounts: true,
+        });
 
-        // Merge PO PDF into the RP PDF
+        // Merge a temporary amount-hidden PO PDF into the RP PDF.
+        // The temporary PDF stays in memory and is not uploaded separately.
         try {
           setSavingStep("กำลังรวมหน้าใบสั่งซื้อ (PO)...");
-          const poPdfBytes = await generatePOPdfBytes(po, { vendor: vendorObj, project: currentProject });
+          const poPdfBytes = await generatePOPdfBytes(po, {
+            vendor: vendorObj,
+            project: currentProject,
+            hideAmounts: true,
+          });
+          setSavingStep("กำลังประทับลายเซ็นในเอกสาร PO...");
+          const signedPoPdfBytes = await stampPoSignaturesToPdf(poPdfBytes, po, {
+            currentUserData: userData,
+            currentAuthUser: user,
+            logPrefix: "[ReceiveView Receive PO]",
+          });
           const mergedPdf = await PDFDocument.load(rpPdfBytes);
-          const poDoc = await PDFDocument.load(poPdfBytes);
+          const poDoc = await PDFDocument.load(signedPoPdfBytes);
           const copiedPages = await mergedPdf.copyPages(poDoc, poDoc.getPageIndices());
           copiedPages.forEach((page) => mergedPdf.addPage(page));
           rpPdfBytes = await mergedPdf.save();
@@ -1527,7 +1603,6 @@ const ReceiveView = React.memo(() => {
                           {isColumnVisible("receive-po", "poNo") && <th className="py-1 px-3">PO No.</th>}
                           {isColumnVisible("receive-po", "vendor") && <th className="py-1 px-3">Vendor</th>}
                           {isColumnVisible("receive-po", "description") && <th className="py-1 px-3">รายละเอียด</th>}
-                          {isColumnVisible("receive-po", "amount") && <th className="py-1 px-3 text-right">ยอดรวม (Ex VAT)</th>}
                           {isColumnVisible("receive-po", "progress") && <th className="py-1 px-3 text-center">สถานะรับของ</th>}
                           <th className="hidden py-1 px-3 text-center md:table-cell">Actions</th>
                         </tr>
@@ -1574,9 +1649,6 @@ const ReceiveView = React.memo(() => {
                                 <td className="py-1 px-3 max-w-[250px] truncate" title={poDescription(po)}>
                                   {poDescription(po)}
                                 </td>
-                              )}
-                              {isColumnVisible("receive-po", "amount") && (
-                                <td className="py-1 px-3 text-right font-semibold">{formatCurrency(getPoAmountExVat(po))}</td>
                               )}
                               {isColumnVisible("receive-po", "progress") && (
                                 <td className="py-1 px-3">
@@ -1678,7 +1750,6 @@ const ReceiveView = React.memo(() => {
                         { label: "PO No.", value: viewingPO.poNo },
                         { label: "Type", value: PO_TYPE_LABELS[viewingPO.poType] || viewingPO.poType || "-" },
                         { label: "Vendor", value: getVendorName(viewingPO.vendorId) },
-                        { label: "ยอดรวม", value: formatCurrency(viewingPO.amount) },
                         { label: "วันที่ PO", value: viewingPO.poDate ? new Date(viewingPO.poDate).toLocaleDateString("th-TH") : "-" },
                         { label: "วันกำหนดส่ง", value: viewingPO.requiredDate || "-" },
                         { label: "สถานะ", value: viewingPO.status },
@@ -1742,21 +1813,29 @@ const ReceiveView = React.memo(() => {
                     {/* PDF Thumbnail */}
                     {viewingPO.pdfUrl && (
                       <div>
-                        <h4 className="text-sm font-bold text-slate-700 mb-2">เอกสาร PDF</h4>
+                        <h4 className="text-sm font-bold text-slate-700 mb-2">เอกสาร PDF (ฉบับทำรับของ ไม่แสดงยอดเงิน)</h4>
                         <div className="inline-block rounded-2xl bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 border border-indigo-100 p-3 shadow-sm">
                           {/* iframe thumbnail — pointer-events-none ป้องกัน scroll/interact */}
                           <div
                             className="relative w-[220px] rounded-xl overflow-hidden border border-indigo-100 shadow-md bg-white cursor-pointer group"
-                            onClick={() => window.open(viewingPO.pdfUrl, "_blank")}
+                            onClick={() => receiveSafePoPdfUrl && window.open(receiveSafePoPdfUrl, "_blank", "noopener,noreferrer")}
                             title="คลิกเพื่อเปิด PDF"
                           >
-                            <iframe
-                              src={`${viewingPO.pdfUrl}#view=FitH&toolbar=0&navpanes=0&scrollbar=0`}
-                              title="PO PDF preview"
-                              className="w-full border-0 pointer-events-none select-none"
-                              style={{ height: 290, transform: "scale(1)", transformOrigin: "top left" }}
-                              scrolling="no"
-                            />
+                            {receiveSafePoPdfUrl ? (
+                              <iframe
+                                src={`${receiveSafePoPdfUrl}#view=FitH&toolbar=0&navpanes=0&scrollbar=0`}
+                                title="PO PDF preview without amounts"
+                                className="w-full border-0 pointer-events-none select-none"
+                                style={{ height: 290, transform: "scale(1)", transformOrigin: "top left" }}
+                                scrolling="no"
+                              />
+                            ) : (
+                              <div className="h-[290px] w-full flex items-center justify-center px-5 text-center text-xs text-slate-400">
+                                {receiveSafePoPdfLoading
+                                  ? `กำลังเปิด PDF PO (${receiveSafePoPdfRemainingSeconds} วินาที)`
+                                  : "ไม่สามารถเตรียม PDF ได้"}
+                              </div>
+                            )}
                             {/* overlay เมื่อ hover */}
                             <div className="absolute inset-0 bg-indigo-600/0 group-hover:bg-indigo-600/10 transition-colors flex items-center justify-center">
                               <span className="opacity-0 group-hover:opacity-100 transition-opacity bg-white/90 text-indigo-700 text-[10px] font-semibold px-3 py-1.5 rounded-full shadow flex items-center gap-1">
@@ -1767,16 +1846,20 @@ const ReceiveView = React.memo(() => {
                           {/* ชื่อไฟล์ + ปุ่ม */}
                           <div className="mt-2 w-[220px] flex items-center justify-between">
                             <p className="text-[10px] text-indigo-500 font-medium truncate max-w-[150px]">
-                              {viewingPO.poNo}.pdf
+                              {viewingPO.poNo}-receive.pdf
                             </p>
-                            <a
-                              href={viewingPO.pdfUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-indigo-100 hover:bg-indigo-200 text-indigo-600 text-[10px] font-semibold transition-colors"
-                            >
-                              <ExternalLink size={10} /> เปิด
-                            </a>
+                            {receiveSafePoPdfUrl ? (
+                              <a
+                                href={receiveSafePoPdfUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-indigo-100 hover:bg-indigo-200 text-indigo-600 text-[10px] font-semibold transition-colors"
+                              >
+                                <ExternalLink size={10} /> เปิด
+                              </a>
+                            ) : (
+                              <span className="text-[10px] text-slate-400">กำลังเตรียม...</span>
+                            )}
                           </div>
                         </div>
                       </div>

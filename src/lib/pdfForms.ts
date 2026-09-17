@@ -374,7 +374,7 @@ function buildPOPrintPages(form: any, items: any[], maxRows: number, customFont?
   return pages;
 }
 
-function fillPOPrintRows(form: any, rows: any[], maxRows: number, customFont?: any) {
+function fillPOPrintRows(form: any, rows: any[], maxRows: number, customFont?: any, hideAmounts = false) {
   for (let i = 1; i <= maxRows; i++) {
     const idx2 = String(i).padStart(2, "0");
     const row = rows[i - 1];
@@ -384,9 +384,9 @@ function fillPOPrintRows(form: any, rows: any[], maxRows: number, customFont?: a
     setTextIfExists(form, [`item_desc_${idx2}`, `desc_${idx2}`, `description_${idx2}`, `fill_${14 + i}`], row?.description || "", customFont);
     setTextIfExists(form, [`item_qty_${idx2}`, `qty_${idx2}`, `quantity_${idx2}`, `fill_${15 + i}`], item ? fmtQty(item.quantity) : "", customFont);
     setTextIfExists(form, [`item_unit_${idx2}`, `unit_${idx2}`, `fill_${16 + i}`], item?.unit || "", customFont);
-    setTextIfExists(form, [`item_unit_price_${idx2}`, `unit_price_${idx2}`, `price_${idx2}`, `fill_${17 + i}`], item ? fmtMoney(item.price) : "", customFont);
-    setTextIfExists(form, [`item_discount_${idx2}`, `discount_${idx2}`, `fill_${18 + i}`], item?.discount ? fmtMoney(item.discount) : "", customFont);
-    setTextIfExists(form, [`item_amount_${idx2}`, `amount_${idx2}`, `fill_${19 + i}`], item ? fmtMoney(item.amount ?? (Number(item.quantity) * Number(item.price))) : "", customFont);
+    setTextIfExists(form, [`item_unit_price_${idx2}`, `unit_price_${idx2}`, `price_${idx2}`, `fill_${17 + i}`], hideAmounts ? "" : (item ? fmtMoney(item.price) : ""), customFont);
+    setTextIfExists(form, [`item_discount_${idx2}`, `discount_${idx2}`, `fill_${18 + i}`], hideAmounts ? "" : (item?.discount ? fmtMoney(item.discount) : ""), customFont);
+    setTextIfExists(form, [`item_amount_${idx2}`, `amount_${idx2}`, `fill_${19 + i}`], hideAmounts ? "" : (item ? fmtMoney(item.amount ?? (Number(item.quantity) * Number(item.price))) : ""), customFont);
   }
 }
 
@@ -573,7 +573,10 @@ export async function generatePRPdfBytes(pr: any, { projectName = "", budgetDesc
   }
 }
 
-export async function generatePOPdfBytes(po: any, { vendor = null, project = null }: { vendor?: any; project?: any } = {}) {
+export async function generatePOPdfBytes(
+  po: any,
+  { vendor = null, project = null, hideAmounts = false }: { vendor?: any; project?: any; hideAmounts?: boolean } = {}
+) {
   const { pdfDoc: initialDoc, hasForm, customFont, templateBytes } = await loadTemplate("po");
 
   // PO keeps a Vendor snapshot so an issued document does not change when the
@@ -650,13 +653,13 @@ export async function generatePOPdfBytes(po: any, { vendor = null, project = nul
       setMultilineIfExists(form, ["vendor_address", "vendoraddress"], vendorAddressWithTel, pageCustomFont);
       setTextIfExists(form, ["vendor_credit_term", "vendor", "vendorcredit", "vendorco"], vendorCredit, pageCustomFont);
 
-      fillPOPrintRows(form, chunk, MAX_ROWS, pageCustomFont);
+      fillPOPrintRows(form, chunk, MAX_ROWS, pageCustomFont, hideAmounts);
 
-      setTextIfExists(form, ["total_amount", "amount", "fill_10"], fmtMoney(subtotal), pageCustomFont);
-      setTextIfExists(form, ["discount", "fill_11"], fmtMoney(discount), pageCustomFont);
-      setTextIfExists(form, ["sub_total", "subtotal", "fill_12"], fmtMoney(subTotalAfterDiscount), pageCustomFont);
-      setTextIfExists(form, ["vat_7", "vat7", "fill_13"], fmtMoney(vat), pageCustomFont);
-      setTextIfExists(form, ["net_total", "total", "fill_7"], fmtMoney(netTotal), pageCustomFont);
+      setTextIfExists(form, ["total_amount", "amount", "fill_10"], hideAmounts ? "" : fmtMoney(subtotal), pageCustomFont);
+      setTextIfExists(form, ["discount", "fill_11"], hideAmounts ? "" : fmtMoney(discount), pageCustomFont);
+      setTextIfExists(form, ["sub_total", "subtotal", "fill_12"], hideAmounts ? "" : fmtMoney(subTotalAfterDiscount), pageCustomFont);
+      setTextIfExists(form, ["vat_7", "vat7", "fill_13"], hideAmounts ? "" : fmtMoney(vat), pageCustomFont);
+      setTextIfExists(form, ["net_total", "total", "fill_7"], hideAmounts ? "" : fmtMoney(netTotal), pageCustomFont);
 
       const saveFieldRect = (name: string) => {
         try {
@@ -701,6 +704,13 @@ export async function generatePOPdfBytes(po: any, { vendor = null, project = nul
     }
     return await mergedPdf.save();
   } else {
+    const itemLines = hideAmounts
+      ? items.map((it: any, i: number) =>
+        `${String(i + 1).padEnd(4)} ${String(it.materialNo || "").substring(0, 14).padEnd(16)} ${String(it.description).substring(0, 26).padEnd(28)} ${String(it.quantity).padEnd(8)} ${String(it.unit).padEnd(8)}`
+      )
+      : items.map((it: any, i: number) =>
+        `${String(i + 1).padEnd(4)} ${String(it.materialNo || "").substring(0, 14).padEnd(16)} ${String(it.description).substring(0, 26).padEnd(28)} ${String(it.quantity).padEnd(8)} ${String(it.unit).padEnd(8)} ${fmtMoney(it.price).padEnd(12)} ${fmtMoney(it.amount)}`
+      );
     const lines: string[] = [
       `## Purchase Order`, ``,
       `PO No.        : ${po.poNo || po.id || "-"}`,
@@ -717,17 +727,19 @@ export async function generatePOPdfBytes(po: any, { vendor = null, project = nul
       `เครดิตเทอม    : ${vendorCredit || "-"}`,
       ``,
       `## รายการสินค้า`,
-      `${"No.".padEnd(4)} ${"Material No.".padEnd(16)} ${"รายการ".padEnd(28)} ${"จำนวน".padEnd(8)} ${"หน่วย".padEnd(8)} ${"ราคา/หน่วย".padEnd(12)} ${"รวม"}`,
-      `${"-".repeat(90)}`,
-      ...items.map((it: any, i: number) =>
-        `${String(i + 1).padEnd(4)} ${String(it.materialNo || "").substring(0, 14).padEnd(16)} ${String(it.description).substring(0, 26).padEnd(28)} ${String(it.quantity).padEnd(8)} ${String(it.unit).padEnd(8)} ${fmtMoney(it.price).padEnd(12)} ${fmtMoney(it.amount)}`
-      ),
-      `${"-".repeat(90)}`,
+      hideAmounts
+        ? `${"No.".padEnd(4)} ${"Material No.".padEnd(16)} ${"รายการ".padEnd(28)} ${"จำนวน".padEnd(8)} ${"หน่วย"}`
+        : `${"No.".padEnd(4)} ${"Material No.".padEnd(16)} ${"รายการ".padEnd(28)} ${"จำนวน".padEnd(8)} ${"หน่วย".padEnd(8)} ${"ราคา/หน่วย".padEnd(12)} ${"รวม"}`,
+      `${"-".repeat(hideAmounts ? 66 : 90)}`,
+      ...itemLines,
+      `${"-".repeat(hideAmounts ? 66 : 90)}`,
       ``,
-      `ยอดรวม        : ${fmtMoney(subtotal)} บาท`,
-      discount > 0 ? `ส่วนลด        : ${fmtMoney(discount)} บาท` : "",
-      vat > 0 ? `VAT (7%)      : ${fmtMoney(vat)} บาท` : "",
-      `## ยอดสุทธิ   : ${fmtMoney(netTotal)} บาท`,
+      ...(hideAmounts ? [] : [
+        `ยอดรวม        : ${fmtMoney(subtotal)} บาท`,
+        discount > 0 ? `ส่วนลด        : ${fmtMoney(discount)} บาท` : "",
+        vat > 0 ? `VAT (7%)      : ${fmtMoney(vat)} บาท` : "",
+        `## ยอดสุทธิ   : ${fmtMoney(netTotal)} บาท`,
+      ]),
       ``,
       `* หมายเหตุ: ไม่พบ Template PDF กรุณาอัปโหลด PO Form ในหน้า Admin → แบบฟอร์ม PDF`,
     ].filter(l => l !== undefined);
@@ -990,7 +1002,7 @@ export async function generatePaymentPdfBytes(
  */
 export async function generateRPPdfBytes(
   rp: any,
-  opts: { signatureUrl?: string } = {}
+  opts: { signatureUrl?: string; hideAmounts?: boolean } = {}
 ): Promise<Uint8Array> {
   const { pdfDoc: initialDoc, hasForm, customFont, templateBytes } = await loadTemplate("rp");
 
@@ -1053,8 +1065,8 @@ export async function generateRPPdfBytes(
         setTextIfExists(form, [`list_${i}`, `item_list_${i}`, `desc_${i}`], item?.description || "", pageCustomFont);
         setTextIfExists(form, [`qty_${i}`, `item_qty_${i}`], item ? fmtQty(item.receivedQty) : "", pageCustomFont);
         setTextIfExists(form, [`unit_${i}`, `item_unit_${i}`], item?.unit || "", pageCustomFont);
-        setTextIfExists(form, [`rateunit_${i}`, `rate_unit_${i}`, `item_price_${i}`], item ? fmtMoney(item.price) : "", pageCustomFont);
-        setTextIfExists(form, [`price_${i}`, `item_amount_${i}`, `amount_${i}`], item ? fmtMoney(item.amount) : "", pageCustomFont);
+        setTextIfExists(form, [`rateunit_${i}`, `rate_unit_${i}`, `item_price_${i}`], opts.hideAmounts ? "" : (item ? fmtMoney(item.price) : ""), pageCustomFont);
+        setTextIfExists(form, [`price_${i}`, `item_amount_${i}`, `amount_${i}`], opts.hideAmounts ? "" : (item ? fmtMoney(item.amount) : ""), pageCustomFont);
       }
 
       setTextIfExists(form, ["user", "User", "creator", "creatorname"], rp.receivedByName || "", pageCustomFont);
