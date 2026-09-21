@@ -47,6 +47,7 @@ import {
 import {
   buildProjectBudgetExportSheets,
 } from "../lib/projectBudgetExport";
+import { isMainBudgetHidden } from "../lib/budgetVisibility";
 import {
   createProjectBudgetDetailWorkbook,
   createProjectBudgetWorkbook,
@@ -623,6 +624,21 @@ const BudgetView = React.memo(() => {
     return sortableItems;
   }, [currentBudgets, sortConfig]);
 
+  // Hide affects presentation only. Keep currentBudgets/sortedBudgets intact so
+  // validation, balances, category summaries, and Grand Total still include it.
+  const visibleSortedBudgets = useMemo(
+    () => sortedBudgets.filter((budget) => !isMainBudgetHidden(budget)),
+    [sortedBudgets]
+  );
+
+  useEffect(() => {
+    const visibleIds = new Set(visibleSortedBudgets.map((budget) => budget.id));
+    setSelectedBudgetIds((previousIds) => {
+      const nextIds = previousIds.filter((id) => visibleIds.has(id));
+      return nextIds.length === previousIds.length ? previousIds : nextIds;
+    });
+  }, [visibleSortedBudgets]);
+
   const requestSort = (key) => {
     let direction = "ascending";
     if (sortConfig.key === key && sortConfig.direction === "ascending") {
@@ -851,8 +867,9 @@ const BudgetView = React.memo(() => {
 
     const dataRows: string[] = [];
 
-    if (currentBudgets.length > 0) {
-      currentBudgets.forEach((budget: any) => {
+    const exportableBudgets = currentBudgets.filter((budget: any) => !isMainBudgetHidden(budget));
+    if (exportableBudgets.length > 0) {
+      exportableBudgets.forEach((budget: any) => {
         const mainCode = budget.code || "";
         const mainDesc = budget.description || "";
         const mainBudget = budget.amount ?? 0;
@@ -1084,6 +1101,7 @@ const BudgetView = React.memo(() => {
               description: row.mainDescription || "",
               amount: 0,
               status: "Draft",
+              Hide: false,
               subItems: [],
             };
           }
@@ -1230,6 +1248,12 @@ const BudgetView = React.memo(() => {
     for (const entry of allBudgetMaps) {
       if (entry.isLegacy) {
         for (const row of (entry.legacyRows || [])) {
+          const existingBudget = budgets.find(
+            (budget) =>
+              budget.projectId === selectedProjectId &&
+              budget.code === row.mainCode &&
+              normalizeDesc(budget.description) === normalizeDesc(row.mainDescription)
+          );
           const budgetItem = {
             projectId: selectedProjectId,
             category: entry.cat,
@@ -1237,6 +1261,7 @@ const BudgetView = React.memo(() => {
             description: row.mainDescription,
             amount: row.amount,
             status: "Draft",
+            Hide: existingBudget?.Hide ?? false,
             subItems: [],
             createdAfterRevision: currentBudgetRevisionNo,
             createdAsRevisionNewItem: true,
@@ -1267,6 +1292,7 @@ const BudgetView = React.memo(() => {
           } else {
             batchPromises.push(addData("budgets", {
               ...budgetItem,
+              Hide: false,
               createdAfterRevision: currentBudgetRevisionNo,
               createdAsRevisionNewItem: true,
               createdAsRevisionNewItemAt: new Date().toISOString(),
@@ -1750,7 +1776,7 @@ const BudgetView = React.memo(() => {
       showAlert("กรุณาเลือกโครงการ", "เลือกโครงการที่ต้องการ Export ก่อน", "warning");
       return;
     }
-    if (selectedProjectBudgets.length === 0) {
+    if (!selectedProjectBudgets.some((budget) => !isMainBudgetHidden(budget))) {
       showAlert("ไม่มีข้อมูล", "โครงการนี้ยังไม่มีรายการ Budget สำหรับ Export", "warning");
       return;
     }
@@ -1811,7 +1837,10 @@ const BudgetView = React.memo(() => {
     try {
       const groupedRows = new Map<string, any>();
       selectedProjectBudgets
-        .filter((budget) => String(budget?.code || "").startsWith(budgetCategory))
+        .filter((budget) => (
+          !isMainBudgetHidden(budget) &&
+          String(budget?.code || "").startsWith(budgetCategory)
+        ))
         .forEach((budget) => {
           const costCode = String(budget?.code || "").trim();
           const stats = budgetStatsById.get(budget.id) || {};
@@ -2339,10 +2368,10 @@ const BudgetView = React.memo(() => {
   }, [budgetStatsById, getNowStatus, getSubItemAmount, getSubItemPrUsed, normalizeBudgetFilterText, pickLatestNowStatus]);
 
   const filteredBudgets = useMemo(() => {
-    if (!hasBudgetTableFilter) return sortedBudgets;
+    if (!hasBudgetTableFilter) return visibleSortedBudgets;
     const filterValue = normalizeBudgetFilterText(budgetTableFilter);
 
-    return sortedBudgets.filter((budget) =>
+    return visibleSortedBudgets.filter((budget) =>
       normalizeBudgetFilterText(getBudgetFilterText(budget)).includes(filterValue)
     );
   }, [
@@ -2350,11 +2379,19 @@ const BudgetView = React.memo(() => {
     getBudgetFilterText,
     hasBudgetTableFilter,
     normalizeBudgetFilterText,
-    sortedBudgets,
+    visibleSortedBudgets,
   ]);
 
   const headerTotals = useMemo(() => {
-    return filteredBudgets.reduce(
+    // A hidden row must still be counted. When a text filter is active, retain
+    // the existing filtered-total behavior for visible rows and add all hidden
+    // rows in the category back into the calculation.
+    const hiddenBudgets = sortedBudgets.filter(isMainBudgetHidden);
+    const budgetsToTotal = hasBudgetTableFilter
+      ? [...filteredBudgets, ...hiddenBudgets]
+      : sortedBudgets;
+
+    return budgetsToTotal.reduce(
       (acc, b) => {
         const totalBudget = Number(calculateTotalBudget(b)) || 0;
         const hasSubItems = Array.isArray(b.subItems) && b.subItems.length > 0;
@@ -2369,7 +2406,7 @@ const BudgetView = React.memo(() => {
       },
       { budget: 0, prTotal: 0, poTotal: 0, balance: 0 }
     );
-  }, [filteredBudgets, budgetStatsById]);
+  }, [filteredBudgets, sortedBudgets, hasBudgetTableFilter, budgetStatsById]);
 
   const getBudgetReturnNotifications = (budget) => {
     if (!budget || !Array.isArray(budget.budgetReturnNotifications)) return [];
@@ -2576,6 +2613,7 @@ const BudgetView = React.memo(() => {
           category: budgetCategory,
           code: `${budgetCategory}${formData.code}`,
           status: "Draft",
+          Hide: false,
           revisionReason: "",
           subItems: [],
           createdAfterRevision: currentBudgetRevisionNo,
@@ -3855,7 +3893,7 @@ const BudgetView = React.memo(() => {
             <Button
               variant="outline"
               onClick={handleExportProjectBudget}
-              disabled={!selectedProjectId || selectedProjectBudgets.length === 0}
+              disabled={!selectedProjectId || !selectedProjectBudgets.some((budget) => !isMainBudgetHidden(budget))}
               className="h-9 px-3 border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
               title="Export Budget, PO และ Invoice แยก Sheet 001-009"
             >

@@ -50,6 +50,21 @@ describe("buildProjectBudgetExportSheets", () => {
     expect(result["002"]).toEqual([]);
   });
 
+  it("ไม่ส่งออก Main Budget ที่ตั้ง Hide แต่ยังไม่แก้ข้อมูลต้นทาง", () => {
+    const budgets = [
+      { id: "visible", category: "001", code: "001001001", amount: 1000, Hide: false },
+      { id: "hidden-boolean", category: "001", code: "001001002", amount: 2000, Hide: true },
+      { id: "hidden-string", category: "001", code: "001001003", amount: 3000, Hide: "true" },
+    ];
+
+    const result = buildProjectBudgetExportSheets(budgets, new Map());
+
+    expect(result["001"]).toEqual([
+      { costCode: "001001001", budgetTotal: 1000, poTotal: 0, invTotal: 0 },
+    ]);
+    expect(budgets).toHaveLength(3);
+  });
+
   it("สร้างไฟล์ xlsx ที่มี 9 Sheet และเก็บ CostCode เป็นข้อความ", () => {
     const rowsByCategory = buildProjectBudgetExportSheets(
       [{ id: "budget-a", category: "001", code: "001001001", amount: 1500 }],

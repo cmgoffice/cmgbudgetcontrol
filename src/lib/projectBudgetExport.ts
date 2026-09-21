@@ -1,4 +1,5 @@
 import { COST_CATEGORIES } from "./constants";
+import { isMainBudgetHidden } from "./budgetVisibility";
 
 export const PROJECT_BUDGET_EXPORT_HEADERS = [
   "CostCode",
@@ -36,6 +37,8 @@ export function buildProjectBudgetExportSheets(
   ) as Record<string, Map<string, ProjectBudgetExportRow>>;
 
   (budgets || []).forEach((budget) => {
+    if (isMainBudgetHidden(budget)) return;
+
     const costCode = String(budget?.code || "").trim();
     if (!costCode) return;
 
