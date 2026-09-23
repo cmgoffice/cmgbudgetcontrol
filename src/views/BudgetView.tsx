@@ -19,6 +19,7 @@ import {
   PO_REVISION_PENDING_PCM, PO_REVISION_PENDING_GM, PR_PENDING_ACTIVE,
 } from "../lib/constants";
 import { canActivatePR, getResumeStatusForPR } from "../lib/prAllocation";
+import { transitionPrActivation } from "../lib/prActivation";
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { getPoNetPrAllocations, scalePrItemsToTotal, sumSubItemAmounts } from "../lib/prBudgetReturn";
 import { getInvoiceAmountForPo, isPaidStatus, isSpentInvoiceRecord } from "../lib/billingPayUtils";
@@ -32,6 +33,7 @@ import {
   buildAcceptedPendingReturnState,
   getPendingBudgetReturnGroup,
   getPendingBudgetReturns,
+  getPrStatusAfterBudgetReturnAcceptance,
   sumBudgetReturnNotifications,
 } from "../lib/pendingBudgetReturns";
 import { generatePRPdfBytes, generatePOPdfBytes, deleteGeneratedPdf } from "../lib/pdfForms";
@@ -3246,12 +3248,14 @@ const BudgetView = React.memo(() => {
                 revisionNoByRequestId.set(requestId, Number(revNo));
               });
               const legacyRequestId = currentPr.pendingBudgetReturn?.requestId;
-              const finalStatus = acceptedState.totalAmount <= 0 ? "Closed PR Auto" : (currentPr.status || "Approved");
+              const finalStatus = getPrStatusAfterBudgetReturnAcceptance();
               transaction.update(prRef, {
                 items: acceptedState.items,
                 totalAmount: acceptedState.totalAmount,
                 amount: acceptedState.totalAmount,
                 status: finalStatus,
+                activeRequestedAt: null,
+                preCloseStatus: null,
                 budgetReturnRevisions: acceptedState.history,
                 budgetReturnRevNo: lastRevision.revNo,
                 lastBudgetReturnAt: lastRevision.at,
@@ -3261,7 +3265,7 @@ const BudgetView = React.memo(() => {
                 ...(legacyRequestId && requestIds.has(String(legacyRequestId)) ? { pendingBudgetReturn: deleteField() } : {}),
               });
               acceptedPrPdfs.push({
-                pr: { ...currentPr, id: prId, items: acceptedState.items, totalAmount: acceptedState.totalAmount, amount: acceptedState.totalAmount, status: finalStatus, pendingBudgetReturns: acceptedState.remainingPendingReturns },
+                pr: { ...currentPr, id: prId, items: acceptedState.items, totalAmount: acceptedState.totalAmount, amount: acceptedState.totalAmount, status: finalStatus, activeRequestedAt: null, preCloseStatus: null, pendingBudgetReturns: acceptedState.remainingPendingReturns },
                 revisionNo: lastRevision.revNo,
               });
             }
@@ -4344,7 +4348,12 @@ const BudgetView = React.memo(() => {
                                       className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                       onClick={async () => {
                                         const { status: resume, usedAmount, totalAmount } = getResumeStatusForPR(pr, pos);
-                                        await updateData("prs", pr.id, { status: resume, preCloseStatus: null, activeRequestedAt: null });
+                                        try {
+                                          await transitionPrActivation({ db, appId, prId: pr.id, action: "approve", resumeStatus: resume, pos });
+                                        } catch (error: any) {
+                                          showAlert("Active PR ไม่สำเร็จ", error?.message || String(error), "warning");
+                                          return;
+                                        }
                                         logAction(
                                           "Approved Active PR",
                                           `อนุมัติ Active PR ${pr.prNo || pr.id} → ${resume} (PO linked ${formatCurrency(usedAmount)} / PR ${formatCurrency(totalAmount)})`,
@@ -4403,7 +4412,12 @@ const BudgetView = React.memo(() => {
                                       className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                       onClick={async () => {
                                         const { status: resume, usedAmount, totalAmount } = getResumeStatusForPR(pr, pos);
-                                        await updateData("prs", pr.id, { status: resume, preCloseStatus: null, activeRequestedAt: null });
+                                        try {
+                                          await transitionPrActivation({ db, appId, prId: pr.id, action: "approve", resumeStatus: resume, pos });
+                                        } catch (error: any) {
+                                          showAlert("Active PR ไม่สำเร็จ", error?.message || String(error), "warning");
+                                          return;
+                                        }
                                         logAction(
                                           "Approved Active PR",
                                           `อนุมัติ Active PR ${pr.prNo || pr.id} → ${resume} (PO linked ${formatCurrency(usedAmount)} / PR ${formatCurrency(totalAmount)})`,

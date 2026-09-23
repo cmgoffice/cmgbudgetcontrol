@@ -329,7 +329,11 @@ export const AppDataProvider = ({
     const unsubs = queries.map((scopedQuery, queryIndex) => onSnapshot(
       scopedQuery,
       (snap) => {
-        rowsByQuery[queryIndex] = snap.docs.map((item) => ({ id: item.id, ...item.data() }));
+        // Keep the Firestore document id authoritative. Legacy records may
+        // contain an `id` field in their payload; spreading that payload after
+        // the document id would make edits target the wrong document and would
+        // prevent invoice validation from excluding the record being edited.
+        rowsByQuery[queryIndex] = snap.docs.map((item) => ({ ...item.data(), id: item.id }));
         firstSnapshots.add(queryIndex);
         publish();
         if (firstSnapshots.size === queries.length) onReady?.();

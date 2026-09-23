@@ -667,7 +667,7 @@ exports.processPoBudgetReturn = onDocumentWritten("artifacts/{appId}/public/data
           ...revision,
           requestId,
           newItems: scalePrItems(currentPr.items || [], row.newPrTotal),
-          newStatus: row.newPrTotal <= 0 ? "Closed PR Auto" : (currentPr.status || "Approved"),
+          newStatus: "Closed PR Auto",
         };
         transaction.update(prRef, { pendingBudgetReturns: [...pendingReturns, pendingBudgetReturn] });
         const budgetId = budgetRef.id;

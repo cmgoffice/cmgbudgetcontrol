@@ -43,7 +43,7 @@ import {
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { generatePOPdfBytes } from "../lib/pdfForms";
 import { stampPoSignaturesToPdf } from "../lib/poSignatureStamps";
-import { validateInvoiceAmountForPo } from "../lib/billingPayUtils";
+import { getInvoiceAmount, validateInvoiceAmountForPo } from "../lib/billingPayUtils";
 import {
   PO_DISCOUNT_ALLOCATION_VERSION,
   appendPaymentDiscountAdjustment,
@@ -982,16 +982,25 @@ const InvoiceView = React.memo(() => {
       const itemIndex = Number.isFinite(Number(item?.poItemIndex))
         ? Number(item.poItemIndex)
         : idx;
-      const matchedIndex = invoiceItems.findIndex((invoiceItem: any) => {
-        const invoiceItemIndex = Number.isFinite(Number(invoiceItem?.poItemIndex))
-          ? Number(invoiceItem.poItemIndex)
-          : -1;
-        if (invoiceItemIndex === itemIndex) return true;
-        return (
+      // A PO line may match only one saved invoice line. Identical descriptions
+      // are common, so use the saved PO index first and fall back to text only
+      // for legacy invoice lines that have no PO index.
+      const indexedMatch = invoiceItems.findIndex((invoiceItem: any, invoiceIndex: number) =>
+        !usedInvoiceIndexes.has(invoiceIndex) &&
+        invoiceItem?.poItemIndex !== undefined &&
+        invoiceItem?.poItemIndex !== null &&
+        invoiceItem?.poItemIndex !== "" &&
+        Number(invoiceItem.poItemIndex) === itemIndex
+      );
+      const matchedIndex = indexedMatch >= 0 ? indexedMatch : invoiceItems.findIndex(
+        (invoiceItem: any, invoiceIndex: number) =>
+          !usedInvoiceIndexes.has(invoiceIndex) &&
+          (invoiceItem?.poItemIndex === undefined ||
+            invoiceItem?.poItemIndex === null ||
+            invoiceItem?.poItemIndex === "") &&
           String(invoiceItem?.materialNo || "") === String(item?.materialNo || "") &&
           String(invoiceItem?.description || "") === String(item?.description || "")
-        );
-      });
+      );
       const matchedItem = matchedIndex >= 0 ? invoiceItems[matchedIndex] : null;
       if (matchedIndex >= 0) usedInvoiceIndexes.add(matchedIndex);
 
@@ -1001,7 +1010,12 @@ const InvoiceView = React.memo(() => {
         : Number(matchedItem?.quantity ?? matchedItem?.invoiceQty ?? item?.quantity ?? 0);
 
       return {
+        // When editing an existing invoice, its persisted line values are the
+        // source of truth. The PO can be revised later (price, quantity, or
+        // discount), and reusing those new PO prices would change the invoice
+        // total even when the user only changes payment type.
         ...item,
+        ...(matchedItem || {}),
         poItemIndex: itemIndex,
         quantity: maxQty,
         invoiceQty,
@@ -1077,7 +1091,10 @@ const InvoiceView = React.memo(() => {
         depositAmount: Number(invoice.depositAmount || 0),
         originalDepositAmount: Number(invoice.depositAmount || 0),
         settleRemaining: false,
-        items: buildInvoiceItemsForForm(source, invoice),
+        // Editing an invoice should keep its original lines. Other PO lines
+        // are available when creating a new/partial invoice, but showing them
+        // here makes the header select-all change the amount accidentally.
+        items: buildInvoiceItemsForForm(source, invoice).filter((item) => item.checked),
       });
     },
     [buildInvoiceItemsForForm, getInvoiceSource]
@@ -1172,7 +1189,9 @@ const InvoiceView = React.memo(() => {
         depositAmount: originalDepositAmount,
         originalDepositAmount,
         settleRemaining: true,
-        items: buildInvoiceItemsForForm(source, invoice),
+        // Settlement edits should preserve the lines already attached to the
+        // invoice instead of exposing unrelated PO lines to select-all.
+        items: buildInvoiceItemsForForm(source, invoice).filter((item) => item.checked),
       });
     },
     [buildInvoiceItemsForForm, getInvoiceSource]
@@ -1226,6 +1245,11 @@ const InvoiceView = React.memo(() => {
           : invoiceForm.isDeposit && Number(invoiceForm.depositAmount || 0) > 0
             ? Number(invoiceForm.depositAmount || 0)
             : calculatedAmount;
+      const originalInvoiceAmount = isEditingInvoice
+        ? getInvoiceAmount(editingInvoice)
+        : 0;
+      const invoiceAmountUnchanged =
+        isEditingInvoice && Math.abs(totalAmount - originalInvoiceAmount) <= 0.01;
       const invoiceStatus = getPoInvoiceStatus(
         invoiceForm.paymentType,
         !invoiceForm.settleRemaining && invoiceForm.isDeposit
@@ -1234,6 +1258,7 @@ const InvoiceView = React.memo(() => {
         return showAlert("ข้อมูลไม่ถูกต้อง", "ไม่พบยอดคงเหลือสำหรับจ่ายส่วนที่เหลือ", "warning");
       }
       if (
+        !invoiceAmountUnchanged &&
         !validateInvoiceAmount(
           viewingPO,
           totalAmount,
@@ -1607,7 +1632,9 @@ const InvoiceView = React.memo(() => {
       if (requestId !== historyRequestIdRef.current) return;
 
       const pageRows = pageSnapshot.docs
-        .map((entry: any) => ({ id: entry.id, ...entry.data() }))
+        // Keep the Firestore document id authoritative for edit and validation
+        // flows, even when a legacy invoice payload contains its own `id` field.
+        .map((entry: any) => ({ ...entry.data(), id: entry.id }))
         .filter((invoice: any) => invoice.status !== "Draft")
         .filter((invoice: any) => visibleProjectIds.has(String(getInvoiceProjectId(invoice))));
 
