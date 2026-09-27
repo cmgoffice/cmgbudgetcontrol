@@ -1299,10 +1299,13 @@ export const AppDataProvider = ({
     }
   }, [pos, roles, showAlert, logAction]);
 
+  // Vendor ที่ถูกรวมเข้ารายการหลักแล้ว (status "merged") ไม่ส่งให้หน้าจอใด จึงไม่ขึ้นในตัวเลือก Vendor ทุกเมนู
+  const activeVendors = useMemo(() => vendors.filter((v) => v?.status !== "merged"), [vendors]);
+
   // ── Context value ──────────────────────────────────────────────────────────
   const value = useMemo(() => ({
     // collections
-    projects, budgets, vendors, materials, prs, pos, invoices, payments, paymentsReady, billings, pays, receives, vendorEvaluations,
+    projects, budgets, vendors: activeVendors, materials, prs, pos, invoices, payments, paymentsReady, billings, pays, receives, vendorEvaluations,
     // derived
     visibleProjects,
     // pending (global, for bell + sidebar badges)
@@ -1332,7 +1335,7 @@ export const AppDataProvider = ({
     // raw Firebase (for views that need direct Firestore access)
     db, appId,
   }), [
-    projects, budgets, vendors, materials, prs, pos, invoices, payments, paymentsReady, billings, pays, receives,
+    projects, budgets, activeVendors, materials, prs, pos, invoices, payments, paymentsReady, billings, pays, receives,
     visibleProjects,
     pendingBudgetsGlobal, pendingSubItemsGlobal,
     pendingPRsGlobal, pendingPOsGlobal, pendingPaymentsGlobal,

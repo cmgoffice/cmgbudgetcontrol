@@ -41,8 +41,6 @@ import {
   truncateLogText,
 } from "../lib/systemLogDetails";
 import { uploadAttachment } from "../lib/uploadAttachment";
-import { generatePOPdfBytes } from "../lib/pdfForms";
-import { stampPoSignaturesToPdf } from "../lib/poSignatureStamps";
 import { validateInvoiceAmountForPo } from "../lib/billingPayUtils";
 import {
   PO_DISCOUNT_ALLOCATION_VERSION,
@@ -75,7 +73,6 @@ const BANK_ACCOUNT_OPTIONS = [
 
 const HISTORY_PAGE_SIZE_OPTIONS = [50, 100, 150, 200];
 const HISTORY_INVOICE_STATUSES = ["Deposit", "Inpay", "Invcredit", "paid", "Paid", "Pending PM", "Approved"];
-const PO_PDF_OPEN_COUNTDOWN_SECONDS = 6;
 
 // Alternating pastel group colors
 const GROUP_COLORS = [
@@ -194,15 +191,12 @@ const InvoiceView = React.memo(() => {
   const [histSearch, setHistSearch] = useState("");
   const [histPaymentType, setHistPaymentType] = useState("");
   const [histStatus, setHistStatus] = useState("");
-  const [histProjectId, setHistProjectId] = useState("all");
   const [historyPage, setHistoryPage] = useState(1);
   const [historyPageSize, setHistoryPageSize] = useState(50);
   const [historyInvoicesPage, setHistoryInvoicesPage] = useState<any[]>([]);
   const [historyTotalCount, setHistoryTotalCount] = useState(0);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyLoadError, setHistoryLoadError] = useState("");
-  const [openingPoPdfId, setOpeningPoPdfId] = useState("");
-  const [openingPoPdfRemainingSeconds, setOpeningPoPdfRemainingSeconds] = useState(PO_PDF_OPEN_COUNTDOWN_SECONDS);
   const historyRequestIdRef = useRef(0);
   const historyPageCursorsRef = useRef<Record<number, any>>({});
 
@@ -444,10 +438,10 @@ const InvoiceView = React.memo(() => {
        uniqueInvoices.set(String(invoice.id), invoice);
      });
      return Array.from(uniqueInvoices.values()).filter((inv: any) => (
-       inv.status === "Draft" && visibleProjectIds.has(String(getInvoiceProjectId(inv)))
+       inv.status === "Draft" && String(getInvoiceProjectId(inv)) === String(selectedProjectId || "")
      ))
          .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-  }, [getInvoiceProjectId, invoices, visibleProjectIds]);
+  }, [getInvoiceProjectId, invoices, selectedProjectId]);
 
   const filteredDraftInvoices = useMemo(() => {
     return draftInvoices.filter((inv: any) => {
@@ -1083,7 +1077,8 @@ const InvoiceView = React.memo(() => {
     [buildInvoiceItemsForForm, getInvoiceSource]
   );
 
-  const handleOpenAmountHiddenPoPdf = useCallback(async (invoice: any) => {
+  // Opens the official PO PDF (with amounts) that was generated and stored when the PO was saved.
+  const handleOpenPoPdf = useCallback((invoice: any) => {
     const poReference = invoice?.poNo || invoice?.poRef || "";
     const po = (pos || []).find((candidate: any) => (
       String(candidate?.id || "") === String(invoice?.poId || "") ||
@@ -1095,66 +1090,13 @@ const InvoiceView = React.memo(() => {
       return;
     }
 
-    const popup = window.open("", "_blank");
-    if (!popup) {
-      showAlert?.("เปิด PDF ไม่สำเร็จ", "กรุณาอนุญาต Popup ของเว็บไซต์ แล้วลองใหม่อีกครั้ง", "warning");
+    if (!po.pdfUrl) {
+      showAlert?.("ไม่พบ PDF", `ยังไม่มี PDF สำหรับ PO ${po.poNo || poReference || "-"} — กรุณา Create PDF ที่เมนู PO ก่อน`, "info");
       return;
     }
 
-    setOpeningPoPdfId(String(invoice?.id || po.id));
-    setOpeningPoPdfRemainingSeconds(PO_PDF_OPEN_COUNTDOWN_SECONDS);
-    popup.document.title = "กำลังเปิด PDF PO";
-    popup.document.body.innerHTML = `
-      <div style="font-family: sans-serif; padding: 32px; color: #475569;">
-        กำลังเปิด PDF PO (${PO_PDF_OPEN_COUNTDOWN_SECONDS} วินาที)
-      </div>
-    `;
-
-    const startedAt = Date.now();
-    const updateLoadingTimer = () => {
-      const remainingSeconds = Math.max(
-        0,
-        PO_PDF_OPEN_COUNTDOWN_SECONDS - Math.floor((Date.now() - startedAt) / 1000)
-      );
-      setOpeningPoPdfRemainingSeconds(remainingSeconds);
-      if (!popup.closed) {
-        popup.document.body.innerHTML = `
-          <div style="font-family: sans-serif; padding: 32px; color: #475569;">
-            กำลังเปิด PDF PO (${remainingSeconds} วินาที)
-          </div>
-        `;
-      }
-    };
-    const loadingTimer = window.setInterval(updateLoadingTimer, 250);
-
-    try {
-      const project = projectById.get(String(po.projectId || getInvoiceProjectId(invoice))) || null;
-      const vendor = (vendors || []).find((candidate: any) => (
-        String(candidate?.id || "") === String(po.vendorId || invoice?.vendorId || "")
-      )) || null;
-      let pdfBytes = await generatePOPdfBytes(po, {
-        vendor,
-        project,
-        hideAmounts: true,
-      });
-      pdfBytes = await stampPoSignaturesToPdf(pdfBytes, po, {
-        currentUserData: userData,
-        currentAuthUser: user,
-        logPrefix: "[InvoiceView Temporary PO]",
-      });
-
-      const objectUrl = URL.createObjectURL(new Blob([pdfBytes], { type: "application/pdf" }));
-      popup.location.href = objectUrl;
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
-    } catch (error: any) {
-      popup.close();
-      console.warn("[InvoiceView] Failed to generate temporary amount-hidden PO PDF:", error);
-      showAlert?.("เปิด PDF ไม่สำเร็จ", error?.message || "ไม่สามารถสร้าง PDF PO ฉบับไม่แสดงยอดเงินได้", "warning");
-    } finally {
-      window.clearInterval(loadingTimer);
-      setOpeningPoPdfId("");
-    }
-  }, [getInvoiceProjectId, pos, projectById, showAlert, user, userData, vendors]);
+    window.open(po.pdfUrl, "_blank", "noopener,noreferrer");
+  }, [pos, showAlert]);
 
   const openDepositSettlement = useCallback(
     (invoice: any) => {
@@ -1558,9 +1500,9 @@ const InvoiceView = React.memo(() => {
 
   const loadHistoryPage = useCallback(async () => {
     const requestId = ++historyRequestIdRef.current;
-    const visibleIds = Array.from(visibleProjectIds);
+    const historyProjectId = String(selectedProjectId || "");
 
-    if (visibleIds.length === 0 || (histProjectId !== "all" && !visibleProjectIds.has(String(histProjectId)))) {
+    if (!historyProjectId || !visibleProjectIds.has(historyProjectId)) {
       setHistoryInvoicesPage([]);
       setHistoryTotalCount(0);
       setHistoryLoading(false);
@@ -1572,20 +1514,11 @@ const InvoiceView = React.memo(() => {
 
     try {
       const invoicesRef = collection(db, "artifacts", appId, "public", "data", "invoices");
+      // History follows the project selected in the header, like Budget/PR/PO/Receive.
       const filters: any[] = [
         where("status", histStatus ? "==" : "in", histStatus || HISTORY_INVOICE_STATUSES),
+        where("projectId", "==", historyProjectId),
       ];
-
-      // A project filter is safe to push down when one project is selected.
-      // When "all projects" is selected, the visible-project check below keeps
-      // legacy records (which may not have a projectId) behaving as before.
-      if (histProjectId !== "all") {
-        filters.push(where("projectId", "==", String(histProjectId)));
-      } else if (visibleIds.length <= 30) {
-        filters.push(where("projectId", "in", visibleIds));
-      } else {
-        throw new Error("LOCAL_HISTORY_SCOPE");
-      }
       if (histPaymentType) filters.push(where("paymentType", "==", histPaymentType));
 
       const countQuery = query(invoicesRef, ...filters);
@@ -1609,7 +1542,7 @@ const InvoiceView = React.memo(() => {
       const pageRows = pageSnapshot.docs
         .map((entry: any) => ({ id: entry.id, ...entry.data() }))
         .filter((invoice: any) => invoice.status !== "Draft")
-        .filter((invoice: any) => visibleProjectIds.has(String(getInvoiceProjectId(invoice))));
+        .filter((invoice: any) => String(getInvoiceProjectId(invoice)) === historyProjectId);
 
       if (pageSnapshot.docs.length > 0) {
         historyPageCursorsRef.current[historyPage + 1] = pageSnapshot.docs[pageSnapshot.docs.length - 1];
@@ -1618,9 +1551,7 @@ const InvoiceView = React.memo(() => {
       setHistoryInvoicesPage(pageRows);
     } catch (error: any) {
       if (requestId !== historyRequestIdRef.current) return;
-      if (error?.message !== "LOCAL_HISTORY_SCOPE") {
-        console.error("Error loading paginated invoice history:", error);
-      }
+      console.error("Error loading paginated invoice history:", error);
 
       // If Firestore has not built the required composite index yet, keep the
       // history usable by falling back to the already-synced invoice cache.
@@ -1629,8 +1560,7 @@ const InvoiceView = React.memo(() => {
         new Map((invoices || []).filter((invoice: any) => invoice?.id).map((invoice: any) => [String(invoice.id), invoice])).values()
       )
         .filter((invoice: any) => invoice.status !== "Draft")
-        .filter((invoice: any) => visibleProjectIds.has(String(getInvoiceProjectId(invoice))))
-        .filter((invoice: any) => histProjectId === "all" || String(getInvoiceProjectId(invoice)) === String(histProjectId))
+        .filter((invoice: any) => String(getInvoiceProjectId(invoice)) === historyProjectId)
         .filter((invoice: any) => !histPaymentType || invoice.paymentType === histPaymentType)
         .filter((invoice: any) => !histStatus || getInvoiceDisplayStatus(invoice).toLowerCase() === String(histStatus).toLowerCase())
         .filter((invoice: any) => {
@@ -1652,12 +1582,12 @@ const InvoiceView = React.memo(() => {
     } finally {
       if (requestId === historyRequestIdRef.current) setHistoryLoading(false);
     }
-  }, [appId, db, getInvoiceDisplayStatus, getInvoiceProjectId, histPaymentType, histProjectId, histSearch, histStatus, historyPage, historyPageSize, invoices, visibleProjectIds]);
+  }, [appId, db, getInvoiceDisplayStatus, getInvoiceProjectId, histPaymentType, histSearch, histStatus, historyPage, historyPageSize, invoices, selectedProjectId, visibleProjectIds]);
 
   useEffect(() => {
     historyPageCursorsRef.current = {};
     setHistoryPage(1);
-  }, [histPaymentType, histProjectId, histSearch, histStatus]);
+  }, [histPaymentType, histSearch, histStatus, selectedProjectId]);
 
   useEffect(() => {
     if (activeTab !== "history") return;
@@ -1666,10 +1596,6 @@ const InvoiceView = React.memo(() => {
 
   const filteredHistoryInvoices = useMemo(() => {
     return historyInvoicesPage.filter((inv) => {
-      if (histProjectId !== "all" && String(getInvoiceProjectId(inv)) !== String(histProjectId)) {
-        return false;
-      }
-
       // 1. Text search filter
       if (histSearch) {
         const q = histSearch.toLowerCase();
@@ -1693,7 +1619,7 @@ const InvoiceView = React.memo(() => {
 
       return true;
     });
-  }, [getInvoiceDisplayStatus, getInvoiceProjectId, histPaymentType, histProjectId, histSearch, histStatus, historyInvoicesPage]);
+  }, [getInvoiceDisplayStatus, histPaymentType, histSearch, histStatus, historyInvoicesPage]);
 
   // ─── Computed totals for invoice items ────────────────────────────────────
   const invoiceTotalAmount = useMemo(
@@ -2247,28 +2173,13 @@ const InvoiceView = React.memo(() => {
                 <option value="paid">จ่ายแล้ว (Paid)</option>
               </select>
 
-              <select
-                value={histProjectId}
-                onChange={(e) => setHistProjectId(e.target.value)}
-                className="px-2 py-1.5 text-xs border border-amber-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-400 w-44 cursor-pointer text-slate-600 font-medium"
-                aria-label="กรองตามโครงการ"
-              >
-                <option value="all">ทุกโครงการ</option>
-                {(visibleProjects || []).map((project: any) => (
-                  <option key={project.id} value={project.id}>
-                    {getProjectLabel(project.id)}
-                  </option>
-                ))}
-              </select>
-
-              {(histSearch || histPaymentType || histStatus || histProjectId !== "all") && (
+              {(histSearch || histPaymentType || histStatus) && (
                 <button
                   type="button"
                   onClick={() => {
                     setHistSearch("");
                     setHistPaymentType("");
                     setHistStatus("");
-                    setHistProjectId("all");
                   }}
                   className="text-slate-400 hover:text-red-500 transition-colors text-xs font-semibold flex items-center gap-0.5 ml-1"
                   title="ล้างตัวกรองทั้งหมด"
@@ -2370,15 +2281,12 @@ const InvoiceView = React.memo(() => {
                         {(inv.poNo || inv.poRef) ? (
                           <button
                             type="button"
-                            className="inline-flex items-center gap-1 text-violet-600 underline decoration-violet-200 underline-offset-2 transition-colors hover:text-violet-800 hover:decoration-violet-500 disabled:cursor-wait disabled:opacity-60"
-                            onClick={() => handleOpenAmountHiddenPoPdf(inv)}
-                            disabled={openingPoPdfId === String(inv.id)}
-                            title="เปิด PDF PO ฉบับไม่แสดงยอดเงิน"
-                            aria-label={`เปิด PDF PO ${inv.poNo || inv.poRef} ฉบับไม่แสดงยอดเงิน`}
+                            className="inline-flex items-center gap-1 text-violet-600 underline decoration-violet-200 underline-offset-2 transition-colors hover:text-violet-800 hover:decoration-violet-500"
+                            onClick={() => handleOpenPoPdf(inv)}
+                            title="เปิด PDF PO"
+                            aria-label={`เปิด PDF PO ${inv.poNo || inv.poRef}`}
                           >
-                            {openingPoPdfId === String(inv.id)
-                              ? `กำลังเปิด PDF PO (${openingPoPdfRemainingSeconds} วินาที)`
-                              : (inv.poNo || inv.poRef)}
+                            {inv.poNo || inv.poRef}
                             <ExternalLink size={11} aria-hidden="true" />
                           </button>
                         ) : "-"}

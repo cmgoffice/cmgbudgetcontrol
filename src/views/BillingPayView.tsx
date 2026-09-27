@@ -211,6 +211,8 @@ const isPaidInvoiceRecord = (invoice: any) => {
 
 const getLedgerCollectionName = (menuType: string) => (menuType === "pay" ? "pays" : "billings");
 
+const PAGE_SIZE_OPTIONS = [100, 150, 200];
+
 const BillingPayView = React.memo(({ menuType = "billing" }) => {
   const config = VIEW_CONFIG[menuType] || VIEW_CONFIG.billing;
   const Icon = config.icon;
@@ -268,6 +270,8 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
   const [formData, setFormData] = useState(getDefaultForm());
   const [activeBillingTab, setActiveBillingTab] = useState<"current" | "history">("current");
   const [activePayTab, setActivePayTab] = useState<"current" | "history">("current");
+  const [pageSize, setPageSize] = useState(100);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const canCreate = canUseFunction(config.moduleKey, "create");
   const canEdit = canUseFunction(config.moduleKey, "edit");
@@ -773,6 +777,23 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
     () => filteredRows.reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0),
     [filteredRows]
   );
+
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginatedRows = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return filteredRows.slice(start, start + pageSize);
+  }, [filteredRows, safePage, pageSize]);
+  const startItem = filteredRows.length === 0 ? 0 : (safePage - 1) * pageSize + 1;
+  const endItem = Math.min(safePage * pageSize, filteredRows.length);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, projectFilterId, activeBillingTab, activePayTab, menuType]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [totalPages, currentPage]);
 
   const billedInvoiceIds = useMemo(() => {
     const ids = new Set<string>();
@@ -2410,6 +2431,70 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
         </div>
       </Card>
 
+      {filteredRows.length > 0 && (
+        <Card className={`border ${config.theme.border}`}>
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-600">แสดง</span>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setCurrentPage(1);
+                }}
+                className="text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-slate-400 focus:border-slate-400"
+              >
+                {PAGE_SIZE_OPTIONS.map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+              <span className="text-xs text-slate-600">รายการต่อหน้า</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-slate-500 mr-1">หน้า</span>
+              <button
+                type="button"
+                disabled={safePage <= 1}
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                className="px-2 py-1 text-xs rounded border border-slate-300 bg-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+              >
+                ‹
+              </button>
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                const pageNum = totalPages <= 5
+                  ? i + 1
+                  : safePage <= 3
+                    ? i + 1
+                    : safePage >= totalPages - 2
+                      ? totalPages - 4 + i
+                      : safePage - 2 + i;
+                return (
+                  <button
+                    key={pageNum}
+                    type="button"
+                    onClick={() => setCurrentPage(pageNum)}
+                    className={`min-w-[28px] px-2 py-1 text-xs rounded border ${safePage === pageNum ? `${config.theme.accent} border-transparent text-white` : "border-slate-300 bg-white hover:bg-slate-50"}`}
+                  >
+                    {pageNum}
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                disabled={safePage >= totalPages}
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                className="px-2 py-1 text-xs rounded border border-slate-300 bg-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+              >
+                ›
+              </button>
+            </div>
+            <span className="text-xs text-slate-500">
+              {startItem}-{endItem} จาก {filteredRows.length} รายการ
+            </span>
+          </div>
+        </Card>
+      )}
+
       <Card className={`overflow-x-auto border ${config.theme.border}`}>
         <table
           className="w-full text-left text-xs text-slate-600"
@@ -2455,7 +2540,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
                 </td>
               </tr>
             ) : (
-              filteredRows.map((row: any, idx: number) => (
+              paginatedRows.map((row: any, idx: number) => (
                 <tr
                   key={row.id}
                   className={`transition-colors ${idx % 2 === 0 ? "bg-white" : config.theme.altRow} ${config.theme.hoverRow}`}

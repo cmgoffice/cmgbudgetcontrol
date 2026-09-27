@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   Plus, Trash2, Edit, Download, FileSpreadsheet, Search, Building2,
-  CheckSquare, Square, ChevronDown
+  CheckSquare, Square, ChevronDown, ChevronUp, ChevronsUpDown, Merge
 } from "lucide-react";
 import { collection, doc, writeBatch } from "firebase/firestore";
 import { useAppData } from "../contexts/AppDataContext";
@@ -12,12 +12,23 @@ import ResizableTh from "../components/ResizableTh";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 import { useProportionalTableLayout } from "../hooks/useProportionalTableLayout";
 import { TABLE_LAYOUT_DEFAULTS } from "../lib/tableLayoutDefaults";
+import {
+  VENDOR_REFERENCE_LABELS,
+  buildMasterFillPatch,
+  buildVendorMergeLogDetails,
+  countVendorReferences,
+  isMergedVendor,
+  mergeVendors,
+  normalizeVendorCode,
+  pickMasterVendor,
+} from "../lib/vendorMerge";
 
 const PAGE_SIZE_OPTIONS = [100, 200, 500];
 const BATCH_SIZE = 500;
 
 const VendorView = React.memo(() => {
-  const { vendors, addData, updateData, deleteData, showAlert, openConfirm, userRole, columnWidths, handleColumnResize, db, appId, loadVendors, canUseFunction, isColumnVisible, vendorEvaluations, loadVendorEvaluations } = useAppData();
+  const { vendors, addData, updateData, deleteData, showAlert, openConfirm, userRole, columnWidths, handleColumnResize, db, appId, loadVendors, canUseFunction, isColumnVisible, vendorEvaluations, loadVendorEvaluations, userData, logAction } = useAppData();
+  const isAdmin = userRole === "Administrator";
   const vendorTableRef = useRef(null);
   const vendorTableLayout = useProportionalTableLayout({
     tableId: "vendor",
@@ -43,7 +54,10 @@ const VendorView = React.memo(() => {
   const [pageSize, setPageSize] = useState(100);
   const [customPageSize, setCustomPageSize] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
+  const [codeSort, setCodeSort] = useState<"asc" | "desc" | null>(null);
   const [uploadProgress, setUploadProgress] = useState({ done: 0, total: 0 });
+  // null = ปิด modal; groups = กลุ่มรหัสซ้ำที่จะรวม พร้อมรายการหลักที่ระบบเลือก
+  const [mergeState, setMergeState] = useState(null);
 
   
   const [activeTab, setActiveTab] = useState('vendor');
@@ -86,7 +100,7 @@ const VendorView = React.memo(() => {
           map.set(vid, {
             vendorId: vid,
             vendorCode: vendors.find(v => v.id === vid)?.code || ev.vendorNo || ev.vendorCode || '-',
-            vendorName: ev.vendorName || vendors.find(v => v.id === vid)?.name || 'Unknown',
+            vendorName: vendors.find(v => v.id === vid)?.name || ev.vendorName || 'Unknown',
             count: 0, po_count: 0, other_count: 0,
             po_q1: 0, po_q2: 0, po_q3: 0,
             pmt_q1: 0, pmt_q2: 0, pmt_q3: 0, pmt_q4: 0, pmt_q5: 0,
@@ -190,9 +204,12 @@ const VendorView = React.memo(() => {
     return () => document.removeEventListener("click", onOutside);
   }, []);
 
+  // รายการที่ถูกรวมเข้ารายการหลักแล้วไม่แสดงในตาราง
+  const activeVendors = useMemo(() => vendors.filter((v) => !isMergedVendor(v)), [vendors]);
+
   const filtered = useMemo(() => {
     const q = searchText.toLowerCase();
-    return vendors.filter(
+    return activeVendors.filter(
       (v) =>
         !q ||
         (v.code || "").toLowerCase().includes(q) ||
@@ -201,7 +218,142 @@ const VendorView = React.memo(() => {
         (v.tel || "").toLowerCase().includes(q) ||
         String(v.creditTerm || "").toLowerCase().includes(q)
     );
-  }, [vendors, searchText]);
+  }, [activeVendors, searchText]);
+
+  // รหัส vendor ที่ซ้ำกัน (ไม่สนตัวพิมพ์เล็ก-ใหญ่และช่องว่างหัวท้าย) นับจากรายการทั้งหมด ไม่ใช่เฉพาะผลค้นหา
+  const duplicateCodes = useMemo(() => {
+    const counts = new Map<string, number>();
+    activeVendors.forEach((v) => {
+      const key = normalizeVendorCode(v.code);
+      if (!key) return;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    const dups = new Set<string>();
+    counts.forEach((count, key) => {
+      if (count > 1) dups.add(key);
+    });
+    return dups;
+  }, [activeVendors]);
+
+  // กลุ่ม Vendor ที่รหัสซ้ำ (เฉพาะรายการที่ยังไม่ถูกรวม)
+  const duplicateGroups = useMemo(() => {
+    const groups = new Map();
+    activeVendors.forEach((v) => {
+      const key = normalizeVendorCode(v.code);
+      if (!duplicateCodes.has(key)) return;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(v);
+    });
+    return groups;
+  }, [activeVendors, duplicateCodes]);
+
+  const openMergeModal = async (codeKeys) => {
+    const groups = codeKeys.map((key) => duplicateGroups.get(key)).filter((g) => g && g.length > 1);
+    if (!groups.length) return;
+    setMergeState({ loading: true, running: false, groups: [], error: "" });
+    try {
+      const ids = groups.flat().map((v) => v.id);
+      const refCounts = await countVendorReferences(db, appId, ids);
+      const planned = groups.map((group) => {
+        const { master, duplicates, reason } = pickMasterVendor(group, refCounts);
+        const moveCounts = {};
+        duplicates.forEach((d) => {
+          Object.entries(refCounts[d.id]?.byLabel || {}).forEach(([label, n]) => {
+            moveCounts[label] = (moveCounts[label] || 0) + n;
+          });
+        });
+        return {
+          code: master.code,
+          master,
+          duplicates,
+          reason,
+          refCounts,
+          moveCounts,
+          fillPatch: buildMasterFillPatch(master, duplicates),
+          included: true,
+        };
+      });
+      setMergeState({ loading: false, running: false, groups: planned, error: "" });
+    } catch (err) {
+      setMergeState({ loading: false, running: false, groups: [], error: String(err?.message || err) });
+    }
+  };
+
+  const toggleMergeGroup = (index) => {
+    setMergeState((prev) => ({
+      ...prev,
+      groups: prev.groups.map((g, i) => (i === index ? { ...g, included: !g.included } : g)),
+    }));
+  };
+
+  const handleConfirmMerge = async () => {
+    if (!isAdmin || !mergeState) return;
+    const selected = mergeState.groups.filter((g) => g.included);
+    if (!selected.length) return;
+    setMergeState((prev) => ({ ...prev, running: true, error: "" }));
+    const actorName = userData ? `${userData.firstName || ""} ${userData.lastName || ""}`.trim() : "";
+    const updateVendor = (id, patch) => updateData("vendors", id, patch, { skipLog: true });
+    let done = 0;
+    try {
+      for (const group of selected) {
+        const result = await mergeVendors(db, appId, {
+          master: group.master,
+          duplicates: group.duplicates,
+          actorName,
+          updateVendor,
+        });
+        await logAction("Update", buildVendorMergeLogDetails(group.master, group.duplicates, result));
+        done += 1;
+      }
+      setMergeState(null);
+      showAlert("สำเร็จ", `รวม Vendor รหัสซ้ำเรียบร้อย ${done} กลุ่ม`, "success");
+    } catch (err) {
+      setMergeState((prev) => ({
+        ...prev,
+        running: false,
+        error: `รวมสำเร็จ ${done} จาก ${selected.length} กลุ่ม แล้วเกิดข้อผิดพลาด: ${err?.message || err} — กดรวมอีกครั้งได้ ระบบจะทำต่อจากส่วนที่ค้าง`,
+      }));
+    }
+  };
+
+  // เรียงตามรหัสเมื่อกดหัวคอลัมน์; ถ้าไม่ได้เรียง คงลำดับเดิมแต่ดึงแถวรหัสซ้ำมาต่อท้ายแถวแรกที่พบ
+  const sorted = useMemo(() => {
+    const normCode = (v) => (v.code || "").trim().toLowerCase();
+    if (codeSort) {
+      const dir = codeSort === "asc" ? 1 : -1;
+      return [...filtered].sort((a, b) => {
+        const ca = normCode(a);
+        const cb = normCode(b);
+        if (!ca && !cb) return 0;
+        if (!ca) return 1;
+        if (!cb) return -1;
+        return dir * ca.localeCompare(cb, "th", { numeric: true });
+      });
+    }
+    const groups = new Map();
+    const result = [];
+    filtered.forEach((v) => {
+      const key = normCode(v);
+      if (!key || !duplicateCodes.has(key)) {
+        result.push([v]);
+        return;
+      }
+      const group = groups.get(key);
+      if (group) {
+        group.push(v);
+      } else {
+        const newGroup = [v];
+        groups.set(key, newGroup);
+        result.push(newGroup);
+      }
+    });
+    return result.flat();
+  }, [filtered, codeSort, duplicateCodes]);
+
+  const toggleCodeSort = () => {
+    setCodeSort((prev) => (prev === null ? "asc" : prev === "asc" ? "desc" : null));
+    setCurrentPage(1);
+  };
 
   const effectivePageSize = useMemo(() => {
     const custom = parseInt(customPageSize, 10);
@@ -213,8 +365,8 @@ const VendorView = React.memo(() => {
   const safePage = Math.min(currentPage, totalPages);
   const paginated = useMemo(() => {
     const start = (safePage - 1) * effectivePageSize;
-    return filtered.slice(start, start + effectivePageSize);
-  }, [filtered, safePage, effectivePageSize]);
+    return sorted.slice(start, start + effectivePageSize);
+  }, [sorted, safePage, effectivePageSize]);
 
   useEffect(() => {
     if (currentPage > totalPages) setCurrentPage(1);
@@ -262,8 +414,31 @@ const VendorView = React.memo(() => {
     setEditingId(null);
   };
 
+  // คืนข้อความเมื่อ Vendor ที่จะลบยังมีเอกสารผูกอยู่ ถ้าไม่มีคืน null
+  const describeLinkedVendors = async (ids) => {
+    const refCounts = await countVendorReferences(db, appId, ids);
+    const linked = ids.filter((id) => (refCounts[id]?.total || 0) > 0);
+    if (!linked.length) return null;
+    const lines = linked.map((id) => {
+      const v = vendors.find((x) => x.id === id);
+      const parts = Object.entries(refCounts[id].byLabel).map(([label, n]) => `${label} ${n}`).join(", ");
+      return `${v?.code || "-"} ${v?.name || id}: ${parts}`;
+    });
+    return `${lines.join("\n")}\n\nลบไม่ได้เพราะยังมีเอกสารผูกอยู่ ถ้าเป็นรหัสซ้ำให้ใช้ "รวมรายการซ้ำ" แทน`;
+  };
+
   const handleDelete = (id) => {
     openConfirm("ยืนยันการลบ", "คุณต้องการลบ Vendor นี้ใช่หรือไม่?", async () => {
+      try {
+        const blocked = await describeLinkedVendors([id]);
+        if (blocked) {
+          showAlert("ลบไม่ได้", blocked, "warning");
+          return;
+        }
+      } catch (err) {
+        showAlert("Error", "ตรวจสอบเอกสารที่ผูกกับ Vendor ไม่สำเร็จ: " + (err?.message || err), "error");
+        return;
+      }
       await deleteData("vendors", id);
     }, "danger");
   };
@@ -295,12 +470,22 @@ const VendorView = React.memo(() => {
     }
     openConfirm("ยืนยันการลบ", `ต้องการลบ ${selectedIds.size} รายการที่เลือกใช่หรือไม่?`, async () => {
       const ids = Array.from(selectedIds);
-      setSelectedIds(new Set());
       setActionDropdownOpen(false);
+      try {
+        const blocked = await describeLinkedVendors(ids);
+        if (blocked) {
+          showAlert("ลบไม่ได้", blocked, "warning");
+          return;
+        }
+      } catch (err) {
+        showAlert("Error", "ตรวจสอบเอกสารที่ผูกกับ Vendor ไม่สำเร็จ: " + (err?.message || err), "error");
+        return;
+      }
+      setSelectedIds(new Set());
       for (const id of ids) await deleteData("vendors", id);
       showAlert("สำเร็จ", `ลบ ${ids.length} รายการเรียบร้อย`, "success");
     }, "danger");
-  }, [selectedIds, deleteData, openConfirm, showAlert]);
+  }, [selectedIds, deleteData, openConfirm, showAlert, db, appId, vendors]);
 
   const handleDownloadTemplate = () => {
     const bom = "\uFEFF";
@@ -426,6 +611,15 @@ const VendorView = React.memo(() => {
               )}
             </div>
           )}
+          {isAdmin && duplicateGroups.size > 0 && (
+            <Button
+              variant="outline"
+              className="h-8 text-xs text-red-600 border-red-200 hover:bg-red-50"
+              onClick={() => openMergeModal(Array.from(duplicateGroups.keys()))}
+            >
+              <Merge size={13} /> รวมรหัสซ้ำทั้งหมด ({duplicateGroups.size})
+            </Button>
+          )}
           {canUseFunction("vendor", "add") && (
             <Button onClick={handleOpenAdd} className="h-8 text-xs">
               <Plus size={13} /> เพิ่ม Vendor
@@ -499,7 +693,7 @@ const VendorView = React.memo(() => {
               <button type="button" disabled={safePage >= totalPages} onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} className="px-2 py-1 text-xs rounded border border-slate-300 bg-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50">›</button>
             </div>
             <span className="text-xs text-slate-500">
-              {startItem}-{endItem} จาก {filtered.length}{searchText ? ` (จาก ${vendors.length})` : ""} รายการ
+              {startItem}-{endItem} จาก {filtered.length}{searchText ? ` (จาก ${activeVendors.length})` : ""} รายการ
             </span>
           </div>
         )}
@@ -518,7 +712,23 @@ const VendorView = React.memo(() => {
               <th className="py-2 px-3 text-center" style={{ width: vendorTableLayout.scaled.rowNo }}>ลำดับ</th>
               )}
               {isColumnVisible("vendor", "code") && (
-              <ResizableTh tableId="vendor" colKey="code" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={vendorTableLayout.handleResize} currentWidth={vendorTableLayout.scaled.code}>รหัส</ResizableTh>
+              <ResizableTh tableId="vendor" colKey="code" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={vendorTableLayout.handleResize} currentWidth={vendorTableLayout.scaled.code}>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 hover:text-blue-600"
+                  onClick={toggleCodeSort}
+                  title={codeSort === null ? "เรียงจากน้อยไปมาก" : codeSort === "asc" ? "เรียงจากมากไปน้อย" : "ยกเลิกการเรียง"}
+                >
+                  รหัส
+                  {codeSort === "asc" ? (
+                    <ChevronUp size={14} />
+                  ) : codeSort === "desc" ? (
+                    <ChevronDown size={14} />
+                  ) : (
+                    <ChevronsUpDown size={14} className="text-slate-400" />
+                  )}
+                </button>
+              </ResizableTh>
               )}
               {isColumnVisible("vendor", "name") && (
               <ResizableTh tableId="vendor" colKey="name" className="py-2 px-3" isAdmin={userRole==="Administrator"} onResize={vendorTableLayout.handleResize} currentWidth={vendorTableLayout.scaled.name}>ชื่อ</ResizableTh>
@@ -547,7 +757,15 @@ const VendorView = React.memo(() => {
               </tr>
             ) : (
               paginated.map((v, idx) => (
-                <tr key={v.id} className="hover:bg-slate-50 odd:bg-white even:bg-slate-50/40">
+                <tr
+                  key={v.id}
+                  className={
+                    duplicateCodes.has((v.code || "").trim().toLowerCase())
+                      ? "bg-red-50 hover:bg-red-100"
+                      : "hover:bg-slate-50 odd:bg-white even:bg-slate-50/40"
+                  }
+                  title={duplicateCodes.has((v.code || "").trim().toLowerCase()) ? "รหัส Vendor ซ้ำ" : undefined}
+                >
                   {isColumnVisible("vendor", "select") && (
                   <td className="py-1.5 px-2 text-center">
                     <button type="button" className="p-0.5 rounded hover:bg-slate-200" onClick={() => toggleSelect(v.id)}>
@@ -576,6 +794,15 @@ const VendorView = React.memo(() => {
                   {isColumnVisible("vendor", "actions") && (
                   <td className="py-1.5 px-3 text-right">
                     <div className="flex justify-end gap-1">
+                      {isAdmin && duplicateCodes.has(normalizeVendorCode(v.code)) && (
+                        <button
+                          className="text-red-600 hover:text-red-800 p-1 hover:bg-red-100 rounded"
+                          onClick={() => openMergeModal([normalizeVendorCode(v.code)])}
+                          title="รวมรายการซ้ำ"
+                        >
+                          <Merge size={13} />
+                        </button>
+                      )}
                       {canUseFunction("vendor", "edit") && (
                         <button className="text-blue-500 hover:text-blue-700 p-1 hover:bg-blue-50 rounded" onClick={() => handleOpenEdit(v)} title="แก้ไข"><Edit size={13} /></button>
                       )}
@@ -723,6 +950,82 @@ const VendorView = React.memo(() => {
             <div className="flex justify-end gap-2 mt-4">
               <Button variant="secondary" onClick={() => { setIsModalOpen(false); setFormData(emptyForm); setEditingId(null); }}>ยกเลิก</Button>
               <Button onClick={handleSave}>{editingId ? "บันทึกการแก้ไข" : "เพิ่มรายการ"}</Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {mergeState && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200">
+          <Card className="w-full max-w-3xl p-6">
+            <h3 className="text-lg font-bold mb-1 flex items-center gap-2">
+              <Merge size={18} /> รวม Vendor รหัสซ้ำ
+            </h3>
+            <p className="text-xs text-slate-500 mb-3">
+              ระบบเลือกรายการหลักให้อัตโนมัติ เอกสาร {VENDOR_REFERENCE_LABELS.join(" / ")} ของรายการซ้ำจะถูกเปลี่ยนไปผูกกับรายการหลัก
+              (เปลี่ยนเฉพาะ Vendor ID ชื่อและรหัสที่พิมพ์ไว้บน PO/INV เดิมคงไว้) คะแนนประเมินจะรวมเข้ารายการหลัก
+              และรายการซ้ำจะถูกซ่อนจากรายการ (ไม่ลบทิ้ง)
+            </p>
+            {mergeState.loading && (
+              <div className="py-8 text-center text-sm text-slate-500">กำลังตรวจสอบเอกสารที่ผูกกับ Vendor...</div>
+            )}
+            {mergeState.error && (
+              <div className="mb-3 p-3 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg whitespace-pre-line">{mergeState.error}</div>
+            )}
+            {!mergeState.loading && mergeState.groups.length > 0 && (
+              <div className="max-h-[60vh] overflow-y-auto space-y-3 mb-4">
+                {mergeState.groups.map((g, index) => (
+                  <div key={g.master.id} className={`border rounded-lg p-3 text-xs ${g.included ? "border-slate-300" : "border-slate-200 opacity-50"}`}>
+                    <label className="flex items-center gap-2 font-semibold text-slate-800 mb-2 cursor-pointer">
+                      <input type="checkbox" checked={g.included} disabled={mergeState.running} onChange={() => toggleMergeGroup(index)} />
+                      รหัส {g.code || "-"}
+                    </label>
+                    <table className="w-full text-left">
+                      <thead className="text-slate-500">
+                        <tr>
+                          <th className="py-1 pr-2 w-24"></th>
+                          <th className="py-1 pr-2">ชื่อ</th>
+                          <th className="py-1 pr-2">ที่อยู่</th>
+                          <th className="py-1 pr-2 w-24">โทร</th>
+                          <th className="py-1 w-24 text-right">เอกสารผูก</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[g.master, ...g.duplicates].map((v) => (
+                          <tr key={v.id} className={v.id === g.master.id ? "bg-green-50" : "bg-red-50"}>
+                            <td className="py-1 px-1 font-medium">{v.id === g.master.id ? "รายการหลัก" : "จะถูกรวม"}</td>
+                            <td className="py-1 pr-2">{v.name || "-"}</td>
+                            <td className="py-1 pr-2 truncate max-w-[220px]" title={v.address}>{v.address || "-"}</td>
+                            <td className="py-1 pr-2">{v.tel || "-"}</td>
+                            <td className="py-1 text-right tabular-nums">{g.refCounts[v.id]?.total || 0}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div className="mt-2 text-slate-600">เหตุผลที่เลือก: {g.reason}</div>
+                    <div className="text-slate-600">
+                      เอกสารที่จะเปลี่ยน id:{" "}
+                      {Object.keys(g.moveCounts).length
+                        ? Object.entries(g.moveCounts).map(([label, n]) => `${label} ${n}`).join(", ")
+                        : "ไม่มี"}
+                    </div>
+                    {Object.keys(g.fillPatch).length > 0 && (
+                      <div className="text-slate-600">
+                        เติมช่องว่างของรายการหลัก: {Object.entries(g.fillPatch).map(([k, val]) => `${k} = ${val}`).join(", ")}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" disabled={mergeState.running} onClick={() => setMergeState(null)}>ยกเลิก</Button>
+              <Button
+                onClick={handleConfirmMerge}
+                disabled={mergeState.loading || mergeState.running || !mergeState.groups.some((g) => g.included)}
+              >
+                <Merge size={13} /> {mergeState.running ? "กำลังรวม..." : `ยืนยันรวม (${mergeState.groups.filter((g) => g.included).length} กลุ่ม)`}
+              </Button>
             </div>
           </Card>
         </div>
