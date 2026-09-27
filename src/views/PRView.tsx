@@ -358,7 +358,7 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
     const pendingDeduction = getPendingReturnDeductionTotal(latestPr);
     const revisedTotalRaw = Math.max(0, latestInfo.currentTotal - pendingDeduction - requested - availability.savingToReserve);
     const revisedTotal = Math.round(revisedTotalRaw * 100) / 100;
-    const nextStatus = revisedTotal <= 0 ? "Closed PR Auto" : (latestPr.status || "Approved");
+    const nextStatus = "Closed PR Auto";
     const history = Array.isArray(latestPr.budgetReturnRevisions) ? latestPr.budgetReturnRevisions : [];
     const byName = userData ? `${userData.firstName || ""} ${userData.lastName || ""}`.trim() : "";
     const revision = {

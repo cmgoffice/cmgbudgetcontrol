@@ -3,6 +3,7 @@ import {
   buildAcceptedPendingReturnState,
   getPendingBudgetReturnGroup,
   getPendingBudgetReturns,
+  getPrStatusAfterBudgetReturnAcceptance,
   getPendingReturnDeductionTotal,
   getPrReturnAvailability,
   removePendingBudgetReturns,
@@ -73,5 +74,18 @@ describe("pending Budget returns", () => {
     expect(result.items[0].amount).toBe(680);
     expect(result.remainingPendingReturns).toEqual([]);
     expect(result.revisionNoByRequestId).toEqual({ one: 1, two: 2 });
+  });
+
+  it("closes the PR after accepting a partial return, including an existing Active request", () => {
+    const pr = {
+      status: "Pending Active PR",
+      totalAmount: 1_000,
+      items: [{ quantity: 1, price: 1_000, amount: 1_000 }],
+      pendingBudgetReturns: [{ requestId: "payment-return", returnedAmount: 100, poBudgetReturnJobId: "job-1" }],
+    };
+    const accepted = buildAcceptedPendingReturnState(pr, ["payment-return"], "accepted", "Budget Owner");
+    expect(accepted.totalAmount).toBe(900);
+    expect(accepted.remainingPendingReturns).toEqual([]);
+    expect(getPrStatusAfterBudgetReturnAcceptance()).toBe("Closed PR Auto");
   });
 });

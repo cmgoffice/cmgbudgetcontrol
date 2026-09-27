@@ -43,4 +43,22 @@ describe("PR activation balance", () => {
     expect(getAvailableBalanceForPR(pr, pos)).toBe(0);
     expect(canActivatePR(pr, pos)).toBe(false);
   });
+
+  it("blocks Active PR during a partial return even when unused balance remains", () => {
+    const pr = {
+      id: "pr-1",
+      totalAmount: 1_000,
+      pendingBudgetReturns: [{ requestId: "return-1", returnedAmount: 100 }],
+    };
+    const pos = [makePo(pr.id, 700)];
+
+    expect(getAvailableBalanceForPR(pr, pos)).toBe(200);
+    expect(canActivatePR(pr, pos)).toBe(false);
+    expect(canActivatePR({ ...pr, pendingBudgetReturns: [] }, pos)).toBe(true);
+  });
+
+  it("also blocks Active PR for a legacy pending return", () => {
+    const pr = { id: "pr-1", totalAmount: 1_000, pendingBudgetReturn: { requestId: "old", returnedAmount: 100 } };
+    expect(canActivatePR(pr, [makePo(pr.id, 700)])).toBe(false);
+  });
 });

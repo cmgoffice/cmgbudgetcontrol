@@ -19,6 +19,10 @@ export const getPendingBudgetReturns = (pr: any) => {
   });
 };
 
+// Accepting a Budget return completes the current PR lifecycle. Any balance
+// left on the revised PR can only be used after a new Active PR approval.
+export const getPrStatusAfterBudgetReturnAcceptance = () => "Closed PR Auto";
+
 export const getPendingReturnDeduction = (pendingReturn: any) => asMoney(
   Math.max(0, Number(pendingReturn?.returnedAmount || 0))
   + Math.max(0, Number(pendingReturn?.procurementSavingAmount || 0))

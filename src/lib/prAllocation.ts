@@ -1,4 +1,4 @@
-import { getPendingReturnDeductionTotal } from "./pendingBudgetReturns";
+import { getPendingBudgetReturns, getPendingReturnDeductionTotal } from "./pendingBudgetReturns";
 import { getPoNetAmountAllocatedToPr } from "./prBudgetReturn";
 
 const isCommittedPoForPr = (po: any) => {
@@ -60,5 +60,5 @@ export const getAvailableBalanceForPR = (pr: any, pos: any[]) => {
 };
 
 export const canActivatePR = (pr: any, pos: any[]) => (
-  getAvailableBalanceForPR(pr, pos) > 0.01
+  getPendingBudgetReturns(pr).length === 0 && getAvailableBalanceForPR(pr, pos) > 0.01
 );

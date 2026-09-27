@@ -21,6 +21,7 @@ import { db, appId, storage, FORM_TEMPLATE_PATHS } from "./lib/firebase";
 import { generatePRPdfBytes, generatePOPdfBytes, downloadBytes, uploadGeneratedPdf, deleteGeneratedPdf } from "./lib/pdfForms";
 import { stampPoSignaturesToPdf } from "./lib/poSignatureStamps";
 import { canActivatePR, getResumeStatusForPR } from "./lib/prAllocation";
+import { transitionPrActivation } from "./lib/prActivation";
 import { buildPrPoUsageIndex, computeBudgetUsedAfterPrRevision, getLinkedPoRefsForPr, getPrBudgetReturnInfo, scalePrItemsToTotal } from "./lib/prBudgetReturn";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "./components/ui";
 import ResizableTh from "./components/ResizableTh";
@@ -1541,11 +1542,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
             return;
           }
           const { status: resume, usedAmount, totalAmount } = getResumeStatusForPR(row, pos);
-          await updateData?.("prs", row.id, {
-            status: resume,
-            preCloseStatus: null,
-            activeRequestedAt: null,
-          }, { skipLog: true });
+          await transitionPrActivation({ db, appId, prId: row.id, action: "approve", resumeStatus: resume, pos });
           await logAction?.(
             "Approved Active PR",
             `อนุมัติ Active PR ${row.prNo || row.id} → ${resume} (PO linked ${formatCurrency(usedAmount)} / PR ${formatCurrency(totalAmount)})`,
@@ -1579,12 +1576,23 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       } else {
         showAlert?.(getPendingActionLabel(row), "กรุณาดำเนินการต่อในหน้า PO หลัก", "info");
       }
+    } catch (error: any) {
+      showAlert?.("Active PR ไม่สำเร็จ", error?.message || String(error), "warning");
     } finally {
       setPendingActionId(null);
     }
-  }, [getPendingTaskStatus, handlePOAction, handlePORevisionAllow, handlePRAction, isPR, logAction, openConfirm, pendingActionId, pos, showAlert, updateData, userRoles]);
+  }, [appId, db, getPendingTaskStatus, handlePOAction, handlePORevisionAllow, handlePRAction, isPR, logAction, openConfirm, pendingActionId, pos, showAlert, updateData, userRoles]);
   const canViewPrBalance = isPR && canUseFunction("pr-table", "viewBalance");
   const canReturnPrBalance = isPR && canUseFunction("pr-table", "returnBalance");
+  const attemptPrActivation = async (prId: string, action: "request" | "approve", resumeStatus?: string) => {
+    try {
+      await transitionPrActivation({ db, appId, prId, action, resumeStatus, pos });
+      return true;
+    } catch (error: any) {
+      showAlert?.("Active PR ไม่สำเร็จ", error?.message || String(error), "warning");
+      return false;
+    }
+  };
   const canStartPoBudgetReturn = !isPR && canUseFunction("po-table", "returnBudget");
   const prById = React.useMemo(() => new Map((prs || []).map((pr: any) => [pr.id, pr])), [prs]);
   const prPoIndexes = React.useMemo(
@@ -2246,7 +2254,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
     const pendingDeduction = getPendingReturnDeductionTotal(latestPr);
     const revisedTotalRaw = Math.max(0, latestInfo.currentTotal - pendingDeduction - requested - availability.savingToReserve);
     const revisedTotal = Math.round(revisedTotalRaw * 100) / 100;
-    const nextStatus = revisedTotal <= 0 ? "Closed PR Auto" : (latestPr.status || "Approved");
+    const nextStatus = "Closed PR Auto";
     const history = Array.isArray(latestPr.budgetReturnRevisions)
       ? latestPr.budgetReturnRevisions
       : [];
@@ -2684,7 +2692,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
             icon={<CheckCircle size={14} />}
             tone="teal"
             onClick={() => openConfirm?.("ขอ Active PR", "ส่งคำขอให้ PCM อนุมัติ Active PR คืน", async () => {
-              await updateData?.("prs", r.id, { status: "Pending Active PR", activeRequestedAt: new Date().toISOString() }, { skipLog: true });
+              if (!(await attemptPrActivation(r.id, "request"))) return;
               logAction?.("Request Active PR", `ขอ Active PR ${r.prNo || r.id}`, r.projectId);
               showAlert?.("ส่งคำขอแล้ว", "รอ PCM อนุมัติ Active PR", "info");
             })}
@@ -2698,7 +2706,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
             tone="success"
             onClick={() => openConfirm?.("อนุมัติ Active PR", "PR จะกลับไปสถานะก่อนถูกปิด", async () => {
               const { status: resume, usedAmount, totalAmount } = getResumeStatusForPR(r, pos);
-              await updateData?.("prs", r.id, { status: resume, preCloseStatus: null, activeRequestedAt: null }, { skipLog: true });
+              if (!(await attemptPrActivation(r.id, "approve", resume))) return;
               logAction?.(
                 "Approved Active PR",
                 `อนุมัติ Active PR ${r.prNo || r.id} → ${resume} (PO linked ${formatCurrency(usedAmount)} / PR ${formatCurrency(totalAmount)})`,
@@ -3589,7 +3597,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                           {/* ขอ Active PR (Procurement/PCM) เมื่อ PR ถูกปิดแล้ว */}
                           {canUseFunction(tableModule, "requestActivePR") && isPR && canActivatePR(r, pos) && (r.status === "Closed PR" || r.status === "Closed PR Auto") && (userRoles.includes("Procurement") || userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
                             <button type="button" className="p-1.5 rounded hover:bg-teal-100 text-teal-700" title="ขอ Active PR คืน (รอ PCM อนุมัติ)" onClick={() => openConfirm?.("ขอ Active PR", "ส่งคำขอให้ PCM อนุมัติ Active PR คืน", async () => {
-                              await updateData?.("prs", r.id, { status: "Pending Active PR", activeRequestedAt: new Date().toISOString() }, { skipLog: true });
+                              if (!(await attemptPrActivation(r.id, "request"))) return;
                               logAction?.("Request Active PR", `ขอ Active PR ${r.prNo || r.id}`, r.projectId);
                               showAlert?.("ส่งคำขอแล้ว", "รอ PCM อนุมัติ Active PR", "info");
                             })}>
@@ -3600,7 +3608,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                           {canUseFunction(tableModule, "approveActivePR") && isPR && canActivatePR(r, pos) && r.status === "Pending Active PR" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && (
                             <button type="button" className="p-1.5 rounded hover:bg-emerald-100 text-emerald-700 text-[10px] font-medium" title="อนุมัติ Active PR" onClick={() => openConfirm?.("อนุมัติ Active PR", "PR จะกลับไปสถานะก่อนถูกปิด", async () => {
                               const { status: resume, usedAmount, totalAmount } = getResumeStatusForPR(r, pos);
-                              await updateData?.("prs", r.id, { status: resume, preCloseStatus: null, activeRequestedAt: null }, { skipLog: true });
+                              if (!(await attemptPrActivation(r.id, "approve", resume))) return;
                               logAction?.(
                                 "Approved Active PR",
                                 `อนุมัติ Active PR ${r.prNo || r.id} → ${resume} (PO linked ${formatCurrency(usedAmount)} / PR ${formatCurrency(totalAmount)})`,
