@@ -238,6 +238,15 @@ service cloud.firestore {
       }
 
       match /invoices/{documentId} {
+        // A transaction must read the missing, deterministic Draft before it
+        // can create it. Authorize only this get through its parent Payment;
+        // existing invoice reads and collection queries keep their old rules.
+        allow get: if documentId.matches('^payment-invoice-.+$') &&
+          !exists(/databases/$(database)/documents/artifacts/$(appId)/public/data/invoices/$(documentId)) &&
+          signedIn() &&
+          assignedToProject(appId,
+            get(/databases/$(database)/documents/artifacts/$(appId)/public/data/payments/$(documentId.replace('^payment-invoice-', ''))).data.get('projectId', '')) &&
+          (moduleAllowed(appId, 'invoice') || moduleAllowed(appId, 'payment-subcontract') || moduleAllowed(appId, 'po'));
         allow read: if canReadExistingProjectDoc(appId) && (
           moduleAllowed(appId, 'budget') || moduleAllowed(appId, 'po') ||
           moduleAllowed(appId, 'payment-subcontract') || moduleAllowed(appId, 'receive') ||

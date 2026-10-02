@@ -5,6 +5,7 @@ import {
   Plus, X, Check, Clock, ExternalLink, Truck, ImageIcon, List, Search, Trash2,
   RefreshCw,
 } from "lucide-react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
@@ -1699,11 +1700,13 @@ const ReceiveView = React.memo(() => {
         </div>
       ))}
 
+      {createPortal(
+        <div className="receive-modal-root">
       {/* ── PO Detail / Receive Modal ── */}
       <AnimatePresence>
         {viewingPO && (
           <motion.div
-            className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-start justify-center z-[10010] p-4 overflow-y-auto"
+            className="receive-document-overlay fixed inset-0 bg-black/60 backdrop-blur-md flex items-start justify-center z-[10010] p-4 overflow-y-auto"
             initial="hidden"
             animate="visible"
             exit="exit"
@@ -1725,7 +1728,7 @@ const ReceiveView = React.memo(() => {
                   </div>
                   <div>
                     <h3 className="text-lg font-bold text-slate-800">
-                      {receiveMode ? "ทำรับของ" : "รายละเอียด Recieve"}
+                      {receiveMode ? "ทำรับของ" : "รายละเอียด Receive"}
                     </h3>
                     <p className="text-xs text-slate-400">{viewingPO.poNo}</p>
                   </div>
@@ -2159,7 +2162,7 @@ const ReceiveView = React.memo(() => {
           const poType = po?.poType;
           return (
             <motion.div
-              className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-start justify-center z-[10015] p-4 overflow-y-auto"
+              className="receive-document-overlay fixed inset-0 bg-black/60 backdrop-blur-md flex items-start justify-center z-[10015] p-4 overflow-y-auto"
               initial="hidden" animate="visible" exit="exit"
               variants={modalOverlayVariants} transition={overlayTransition}
               onClick={() => setViewingRcv(null)}
@@ -2420,6 +2423,9 @@ const ReceiveView = React.memo(() => {
           }, 100);
         }}
       />
+        </div>,
+        document.body
+      )}
     </div>
   );
 });

@@ -41,6 +41,7 @@ import {
   buildUpdateLogDetails as buildCrudUpdateLogDetails,
 } from "../lib/systemLogDetails";
 import { buildPoApprovalIdentityFields } from "../lib/poSignatureStamps";
+import { ensurePaymentInvoiceDraft } from "../lib/paymentInvoiceDraft";
 
 // Firestore document paths for dynamic permissions
 const ROLE_PERMISSIONS_DOC = ["artifacts", appId, "public", "data", "settings", "rolePermissions"];
@@ -752,7 +753,11 @@ export const AppDataProvider = ({
     const { skipLog = false } = options || {};
     try {
       let newId = customId;
-      if (customId) {
+      if (collectionName === "invoices" && data?.sourceType === "payment" && data?.status === "Draft") {
+        // Both Payment approval and Invoice auto-creation pass through here.
+        // This path intentionally never overwrites an existing invoice.
+        newId = await ensurePaymentInvoiceDraft(db, appId, data);
+      } else if (customId) {
         await setDoc(doc(db, "artifacts", appId, "public", "data", collectionName, customId), data);
         if (collectionName === "vendors")   setVendors((prev)   => [...prev, { id: customId, ...data }]);
         if (collectionName === "materials") setMaterials((prev) => [...prev, { id: customId, ...data }]);

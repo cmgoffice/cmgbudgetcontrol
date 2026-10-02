@@ -42,6 +42,7 @@ import {
 } from "../lib/systemLogDetails";
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { getInvoiceAmount, validateInvoiceAmountForPo } from "../lib/billingPayUtils";
+import { buildPaymentInvoiceFormItems, validatePaymentInvoiceAmount } from "../lib/paymentInvoice";
 import {
   PO_DISCOUNT_ALLOCATION_VERSION,
   appendPaymentDiscountAdjustment,
@@ -968,6 +969,7 @@ const InvoiceView = React.memo(() => {
   );
 
   const buildInvoiceItemsForForm = useCallback((source: any, invoice?: any) => {
+    if (source?.isPaymentSubcontract) return buildPaymentInvoiceFormItems(source, invoice);
     const invoiceItems = Array.isArray(invoice?.items) ? invoice.items : [];
     const sourceItems = Array.isArray(source?.items) ? source.items : [];
     const usedInvoiceIndexes = new Set<number>();
@@ -1187,6 +1189,9 @@ const InvoiceView = React.memo(() => {
           : invoiceForm.isDeposit && Number(invoiceForm.depositAmount || 0) > 0
             ? Number(invoiceForm.depositAmount || 0)
             : calculatedAmount;
+      if (isPaymentInvoice && !validatePaymentInvoiceAmount(viewingPO, selectedItems, totalAmount)) {
+        return showAlert("ยอด Payment ไม่ตรงกัน", "ยอดรายการ Invoice ต้องตรงกับยอด Payment งวดนี้ กรุณาตรวจสอบข้อมูลก่อนบันทึก", "warning");
+      }
       const originalInvoiceAmount = isEditingInvoice
         ? getInvoiceAmount(editingInvoice)
         : 0;
@@ -2533,7 +2538,7 @@ const InvoiceView = React.memo(() => {
                       tone: "amber",
                     },
                     {
-                      label: "ยอด PO",
+                      label: viewingPO.isPaymentSubcontract ? "ยอด Payment งวดนี้" : "ยอด PO",
                       value: formatCurrency(viewingPO.amount),
                       tone: "amber",
                     },
