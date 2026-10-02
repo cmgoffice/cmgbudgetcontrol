@@ -149,7 +149,7 @@ function buildItemIdempotencyKey(receiveNo: string, item: any) {
   return `${receiveNo}:${lineKey || "item"}`;
 }
 
-export function buildCmgStoreReceiveRequest({ receive, po }: { receive: any; po: any }) {
+export function buildCmgStoreReceiveRequest({ receive, po, manual = false }: { receive: any; po: any; manual?: boolean }) {
   const receiveNo = normalizeText(receive?.receiveNo || receive?.rpNo);
   const inventoryType = normalizeText(po?.inventoryType || receive?.inventoryType);
   const targetProjectCode = getCmgStoreTargetProjectCode({ receive, po });
@@ -157,7 +157,7 @@ export function buildCmgStoreReceiveRequest({ receive, po }: { receive: any; po:
   if (!receiveNo) {
     throw new Error("ไม่พบ receiveNo/rpNo สำหรับส่งไป CMG Store Management");
   }
-  if (!isCmgStoreEligibleInventoryStatus(inventoryType)) {
+  if (!isCmgStoreEligibleInventoryStatus(inventoryType) && !(manual && normalizeKey(inventoryType) === "none inventory")) {
     return null;
   }
   if (!targetProjectCode) {
@@ -264,8 +264,8 @@ export function buildCmgStoreReceiveRequest({ receive, po }: { receive: any; po:
   };
 }
 
-export async function sendReceiveToCmgStore({ receive, po }: { receive: any; po: any }) {
-  const payload = buildCmgStoreReceiveRequest({ receive, po });
+export async function sendReceiveToCmgStore({ receive, po, manual = false }: { receive: any; po: any; manual?: boolean }) {
+  const payload = buildCmgStoreReceiveRequest({ receive, po, manual });
   if (!payload) {
     return {
       skipped: true,
