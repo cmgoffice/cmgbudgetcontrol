@@ -1,4 +1,5 @@
 import { collection, doc, getDocsFromServer, query, runTransaction, where } from "firebase/firestore";
+import { isHiddenDuplicateDraft, selectPaymentInvoicePrimary } from "./invoiceDuplicateVisibility";
 
 export const getPaymentInvoiceDraftId = (paymentId: string) => `payment-invoice-${paymentId}`;
 
@@ -12,13 +13,16 @@ export const ensurePaymentInvoiceDraft = async (db: any, appId: string, payload:
   const matches = await Promise.all(["poId", "paymentId"].map((field) => getDocsFromServer(query(
     invoices, where("projectId", "==", payload.projectId), where(field, "==", paymentId),
   ))));
-  const existing = matches.flatMap((snapshot) => snapshot.docs)
-    .sort((a, b) => String(a.data().createdAt || "").localeCompare(String(b.data().createdAt || "")) || a.id.localeCompare(b.id));
-  if (existing.length > 0) return existing[0].id;
+  const existing = Array.from(new Map(matches.flatMap((snapshot) => snapshot.docs)
+    .map((snapshot) => [snapshot.id, { ...snapshot.data(), id: snapshot.id }])).values());
+  const primary = selectPaymentInvoicePrimary(existing);
+  if (primary) return primary.id;
+  if (existing.some(isHiddenDuplicateDraft)) throw new Error("พบ Draft ที่ซ่อนไว้ แต่ไม่พบใบหลัก กรุณาให้ผู้ดูแลตรวจสอบก่อนสร้าง Invoice");
 
   const draftRef = doc(db, ...base, "invoices", getPaymentInvoiceDraftId(paymentId));
   return runTransaction(db, async (transaction) => {
     const draft = await transaction.get(draftRef);
+    if (draft.exists() && isHiddenDuplicateDraft(draft.data())) throw new Error("Draft นี้ถูกซ่อนไว้ กรุณาตรวจใบหลักก่อนสร้าง Invoice");
     if (!draft.exists()) transaction.set(draftRef, payload);
     return draftRef.id;
   });

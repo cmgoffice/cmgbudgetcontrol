@@ -83,10 +83,15 @@ const ts = require("typescript");
 const { initializeApp, deleteApp } = require("firebase/app");
 const { getFirestore, connectFirestoreEmulator, terminate } = require("firebase/firestore");
 const helperExports = {};
+const visibilityExports = {};
+vm.runInNewContext(ts.transpileModule(
+  readFileSync(new URL("../src/lib/invoiceDuplicateVisibility.ts", import.meta.url), "utf8"),
+  { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } },
+).outputText, { exports: visibilityExports });
 vm.runInNewContext(ts.transpileModule(
   readFileSync(new URL("../src/lib/paymentInvoiceDraft.ts", import.meta.url), "utf8"),
   { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } },
-).outputText, { require, exports: helperExports });
+).outputText, { require: (name) => name === "./invoiceDuplicateVisibility" ? visibilityExports : require(name), exports: helperExports });
 await seed("payments/race-payment", { projectId: "J-72", status: "Wait Pay", amount: 60000 });
 await request(`${base}/invoices/payment-invoice-race-payment`, { method: "DELETE" }, "owner");
 const apps = ["draft-client-a", "draft-client-b"].map((name) => initializeApp({ projectId: project, apiKey: "emulator-key" }, name));
@@ -111,6 +116,21 @@ try {
   assert.equal(persisted.body.fields.amount.integerValue, "60000");
   assert.equal(persisted.body.fields.invNo.stringValue, "SAVED-INVOICE");
   console.log("PASS: actual helper with two concurrent clients creates one Draft and preserves a completed invoice on later calls");
+  const hiddenFields = fields({ ...payload, amount: 60000 });
+  hiddenFields.isDuplicateArchived = { booleanValue: true };
+  hiddenFields.duplicateOfInvoiceId = field(ids[0]);
+  const hidden = await request(`${base}/invoices/hidden-local`, { method: "PATCH", body: JSON.stringify({ fields: hiddenFields }) }, "owner");
+  assert.equal(hidden.status, 200);
+  assert.equal(await helperExports.ensurePaymentInvoiceDraft(clients[0], "test-app", payload), ids[0]);
+  const restored = await request(`${base}/invoices/hidden-local?updateMask.fieldPaths=isDuplicateArchived`, {
+    method: "PATCH", body: JSON.stringify({ fields: { isDuplicateArchived: { booleanValue: false } } }),
+  });
+  assert.equal(restored.status, 200);
+  assert.equal(restored.body.fields.status.stringValue, "Draft");
+  assert.equal(restored.body.fields.amount.integerValue, "60000");
+  assert.equal(restored.body.fields.duplicateOfInvoiceId.stringValue, ids[0]);
+  assert.equal(restored.body.fields.isDuplicateArchived.booleanValue, false);
+  console.log("PASS: hidden Draft is skipped for primary selection and restoring its flag preserves status, amount and primary reference");
 } finally {
   await Promise.all(clients.map(terminate));
   await Promise.all(apps.map(deleteApp));

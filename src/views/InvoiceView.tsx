@@ -42,6 +42,7 @@ import {
 } from "../lib/systemLogDetails";
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { getInvoiceAmount, validateInvoiceAmountForPo } from "../lib/billingPayUtils";
+import { isHiddenDuplicateDraft, partitionInvoiceDrafts } from "../lib/invoiceDuplicateVisibility";
 import { buildPaymentInvoiceFormItems, validatePaymentInvoiceAmount } from "../lib/paymentInvoice";
 import {
   PO_DISCOUNT_ALLOCATION_VERSION,
@@ -189,6 +190,8 @@ const InvoiceView = React.memo(() => {
   const [expandedTypes, setExpandedTypes] = useState<Record<string, boolean>>({});
   const [poPOSearch, setPoPOSearch] = useState("");
   const [poVendorSearch, setPoVendorSearch] = useState("");
+  const [showHiddenDuplicateDrafts, setShowHiddenDuplicateDrafts] = useState(false);
+  const [restoringDuplicateId, setRestoringDuplicateId] = useState("");
   const [histSearch, setHistSearch] = useState("");
   const [histPaymentType, setHistPaymentType] = useState("");
   const [histStatus, setHistStatus] = useState("");
@@ -432,17 +435,37 @@ const InvoiceView = React.memo(() => {
       .sort((a: any, b: any) => a.name.localeCompare(b.name, "th"));
   }, [invoiceEligibleReceives, pos, vendors]);
 
-  const draftInvoices = useMemo(() => {
+  const projectDraftPartition = useMemo(() => {
      const uniqueInvoices = new Map<string, any>();
      (invoices || []).forEach((invoice: any) => {
        if (!invoice?.id) return;
        uniqueInvoices.set(String(invoice.id), invoice);
      });
-     return Array.from(uniqueInvoices.values()).filter((inv: any) => (
+     const projectDrafts = Array.from(uniqueInvoices.values()).filter((inv: any) => (
        inv.status === "Draft" && String(getInvoiceProjectId(inv)) === String(selectedProjectId || "")
      ))
          .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+     return partitionInvoiceDrafts(projectDrafts);
   }, [getInvoiceProjectId, invoices, selectedProjectId]);
+  const draftInvoices = projectDraftPartition.visible;
+  const hiddenDuplicateDrafts = projectDraftPartition.hidden;
+
+  const restoreDuplicateDraft = (invoice: any) => {
+    if (!canDeleteInvoiceSource || !canEditInvoiceHistory || !isHiddenDuplicateDraft(invoice) || restoringDuplicateId) return;
+    openConfirm?.("คืนการแสดง Draft", `คืนการแสดง ${invoice.poNo || invoice.id} หรือไม่? ใบหลัก ${invoice.duplicateOfInvoiceId || "-"} ยังอยู่ การคืนรายการอาจทำให้เห็น Draft ซ้ำอีกครั้ง โดยไม่เปลี่ยนยอดเงิน`, async () => {
+      setRestoringDuplicateId(invoice.id);
+      try {
+        const restored = await updateData("invoices", invoice.id, {
+          isDuplicateArchived: false,
+          duplicateRestoredAt: new Date().toISOString(),
+          duplicateRestoredBy: user?.email || "Administrator",
+        }, { skipLog: true });
+        if (!restored) return;
+        await logAction?.("Restore Duplicate Draft Visibility", `คืนการแสดง Draft ${invoice.id} | ใบหลัก ${invoice.duplicateOfInvoiceId || "-"} | ไม่เปลี่ยนสถานะหรือยอดเงิน`, invoice.projectId);
+        showAlert("สำเร็จ", "คืนการแสดง Draft แล้ว โดยคงข้อมูลและยอดเดิม", "success");
+      } finally { setRestoringDuplicateId(""); }
+    });
+  };
 
   const filteredDraftInvoices = useMemo(() => {
     return draftInvoices.filter((inv: any) => {
@@ -1152,6 +1175,9 @@ const InvoiceView = React.memo(() => {
       return;
     }
     if (!viewingPO) return;
+    if (isHiddenDuplicateDraft(editingInvoice) || (invoices || []).some((invoice: any) => invoice.id === editingInvoice?.id && isHiddenDuplicateDraft(invoice))) {
+      return showAlert("Draft ถูกซ่อนไว้", "กรุณาใช้ Invoice ใบหลัก หรือให้ผู้ดูแลคืนการแสดงก่อนบันทึก", "warning");
+    }
     const isTransferPayment = invoiceForm.paymentType === "โอน";
     const isPaymentInvoice = Boolean(viewingPO?.isPaymentSubcontract);
     const existingInvoiceAttachments = isEditingInvoice
@@ -1799,6 +1825,11 @@ const InvoiceView = React.memo(() => {
               <span className="ml-auto text-[11px] text-violet-400 mr-4">
                 {filteredDraftInvoices.length} รายการ Draft
               </span>
+              {canDeleteInvoiceSource && hiddenDuplicateDrafts.length > 0 && (
+                <button type="button" onClick={() => setShowHiddenDuplicateDrafts((value) => !value)} className="text-xs text-slate-600 underline">
+                  {showHiddenDuplicateDrafts ? "ปิดรายการซ่อน" : "ดู Draft ซ้ำที่ซ่อนไว้"} ({hiddenDuplicateDrafts.length})
+                </button>
+              )}
               <div className="ml-auto">
                 <Button
                   variant="primary"
@@ -1810,6 +1841,32 @@ const InvoiceView = React.memo(() => {
               </div>
             </div>
           </Card>
+
+          {canDeleteInvoiceSource && showHiddenDuplicateDrafts && hiddenDuplicateDrafts.length > 0 && (
+            <Card className="p-4 border-slate-200">
+              <h4 className="text-sm font-semibold text-slate-700 mb-2">Draft ซ้ำที่ซ่อนไว้ — ข้อมูลและยอดเงินยังอยู่ครบ</h4>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead><tr><th className="p-2">Payment / Document ID</th><th className="p-2">Invoice ใบหลัก</th><th className="p-2">เหตุผล</th><th className="p-2 text-right">ยอดเดิม</th><th className="p-2">การแสดงผล</th></tr></thead>
+                  <tbody>{hiddenDuplicateDrafts.map((invoice: any) => (
+                    <tr key={invoice.id} className="border-t border-slate-100">
+                      <td className="p-2">{invoice.poNo || invoice.poRef}<div className="text-slate-400">{invoice.id}</div>
+                        <details className="mt-1"><summary className="cursor-pointer text-violet-600">ดูข้อมูลเดิม</summary>
+                          <div className="py-2 text-slate-600">สถานะ: {invoice.status} · ซ่อนเมื่อ: {invoice.duplicateArchivedAt || "-"}<br />ผู้ดำเนินการ: {invoice.duplicateArchivedBy || "-"}</div>
+                          {(invoice.items || []).map((item: any, index: number) => <div key={index}>{item.description || item.materialNo || "-"} · จำนวน {item.quantity ?? item.invoiceQty ?? 0} · ยอด {formatCurrency(item.amount || 0)}</div>)}
+                          {(invoice.invoiceAttachments || []).map((attachment: any, index: number) => <div key={index}><a href={attachment.url} target="_blank" rel="noopener noreferrer" className="underline">{attachment.name || "ไฟล์แนบ"}</a></div>)}
+                        </details>
+                      </td>
+                      <td className="p-2">{invoice.duplicateOfInvoiceId || "-"}</td>
+                      <td className="p-2">{invoice.duplicateArchivedReason || "Draft ซ้ำจาก Payment เดียวกัน"}</td>
+                      <td className="p-2 text-right">{formatCurrency(invoice.amount || 0)}</td>
+                      <td className="p-2">{canEditInvoiceHistory && <button type="button" disabled={Boolean(restoringDuplicateId)} onClick={() => restoreDuplicateDraft(invoice)} className="text-violet-600 underline disabled:opacity-50">คืนการแสดง</button>}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </Card>
+          )}
 
           {/* Empty state */}
           {Object.keys(groupedDraftInvoices).length === 0 ? (
