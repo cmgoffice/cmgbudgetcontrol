@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useCallback, useContext, useEffect } from "react";
 import {
   ChevronDown, ChevronLeft, ChevronRight, Package, Eye, FileText,
-  Plus, X, Check, Clock, ExternalLink, Truck, ImageIcon, List, Search, Trash2,
+  Plus, X, Check, Clock, ExternalLink, Truck, ImageIcon, List, Search, Trash2, Boxes,
 } from "lucide-react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
@@ -92,7 +92,7 @@ const ReceiveView = React.memo(() => {
 
   // ไม่โหลด vendors ตอน mount — โหลดเมื่อ user เปิด PO detail จริงๆ (ลด Firebase reads)
 
-  const [activeTab, setActiveTab] = useState<"po" | "history">("po");
+  const [activeTab, setActiveTab] = useState<"po" | "history" | "material_received">("po");
   const [viewingPO, setViewingPO] = useState(null);
   const [receiveMode, setReceiveMode] = useState(false);
   const [receiveForm, setReceiveForm] = useState([]);
@@ -1301,9 +1301,29 @@ const ReceiveView = React.memo(() => {
                 )}
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => setActiveTab("material_received")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                activeTab === "material_received"
+                  ? "bg-white text-emerald-600 shadow-sm ring-1 ring-emerald-200"
+                  : "text-emerald-400 hover:text-emerald-600 hover:bg-white/50"
+              }`}
+            >
+              <Boxes size={13} />
+              Material Received
+            </button>
           </div>
         </div>
       </div>
+
+      {/* ── Tab: Material Received ── */}
+      {activeTab === "material_received" && (
+        <Card className="p-8 text-center text-slate-400">
+          <Boxes size={40} className="mx-auto mb-3 opacity-40" />
+          <p className="font-medium">Material Received</p>
+        </Card>
+      )}
 
       {/* ── Tab: รายการ Receive ── */}
       {canViewReceiveHistory && activeTab === "history" && (

@@ -204,6 +204,10 @@ const InvoiceView = React.memo(() => {
   const historyRequestIdRef = useRef(0);
   const historyPageCursorsRef = useRef<Record<number, any>>({});
 
+  // Export Excel Modal State
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [exportSelectedTypes, setExportSelectedTypes] = useState<string[]>(["INW", "SM"]);
+
   // Create Invoice Modal State
   const [isCreateInvoiceModalOpen, setIsCreateInvoiceModalOpen] = useState(false);
   const [createInvoiceVendorId, setCreateInvoiceVendorId] = useState<string>("");
@@ -533,6 +537,34 @@ const InvoiceView = React.memo(() => {
     const first = items[0]?.description || "-";
     return items.length > 1 ? `${first} (+${items.length - 1} รายการ)` : first;
   };
+
+  const getInvoiceCostCode = useCallback((po: any, draftInv: any) => {
+    if (draftInv?.costCode) return String(draftInv.costCode);
+    if (po?.costCode) return String(po.costCode);
+    if (Array.isArray(draftInv?.items)) {
+      const itCode = draftInv.items.find((item: any) => item?.costCode)?.costCode;
+      if (itCode) return String(itCode);
+    }
+    if (Array.isArray(po?.items)) {
+      const itCode = po.items.find((item: any) => item?.costCode)?.costCode;
+      if (itCode) return String(itCode);
+    }
+    const targetPrId = po?.prId || draftInv?.prId;
+    if (targetPrId) {
+      const matchedPr = prs.find((p: any) => p.id === targetPrId);
+      if (matchedPr?.costCode) return String(matchedPr.costCode);
+    }
+    if (Array.isArray(po?.prIds) && po.prIds.length > 0) {
+      const matchedPr = prs.find((p: any) => po.prIds.includes(p.id) && p?.costCode);
+      if (matchedPr?.costCode) return String(matchedPr.costCode);
+    }
+    const targetPrNo = po?.prNo || draftInv?.prNo || po?.sourcePrNo;
+    if (targetPrNo) {
+      const matchedPr = prs.find((p: any) => p.prNo === targetPrNo);
+      if (matchedPr?.costCode) return String(matchedPr.costCode);
+    }
+    return po?.budgetCode || draftInv?.budgetCode || "-";
+  }, [prs]);
 
   const getPaymentTypeBadgeClass = useCallback(
     (paymentType?: string) =>
@@ -928,6 +960,77 @@ const InvoiceView = React.memo(() => {
       }).catch(() => paymentInvoiceDraftsRef.current.delete(paymentKey));
     });
   }, [addData, getVendorName, invoices, payments, selectedProjectId, user?.email, userData?.firstName, userData?.lastName]);
+ 
+  const handleExportExcel = useCallback(() => {
+    if (exportSelectedTypes.length === 0) {
+      showAlert("แจ้งเตือน", "กรุณาเลือกตารางที่ต้องการส่งออกอย่างน้อย 1 ตาราง", "warning");
+      return;
+    }
+
+    const headers = [
+      "ประเภท",
+      "PO No.",
+      "สถานะ",
+      "โครงการ",
+      "COSTCODE",
+      "Vendor",
+      "วันที่ PO",
+      "รายละเอียด",
+      "ใบตรวจรับ",
+      "ยอดรวม (บาท)",
+    ];
+
+    const exportRows: (string | number)[][] = [];
+
+    exportSelectedTypes.forEach((type) => {
+      const list = groupedDraftInvoices[type] || [];
+      list.forEach((draftInv) => {
+        const po = getDraftInvoiceSource(draftInv);
+        exportRows.push([
+          PO_TYPE_LABELS[type] || type,
+          draftInv.poNo || draftInv.poRef || po?.poNo || "-",
+          "Draft",
+          getProjectLabel(draftInv.projectId || po?.projectId),
+          getInvoiceCostCode(po, draftInv),
+          draftInv.vendorName || getPoVendorName(po),
+          formatDate(draftInv.createdAt || draftInv.invDate),
+          draftInv.description || poDescription(po),
+          `มาจาก ${(draftInv.receiveIds || []).length} ใบรับของ`,
+          draftInv.amount ?? 0,
+        ]);
+      });
+    });
+
+    if (exportRows.length === 0) {
+      showAlert("แจ้งเตือน", "ไม่พบรายการข้อมูลในตารางที่เลือกสำหรับส่งออก", "warning");
+      return;
+    }
+
+    const csv = [headers, ...exportRows]
+      .map((row) => row.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","))
+      .join("\r\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const projectCode = projects.find((p: any) => p.id === selectedProjectId)?.code || "PROJECT";
+    const dateStr = new Date().toISOString().split("T")[0];
+    a.download = `Invoice_Draft_${projectCode}_${exportSelectedTypes.join("_")}_${dateStr}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setIsExportModalOpen(false);
+  }, [
+    exportSelectedTypes,
+    groupedDraftInvoices,
+    getDraftInvoiceSource,
+    getProjectLabel,
+    getInvoiceCostCode,
+    getPoVendorName,
+    formatDate,
+    projects,
+    selectedProjectId,
+    showAlert,
+  ]);
 
   const getInvoiceSource = useCallback(
     (invoice: any) => {
@@ -1709,6 +1812,25 @@ const InvoiceView = React.memo(() => {
     [filteredHistoryInvoices]
   );
 
+  const historyAllInvoicesTotal = useMemo(() => {
+    const historyProjectId = String(selectedProjectId || "");
+    if (!historyProjectId) return 0;
+    const allHistory = Array.from(
+      new Map((invoices || []).filter((inv: any) => inv?.id).map((inv: any) => [String(inv.id), inv])).values()
+    )
+      .filter((inv: any) => inv.status !== "Draft")
+      .filter((inv: any) => String(getInvoiceProjectId(inv)) === historyProjectId)
+      .filter((inv: any) => !histPaymentType || inv.paymentType === histPaymentType)
+      .filter((inv: any) => !histStatus || getInvoiceDisplayStatus(inv).toLowerCase() === String(histStatus).toLowerCase())
+      .filter((inv: any) => {
+        if (!histSearch) return true;
+        const search = histSearch.toLowerCase();
+        return [inv.invNo, inv.poNo || inv.poRef, inv.vendorName]
+          .some((val: any) => String(val || "").toLowerCase().includes(search));
+      });
+    return allHistory.reduce((sum: number, inv: any) => sum + Number(inv.amount || 0), 0);
+  }, [getInvoiceDisplayStatus, getInvoiceProjectId, histPaymentType, histSearch, histStatus, invoices, selectedProjectId]);
+
   return (
     <div className="space-y-4">
       {/* ── Page Header + Tabs ── */}
@@ -1830,7 +1952,17 @@ const InvoiceView = React.memo(() => {
                   {showHiddenDuplicateDrafts ? "ปิดรายการซ่อน" : "ดู Draft ซ้ำที่ซ่อนไว้"} ({hiddenDuplicateDrafts.length})
                 </button>
               )}
-              <div className="ml-auto">
+              <div className="ml-auto flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExportSelectedTypes(["INW", "SM"]);
+                    setIsExportModalOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs shadow-sm bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg transition-colors cursor-pointer"
+                >
+                  <span>📊</span> Export Excel
+                </button>
                 <Button
                   variant="primary"
                   className="px-3 py-1.5 text-xs shadow-sm bg-violet-600 hover:bg-violet-700 text-white font-medium"
@@ -1924,6 +2056,7 @@ const InvoiceView = React.memo(() => {
                           <th className="py-1.5 px-3 text-center md:hidden">Actions</th>
                           <th className="py-1.5 px-3">PO No.</th>
                           <th className="py-1.5 px-3">โครงการ</th>
+                          <th className="py-1.5 px-3">COSTCODE</th>
                           <th className="py-1.5 px-3">Vendor</th>
                           <th className="py-1.5 px-3">วันที่ PO</th>
                           <th className="py-1.5 px-3">รายละเอียด</th>
@@ -2002,6 +2135,9 @@ const InvoiceView = React.memo(() => {
                                 </td>
                                 <td className="py-1.5 px-3 max-w-[180px] truncate" title={getProjectLabel(draftInv.projectId || po.projectId)}>
                                   {getProjectLabel(draftInv.projectId || po.projectId)}
+                                </td>
+                                <td className="py-1.5 px-3 font-mono text-[11px] whitespace-nowrap text-slate-700" title={getInvoiceCostCode(po, draftInv)}>
+                                  {getInvoiceCostCode(po, draftInv)}
                                 </td>
                                 <td className="py-1.5 px-3" title={draftInv.vendorName || getPoVendorName(po)}>
                                   {draftInv.vendorName || getPoVendorName(po)}
@@ -2456,9 +2592,21 @@ const InvoiceView = React.memo(() => {
                   <td className="py-2 px-3"></td>
                   <td className="py-2 px-3"></td>
                   <td className="hidden py-2 px-3 md:table-cell"></td>
-                  <td colSpan={2} className="py-2 px-3 text-right text-xs font-semibold text-amber-700">ยอดรวมหน้านี้:</td>
-                  <td className="py-2 px-3 text-right text-sm font-bold text-amber-900">
-                    {formatCurrency(historyInvoicesTotals.grand)}
+                  <td colSpan={3} className="py-2 px-3 text-right">
+                    <div className="flex items-center justify-end gap-6 flex-wrap">
+                      <div className="flex items-center gap-1.5 whitespace-nowrap">
+                        <span className="text-xs font-semibold text-slate-600">ยอดรวมทั้งหมด:</span>
+                        <span className="text-sm font-bold text-slate-800">
+                          {formatCurrency(historyAllInvoicesTotal)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 whitespace-nowrap">
+                        <span className="text-xs font-semibold text-amber-700">ยอดรวมหน้านี้:</span>
+                        <span className="text-sm font-bold text-amber-900">
+                          {formatCurrency(historyInvoicesTotals.grand)}
+                        </span>
+                      </div>
+                    </div>
                   </td>
                   <td className="py-2 px-3"></td>
                   <td className="hidden py-2 px-3 md:table-cell"></td>
@@ -3221,6 +3369,151 @@ const InvoiceView = React.memo(() => {
                 <Button variant="primary" onClick={handleSaveCreateInvoice} disabled={saving || !createInvoiceVendorId || createInvoiceSelectedReceiveIds.length === 0} loading={saving}>
                   บันทึกข้อมูล
                 </Button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>,
+      document.body)}
+
+      {/* ══════════════════════════════════════
+          Export Excel Modal (INW / SM)
+      ══════════════════════════════════════ */}
+      {typeof document !== "undefined" && createPortal(
+      <AnimatePresence>
+        {isExportModalOpen && (
+          <motion.div
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10020] p-4"
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+            variants={modalOverlayVariants}
+            transition={overlayTransition}
+            onClick={() => setIsExportModalOpen(false)}
+          >
+            <motion.div
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+              variants={modalContentVariants}
+              transition={modalTransition}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="bg-gradient-to-r from-emerald-600 to-teal-700 px-6 py-4 flex items-center justify-between shadow-sm relative overflow-hidden">
+                <div className="relative z-10">
+                  <h3 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
+                    <span>📊</span> Export Excel
+                  </h3>
+                  <p className="text-emerald-100 text-xs mt-0.5">
+                    เลือกตารางข้อมูลที่ต้องการส่งออก (INW / SM)
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsExportModalOpen(false)}
+                  className="relative z-10 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-6 space-y-4">
+                <div className="flex items-center justify-between text-xs text-slate-500">
+                  <span>เลือกตารางที่ต้องการ:</span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setExportSelectedTypes(["INW", "SM"])}
+                      className="text-emerald-600 hover:text-emerald-700 font-semibold underline"
+                    >
+                      เลือกทั้งหมด
+                    </button>
+                    <span>|</span>
+                    <button
+                      type="button"
+                      onClick={() => setExportSelectedTypes([])}
+                      className="text-slate-400 hover:text-slate-600 underline"
+                    >
+                      ล้างการเลือก
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-2.5">
+                  {[
+                    { id: "INW", label: "INW", fullLabel: "INW - INW", count: (groupedDraftInvoices["INW"] || []).length, badgeColor: "bg-purple-100 text-purple-700 border-purple-200" },
+                    { id: "SM", label: "SM", fullLabel: "SM — เงินเดือน", count: (groupedDraftInvoices["SM"] || []).length, badgeColor: "bg-amber-100 text-amber-700 border-amber-200" },
+                  ].map((table) => {
+                    const isChecked = exportSelectedTypes.includes(table.id);
+                    return (
+                      <label
+                        key={table.id}
+                        className={`flex items-center justify-between p-3.5 rounded-xl border-2 cursor-pointer transition-all ${
+                          isChecked
+                            ? "border-emerald-500 bg-emerald-50/50 shadow-sm"
+                            : "border-slate-200 bg-slate-50/50 hover:border-slate-300"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setExportSelectedTypes((prev) => [...prev, table.id]);
+                              } else {
+                                setExportSelectedTypes((prev) => prev.filter((t) => t !== table.id));
+                              }
+                            }}
+                            className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500"
+                          />
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className={`px-2 py-0.5 rounded text-[11px] font-bold border ${table.badgeColor}`}>
+                                {table.label}
+                              </span>
+                              <span className="text-sm font-semibold text-slate-800">
+                                {table.fullLabel}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <span className="text-xs font-medium text-slate-500 bg-white px-2 py-1 rounded-md border border-slate-200">
+                          {table.count} รายการ
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+
+                <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-600 flex items-center justify-between">
+                  <span>จำนวนรายการที่จะส่งออกทั้งหมด:</span>
+                  <span className="font-bold text-emerald-600">
+                    {exportSelectedTypes.reduce(
+                      (sum, type) => sum + (groupedDraftInvoices[type] || []).length,
+                      0
+                    )}{" "}
+                    รายการ
+                  </span>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => setIsExportModalOpen(false)}
+                >
+                  ยกเลิก
+                </Button>
+                <button
+                  type="button"
+                  onClick={handleExportExcel}
+                  disabled={exportSelectedTypes.length === 0}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs shadow-sm bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors cursor-pointer"
+                >
+                  <span>📊</span> ดาวน์โหลด Excel
+                </button>
               </div>
             </motion.div>
           </motion.div>
