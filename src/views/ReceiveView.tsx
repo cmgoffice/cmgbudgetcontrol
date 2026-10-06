@@ -962,17 +962,9 @@ const ReceiveView = React.memo(() => {
   }, [receiveHistoryTotalPages]);
 
   const handleRetryCmgStoreSync = useCallback(async (rcv) => {
-    if (!rcv?.id) return;
+    if (!rcv?.id || !isAdministrator || cmgStoreRetryingId) return;
 
-    const po = pos.find((entry) => entry.id === rcv.poId);
-    if (!po) {
-      showAlert("ไม่พบ PO", "ไม่สามารถ retry ได้เพราะไม่พบ PO ที่ผูกกับ Receive นี้", "warning");
-      return;
-    }
-    if (!isCmgStoreEligibleInventoryStatus(po.inventoryType || rcv.inventoryType)) {
-      showAlert("ไม่เข้าเงื่อนไข", "ส่งไป CMG Store ได้เฉพาะ PO ที่ CMG Store Management Status เป็น Inventory เท่านั้น", "warning");
-      return;
-    }
+    const po = pos.find((entry) => entry.id === rcv.poId) || {};
 
     const pendingSync = {
       status: "pending",
@@ -982,17 +974,18 @@ const ReceiveView = React.memo(() => {
     };
 
     setCmgStoreRetryingId(rcv.id);
-    await updateData("receives", rcv.id, { cmgStoreSync: pendingSync }, { skipLog: true });
-    setViewingRcv((prev) => (
-      prev && prev.rcv?.id === rcv.id
-        ? { ...prev, rcv: { ...prev.rcv, cmgStoreSync: pendingSync } }
-        : prev
-    ));
-
     try {
+      await updateData("receives", rcv.id, { cmgStoreSync: pendingSync }, { skipLog: true });
+      setViewingRcv((prev) => (
+        prev && prev.rcv?.id === rcv.id
+          ? { ...prev, rcv: { ...prev.rcv, cmgStoreSync: pendingSync } }
+          : prev
+      ));
+
       const syncResult = await sendReceiveToCmgStore({
         receive: { ...rcv, cmgStoreSync: pendingSync },
         po,
+        manual: true,
       });
       const nextSync = syncResult.skipped
         ? {
@@ -1049,30 +1042,34 @@ const ReceiveView = React.memo(() => {
     } finally {
       setCmgStoreRetryingId(null);
     }
-  }, [logAction, pos, selectedProjectId, showAlert, updateData]);
+  }, [cmgStoreRetryingId, isAdministrator, logAction, pos, selectedProjectId, showAlert, updateData]);
 
   const renderCmgStoreSyncStatus = useCallback((rcv, po) => {
     const isInventory = isCmgStoreEligibleInventoryStatus(po?.inventoryType || rcv?.inventoryType);
-    const badge = isInventory
-      ? getCmgStoreSyncBadge(rcv?.cmgStoreSync)
-      : getCmgStoreSyncBadge({ status: "skipped" });
-    const failed = isInventory && String(rcv?.cmgStoreSync?.status || "").toLowerCase() === "failed";
-    const sent = isInventory && String(rcv?.cmgStoreSync?.status || "").toLowerCase() === "success";
+    const status = String(rcv?.cmgStoreSync?.status || "").toLowerCase();
+    const badge = getCmgStoreSyncBadge(status ? rcv.cmgStoreSync : { status: isInventory ? "" : "skipped" });
+    const failed = status === "failed";
+    const sent = status === "success";
+    const canSend = isAdministrator && !sent;
+    const skipped = badge.label === "ไม่ส่ง";
     return (
       <div className="flex flex-col items-center gap-1">
         <div className="flex items-center justify-center gap-1">
-          <span
-            className={`inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap ${badge.className}`}
-            title={rcv?.cmgStoreSync?.errorMessage || rcv?.cmgStoreSync?.reason || ""}
+          <button
+            type="button"
+            className={`inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap ${badge.className} ${canSend && skipped ? "hover:bg-blue-50 hover:text-blue-600 cursor-pointer" : "cursor-default"}`}
+            disabled={!canSend || !skipped || Boolean(cmgStoreRetryingId)}
+            onClick={() => handleRetryCmgStoreSync(rcv)}
+            title={canSend && skipped ? "คลิกเพื่อส่งข้อมูล Receive ไป CMG Store Management" : rcv?.cmgStoreSync?.errorMessage || rcv?.cmgStoreSync?.reason || ""}
           >
             {badge.label}
-          </span>
-          {isAdministrator && isInventory && !sent && (
+          </button>
+          {canSend && !skipped && (
             <button
               type="button"
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-blue-200 bg-white hover:bg-blue-50 text-blue-600 text-[10px] font-medium transition-colors disabled:opacity-60"
               onClick={() => handleRetryCmgStoreSync(rcv)}
-              disabled={cmgStoreRetryingId === rcv.id}
+              disabled={Boolean(cmgStoreRetryingId)}
               title="ส่งข้อมูล Receive ไป CMG Store Management ด้วยตนเอง"
             >
               <RefreshCw size={11} className={cmgStoreRetryingId === rcv.id ? "animate-spin" : ""} /> {failed ? "ส่ง Store" : "ส่งข้อมูล"}
