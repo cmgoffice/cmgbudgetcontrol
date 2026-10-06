@@ -3,8 +3,8 @@ import React, { useState, useMemo, useCallback, useContext, useEffect } from "re
 import {
   ChevronDown, ChevronLeft, ChevronRight, Package, Eye, FileText,
   Plus, X, Check, Clock, ExternalLink, Truck, ImageIcon, List, Search, Trash2,
-  RefreshCw,
 } from "lucide-react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
@@ -87,7 +87,7 @@ const ReceiveView = React.memo(() => {
   const { selectedProjectId } = useUI();
   const { user, userData, logAction } = useContext(AuthContext);
   const canViewReceiveHistory = canUseFunction("receive", "viewHistory");
-  const isAdministrator = userRoles.includes("Administrator");
+  const canSendToCmgStore = canUseFunction("receive", "sendToCmgStore");
   const canDeleteReceivePo = canUseFunction("receive", "delete") || userRoles.includes("MasterAdmin");
 
   // ไม่โหลด vendors ตอน mount — โหลดเมื่อ user เปิด PO detail จริงๆ (ลด Firebase reads)
@@ -962,7 +962,7 @@ const ReceiveView = React.memo(() => {
   }, [receiveHistoryTotalPages]);
 
   const handleRetryCmgStoreSync = useCallback(async (rcv) => {
-    if (!rcv?.id || !isAdministrator || cmgStoreRetryingId) return;
+    if (!canSendToCmgStore || !rcv?.id || cmgStoreRetryingId) return;
 
     const po = pos.find((entry) => entry.id === rcv.poId) || {};
 
@@ -1042,39 +1042,41 @@ const ReceiveView = React.memo(() => {
     } finally {
       setCmgStoreRetryingId(null);
     }
-  }, [cmgStoreRetryingId, isAdministrator, logAction, pos, selectedProjectId, showAlert, updateData]);
+  }, [cmgStoreRetryingId, canSendToCmgStore, logAction, pos, selectedProjectId, showAlert, updateData]);
 
   const renderCmgStoreSyncStatus = useCallback((rcv, po) => {
     const isInventory = isCmgStoreEligibleInventoryStatus(po?.inventoryType || rcv?.inventoryType);
-    const status = String(rcv?.cmgStoreSync?.status || "").toLowerCase();
-    const badge = getCmgStoreSyncBadge(status ? rcv.cmgStoreSync : { status: isInventory ? "" : "skipped" });
-    const failed = status === "failed";
-    const sent = status === "success";
-    const canSend = isAdministrator && !sent;
-    const skipped = badge.label === "ไม่ส่ง";
+    const syncStatus = String(rcv?.cmgStoreSync?.status || "").toLowerCase();
+    const badge = isInventory || ["success", "failed", "pending"].includes(syncStatus)
+      ? getCmgStoreSyncBadge(rcv?.cmgStoreSync)
+      : getCmgStoreSyncBadge({ status: "skipped" });
+    const failed = syncStatus === "failed";
+    const sent = syncStatus === "success";
+    const canSend = canSendToCmgStore && !sent && syncStatus !== "pending";
+    const confirmSend = () => {
+      const randomValue = new Uint32Array(1);
+      window.crypto.getRandomValues(randomValue);
+      const code = String(1000 + randomValue[0] % 9000);
+      openConfirm(
+        "ยืนยันส่งข้อมูลไป CMG Store",
+        `ส่ง Receive ${rcv.rpNo || rcv.receiveNo || rcv.id} ไป CMG Store Management\nพิมพ์รหัส ${code} เพื่อยืนยันการส่ง`,
+        () => handleRetryCmgStoreSync(rcv),
+        "warning",
+        { requireText: code, requireTextLabel: "พิมพ์รหัส 4 หลักที่แสดงเพื่อยืนยัน", requireTextPlaceholder: "รหัส 4 หลัก" }
+      );
+    };
     return (
       <div className="flex flex-col items-center gap-1">
         <div className="flex items-center justify-center gap-1">
           <button
             type="button"
-            className={`inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap ${badge.className} ${canSend && skipped ? "hover:bg-blue-50 hover:text-blue-600 cursor-pointer" : "cursor-default"}`}
-            disabled={!canSend || !skipped || Boolean(cmgStoreRetryingId)}
-            onClick={() => handleRetryCmgStoreSync(rcv)}
-            title={canSend && skipped ? "คลิกเพื่อส่งข้อมูล Receive ไป CMG Store Management" : rcv?.cmgStoreSync?.errorMessage || rcv?.cmgStoreSync?.reason || ""}
+            onClick={canSend ? confirmSend : undefined}
+            disabled={!canSend || Boolean(cmgStoreRetryingId)}
+            className={`inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap ${badge.className}`}
+            title={rcv?.cmgStoreSync?.errorMessage || rcv?.cmgStoreSync?.reason || ""}
           >
-            {badge.label}
+            {canSend && badge.label === "-" ? "ไม่ส่ง" : badge.label}
           </button>
-          {canSend && !skipped && (
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-blue-200 bg-white hover:bg-blue-50 text-blue-600 text-[10px] font-medium transition-colors disabled:opacity-60"
-              onClick={() => handleRetryCmgStoreSync(rcv)}
-              disabled={Boolean(cmgStoreRetryingId)}
-              title="ส่งข้อมูล Receive ไป CMG Store Management ด้วยตนเอง"
-            >
-              <RefreshCw size={11} className={cmgStoreRetryingId === rcv.id ? "animate-spin" : ""} /> {failed ? "ส่ง Store" : "ส่งข้อมูล"}
-            </button>
-          )}
         </div>
         {failed && rcv?.cmgStoreSync?.errorMessage && (
           <span className="max-w-[160px] truncate text-[9px] text-red-500" title={rcv.cmgStoreSync.errorMessage}>
@@ -1083,7 +1085,7 @@ const ReceiveView = React.memo(() => {
         )}
       </div>
     );
-  }, [cmgStoreRetryingId, handleRetryCmgStoreSync, isAdministrator]);
+  }, [cmgStoreRetryingId, handleRetryCmgStoreSync, canSendToCmgStore, openConfirm]);
 
   // Delete receive record
   const handleDeleteReceive = useCallback((rcv) => {
@@ -1696,11 +1698,13 @@ const ReceiveView = React.memo(() => {
         </div>
       ))}
 
+      {createPortal(
+        <div className="receive-modal-root">
       {/* ── PO Detail / Receive Modal ── */}
       <AnimatePresence>
         {viewingPO && (
           <motion.div
-            className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-start justify-center z-[10010] p-4 overflow-y-auto"
+            className="receive-document-overlay fixed inset-0 bg-black/60 backdrop-blur-md flex items-start justify-center z-[10010] p-4 overflow-y-auto"
             initial="hidden"
             animate="visible"
             exit="exit"
@@ -1722,7 +1726,7 @@ const ReceiveView = React.memo(() => {
                   </div>
                   <div>
                     <h3 className="text-lg font-bold text-slate-800">
-                      {receiveMode ? "ทำรับของ" : "รายละเอียด Recieve"}
+                      {receiveMode ? "ทำรับของ" : "รายละเอียด Receive"}
                     </h3>
                     <p className="text-xs text-slate-400">{viewingPO.poNo}</p>
                   </div>
@@ -2156,7 +2160,7 @@ const ReceiveView = React.memo(() => {
           const poType = po?.poType;
           return (
             <motion.div
-              className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-start justify-center z-[10015] p-4 overflow-y-auto"
+              className="receive-document-overlay fixed inset-0 bg-black/60 backdrop-blur-md flex items-start justify-center z-[10015] p-4 overflow-y-auto"
               initial="hidden" animate="visible" exit="exit"
               variants={modalOverlayVariants} transition={overlayTransition}
               onClick={() => setViewingRcv(null)}
@@ -2417,6 +2421,9 @@ const ReceiveView = React.memo(() => {
           }, 100);
         }}
       />
+        </div>,
+        document.body
+      )}
     </div>
   );
 });

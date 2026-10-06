@@ -10,7 +10,7 @@ const receive = {
 };
 
 describe("manual Receive sending to CMG Store", () => {
-  it.each(["Non-Inventory", "", undefined])("allows manual sending with inventory status %s", (inventoryType) => {
+  it.each(["Inventory", "none inventory", "Non-Inventory", "", undefined])("allows manual sending with inventory status %s", (inventoryType) => {
     const payload = buildCmgStoreReceiveRequest({ receive, po: { inventoryType }, manual: true });
     expect(payload.header.inventoryType).toBe(inventoryType || "");
     expect(payload.projectId).toBe("J-03");

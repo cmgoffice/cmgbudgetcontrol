@@ -70,3 +70,7 @@ node_modules/
 
 # dataconnect generated files
 .dataconnect
+
+# Local production audit evidence and backups (keep out of Git)
+/output/payment-invoice-audit-2026-10-05/
+/output/duplicate-visibility-2026-10-05/

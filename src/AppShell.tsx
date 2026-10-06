@@ -3214,13 +3214,13 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
       )}
 
       {/* Header bar */}
-      <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-2 xl:flex-row xl:items-center xl:justify-between">
+      <div className="log-prpo-toolbar flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
         <div className="flex min-w-0 items-center gap-3">
           <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm ${isPR ? "bg-slate-700" : "bg-red-600"}`}>
             {isPR ? <FileText size={18} className="text-white" /> : <ShoppingCart size={18} className="text-white" />}
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-lg font-bold text-slate-800">
                 {isPR ? "Log PR" : "Log PO"}
               </h2>
@@ -3244,7 +3244,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
         </div>
 
         {typeTabs.length > 0 && (
-          <div className="flex w-full min-w-0 flex-wrap items-center gap-2 xl:w-auto xl:flex-1 xl:px-3">
+          <div className="log-prpo-type-tabs flex w-full min-w-0 flex-wrap items-center gap-2">
             {typeTabs.map((tab) => {
               const active = (activeTypeGroup?.key || "") === tab.key;
               return (
@@ -3255,7 +3255,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                     setActiveTypeTab(tab.key);
                     setCurrentPage(1);
                   }}
-                  className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${active
+                  className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${active
                     ? isPR
                       ? "bg-slate-800 border-slate-800 text-white"
                       : "bg-red-600 border-red-600 text-white"
@@ -3278,7 +3278,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
         )}
 
         {/* Filters */}
-        <div className="flex w-full shrink-0 flex-wrap gap-2 xl:w-auto">
+        <div className="log-prpo-filters flex w-full min-w-0 flex-wrap items-center gap-2">
           <div className="flex w-full items-center gap-1 sm:w-auto">
             <label className="text-[10px] font-semibold text-slate-500" htmlFor={`${tblId}-start-date`}>Start</label>
             <input

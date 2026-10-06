@@ -611,6 +611,60 @@ input[type="checkbox"] {
    rules intentionally compact tables, so this table gets its own readable
    column proportions and a horizontal fallback on narrow screens.
    ============================= */
+.receive-modal-root {
+  position: relative;
+  /* Above navigation, below the global alert/confirmation layer (500). */
+  z-index: 499;
+}
+
+.receive-modal-root > div.fixed.inset-0 {
+  padding: 16px;
+}
+
+.receive-modal-root > .receive-document-overlay {
+  align-items: center;
+}
+
+.receive-document-overlay > div {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
+  margin-top: 0;
+  margin-bottom: 0;
+  overflow: hidden;
+}
+
+.receive-document-overlay > div > :first-child,
+.receive-document-overlay > div > :last-child {
+  flex-shrink: 0;
+}
+
+.receive-document-overlay > div > :nth-child(2) {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Keep Log PR / PO text within its column at every desktop width. */
+.log-prpo-table :is(th, td) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-prpo-table thead th {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.log-prpo-table td > div {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .receive-detail-table-wrapper {
   min-width: 0;
   overflow-x: auto;
@@ -641,15 +695,18 @@ input[type="checkbox"] {
 }
 
 @media (max-width: 1279px) {
-  .app-shell-root .receive-detail-table-wrapper {
+  .app-shell-root .receive-detail-table-wrapper,
+  .receive-modal-root .receive-detail-table-wrapper {
     overflow-x: auto !important;
   }
 
-  .app-shell-root .receive-detail-items-table {
+  .app-shell-root .receive-detail-items-table,
+  .receive-modal-root .receive-detail-items-table {
     min-width: 760px !important;
   }
 
-  .app-shell-root .receive-detail-items-table td .receive-detail-description {
+  .app-shell-root .receive-detail-items-table td .receive-detail-description,
+  .receive-modal-root .receive-detail-items-table td .receive-detail-description {
     white-space: normal !important;
   }
 }

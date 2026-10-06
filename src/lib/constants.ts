@@ -175,6 +175,7 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
     { key: "delete",  label: "ลบ Invoice" },
   ],
   receive: [
+    { key: "sendToCmgStore", label: "ส่งข้อมูลไป CMG Store" },
     { key: "receive",     label: "ทำรับของ" },
     { key: "viewHistory", label: "ดูประวัติรับของ" },
     { key: "delete",      label: "ลบ Receive" },
@@ -300,6 +301,7 @@ export function mergeFunctionPermissionsWithDefaults(
     // These are fallback permissions only. Once Set Role has been saved, the
     // configured functionPermissions from Firestore remain authoritative.
     receive: {
+      sendToCmgStore: ["Administrator"],
       receive: ["Administrator", "MD", "GM", "PM", "PCM", "Staff"],
       viewHistory: ["Administrator", "MD", "GM", "PM", "PCM", "Staff", "Admin Site"],
       delete: ["Administrator", "MD", "GM", "PM", "PCM", "Staff"],
