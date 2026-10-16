@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useState, useMemo } from "react";
 import ReactDOM from "react-dom";
+import { hasOwnAdvanceRecovery } from "../lib/advanceRecovery";
 import {
   Search, CreditCard, FileSpreadsheet, Paperclip,
   Trash2, Eye, Filter, FileText, ChevronLeft, ChevronRight, Wallet, CheckCircle,
@@ -246,6 +247,7 @@ const PaymentTableView = React.memo(({ onRequestCompleteJob = null }: any) => {
   };
 
   const handleCreateHistoricalInvoice = (payment: any) => {
+    if (hasOwnAdvanceRecovery(payments.find((row: any) => row.id === payment.id) || payment)) return showAlert?.("Advance", "Payment นี้มีรายการหัก Advance กรุณาสร้าง Invoice ผ่านขั้นตอนปกติเพื่อรับรายการหักจาก Payment", "warning");
     if (!canBackfillPaymentInvoice) {
       showAlert?.("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์สร้าง Invoice", "warning");
       return;
@@ -267,6 +269,7 @@ const PaymentTableView = React.memo(({ onRequestCompleteJob = null }: any) => {
         if (!paymentId || backfillPaymentId) return;
         setBackfillPaymentId(paymentId);
         try {
+          if (hasOwnAdvanceRecovery(payments.find((row: any) => row.id === payment.id) || payment)) return showAlert?.("Advance", "กรุณาใช้ขั้นตอน Invoice ปกติสำหรับ Payment ที่มีรายการหัก Advance", "warning");
           if (hasInvoiceForPayment(payment)) {
             showAlert?.("รายการมีอยู่แล้ว", "พบ Invoice ของ Payment รายการนี้แล้ว", "info");
             return;
@@ -380,11 +383,14 @@ const PaymentTableView = React.memo(({ onRequestCompleteJob = null }: any) => {
   };
 
   const handleDelete = (p: any) => {
+    if (hasOwnAdvanceRecovery(payments.find((row: any) => row.id === p.id) || p)) return showAlert?.("Advance", "กรุณาย้อนรายการหัก Advance ก่อนลบ Payment", "warning");
     openConfirm?.(
       "ยืนยันการลบ",
       `ต้องการลบ Payment ${p.paymentNo} ใช่หรือไม่?`,
       async () => {
-        await deleteData("payments", p.id, { skipLog: true });
+        if (hasOwnAdvanceRecovery(payments.find((row: any) => row.id === p.id) || p)) return showAlert?.("Advance", "กรุณาย้อนรายการหัก Advance ก่อนลบ Payment", "warning");
+        const deleted = await deleteData("payments", p.id, { skipLog: true });
+        if (!deleted) return;
         await logAction?.("Delete Payment", `ลบ Payment ${p.paymentNo}`);
         showAlert?.("สำเร็จ", "ลบ Payment เรียบร้อย", "success");
       },

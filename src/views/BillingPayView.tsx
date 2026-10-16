@@ -1,6 +1,7 @@
 // @ts-nocheck
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { deductAdvanceRecovery, sumInvoiceAdvanceRecovery, sumBillingAdvanceRecovery } from "../lib/advanceRecovery";
 import { doc, writeBatch } from "firebase/firestore";
 import { AnimatePresence, motion } from "framer-motion";
 
@@ -695,6 +696,17 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
           invoice.paymentType ||
           "-";
 
+        const directPayment = !linkedPay && !invoice.payNo && ["เงินสด", "โอน", "เช็ค"].includes(paymentType);
+        let cashPayable: number | null = null;
+        let advanceRecoveryAmount = 0;
+        let recoveryError = "";
+        if (directPayment) {
+          try {
+            advanceRecoveryAmount = sumInvoiceAdvanceRecovery([invoice]);
+            if (advanceRecoveryAmount > 0) cashPayable = deductAdvanceRecovery(getInvoiceAmountAfterVat(invoice), advanceRecoveryAmount);
+          } catch (error: any) { recoveryError = error.message; }
+        }
+
         return {
           id: `paid-invoice-${invoice.id}`,
           sourceType: "invoice",
@@ -711,7 +723,9 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
             : `Invoice ${invoice.invNo || invoice.id}`,
           note: invoice.note || "",
           paymentType,
-          amount: getInvoiceAmountBeforeVat(invoice),
+          amount: cashPayable ?? getInvoiceAmountBeforeVat(invoice),
+          advanceRecoveryAmount,
+          recoveryError,
           amountBeforeVat: getInvoiceAmountBeforeVat(invoice),
           amountAfterVat: getInvoiceAmountAfterVat(invoice),
           status: invoice.status || invoice.statusNow || "paid",
@@ -1014,19 +1028,33 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
     );
   }, [selectedPayBillings]);
 
+  const selectedAdvanceRecovery = useMemo(() => {
+    try {
+      return { amount: isPayMode ? sumBillingAdvanceRecovery(selectedPayBillings, invoices) : sumInvoiceAdvanceRecovery(selectedBillingInvoices), error: "" };
+    } catch (error: any) {
+      return { amount: 0, error: error.message };
+    }
+  }, [isPayMode, selectedPayBillings, selectedBillingInvoices, invoices]);
+
   const payDeductionTotals = useMemo(() => {
     const retention = Math.max(0, Number(formData.retentionAmount || 0));
     const withholdingTax = Math.max(0, Number(formData.withholdingTaxAmount || 0));
     const other = Math.max(0, Number(formData.otherDeductionAmount || 0));
     const total = retention + withholdingTax + other;
+    const existingNet = Math.max(0, selectedPayTotals.afterVat - total);
+    let net = existingNet;
+    let recoveryError = selectedAdvanceRecovery.error;
+    try { net = deductAdvanceRecovery(existingNet, selectedAdvanceRecovery.amount); }
+    catch (error: any) { recoveryError = error.message; }
     return {
       retention,
       withholdingTax,
       other,
       total,
-      net: Math.max(0, selectedPayTotals.afterVat - total),
+      net,
+      recoveryError,
     };
-  }, [formData.otherDeductionAmount, formData.retentionAmount, formData.withholdingTaxAmount, selectedPayTotals.afterVat]);
+  }, [formData.otherDeductionAmount, formData.retentionAmount, formData.withholdingTaxAmount, selectedPayTotals.afterVat, selectedAdvanceRecovery]);
 
   const handleVendorChange = useCallback((vendorId: string) => {
     const billingVendor = billingVendorOptions.find((item) => item.id === vendorId);
@@ -1139,7 +1167,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
       showAlert?.("ข้อมูลไม่ครบ", "กรุณาเลือก Billing อย่างน้อย 1 รายการ", "warning");
       return;
     }
-    if (!formData.amount || Number(formData.amount) <= 0) {
+    if ((!formData.amount || Number(formData.amount) <= 0) && !(isPayMode && selectedAdvanceRecovery.amount > 0 && payDeductionTotals.net === 0 && !payDeductionTotals.recoveryError)) {
       showAlert?.("ข้อมูลไม่ครบ", "กรุณากรอกจำนวนเงินให้มากกว่า 0", "warning");
       return;
     }
@@ -1154,6 +1182,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
 
     setSaving(true);
     try {
+      if (selectedAdvanceRecovery.error || (isPayMode && payDeductionTotals.recoveryError)) throw new Error(selectedAdvanceRecovery.error || payDeductionTotals.recoveryError);
       const now = new Date().toISOString();
       const billingInvoiceIds = isBillingMode
         ? normalizeIdList(formData.selectedInvoiceIds || [])
@@ -1220,7 +1249,8 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
       const payWithholdingTaxAmount = isPayMode ? payDeductionTotals.withholdingTax : 0;
       const payOtherDeductionAmount = isPayMode ? payDeductionTotals.other : 0;
       const payDeductionAmount = isPayMode ? payDeductionTotals.total : 0;
-      const payNetAmount = isPayMode ? Math.max(0, payAmountAfterVat - payDeductionAmount) : billingAmountBeforeVat;
+      const advanceRecoveryAmount = selectedAdvanceRecovery.amount;
+      const payNetAmount = isPayMode ? deductAdvanceRecovery(Math.max(0, payAmountAfterVat - payDeductionAmount), advanceRecoveryAmount) : billingAmountBeforeVat;
       const payInvoiceIds = isPayMode
         ? Array.from(new Set(payBillings.flatMap((billing: any) => Array.isArray(billing.invoiceIds) ? billing.invoiceIds.map(String) : [])))
         : billingInvoiceIds;
@@ -1228,6 +1258,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
         ? Array.from(new Set(payBillings.flatMap((billing: any) => Array.isArray(billing.invoiceRefs) ? billing.invoiceRefs : []))).filter(Boolean)
         : billingInvoices.map((invoice: any) => invoice.invNo || invoice.id).filter(Boolean);
       const payload = {
+        advanceRecoveryAmount,
         docNo: formData.docNo.trim(),
         docDate: formData.docDate,
         dueDate: formData.dueDate || "",
@@ -1571,6 +1602,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
     rows,
     selectedProjectId,
     selectedPayTotals,
+    selectedAdvanceRecovery,
     showAlert,
     syncPoStatusForInvoiceIds,
     syncPoStatusFromInvoiceOverrides,
@@ -2136,6 +2168,8 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
                     <div className="rounded-xl bg-white px-3 py-2 text-right shadow-sm">
                       <p className="text-[11px] font-semibold text-slate-500">รวมหลัง VAT</p>
                       <p className="text-base font-extrabold text-slate-900">{formatCurrency(selectedBillingTotals.afterVat)}</p>
+                      <p className="text-xs text-amber-700">Advance (หักเมื่อจ่าย): {formatCurrency(selectedAdvanceRecovery.amount)}</p>
+                      {selectedAdvanceRecovery.error && <p role="alert" className="text-xs text-red-600">{selectedAdvanceRecovery.error}</p>}
                     </div>
                   </div>
                 </div>
@@ -2251,6 +2285,9 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
 
                   <div className="mt-3 rounded-xl border border-amber-100 bg-amber-50/50 p-3">
                     <div className="mb-2 text-xs font-bold text-amber-800">รายการหักจากยอดจ่าย</div>
+                    <p className="text-sm text-amber-800">หักคืน Advance: {formatCurrency(selectedAdvanceRecovery.amount)}</p>
+                    {editingRow && <p className="text-xs text-slate-600">ยอดหัก Advance ที่บันทึกไว้: {formatCurrency(editingRow.advanceRecoveryAmount ?? 0)}</p>}
+                    {payDeductionTotals.recoveryError && <p role="alert" className="text-sm text-red-600">{payDeductionTotals.recoveryError}</p>}
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                       {[
                         ["retentionAmount", "เงินประกันผลงาน"],
@@ -2312,7 +2349,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
               <Button type="button" variant="secondary" onClick={closeModal} disabled={saving}>
                 ยกเลิก
               </Button>
-              <Button type="button" onClick={handleSave} disabled={saving} className={`${config.theme.accent} text-white`}>
+              <Button type="button" onClick={handleSave} disabled={saving || !!selectedAdvanceRecovery.error || (isPayMode && !!payDeductionTotals.recoveryError)} className={`${config.theme.accent} text-white`}>
                 {saving ? "กำลังบันทึก..." : editingRow ? "บันทึกการแก้ไข" : "บันทึกรายการ"}
               </Button>
             </div>
@@ -2578,7 +2615,10 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
                       {row.paymentType || "-"}
                     </span>
                   </td>
-                  <td className="px-3 py-2 text-right font-semibold">{formatCurrency(row.amount || 0)}</td>
+                  <td className="px-3 py-2 text-right font-semibold">{formatCurrency(row.amount || 0)}
+                    {Number(row.advanceRecoveryAmount) > 0 && <div className="text-xs font-normal text-amber-700">หัก Advance {formatCurrency(row.advanceRecoveryAmount)}</div>}
+                    {row.recoveryError && <div role="alert" className="text-xs text-red-600">{row.recoveryError}</div>}
+                  </td>
                   <td className="px-3 py-2 text-center">
                     <span className="cell-text text-center">
                       <Badge status={row.status || "Draft"} />

@@ -30,6 +30,7 @@ export const UIProvider = ({ children, logAction }) => {
     "pr-table": "ตารางข้อมูล PR",
     po: "ระบบ PO",
     "po-table": "ตารางข้อมูล PO",
+    "advance-payment": "Advance payment",
     vendor: "Vendor Management",
     material: "Material",
     invoice: "Invoice",

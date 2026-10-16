@@ -1,6 +1,8 @@
 // @ts-nocheck
 import React, { useState, useMemo } from "react";
 import { createPortal } from "react-dom";
+import AdvanceRecoveryPanel from "../components/AdvanceRecoveryPanel";
+import { hasOwnAdvanceRecovery } from "../lib/advanceRecovery";
 import {
   Trash2, Edit, XCircle, Save, Upload,
   CreditCard, AlertTriangle, CheckCircle, RotateCcw,
@@ -254,7 +256,7 @@ const PaymentView = React.memo(({
 
   const withLatestPo = React.useCallback((payment: any) => {
     const linkedPo = findPaymentPo(payment);
-    return linkedPo ? { ...payment, ...getPaymentPoSyncPatch(payment, linkedPo) } : payment;
+    return linkedPo && !hasOwnAdvanceRecovery(payment) ? { ...payment, ...getPaymentPoSyncPatch(payment, linkedPo) } : payment;
   }, [findPaymentPo]);
 
   React.useEffect(() => {
@@ -370,6 +372,7 @@ const PaymentView = React.memo(({
   // document may be removed; a period containing any work/payment artefact is
   // never auto-deleted.
   const getEmptyActivePeriodCleanup = (payment: any) => {
+    if (hasOwnAdvanceRecovery(payment)) return null;
     if (!payment || payment.status !== "Active" || payment.jobCompleted) return null;
 
     const items = Array.isArray(payment.items) ? payment.items : [];
@@ -431,8 +434,10 @@ const PaymentView = React.memo(({
 
   // ─── Delete ──────────────────────────────────────────────────────────────────
   const handleDelete = (p: any) => {
+    if (hasOwnAdvanceRecovery(payments.find((row: any) => row.id === p.id) || p)) return showAlert("Advance", "กรุณาย้อนรายการหัก Advance ก่อนลบ", "warning");
     if (!canDeletePayment) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ลบ Payment", "warning");
     openConfirm("ยืนยันการลบ", `ต้องการลบ Payment ${p.paymentNo} ใช่หรือไม่?\n(ไฟล์แนบที่อัปโหลดไว้จะถูกลบด้วย)`, async () => {
+      if (hasOwnAdvanceRecovery(payments.find((row: any) => row.id === p.id) || p)) return showAlert("Advance", "กรุณาย้อนรายการหัก Advance ก่อนลบ", "warning");
       // ── ลบไฟล์ใน Firebase Storage ก่อนลบ Firestore doc ──
       if (p.paySlipPath) {
         try { const { deleteGeneratedPdf } = await import("../lib/pdfForms"); await deleteGeneratedPdf(p.paySlipPath); } catch (_) {}
@@ -442,7 +447,8 @@ const PaymentView = React.memo(({
       for (const att of (p.paymentAttachments || [])) {
         if (att?.url) await deleteStorageFile(att.url);
       }
-      await deleteData("payments", p.id, { skipLog: true });
+      const deleted = await deleteData("payments", p.id, { skipLog: true });
+      if (!deleted) return;
       await logAction(
         "Delete Payment",
         buildDeleteLogDetails("payments", p, p.id),
@@ -517,6 +523,7 @@ const PaymentView = React.memo(({
   };
 
   const handleRejectConfirm = async () => {
+    if (hasOwnAdvanceRecovery(payments.find((row: any) => row.id === rejectModalPayment?.id) || rejectModalPayment)) return showAlert("Advance", "กรุณาย้อนรายการหัก Advance ก่อน Reject", "warning");
     if (!rejectModalPayment) return;
     if (!canRejectFlow) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธ Payment", "warning");
     setActioning(true);
@@ -568,6 +575,7 @@ const PaymentView = React.memo(({
   };
 
   const handleApproveRevision = async (p: any) => {
+    if (hasOwnAdvanceRecovery(payments.find((row: any) => row.id === p.id) || p)) return showAlert("Advance", "กรุณาย้อนรายการหัก Advance ก่อนย้อนกลับแก้ไข", "warning");
     if (!canApproveRevision) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์อนุมัติคำขอแก้ไข", "warning");
     setActioning(true);
     try {
@@ -628,6 +636,11 @@ const PaymentView = React.memo(({
   };
 
   const handleSaveActiveQty = async (p: any, finalize = false) => {
+    const recoveryPayment = payments.find((row: any) => row.id === p.id) || p;
+    if (hasOwnAdvanceRecovery(recoveryPayment)) {
+      if (Object.keys(activeQtyEdits).length) return showAlert("Advance", "กรุณาย้อนรายการหัก Advance ก่อนแก้ไขปริมาณหรือยอดเงิน", "warning");
+      p = recoveryPayment;
+    }
     if (finalize && !canSubmitPeriod) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์บันทึกงวดงานส่งอนุมัติ", "warning");
     if (!finalize && !canSavePeriodDraft) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์บันทึก Draft งวดงาน", "warning");
     // บังคับเลือกรอบวางบิลทุกครั้ง
@@ -728,7 +741,10 @@ const PaymentView = React.memo(({
           extraFields.periodApprovedByEmail = null;
           extraFields.periodApprovedAt = null;
         }
-        await updateData("payments", p.id, { items: updatedItems, amount: netPeriodAmount, ...extraFields }, { skipLog: true });
+        const savePatch = hasOwnAdvanceRecovery(p)
+          ? Object.fromEntries(Object.entries(extraFields).filter(([key]) => !["discountAllocationVersion", "poGrossAmount", "poDiscountAmount", "discountPrId", "discountPrNo", "discountRate", "grossPeriodAmount", "thisPeriodDiscount", "netPeriodAmount", "discountAppliedAmount"].includes(key)))
+          : { items: updatedItems, amount: netPeriodAmount, ...extraFields };
+        await updateData("payments", p.id, savePatch, { skipLog: true });
         await logAction(
           finalize ? "Submit งวดงาน" : "Save Draft งวดงาน",
           `${finalize ? "บันทึกงวดงาน" : "บันทึก Draft งวดงาน"} | ${getPaymentLogSummary(p, { items: updatedItems, amount: netPeriodAmount, ...extraFields })} | ยอดก่อนหัก: ${formatLogCurrency(totalAmt) || "฿0"} | ส่วนลด: ${formatLogCurrency(thisPeriodDiscount) || "฿0"} | ยอดสุทธิ: ${formatLogCurrency(netPeriodAmount) || "฿0"}`,
@@ -739,7 +755,7 @@ const PaymentView = React.memo(({
         setIsQtyEditMode(false);
         setViewingPayment((prev: any) => {
           if (!prev) return prev;
-          return { ...prev, items: updatedItems, amount: netPeriodAmount, ...extraFields };
+          return { ...prev, ...savePatch };
         });
     } catch (_) { }
     finally { setSavingActiveQty(false); }
@@ -747,6 +763,7 @@ const PaymentView = React.memo(({
 
   // ─── Period (งวดงาน) Reject → กลับไป Reject ────────────────────────────────
   const handlePeriodRejectConfirm = async () => {
+    if (hasOwnAdvanceRecovery(payments.find((row: any) => row.id === periodRejectModal?.id) || periodRejectModal)) return showAlert("Advance", "กรุณาย้อนรายการหัก Advance ก่อน Reject", "warning");
     if (!periodRejectModal) return;
     if (!canApprovePeriod) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ปฏิเสธงวดงาน", "warning");
     setActioning(true);
@@ -847,7 +864,7 @@ const PaymentView = React.memo(({
       const emailField = isCheckStep ? "periodCheckedByEmail" : "periodApprovedByEmail";
       const signatureFields = buildPaymentSignatureUserFields(isCheckStep ? "Signature2" : "Signature3", userData, user);
       await updateData("payments", p.id, {
-        ...getPaymentPoSyncPatch(p, findPaymentPo(p)),
+        ...(hasOwnAdvanceRecovery(payments.find((row: any) => row.id === p.id) || p) ? {} : getPaymentPoSyncPatch(p, findPaymentPo(p))),
         status: nextStatus,
         [sigField]: approver.name || userData?.name || user?.email || "",
         [uidField]: approver.uid || null,
@@ -1006,6 +1023,7 @@ const PaymentView = React.memo(({
   };
 
   const handleHoldConfirm = async () => {
+    if (holdDecision === "backToEdit" && hasOwnAdvanceRecovery(payments.find((row: any) => row.id === holdModalPayment?.id) || holdModalPayment)) return showAlert("Advance", "กรุณาย้อนรายการหัก Advance ก่อน Reject", "warning");
     if (!holdModalPayment) return;
     if (!canHoldPayment) return showAlert("ไม่มีสิทธิ์", "คุณไม่มีสิทธิ์ Hold Payment", "warning");
     if (!holdReasonInput.trim()) {
@@ -1352,6 +1370,8 @@ const PaymentView = React.memo(({
       })));
 
       const newPayload = {
+        advanceRecovery: null,
+        inheritedAdvanceRecovery: null,
         paymentNo: nextPaymentNo,
         paymentType: p.paymentType,
         contractorId: p.contractorId,
@@ -2010,7 +2030,9 @@ const PaymentView = React.memo(({
 
       {/* ─── View Modal — Payment Application Form (Portal → document.body) ── */}
       {viewingPayment && createPortal((() => {
-        const vp = viewingPayment;
+        const vp = hasOwnAdvanceRecovery(payments.find((row: any) => row.id === viewingPayment.id))
+          ? payments.find((row: any) => row.id === viewingPayment.id)
+          : { ...viewingPayment, advanceRecovery: (payments.find((row: any) => row.id === viewingPayment.id) || viewingPayment).advanceRecovery };
         // ใช้ข้อมูล Vendor จาก Payment object โดยตรง (fallback ไปที่ vendors array ถ้าไม่มี)
         const contractor = vp.contractorName 
           ? { id: vp.contractorId, name: vp.contractorName, code: vp.contractorCode, type: vp.contractorType }
@@ -2123,6 +2145,7 @@ const PaymentView = React.memo(({
 
               {/* ─ Scrollable body ─ */}
               <div className="flex-1 min-h-0 overflow-y-auto">
+                {vp.id && !isViewingOldPeriod && <AdvanceRecoveryPanel documentType="payments" document={vp} onChange={() => setActiveQtyEdits({})} />}
                 <div className="p-4 space-y-3">
 
                   {/* ── Header info grid ── */}
@@ -2396,7 +2419,7 @@ const PaymentView = React.memo(({
                             vpItems.map((it: any, i: number) => {
                               const key = `${it.prId}_${it.prItemIndex ?? i}`;
                               const edit = activeQtyEdits[key] || {};
-                              const canEditQty = ["Active", "Draft", "Reject", "Rejected"].includes(vp.status || "Draft") && isQtyEditMode && !isViewingOldPeriod;
+                              const canEditQty = !hasOwnAdvanceRecovery(vp) && ["Active", "Draft", "Reject", "Rejected"].includes(vp.status || "Draft") && isQtyEditMode && !isViewingOldPeriod;
                               const cQty = Number(it.contractQty) || 0;
                               const cPrice = Number(it.contractPrice) || 0;
                               const cAmount = cQty * cPrice;

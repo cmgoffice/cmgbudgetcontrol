@@ -80,3 +80,6 @@ node_modules/
 /output/material-*.cjs
 /output/material-*.json
 /output/material-firestore.rules
+
+# Local Advance emulator runtime and test logs
+/output/advance-rules/

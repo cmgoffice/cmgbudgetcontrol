@@ -142,6 +142,7 @@ const FIRESTORE_IN_QUERY_LIMIT = 30;
 // Menus that are designed as company/assigned-project reports keep their
 // assigned-project scope; operational menus use the single selected project.
 const MENU_COLLECTION_DEPENDENCIES = {
+  "advance-payment": ["pos", "payments"],
   projects: ["budgets"],
   budget: ["budgets", "prs", "pos", "payments", "invoices", "receives"],
   pr: ["budgets", "prs", "pos"],
@@ -626,10 +627,12 @@ export const AppDataProvider = ({
     "budget-summary", "project-spending",
   ]);
   const canSyncPos = needsCollection("pos") && canReadAnyModule([
+    "advance-payment",
     "budget", "pr", "po", "payment-subcontract", "receive", "invoice",
     "billing", "pay", "budget-summary", "project-spending",
   ]);
   const canSyncPayments = needsCollection("payments") && canReadAnyModule([
+    "advance-payment",
     "budget", "payment-subcontract", "invoice", "budget-summary", "project-spending",
   ]);
   const canSyncInvoice = needsCollection("invoices") && canReadAnyModule([

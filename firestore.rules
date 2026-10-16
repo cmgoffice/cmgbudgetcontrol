@@ -38,7 +38,9 @@ service cloud.firestore {
     // Without the same fallback here, the UI can show an allowed action while
     // Firestore rejects it with "Missing or insufficient permissions".
     function defaultModuleRoles(moduleKey) {
-      return moduleKey == 'dashboard'
+      return moduleKey == 'advance-payment'
+        ? ['Administrator', 'MD', 'GM', 'PM', 'PCM', 'PD', 'CM', 'Procurement', 'Staff']
+        : moduleKey == 'dashboard'
         ? ['Administrator', 'MD', 'GM', 'PM', 'PCM', 'PD', 'CM', 'Procurement', 'Staff', 'Admin Site']
         : moduleKey == 'projects'
           ? ['Administrator', 'MD', 'GM', 'PM', 'PCM', 'PD', 'CM', 'Admin Site']
@@ -184,7 +186,233 @@ service cloud.firestore {
       );
     }
 
+    // Advance money is stored in integer satang; all lifecycle/audit writes are atomic.
+    function advanceRole(appId, roles) {
+      return isAdmin(appId) || primaryRole(appId) in roles || secondaryRoles(appId).hasAny(roles);
+    }
+    function advanceActionAllowed(appId, action, defaults) {
+      let p = /databases/$(database)/documents/artifacts/$(appId)/public/data/settings/functionPermissions;
+      let roles = exists(p) ? get(p).data.get('advance-payment', {}).get(action, defaults) : defaults;
+      return moduleAllowed(appId, 'advance-payment') && advanceRole(appId, roles);
+    }
+    function advanceReadable(appId) {
+      return moduleAllowed(appId, 'advance-payment') || moduleAllowed(appId, 'payment-subcontract') ||
+        moduleAllowed(appId, 'invoice') || moduleAllowed(appId, 'billing') || moduleAllowed(appId, 'pay');
+    }
+    function advanceStage(appId, status) {
+      return status in ['Pending PD', 'Pending PCM', 'Pending GM', 'Pending MD'] &&
+        advanceRole(appId,
+          status == 'Pending PD' ? ['PD'] :
+          status == 'Pending PCM' ? ['PCM'] :
+          status == 'Pending GM' ? ['GM'] : ['MD']);
+    }
+    function advanceNext(a) {
+      return a.status == 'Pending PD' ? 'Pending PCM' : a.status == 'Pending PCM' ? 'Pending GM' :
+        a.status == 'Pending GM' && a.amountSatang > 10000000 ? 'Pending MD' : 'Approved';
+    }
+    function advanceAudit(appId, id, before, after, action) {
+      let h = after.history;
+      let e = h[h.size() - 1];
+      let p = /databases/$(database)/documents/artifacts/$(appId)/public/data/advanceTransactions/$(e.id);
+      let audit = getAfter(p).data;
+      return h is list && h.size() == before.get('history', []).size() + 1 &&
+        h == before.get('history', []).concat([e]) &&
+        e.keys().hasOnly(['id', 'action', 'fromStatus', 'toStatus', 'byUid', 'byName', 'note', 'at', 'amountSatang', 'paidDate', 'paymentReference']) &&
+        e.action == action && e.fromStatus == before.get('status', '') && e.toStatus == after.status &&
+        e.byUid == request.auth.uid && e.byName is string && e.note is string && e.at is timestamp &&
+        !exists(p) && audit.diff(e).affectedKeys().hasOnly(['advanceId', 'projectId', 'poId', 'amountSatang', 'createdAt']) &&
+        audit.advanceId == id && audit.projectId == after.projectId && audit.poId == after.poId &&
+        audit.amountSatang == after.amountSatang && audit.createdAt == request.time;
+    }
+
+    function validAdvanceCreate(appId, id, a) {
+      let po = get(/databases/$(database)/documents/artifacts/$(appId)/public/data/pos/$(a.poId)).data;
+      return a.keys().hasOnly(['status', 'amountSatang', 'paidSatang', 'recoveredSatang', 'projectId', 'poId', 'poNo', 'vendorId', 'vendorName', 'workUnclaimedAmount', 'balanceSnapshot', 'recoveryTerms', 'reason', 'createdByUid', 'createdByName', 'createdAt', 'updatedAt', 'history']) &&
+        advanceRole(appId, ['CM', 'PM']) && a.status == 'Pending PD' &&
+        a.amountSatang is int && a.amountSatang > 0 && a.amountSatang <= 9007199254740991 && a.paidSatang == 0 && a.recoveredSatang == 0 &&
+        po.get('status', '') in ['Approved', 'Approve', 'Partial Receive', 'Received', 'Wait Invoice', 'Deposit', 'Invcredit', 'Inpay', 'paid', 'Paid'] &&
+        !po.get('statusNow', '').lower().matches('.*(draft|pending|reject|cancel|closed).*') && a.projectId == po.projectId && a.poNo == po.poNo &&
+        a.vendorId != '' && a.vendorId == po.get('vendorId', po.get('supplierId', '')) &&
+        a.vendorName == po.get('vendorName', po.get('supplierName', po.get('vendor', ''))) &&
+        a.workUnclaimedAmount is number && a.workUnclaimedAmount >= 0 && a.balanceSnapshot is number && a.balanceSnapshot >= 0 &&
+        a.reason is string && a.reason.size() > 0 && a.recoveryTerms is string && a.recoveryTerms.size() > 0 &&
+        a.createdByUid == request.auth.uid && a.createdByName is string && a.createdAt == request.time && a.updatedAt == request.time &&
+        advanceAudit(appId, id, {}, a, 'create');
+    }
+    function validAdvanceLifecycle(appId, id, b, a) {
+      let changed = a.diff(b).affectedKeys();
+      return a.updatedAt == request.time && (
+        (advanceStage(appId, b.status) && changed.hasOnly(['status', 'history', 'updatedAt', 'rejectionReason']) &&
+          ((a.status == advanceNext(b) && a.get('rejectionReason', null) == b.get('rejectionReason', null) && advanceAudit(appId, id, b, a, 'approve')) ||
+           (a.status == 'Rejected' && a.rejectionReason is string && a.rejectionReason.size() > 0 &&
+             a.history[a.history.size()-1].note == a.rejectionReason && advanceAudit(appId, id, b, a, 'reject')))) ||
+        (b.status == 'Approved' && a.status == 'Paid' && b.paidSatang == 0 && b.recoveredSatang == 0 &&
+          advanceActionAllowed(appId, 'confirmPay', ['Administrator']) &&
+          changed.hasOnly(['status', 'history', 'updatedAt', 'paidSatang', 'paidDate', 'paymentReference', 'paidByUid', 'paidByName', 'paidAt']) &&
+          a.paidSatang == b.amountSatang && a.paidDate is string && a.paidDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+          a.paymentReference is string && a.paymentReference.size() > 0 && a.paidByUid == request.auth.uid && a.paidByName is string && a.paidAt == request.time &&
+          a.history[a.history.size()-1].amountSatang == a.amountSatang && a.history[a.history.size()-1].paidDate == a.paidDate &&
+          a.history[a.history.size()-1].paymentReference == a.paymentReference && advanceAudit(appId, id, b, a, 'pay')));
+    }
+    function recoveryPath(appId, id) {
+      return /databases/$(database)/documents/artifacts/$(appId)/public/data/advanceRecoveries/$(id);
+    }
+    function advancePath(appId, id) {
+      return /databases/$(database)/documents/artifacts/$(appId)/public/data/advances/$(id);
+    }
+    function recoveryDocumentPath(appId, kind, id) {
+      return /databases/$(database)/documents/artifacts/$(appId)/public/data/$(kind)/$(id);
+    }
+    function ownRecovery(d) {
+      return d.get('advanceRecovery', null) != null && d.advanceRecovery.get('amountSatang', 0) > 0;
+    }
+    function recoveryEligible(appId, kind, id, d, amount) {
+      return d.get('billingNo', '') in ['', null] && d.get('payNo', '') in ['', null] &&
+        d.get('inheritedAdvanceRecovery', null) == null && !d.get('isDeposit', false) && !d.get('depositSettled', false) &&
+        (kind == 'payments' ? (
+          d.get('invoiceId', '') in ['', null] &&
+          !exists(/databases/$(database)/documents/artifacts/$(appId)/public/data/invoices/$('payment-invoice-' + id)) &&
+          (d.status == 'Active' || (amount == 0 && d.status in ['งวดงาน Pending CM', 'งวดงาน Pending PM', 'Reject', 'Rejected', 'Hold', 'Wait Pay']))
+        ) : d.get('sourceType', '') != 'payment' && (d.status == 'Draft' || (amount == 0 && d.status == 'Invcredit')));
+    }
+    function validRecovery(appId, id, r) {
+      let p = recoveryPath(appId, id);
+      let old = exists(p) ? get(p).data : {};
+      let ap = advancePath(appId, r.advanceId);
+      let a = get(ap).data;
+      let next = getAfter(ap).data;
+      let dp = recoveryDocumentPath(appId, r.documentType, r.documentId);
+      let d = get(dp).data;
+      let nd = getAfter(dp).data;
+      return r.keys().hasOnly(['advanceId', 'amountSatang', 'projectId', 'poId', 'documentType', 'documentId', 'updatedAt', 'updatedByUid', 'lastTransactionId']) &&
+        r.documentType in ['payments', 'invoices'] && id == r.documentType + '-' + r.documentId &&
+        r.amountSatang is int && r.amountSatang >= 0 && r.amountSatang <= 9007199254740991 &&
+        r.updatedAt == request.time && r.updatedByUid == request.auth.uid &&
+        recoveryActor(appId, r) &&
+        (old.get('amountSatang', 0) == 0 || old.advanceId == r.advanceId) &&
+        r.projectId == a.projectId && r.poId == a.poId && d.projectId == a.projectId && d.get('vendorId', d.get('contractorId', '')) == a.vendorId &&
+        (r.documentType == 'payments' ? (d.get('poId', '') == a.poId || a.poId in d.get('selectedPrIds', [])) : d.poId == a.poId) &&
+        a.status == 'Paid' && next.status == 'Paid' && a.paidSatang == a.amountSatang &&
+        recoveryEligible(appId, r.documentType, r.documentId, d, r.amountSatang) &&
+        r.amountSatang <= math.round(d.amount * 100) &&
+        d.get('advanceRecovery', null) == (old.get('amountSatang', 0) == 0 ? null : {'advanceId': old.advanceId, 'amountSatang': old.amountSatang}) &&
+        nd.get('advanceRecovery', null) == (r.amountSatang == 0 ? null : {'advanceId': r.advanceId, 'amountSatang': r.amountSatang}) &&
+        nd.diff(d).affectedKeys().hasOnly(['advanceRecovery', 'updatedAt']) &&
+        next.recoveredSatang is int && next.recoveredSatang == a.recoveredSatang + r.amountSatang - old.get('amountSatang', 0) &&
+        next.recoveredSatang >= 0 && next.recoveredSatang <= a.paidSatang && next.lastRecoveryId == id &&
+        next.updatedAt == request.time && next.diff(a).affectedKeys().hasOnly(['recoveredSatang', 'lastRecoveryId', 'updatedAt']) &&
+        r.amountSatang != old.get('amountSatang', 0) && recoveryAuditLinked(appId, id, r, old.get('amountSatang', 0));
+    }
+    function recoveryActor(appId, r) {
+      let u = userProfile(appId).data;
+      let roles = u.get('roles', []).concat([u.get('role', 'Staff')]);
+      let mp = /databases/$(database)/documents/artifacts/$(appId)/public/data/settings/rolePermissions;
+      let fp = /databases/$(database)/documents/artifacts/$(appId)/public/data/settings/functionPermissions;
+      let m = exists(mp) ? get(mp).data : {};
+      let f = exists(fp) ? get(fp).data : {};
+      return roles.hasAny(['Administrator']) || (r.projectId in u.get('assignedProjectIds', []) &&
+        roles.hasAny(m.get('advance-payment', ['Administrator', 'CM', 'PM', 'PD', 'PCM', 'GM', 'MD'])) &&
+        roles.hasAny(f.get('advance-payment', {}).get('applyRecovery', ['CM', 'PM', 'PCM', 'Administrator'])) &&
+        roles.hasAny(r.documentType == 'payments' ? m.get('payment-subcontract', ['Administrator', 'MD', 'GM', 'PM', 'PCM', 'PD', 'CM', 'Procurement', 'Staff']) : m.get('invoice', ['Administrator', 'MD', 'GM', 'PM', 'PCM', 'Staff'])));
+    }
+    function recoveryAuditLinked(appId, id, r, old) {
+      let p = /databases/$(database)/documents/artifacts/$(appId)/public/data/advanceTransactions/$(r.lastTransactionId);
+      let t = getAfter(p).data;
+      let delta = r.amountSatang - old;
+      return !exists(p) && t.advanceId == r.advanceId && t.projectId == r.projectId && t.poId == r.poId &&
+        t.documentType == r.documentType && t.documentId == r.documentId && t.recoveryId == id &&
+        t.type == (delta > 0 ? 'recovery' : 'reversal') && t.amountSatang == math.abs(delta) &&
+        t.createdAt == request.time && t.createdByUid == request.auth.uid;
+    }
+    function recoveryCounter(appId, id, a) {
+      let r = getAfter(recoveryPath(appId, a.lastRecoveryId)).data;
+      let p = recoveryPath(appId, a.lastRecoveryId);
+      return r.advanceId == id && r.updatedAt == request.time &&
+        (!exists(p) || get(p).data != r) &&
+        a.diff(resource.data).affectedKeys().hasOnly(['recoveredSatang', 'lastRecoveryId', 'updatedAt']);
+    }
+    function validAdvanceTransaction(appId, id, t) {
+      let ap = advancePath(appId, t.advanceId);
+      let a = getAfter(ap).data;
+      let e = a.history[a.history.size()-1];
+      return t.createdAt == request.time && t.projectId == a.projectId && t.poId == a.poId && (
+        (t.get('action', '') in ['create', 'approve', 'reject', 'pay'] && e.id == id &&
+          t.diff(e).affectedKeys().hasOnly(['advanceId', 'projectId', 'poId', 'amountSatang', 'createdAt']) && t.amountSatang == a.amountSatang &&
+          (t.action == 'create' ? !exists(ap) : get(ap).data.history.size() + 1 == a.history.size())) ||
+        (t.keys().hasOnly(['advanceId', 'projectId', 'poId', 'type', 'amountSatang', 'documentType', 'documentId', 'recoveryId', 'createdAt', 'createdByUid']) &&
+          t.createdByUid == request.auth.uid && getAfter(recoveryPath(appId, t.recoveryId)).data.lastTransactionId == id && validRecoveryAudit(appId, t)));
+    }
+    function validRecoveryAudit(appId, t) {
+      let p = recoveryPath(appId, t.recoveryId);
+      let r = getAfter(p).data;
+      let old = exists(p) ? get(p).data.get('amountSatang', 0) : 0;
+      let delta = r.amountSatang - old;
+      return t.advanceId == r.advanceId && t.documentType == r.documentType && t.documentId == r.documentId &&
+        t.type == (delta > 0 ? 'recovery' : 'reversal') && t.amountSatang == math.abs(delta) &&
+        r.updatedAt == request.time && delta != 0 && recoveryAuditLinked(appId, t.recoveryId, r, old);
+    }
+    function recoveryDocUpdate(appId, kind, id, b, a) {
+      let changed = a.diff(b).affectedKeys();
+      return (!changed.hasAny(['advanceRecovery']) || recoveryDocLinked(appId, kind + '-' + id, a)) &&
+        (!ownRecovery(b) || (!changed.hasAny(['discountAllocationVersion', 'poGrossAmount', 'poDiscountAmount', 'discountPrId', 'discountPrNo', 'discountRate', 'grossPeriodAmount', 'thisPeriodDiscount', 'netPeriodAmount', 'discountAppliedAmount', 'prevAccumDiscount', 'depositMode', 'isDeposit', 'depositAmount']) &&
+          (!changed.hasAny(['originalAmount']) || (!('originalAmount' in b) && a.originalAmount == b.amount)))) &&
+        (!ownRecovery(b) || (!changed.hasAny(['amount', 'totalAmount', 'netAmount', 'vat', 'vatAmount', 'wht', 'whtAmount', 'retention', 'retentionAmount', 'discount', 'discountAmount', 'projectId', 'vendorId', 'contractorId', 'sourcePoId', 'vendorName', 'poId', 'poNo', 'selectedPrIds', 'items', 'sourceType', 'paymentId']) &&
+          (!changed.hasAny(['status']) || a.status in ['Active', 'In Process', 'Wait Invoice', 'Invcredit', 'Inpay', 'Paid', 'paid', 'Wait Pay', 'งวดงาน Pending CM', 'งวดงาน Pending PM', 'Hold', 'จบงาน']))) &&
+        a.get('inheritedAdvanceRecovery', null) == b.get('inheritedAdvanceRecovery', null) &&
+        (b.get('inheritedAdvanceRecovery', null) == null || !changed.hasAny(['sourceType', 'paymentId', 'poId', 'projectId', 'vendorId', 'amount']));
+    }
+    function recoveryDocLinked(appId, id, a) {
+      let p = recoveryPath(appId, id);
+      let r = getAfter(p).data;
+      return r.updatedAt == request.time && (!exists(p) || get(p).data != r) &&
+        a.get('advanceRecovery', null) == (r.amountSatang == 0 ? null : {'advanceId':r.advanceId, 'amountSatang':r.amountSatang});
+    }
+    function inheritedCreate(appId, a) {
+      let p = get(/databases/$(database)/documents/artifacts/$(appId)/public/data/payments/$(a.get('paymentId', a.get('poId', '')))).data;
+      return ownRecovery(p) ? (a.inheritedAdvanceRecovery == {'advanceId': p.advanceRecovery.advanceId, 'amountSatang': p.advanceRecovery.amountSatang, 'paymentId': a.get('paymentId', a.get('poId', ''))} &&
+        a.status == 'Draft' && a.projectId == p.projectId && a.vendorId == p.get('vendorId', p.get('contractorId', '')) && a.amount == p.amount) : a.get('inheritedAdvanceRecovery', null) == null;
+    }
+    function advanceDocCreate(appId, kind, a) {
+      return a.get('advanceRecovery', null) == null &&
+        (kind == 'invoice' && a.get('sourceType', '') == 'payment' ? inheritedCreate(appId, a) : a.get('inheritedAdvanceRecovery', null) == null);
+    }
+    function inheritedInvoiceRollback(appId, id) {
+      let b = resource.data;
+      let a = request.resource.data;
+      let invoiceId = b.get('invoiceId', '') in ['', null] ? 'payment-invoice-' + id : b.invoiceId;
+      let p = /databases/$(database)/documents/artifacts/$(appId)/public/data/invoices/$(invoiceId);
+      let inv = get(p).data;
+      return moduleAllowed(appId, 'invoice') && ownRecovery(b) &&
+        inv.get('sourceType', '') == 'payment' && inv.projectId == b.projectId &&
+        inv.inheritedAdvanceRecovery == {'paymentId':id, 'advanceId':b.advanceRecovery.advanceId, 'amountSatang':b.advanceRecovery.amountSatang} &&
+        !existsAfter(p) && a.status == 'Hold' && a.invoiceId == null && a.invoiceNo == null &&
+        a.invoiceAttachments == [] && a.invoicePeriodNo == null && a.holdReason is string &&
+        a.diff(b).affectedKeys().hasOnly(['status', 'invoiceId', 'invoiceNo', 'invoiceAttachments', 'invoicePeriodNo', 'holdReason', 'updatedAt']);
+    }
+
     match /artifacts/{appId}/public/data {
+      match /advances/{documentId} {
+        allow read: if canReadExistingProjectDoc(appId) && advanceReadable(appId);
+        allow create: if canCreateInProject(appId) && moduleAllowed(appId, 'advance-payment') && validAdvanceCreate(appId, documentId, request.resource.data);
+        allow update: if signedIn() &&
+          ((request.resource.data.get('lastRecoveryId', '') != '' && recoveryCounter(appId, documentId, request.resource.data)) ||
+           (canUpdateExistingProjectDoc(appId) && moduleAllowed(appId, 'advance-payment') && validAdvanceLifecycle(appId, documentId, resource.data, request.resource.data)));
+        allow delete: if false;
+      }
+      match /advanceRecoveries/{documentId} {
+        allow get: if signedIn() && !exists(recoveryPath(appId, documentId));
+        allow read: if canReadExistingProjectDoc(appId) && advanceReadable(appId);
+        allow create, update: if signedIn() && validRecovery(appId, documentId, request.resource.data);
+        allow delete: if false;
+      }
+      match /advanceTransactions/{documentId} {
+        allow read: if canReadExistingProjectDoc(appId) && advanceReadable(appId);
+        allow create: if signedIn() &&
+          (request.resource.data.get('type', '') in ['recovery', 'reversal'] || (canCreateInProject(appId) && moduleAllowed(appId, 'advance-payment'))) &&
+          validAdvanceTransaction(appId, documentId, request.resource.data);
+        allow update, delete: if false;
+      }
+
       match /users/{uid} {
         allow get: if signedIn() && (request.auth.uid == uid || isAdmin(appId));
         allow list: if isAdmin(appId) && moduleAllowed(appId, 'admin');
@@ -281,7 +509,7 @@ service cloud.firestore {
           // by rolePermissions in Set Role.
           isAdminSite(appId) ||
           moduleAllowed(appId, 'budget') || moduleAllowed(appId, 'pr') ||
-          moduleAllowed(appId, 'po') || moduleAllowed(appId, 'payment-subcontract') ||
+          moduleAllowed(appId, 'po') || moduleAllowed(appId, 'payment-subcontract') || moduleAllowed(appId, 'advance-payment') ||
           moduleAllowed(appId, 'receive') || moduleAllowed(appId, 'invoice') ||
           moduleAllowed(appId, 'billing') || moduleAllowed(appId, 'pay') ||
           moduleAllowed(appId, 'budget-summary') || moduleAllowed(appId, 'project-spending')
@@ -306,13 +534,16 @@ service cloud.firestore {
 
       match /payments/{documentId} {
         allow read: if canReadExistingProjectDoc(appId) && (
-          moduleAllowed(appId, 'budget') || moduleAllowed(appId, 'payment-subcontract') ||
+          moduleAllowed(appId, 'budget') || moduleAllowed(appId, 'payment-subcontract') || moduleAllowed(appId, 'advance-payment') ||
           moduleAllowed(appId, 'invoice') || moduleAllowed(appId, 'budget-summary') ||
           moduleAllowed(appId, 'project-spending')
         );
-        allow create: if canCreateInProject(appId) && moduleAllowed(appId, 'payment-subcontract');
-        allow update: if canUpdateExistingProjectDoc(appId) && moduleAllowed(appId, 'payment-subcontract');
-        allow delete: if canReadExistingProjectDoc(appId) && moduleAllowed(appId, 'payment-subcontract');
+        allow create: if canCreateInProject(appId) && moduleAllowed(appId, 'payment-subcontract') && advanceDocCreate(appId, 'payment', request.resource.data);
+        allow update: if signedIn() && (
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['advanceRecovery', 'updatedAt']) &&
+            request.resource.data.get('advanceRecovery', null) != resource.data.get('advanceRecovery', null) && recoveryDocLinked(appId, 'payments-' + documentId, request.resource.data)) ||
+          (canUpdateExistingProjectDoc(appId) && ((moduleAllowed(appId, 'payment-subcontract') && recoveryDocUpdate(appId, 'payments', documentId, resource.data, request.resource.data)) || inheritedInvoiceRollback(appId, documentId))));
+        allow delete: if canReadExistingProjectDoc(appId) && moduleAllowed(appId, 'payment-subcontract') && !ownRecovery(resource.data);
       }
 
       match /invoices/{documentId} {
@@ -332,13 +563,15 @@ service cloud.firestore {
           moduleAllowed(appId, 'pay') || moduleAllowed(appId, 'budget-summary') ||
           moduleAllowed(appId, 'project-spending')
         );
-        allow create: if canCreateInProject(appId) && (
+        allow create: if canCreateInProject(appId) && advanceDocCreate(appId, 'invoice', request.resource.data) && (
           moduleAllowed(appId, 'invoice') || moduleAllowed(appId, 'po') || moduleAllowed(appId, 'payment-subcontract')
         );
-        allow update: if canUpdateExistingProjectDoc(appId) && (
+        allow update: if signedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['advanceRecovery', 'updatedAt']) &&
+          request.resource.data.get('advanceRecovery', null) != resource.data.get('advanceRecovery', null) && recoveryDocLinked(appId, 'invoices-' + documentId, request.resource.data);
+        allow update: if canUpdateExistingProjectDoc(appId) && recoveryDocUpdate(appId, 'invoices', documentId, resource.data, request.resource.data) && (
           moduleAllowed(appId, 'invoice') || moduleAllowed(appId, 'billing') || moduleAllowed(appId, 'pay')
         );
-        allow delete: if canReadExistingProjectDoc(appId) && (
+        allow delete: if canReadExistingProjectDoc(appId) && !ownRecovery(resource.data) && (
           moduleAllowed(appId, 'invoice') || moduleAllowed(appId, 'billing') || moduleAllowed(appId, 'pay')
         );
       }

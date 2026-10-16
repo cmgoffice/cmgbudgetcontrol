@@ -1,6 +1,8 @@
 // @ts-nocheck
 import React, { useState, useMemo, useCallback, useContext, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import AdvanceRecoveryPanel from "../components/AdvanceRecoveryPanel";
+import { hasOwnAdvanceRecovery, invoiceRecoveryAmountsUnchanged } from "../lib/advanceRecovery";
 import {
   collection,
   doc,
@@ -238,6 +240,8 @@ const InvoiceView = React.memo(() => {
     depositAmount: 0,
   });
   const isEditingInvoice = Boolean(editingInvoice);
+  const savedRecoveryInvoice = (invoices || []).find((row: any) => row.id === editingInvoice?.id) || editingInvoice;
+  const recoveryAmountLocked = hasOwnAdvanceRecovery(savedRecoveryInvoice) || savedRecoveryInvoice?.inheritedAdvanceRecovery != null;
   const canEditInvoiceHistory = canUseFunction("invoice", "edit");
   const canViewInvoiceHistory = canUseFunction("invoice", "viewHistory");
   const canViewInvoiceEntry = canUseFunction("invoice", "viewEntry");
@@ -701,6 +705,10 @@ const InvoiceView = React.memo(() => {
       "ยืนยันการลบ",
       `ต้องการลบ Invoice ${invoice.invNo || invoice.id} ใช่หรือไม่?`,
       async () => {
+        if (hasOwnAdvanceRecovery((invoices || []).find((row: any) => row.id === invoice.id) || invoice)) {
+          showAlert("Advance", "กรุณาย้อนรายการหัก Advance ก่อนลบ Invoice", "warning");
+          return;
+        }
         const basePath = ["artifacts", appId, "public", "data"] as const;
         const invoiceId = String(invoice?.id || "");
         const invoiceNo = String(invoice?.invNo || invoice?.docNo || invoiceId);
@@ -759,6 +767,20 @@ const InvoiceView = React.memo(() => {
           const nowIso = new Date().toISOString();
           batch.delete(doc(db, "artifacts", appId, "public", "data", "invoices", invoice.id));
 
+          // Recovery belongs to Payment. Unlink its deleted Invoice without refunding the ledger.
+          // Hold permits explicit reversal and avoids the Wait Pay auto-Draft effect racing it.
+          if (invoice.inheritedAdvanceRecovery?.paymentId) {
+            const paymentId = String(invoice.inheritedAdvanceRecovery.paymentId);
+            const otherInvoice = (invoices || []).some((row: any) => row.id !== invoice.id && row.sourceType === "payment" && String(row.paymentId || row.poId) === paymentId);
+            if (otherInvoice) throw new Error("Payment นี้มี Invoice อื่น กรุณาตรวจสอบก่อนย้อนขั้นตอน");
+            batch.update(doc(db, ...basePath, "payments", paymentId), {
+              status: "Hold", invoiceId: null, invoiceNo: null,
+              invoiceAttachments: [], invoicePeriodNo: null,
+              holdReason: "ลบ Invoice แล้ว กรุณาย้อนรายการหัก Advance ก่อนดำเนินการต่อ",
+              updatedAt: nowIso,
+            });
+          }
+
           const poId = String(invoice?.poId || "");
           const matchedPO = pos.find((po) => String(po.id) === poId);
           if (poId && matchedPO) {
@@ -807,6 +829,7 @@ const InvoiceView = React.memo(() => {
       "ยืนยันการลบ",
       `ต้องการลบ ${label} ${docNo} ใช่หรือไม่?`,
       async () => {
+        if (hasOwnAdvanceRecovery(po)) return showAlert("Advance", "กรุณาย้อนรายการหัก Advance ก่อนลบ", "warning");
         const linkedInvoice = (invoices || []).find(
           (invoice: any) => String(invoice?.poId || "") === String(po?.id || "")
         );
@@ -1441,6 +1464,9 @@ const InvoiceView = React.memo(() => {
           : invoiceForm.isDeposit && Number(invoiceForm.depositAmount || 0) > 0
             ? Number(invoiceForm.depositAmount || 0)
             : calculatedAmount;
+      if (recoveryAmountLocked) {
+        if (!invoiceRecoveryAmountsUnchanged(savedRecoveryInvoice, selectedItems, totalAmount)) return showAlert("Advance", "กรุณาย้อนรายการหัก Advance ก่อนแก้ไขรายการหรือยอดเงิน", "warning");
+      }
       if (isPaymentInvoice && !validatePaymentInvoiceAmount(viewingPO, selectedItems, totalAmount)) {
         return showAlert("ยอด Payment ไม่ตรงกัน", "ยอดรายการ Invoice ต้องตรงกับยอด Payment งวดนี้ กรุณาตรวจสอบข้อมูลก่อนบันทึก", "warning");
       }
@@ -1513,7 +1539,9 @@ const InvoiceView = React.memo(() => {
           price: item.price || 0,
           amount: Number(item.invoiceQty) * Number(item.price || 0),
         })),
-        amount: totalAmount,
+        ...(recoveryAmountLocked ? { items: savedRecoveryInvoice.items } : {}),
+        amount: recoveryAmountLocked ? savedRecoveryInvoice.amount : totalAmount,
+        ...(savedRecoveryInvoice?.inheritedAdvanceRecovery != null ? { inheritedAdvanceRecovery: savedRecoveryInvoice.inheritedAdvanceRecovery } : {}),
         isDeposit: Boolean(!invoiceForm.settleRemaining && invoiceForm.isDeposit),
         depositAmount: originalDepositAmount,
         originalAmount: calculatedAmount,
@@ -2351,6 +2379,7 @@ const InvoiceView = React.memo(() => {
                       </td>
                       <td className="py-1.5 px-3 text-right font-semibold">
                         {formatCurrency(inv.amount)}
+                        {(inv.advanceRecovery || inv.inheritedAdvanceRecovery) && <div className="text-xs text-amber-700">หัก Advance {formatCurrency((inv.advanceRecovery || inv.inheritedAdvanceRecovery).amountSatang / 100)} · สุทธิ {formatCurrency(Number(inv.amount) - (inv.advanceRecovery || inv.inheritedAdvanceRecovery).amountSatang / 100)} (ก่อนภาษี/รายการหักอื่น)</div>}
                         {inv.isDeposit && (
                           <div className="mt-0.5 text-[10px] font-semibold text-violet-500">
                             มัดจำ
@@ -2621,6 +2650,7 @@ const InvoiceView = React.memo(() => {
                       </td>
                       <td className="py-1.5 px-3 text-right font-semibold">
                         {formatCurrency(inv.amount)}
+                        {(inv.advanceRecovery || inv.inheritedAdvanceRecovery) && <div className="text-xs text-amber-700">หัก Advance {formatCurrency((inv.advanceRecovery || inv.inheritedAdvanceRecovery).amountSatang / 100)} · สุทธิ {formatCurrency(Number(inv.amount) - (inv.advanceRecovery || inv.inheritedAdvanceRecovery).amountSatang / 100)} (ก่อนภาษี/รายการหักอื่น)</div>}
                         {inv.isDeposit && (
                           <div className="mt-0.5 text-[10px] font-semibold text-amber-500">
                             มัดจำ
@@ -2925,6 +2955,7 @@ const InvoiceView = React.memo(() => {
                 </div>
 
                 {/* Invoice Entry Fields */}
+                {savedRecoveryInvoice?.id && <AdvanceRecoveryPanel documentType="invoices" document={savedRecoveryInvoice} />}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-gradient-to-r from-violet-50/60 to-amber-50/60 rounded-xl p-3 border border-violet-100">
                   <div>
                     <label className="flex items-center gap-1 text-xs font-semibold text-violet-700 mb-1.5">
@@ -3012,7 +3043,7 @@ const InvoiceView = React.memo(() => {
                         <input
                           type="checkbox"
                           checked={!!invoiceForm.isDeposit}
-                          disabled={isFixedPayBeforeReceiveInvoice}
+                          disabled={isFixedPayBeforeReceiveInvoice || recoveryAmountLocked}
                           onChange={(e) =>
                             setInvoiceForm((f) => ({
                               ...f,
@@ -3031,7 +3062,7 @@ const InvoiceView = React.memo(() => {
                             type="number"
                             min={0}
                             value={invoiceForm.depositAmount || ""}
-                            disabled={isFixedPayBeforeReceiveInvoice}
+                            disabled={isFixedPayBeforeReceiveInvoice || recoveryAmountLocked}
                             onChange={(e) =>
                               setInvoiceForm((f) => ({
                                 ...f,
@@ -3103,7 +3134,7 @@ const InvoiceView = React.memo(() => {
                                 invoiceForm.items.length > 0 &&
                                 invoiceForm.items.every((i) => i.checked)
                               }
-                              disabled={viewingPO.isPaymentSubcontract}
+                              disabled={viewingPO.isPaymentSubcontract || recoveryAmountLocked}
                               onChange={(e) =>
                                 setInvoiceForm((f) => ({
                                   ...f,
@@ -3143,7 +3174,7 @@ const InvoiceView = React.memo(() => {
                               <input
                                 type="checkbox"
                                 checked={item.checked}
-                                disabled={viewingPO.isPaymentSubcontract}
+                                disabled={viewingPO.isPaymentSubcontract || recoveryAmountLocked}
                                 onChange={(e) =>
                                   setInvoiceForm((f) => ({
                                     ...f,
@@ -3181,7 +3212,7 @@ const InvoiceView = React.memo(() => {
                                   min={0}
                                   max={item.quantity}
                                   value={item.invoiceQty}
-                                  disabled={!item.checked || viewingPO.isPaymentSubcontract}
+                                  disabled={!item.checked || viewingPO.isPaymentSubcontract || recoveryAmountLocked}
                                   onChange={(e) =>
                                     setInvoiceForm((f) => ({
                                       ...f,

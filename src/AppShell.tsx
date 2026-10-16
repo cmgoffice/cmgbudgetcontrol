@@ -63,6 +63,7 @@ import ProjectsView from "./views/ProjectsView";
 import PRView from "./views/PRView";
 import POView from "./views/POView";
 import PaymentView from "./views/PaymentView";
+import AdvancePaymentView from "./views/AdvancePaymentView";
 import PaymentTableView from "./views/PaymentTableView";
 import BudgetView from "./views/BudgetView";
 import BudgetSummaryReportView from "./views/BudgetSummaryReportView";
@@ -371,7 +372,7 @@ const AppShell = () => {
   // ── Initial menu redirect — เด้งไปเมนูแรกที่มีสิทธิ์ทันทีที่ permissions พร้อม ──
   const MENU_ORDER = [
     "dashboard", "projects", "budget", "pr",
-    "po", "payment-subcontract", "vendor", "material", "receive", "invoice", "billing", "pay",
+    "po", "advance-payment", "payment-subcontract", "vendor", "material", "receive", "invoice", "billing", "pay",
     "budget-summary", "project-spending", "user-manual", "profile", "admin",
   ];
   const initialRedirectDone = useRef(false);
@@ -417,7 +418,7 @@ const AppShell = () => {
   const shouldStackProjectSwitcher = isCompactViewport || isNarrowSidebarViewport;
   const collapsedSidebarWidth = isNarrowSidebarViewport ? "w-16" : "w-[4.5rem]";
   const shouldShowSidebar = !isFullScreenModalOpen;
-  const moduleMenus = ["budget", "pr", "po", "payment-subcontract", "invoice", "billing", "pay", "receive"].includes(activeMenu);
+  const moduleMenus = ["budget", "pr", "po", "advance-payment", "payment-subcontract", "invoice", "billing", "pay", "receive"].includes(activeMenu);
   const selectedProjectPending = pendingByProject?.find((item: any) => item.projectId === selectedProjectId);
   const tabPendingCounts = {
     pr: selectedProjectPending?.prs || 0,
@@ -533,6 +534,16 @@ const AppShell = () => {
                       onClick={() => changeMenu("po")}
                       collapsed={sidebarCollapsed}
                       badge={projBadge.po}
+                      dense={sidebarDense}
+                    />
+                  )}
+                  {canAccessModule("advance-payment") && (
+                    <SidebarItem
+                      icon={<DollarSign size={20} className="text-amber-300" />}
+                      label="Advance payment"
+                      active={activeMenu === "advance-payment"}
+                      onClick={() => changeMenu("advance-payment")}
+                      collapsed={sidebarCollapsed}
                       dense={sidebarDense}
                     />
                   )}
@@ -731,6 +742,8 @@ const AppShell = () => {
                       ? "Purchase Request (PR)"
                       : activeMenu === "po"
                         ? "Purchase Order (PO)"
+                        : activeMenu === "advance-payment"
+                          ? "Advance payment"
                         : activeMenu === "vendor"
                           ? "Vendor Management"
                           : activeMenu === "material"
@@ -942,7 +955,7 @@ const AppShell = () => {
           </header>
         )}
         <div
-          className={`app-shell-content ${["projects", "budget", "pr", "po", "payment-subcontract", "vendor", "material", "invoice", "billing", "pay", "receive", "admin", "budget-summary", "project-spending", "user-manual"].includes(
+          className={`app-shell-content ${["projects", "budget", "pr", "po", "advance-payment", "payment-subcontract", "vendor", "material", "invoice", "billing", "pay", "receive", "admin", "budget-summary", "project-spending", "user-manual"].includes(
             activeMenu
           )
             ? "p-3 pt-4 md:p-6 w-full max-w-none min-w-0"
@@ -1095,6 +1108,9 @@ const AppShell = () => {
                   </>
                 )}
               </div>
+              {activeMenu === "advance-payment" && canAccessModule("advance-payment") && (
+                <div data-menu-page="advance-payment"><AdvancePaymentView /></div>
+              )}
               <div data-menu-page="payment-subcontract" style={{ display: activeMenu === "payment-subcontract" ? undefined : "none" }}>
                 {activeMenu === "payment-subcontract" && (
                   <>
@@ -4722,6 +4738,7 @@ const SIDEBAR_MODULES = [
   { key: "pr-table", label: "PR (ตาราง)", shortLabel: "PR ตาราง" },
   { key: "po", label: "PO (ระบบ)", shortLabel: "PO ระบบ" },
   { key: "po-table", label: "PO (ตาราง)", shortLabel: "PO ตาราง" },
+  { key: "advance-payment", label: "Advance payment", shortLabel: "Advance" },
   { key: "payment-subcontract", label: "Payment Subcontract", shortLabel: "Payment" },
   { key: "receive", label: "Receive", shortLabel: "Receive" },
   { key: "invoice", label: "Invoice", shortLabel: "Invoice" },
@@ -4764,7 +4781,7 @@ const SET_ROLE_MODULE_GROUPS = [
     key: "workflow",
     label: "จัดซื้อ/จ่าย",
     description: "PR, PO, Payment, Receive, Invoice, Billing, Pay",
-    modules: ["pr", "pr-table", "po", "po-table", "payment-subcontract", "receive", "invoice", "billing", "pay"],
+    modules: ["pr", "pr-table", "po", "po-table", "advance-payment", "payment-subcontract", "receive", "invoice", "billing", "pay"],
   },
   {
     key: "master",

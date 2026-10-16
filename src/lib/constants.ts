@@ -194,6 +194,10 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
     { key: "edit",   label: "แก้ไข Pay" },
     { key: "delete", label: "ลบ Pay" },
   ],
+  "advance-payment": [
+    { key: "confirmPay", label: "ยืนยันจ่าย Advance" },
+    { key: "applyRecovery", label: "หักคืน / ย้อนรายการหัก Advance" },
+  ],
   "payment-subcontract": [
     { key: "create",          label: "สร้าง Payment" },
     { key: "edit",            label: "แก้ไข Payment" },
@@ -266,6 +270,7 @@ export const MODULE_ACCESS: Record<string, string[]> = {
   "pr-table": ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff"],
   po: ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff"],
   "po-table": ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff"],
+  "advance-payment": ["Administrator", "MD", "GM", "PM", "PCM", "PD", "CM", "Procurement", "Staff"],
   vendor: ["Administrator", "MD", "GM", "PM", "PCM", "Procurement", "Staff"],
   material: ["Administrator", "MD", "GM", "PM", "PCM", "Procurement", "Staff"],
   invoice: ["Administrator", "MD", "GM", "PM", "PCM", "Staff"],
@@ -305,6 +310,10 @@ export function mergeFunctionPermissionsWithDefaults(
     return undefined;
   };
   const defaultByModuleAndKey: Record<string, Record<string, string[]>> = {
+    "advance-payment": {
+      confirmPay: ["Administrator"],
+      applyRecovery: ["Administrator", "CM", "PM", "PCM"],
+    },
     budget: {
       acceptBudgetReturn: ["PM", "PCM", "GM", "MD"],
     },

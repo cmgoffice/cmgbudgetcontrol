@@ -1,5 +1,6 @@
 import { collection, doc, getDocsFromServer, query, runTransaction, where } from "firebase/firestore";
 import { isHiddenDuplicateDraft, selectPaymentInvoicePrimary } from "./invoiceDuplicateVisibility";
+import { inheritedRecoveryFromPayment } from "./advanceRecovery";
 
 export const getPaymentInvoiceDraftId = (paymentId: string) => `payment-invoice-${paymentId}`;
 
@@ -22,8 +23,16 @@ export const ensurePaymentInvoiceDraft = async (db: any, appId: string, payload:
   const draftRef = doc(db, ...base, "invoices", getPaymentInvoiceDraftId(paymentId));
   return runTransaction(db, async (transaction) => {
     const draft = await transaction.get(draftRef);
+    const payment = await transaction.get(doc(db, ...base, "payments", paymentId));
     if (draft.exists() && isHiddenDuplicateDraft(draft.data())) throw new Error("Draft นี้ถูกซ่อนไว้ กรุณาตรวจใบหลักก่อนสร้าง Invoice");
-    if (!draft.exists()) transaction.set(draftRef, payload);
+    if (!draft.exists()) {
+      if (!payment.exists() || payment.data().projectId !== payload.projectId) throw new Error("Payment missing or project mismatch");
+      transaction.set(draftRef, {
+        ...payload,
+        advanceRecovery: null,
+        inheritedAdvanceRecovery: inheritedRecoveryFromPayment({ ...payment.data(), id: paymentId }),
+      });
+    }
     return draftRef.id;
   });
 };
