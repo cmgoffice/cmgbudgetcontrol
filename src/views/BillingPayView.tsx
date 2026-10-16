@@ -35,6 +35,7 @@ import {
   truncateLogText,
 } from "../lib/systemLogDetails";
 import { buildConfiguredReceiveData } from "../lib/poDocumentFlow";
+import { requiresMaterialReceive } from "../lib/materialReceive";
 
 const VIEW_CONFIG = {
   billing: {
@@ -393,6 +394,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
       .map((poId) => pos.find((po: any) => String(po.id) === poId))
       .filter((po: any) => (
         po &&
+        !requiresMaterialReceive(po) &&
         po.receivedAfterPaymentChecked &&
         Array.isArray(po?.receivedAfterPaymentSetup?.items) &&
         po.receivedAfterPaymentSetup.items.length > 0
@@ -414,6 +416,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
 
     for (const receive of previousReceives) {
       const poId = String(receive?.poId || "");
+      if (requiresMaterialReceive(pos.find((po: any) => String(po.id) === poId))) continue;
       if (desiredPoIds.has(poId)) continue;
       const deleted = await deleteData("receives", receive.id, { skipLog: true });
       if (!deleted) {

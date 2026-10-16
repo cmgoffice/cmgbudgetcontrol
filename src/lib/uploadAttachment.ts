@@ -38,7 +38,7 @@ export async function uploadAttachment(
  * - รองรับทั้ง HTTPS download URL และ gs:// path
  * - ไม่ throw ถ้าไฟล์ไม่มีอยู่แล้ว (object-not-found)
  */
-export async function deleteStorageFile(urlOrPath: string): Promise<void> {
+export async function deleteStorageFile(urlOrPath: string, options: { strict?: boolean } = {}): Promise<void> {
   if (!urlOrPath) return;
   try {
     let storageRef;
@@ -50,7 +50,10 @@ export async function deleteStorageFile(urlOrPath: string): Promise<void> {
       // format: https://firebasestorage.googleapis.com/v0/b/{bucket}/o/{encoded-path}?...
       const url = new URL(urlOrPath);
       const encodedPath = url.pathname.split("/o/")[1];
-      if (!encodedPath) return; // URL รูปแบบอื่น ไม่ใช่ Firebase Storage
+      if (!encodedPath) {
+        if (options.strict) throw new Error("URL ไม่ใช่ Firebase Storage");
+        return;
+      }
       const decodedPath = decodeURIComponent(encodedPath);
       storageRef = ref(storage, decodedPath);
     } else {
@@ -60,6 +63,7 @@ export async function deleteStorageFile(urlOrPath: string): Promise<void> {
     await deleteObject(storageRef);
   } catch (e: any) {
     if (e?.code === "storage/object-not-found") return; // ไม่มีไฟล์ ถือเป็น OK
+    if (options.strict) throw e;
     console.warn("[deleteStorageFile]", e);
   }
 }

@@ -1,4 +1,6 @@
 // @ts-nocheck
+import { poEvaluationWeights, evaluationTotal } from "../lib/vendorScoring";
+import { buildMaterialPoSnapshot, hasPassedMaterialReceive, isMaterialPoFormRequired } from "../lib/materialReceive";
 import React, { useState, useEffect, useMemo, useCallback, useRef, useContext } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -421,6 +423,25 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
 
   // Form Data State
   const [formData, setFormData] = useState(getDefaultPoFormData());
+  const editingMaterialPo = editingPoId ? pos.find((po: any) => po.id === editingPoId) : null;
+  const materialPoRequired = isMaterialPoFormRequired(formData, prs, editingMaterialPo);
+  const validateMaterialPoForm = () => {
+    try {
+      buildMaterialPoSnapshot(formData, prs, editingMaterialPo);
+      return true;
+    } catch (error: any) {
+      showAlert("Material Approve", error.message, "warning");
+      return false;
+    }
+  };
+  useEffect(() => {
+    if (!materialPoRequired) return;
+    setFormData((previous: any) => {
+      if (previous.receiveType !== "Receive Auto" && !previous.receivedAfterPaymentChecked && !previous.receivedAfterPaymentSetup) return previous;
+      return { ...previous, receiveType: previous.receiveType === "Receive Auto" ? "Material" : previous.receiveType,
+        receivedAfterPaymentChecked: false, receivedAfterPaymentSetup: null };
+    });
+  }, [materialPoRequired, formData.receiveType, formData.receivedAfterPaymentChecked, formData.receivedAfterPaymentSetup]);
   const editingPo = useMemo(() => editingPoId ? pos.find((po: any) => po.id === editingPoId) : null, [editingPoId, pos]);
   const paidLockedPoItemIndexes = useMemo(
     () => editingPo ? getPaidPoItemIndexes({ po: editingPo, payments }) : new Set<number>(),
@@ -1508,6 +1529,10 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
   }, [invoiceSetupDraft, showAlert]);
 
   const openReceiveSetupModal = useCallback(() => {
+    if (materialPoRequired) {
+      showAlert("Material Approve", "ต้องผ่าน Material Received และบันทึกจำนวนในแท็บรับของ", "warning");
+      return;
+    }
     if (!formData.payBeforeReceiveChecked) {
       showAlert("ยังไม่พร้อม", "ต้องบันทึกตัวเลือก จ่ายก่อนรับของ ก่อน จึงจะตั้งค่า รับของแล้ว ได้", "warning");
       return;
@@ -1518,9 +1543,13 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
     }
     setReceiveSetupDraft(createReceiveSetupDraft(formData.items, selectedVendorName, formData.receivedAfterPaymentSetup));
     setIsReceiveSetupModalOpen(true);
-  }, [formData.items, formData.payBeforeReceiveChecked, formData.receivedAfterPaymentSetup, selectedVendorName, showAlert]);
+  }, [formData.items, formData.payBeforeReceiveChecked, formData.receivedAfterPaymentSetup, selectedVendorName, showAlert, materialPoRequired]);
 
   const saveReceiveSetup = useCallback(() => {
+    if (materialPoRequired) {
+      showAlert("Material Approve", "ต้องผ่าน Material Received และบันทึกจำนวนในแท็บรับของ", "warning");
+      return;
+    }
     if (!String(receiveSetupDraft.vendorName || "").trim()) {
       showAlert("ข้อมูลไม่ครบ", "กรุณากรอกชื่อผู้จำหน่าย", "warning");
       return;
@@ -1561,7 +1590,7 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
       },
     }));
     setIsReceiveSetupModalOpen(false);
-  }, [receiveSetupDraft, showAlert]);
+  }, [receiveSetupDraft, showAlert, materialPoRequired]);
 
   const uploadPoPendingFiles = async (poNoForPath: string) => {
     if (!poPendingFiles.length) return [] as { url: string; name: string }[];
@@ -1604,7 +1633,7 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
       }
       : null;
     const receivedAfterPaymentChecked = Boolean(
-      payBeforeReceiveChecked &&
+      !materialPoRequired && payBeforeReceiveChecked &&
       formData.receivedAfterPaymentChecked &&
       formData.receivedAfterPaymentSetup
     );
@@ -1616,13 +1645,13 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
       : null;
 
     return {
-      receiveType: payBeforeReceiveChecked ? "Pay before receive" : formData.receiveType,
+      receiveType: payBeforeReceiveChecked ? "Pay before receive" : (materialPoRequired && formData.receiveType === "Receive Auto" ? "Material" : formData.receiveType),
       payBeforeReceiveChecked,
       payBeforeReceiveInvoiceSetup,
       receivedAfterPaymentChecked,
       receivedAfterPaymentSetup,
     };
-  }, [formData]);
+  }, [formData, materialPoRequired]);
 
   // Every new PO line must have a traceable PR item route. Budget fields are
   // copied from the source PR item so a stale budgetId cannot move an amount
@@ -1751,6 +1780,7 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
   };
 
   const handleSavePODraft = async () => {
+    if (!validateMaterialPoForm()) return;
     if (poDraftInFlightRef.current || poSendInFlightRef.current) return;
     if (!formData.poType) {
       return showAlert("ข้อมูลไม่ครบ", L.noType, "warning");
@@ -1818,6 +1848,7 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
       const creatorIdentityFields = buildPoCreatorIdentityFields(editingPo, userData, user);
 
       const draftPayload: Record<string, any> = {
+        ...buildMaterialPoSnapshot({ ...formData, items: itemsDraft }, prs, editingPo),
         poNo: resolvedPoNo,
         poType: formData.poType,
         inventoryType: formData.inventoryType || "",
@@ -1908,6 +1939,7 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
   };
 
   const handleSavePO = () => {
+    if (!validateMaterialPoForm()) return;
     if (poDraftInFlightRef.current || poSendInFlightRef.current) return;
     if (!formData.poType) {
       return showAlert("ข้อมูลไม่ครบ", L.noType, "warning");
@@ -1926,6 +1958,7 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
   };
 
   const executeSavePO = async () => {
+    if (!validateMaterialPoForm()) return;
     if (poDraftInFlightRef.current || poSendInFlightRef.current) return;
       const discountSelection = getDiscountSelection();
       if (!discountSelection.valid) {
@@ -2369,6 +2402,8 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
       };
       
       const basePayload = {
+        ...buildMaterialPoSnapshot({ ...formData, items: itemsWithAllocations }, prs, existingPoForCreator),
+        ...(!existingPoForCreator || existingPoForCreator.materialReceiveRequired !== undefined ? { materialSnapshotLocked: true } : {}),
         poNo: resolvedPoNo,
         poType: formData.poType,
         inventoryType: formData.inventoryType || "",
@@ -2574,7 +2609,9 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
             evaluatorName: creatorDisplayName || (creatorFirstName ? `${creatorFirstName} ${creatorLastName}` : (user?.email || "Unknown")),
             evaluationDate: new Date().toISOString(),
             scores: vendorEvalScoresRef.current,
-            totalScore: vendorEvalScoresRef.current.q1 + vendorEvalScoresRef.current.q2 + vendorEvalScoresRef.current.q3,
+            totalScore: evaluationTotal(vendorEvalScoresRef.current, poEvaluationWeights(formData.poType)),
+            maxTotalScore: poEvaluationWeights(formData.poType).reduce((sum, weight) => sum + weight, 0),
+            scoringVersion: 2,
             suggestion: vendorEvalScoresRef.current.suggestion || "",
             evaluationStage: "PO Creation"
           };
@@ -4744,7 +4781,7 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
                             >
                               <option value="">-- เลือก --</option>
                               {RECEIVE_TYPES.map((t) => (
-                                <option key={t.value} value={t.value}>{t.label}</option>
+                                <option key={t.value} value={t.value} disabled={materialPoRequired && t.value === "Receive Auto"}>{t.label}</option>
                               ))}
                             </select>
                             {formData.payBeforeReceiveChecked && (
@@ -5393,6 +5430,8 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
                     </div>
 
                     <div className="border border-slate-200 rounded-xl bg-white shadow-sm overflow-hidden h-full">
+                      {materialPoRequired && <p className="p-3 text-xs text-blue-900 bg-blue-50">Material Approve: จ่ายก่อนรับของได้ แต่ต้องผ่าน Material Received และกรอกจำนวนรับเอง ระบบปิด Receive Auto และรับของแล้วสำหรับ PO นี้</p>}
+                      {hasPassedMaterialReceive(editingMaterialPo) && <p className="p-3 text-xs text-amber-900 bg-amber-50">PO ผ่าน Material Received แล้ว ไม่สามารถบันทึกการเปลี่ยนรายการหรือ PR อ้างอิง</p>}
                       <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 flex items-center gap-2">
                         <Package size={14} className="text-slate-500 shrink-0" />
                         <span className="text-[11px] font-bold text-slate-700">Flow อัตโนมัติ</span>
@@ -5428,7 +5467,7 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
                               <input
                                 type="checkbox"
                                 checked={!!formData.receivedAfterPaymentChecked}
-                                disabled={!formData.payBeforeReceiveChecked}
+                                disabled={!formData.payBeforeReceiveChecked || materialPoRequired}
                                 onChange={(e) => {
                                   if (e.target.checked) openReceiveSetupModal();
                                   else clearReceivedAfterPaymentFlow();
@@ -6234,6 +6273,7 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
           )}
 
           <VendorEvaluationModal
+            poType={formData.poType || ""}
             isOpen={vendorEvalModalOpen}
             onClose={() => setVendorEvalModalOpen(false)}
             vendorName={formData.vendorName || vendors.find((v: any) => v.id === formData.vendorId)?.name || ""}

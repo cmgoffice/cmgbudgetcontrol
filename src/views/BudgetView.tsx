@@ -13,12 +13,14 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "../components/ui";
+import RelatedDocumentDetailModal from "../components/RelatedDocumentDetailModal";
 import ResizableTh from "../components/ResizableTh";
 import {
   COST_CATEGORIES, PURCHASE_TYPES, PURCHASE_TYPE_CODES, PURCHASE_TYPE_RENTAL_LABEL, getPurchaseTypeDisplayLabel,
   PO_REVISION_PENDING_PCM, PO_REVISION_PENDING_GM, PR_PENDING_ACTIVE,
 } from "../lib/constants";
-import { canActivatePR, getResumeStatusForPR } from "../lib/prAllocation";
+import { getResumeStatusForPR } from "../lib/prAllocation";
+import { isBudgetPrApprovalTask, isBudgetPoApprovalTask } from "../lib/budgetApprovalTasks";
 import { transitionPrActivation } from "../lib/prActivation";
 import { uploadAttachment } from "../lib/uploadAttachment";
 import { getPoNetPrAllocations, scalePrItemsToTotal, sumSubItemAmounts } from "../lib/prBudgetReturn";
@@ -102,6 +104,8 @@ const BudgetView = React.memo(() => {
     expandedBudgetRows, setExpandedBudgetRows,
     scrollToPendingAfterRender, setScrollToPendingAfterRender,
     pendingSectionRef, setIsFullScreenModalOpen } = useUI();
+  const [pendingDetail, setPendingDetail] = useState(null);
+  const [collapsedApprovalRoles, setCollapsedApprovalRoles] = useState({});
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isRevisionModalOpen, setIsRevisionModalOpen] = useState(false);
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
@@ -170,8 +174,6 @@ const BudgetView = React.memo(() => {
   const budgetTableContainerRef = useRef<HTMLDivElement>(null);
   const dashBudgetTableRef = useRef<HTMLDivElement>(null);
   const dashSubitemTableRef = useRef<HTMLDivElement>(null);
-  const dashPrTableRef = useRef<HTMLDivElement>(null);
-  const dashPoTableRef = useRef<HTMLDivElement>(null);
 
   const budgetMainLayout = useProportionalTableLayout({
     tableId: "budget",
@@ -204,41 +206,17 @@ const BudgetView = React.memo(() => {
     handleColumnResize,
   });
 
-  const dashPrLayout = useProportionalTableLayout({
-    tableId: "dash-pr",
-    defaultWeights: TABLE_LAYOUT_DEFAULTS["dash-pr"],
-    savedWidths: columnWidths["dash-pr"],
-    containerRef: dashPrTableRef,
-    enabled: budgetCategory === "OVERVIEW",
-    driftKey: "description",
-    handleColumnResize,
-  });
-
-  const dashPoLayout = useProportionalTableLayout({
-    tableId: "dash-po",
-    defaultWeights: TABLE_LAYOUT_DEFAULTS["dash-po"],
-    savedWidths: columnWidths["dash-po"],
-    containerRef: dashPoTableRef,
-    enabled: budgetCategory === "OVERVIEW",
-    driftKey: "costCode",
-    handleColumnResize,
-  });
-
   const onBudgetViewColumnResize = useMemo(
     () =>
       chainTableResizeHandlers(
         budgetMainLayout.handleResize,
         dashBudgetLayout.handleResize,
-        dashSubitemLayout.handleResize,
-        dashPrLayout.handleResize,
-        dashPoLayout.handleResize
+        dashSubitemLayout.handleResize
       ),
     [
       budgetMainLayout.handleResize,
       dashBudgetLayout.handleResize,
       dashSubitemLayout.handleResize,
-      dashPrLayout.handleResize,
-      dashPoLayout.handleResize,
     ]
   );
 
@@ -566,21 +544,9 @@ const BudgetView = React.memo(() => {
 
   const pendingPRsForProject = useMemo(() => {
     if (!selectedProjectId) return [];
-    return projectPrs.filter((pr) => {
-      if (pr.status === "Rejected" || pr.status === "Approved" || pr.status === "PO Issued") return false;
-
-      if (userRoles.includes("Administrator")) {
-        return pr.status !== PR_PENDING_ACTIVE || canActivatePR(pr, pos);
-      }
-      if (userRoles.includes("CM") && pr.status === "Pending CM") return true;
-      if (userRoles.includes("PM") && pr.status === "Pending PM") return true;
-      if (userRoles.includes("GM") && pr.status === "Pending GM") return true;
-      if (userRoles.includes("MD") && pr.status === "Pending MD") return true;
-      // PCM เห็น PR ที่ขอ Active
-      if (userRoles.includes("PCM") && pr.status === PR_PENDING_ACTIVE && canActivatePR(pr, pos)) return true;
-
-      return false;
-    });
+    return projectPrs.filter((pr) =>
+      ["Pending MD", "Pending GM"].includes(pr.status) && isBudgetPrApprovalTask(pr, userRoles, pos)
+    );
   }, [projectPrs, selectedProjectId, userRoles, pos]);
 
   const pendingSubItemsForProject = useMemo(() => {
@@ -599,16 +565,12 @@ const BudgetView = React.memo(() => {
     return pendingSubs;
   }, [selectedProjectBudgets, selectedProjectId, userRole]);
 
-  const pendingPOsForProject = useMemo(() => projectPos.filter((po) => {
-    if (userRoles.includes("Administrator") && (
-      po.status?.startsWith("Pending") ||
-      po.status === PO_REVISION_PENDING_PCM ||
-      po.status === PO_REVISION_PENDING_GM
-    )) return true;
-    if (userRoles.includes("PCM") && (po.status === "Pending PCM" || po.status === PO_REVISION_PENDING_PCM)) return true;
-    if (userRoles.includes("GM") && (po.status === "Pending GM" || po.status === PO_REVISION_PENDING_GM)) return true;
-    return false;
-  }), [projectPos, selectedProjectId, userRoles]);
+  const pendingPOsForProject = useMemo(
+    () => projectPos.filter((po) =>
+      ["Pending GM", PO_REVISION_PENDING_GM].includes(po.status) && isBudgetPoApprovalTask(po, userRoles)
+    ),
+    [projectPos, userRoles]
+  );
 
   const sortedBudgets = useMemo(() => {
     let sortableItems = [...currentBudgets];
@@ -4031,14 +3993,33 @@ const BudgetView = React.memo(() => {
                 </span>
               </div>
 
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+              {["MD", "GM"].map((role) => {
+                const matchesRole = (status) => role === "MD" ? status === "Pending MD" : ["Pending GM", PO_REVISION_PENDING_GM].includes(status);
+                const roleBudgets = role === "MD" ? pendingBudgetsForProject : [];
+                const roleSubs = role === "MD" ? pendingSubItemsForProject : [];
+                const rolePrs = pendingPRsForProject.filter((item) => matchesRole(item.status));
+                const rolePos = pendingPOsForProject.filter((item) => matchesRole(item.status));
+                const count = roleBudgets.length + roleSubs.length + rolePrs.length + rolePos.length;
+                const collapsed = !!collapsedApprovalRoles[role];
+                return (
+                  <section key={role} className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 overflow-hidden">
+                    <button type="button" aria-expanded={!collapsed} aria-controls={`pending-role-${role}`}
+                      onClick={() => setCollapsedApprovalRoles((prev) => ({ ...prev, [role]: !prev[role] }))}
+                      className="w-full flex items-center justify-between gap-3 p-4 text-left bg-white border-b">
+                      <span className="font-bold text-slate-800">{`รออนุมัติ ${role}`}</span>
+                      <span className="flex items-center gap-3 text-sm text-slate-600">{count} รายการ {collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}</span>
+                    </button>
+                    <div id={`pending-role-${role}`} hidden={collapsed} className="p-3 space-y-3">
+                      {count === 0 && <p className="py-8 text-center text-sm text-slate-500">ไม่มีรายการรออนุมัติ {role}</p>}
               {/* ----- Budget Approval Table (MD only) ----- */}
-              {pendingBudgetsForProject.length > 0 && (
+              {roleBudgets.length > 0 && (
                 <Card className="overflow-hidden border-l-4 border-l-blue-500 w-full min-w-0">
                   <div className="p-3 bg-blue-50 border-b flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <CheckCircle size={15} className="text-blue-600" />
                       <h4 className="font-bold text-xs text-blue-800 uppercase tracking-wide">
-                        Project Budget — รออนุมัติ ({pendingBudgetsForProject.length} รายการ)
+                        Project Budget — รออนุมัติ ({roleBudgets.length} รายการ)
                       </h4>
                     </div>
                     <div className="flex items-center gap-2">
@@ -4084,9 +4065,9 @@ const BudgetView = React.memo(() => {
                             <input
                               type="checkbox"
                               className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                              checked={pendingSelectedBudgetIds.length > 0 && pendingSelectedBudgetIds.length === pendingBudgetsForProject.length}
+                              checked={pendingSelectedBudgetIds.length > 0 && pendingSelectedBudgetIds.length === roleBudgets.length}
                               onChange={(e) => {
-                                if (e.target.checked) setPendingSelectedBudgetIds(pendingBudgetsForProject.map((b) => b.id));
+                                if (e.target.checked) setPendingSelectedBudgetIds(roleBudgets.map((b) => b.id));
                                 else setPendingSelectedBudgetIds([]);
                               }}
                             />
@@ -4099,7 +4080,7 @@ const BudgetView = React.memo(() => {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {pendingBudgetsForProject.map((b) => {
+                        {roleBudgets.map((b) => {
                           const totalBudget =
                             b.subItems && b.subItems.length > 0
                               ? b.subItems.reduce((sum, s) => sum + Number(s.amount), 0)
@@ -4121,7 +4102,7 @@ const BudgetView = React.memo(() => {
                                   }}
                                 />
                               </td>
-                              <td className="py-2 px-3 font-mono font-bold text-slate-800" title={b.code}><span className="cell-text">{b.code}</span></td>
+                              <td className="py-2 px-3 font-mono font-bold text-slate-800" title={b.code}><button type="button" className="text-blue-700 underline" onClick={() => setPendingDetail({ type: "budget", document: { ...b, items: b.subItems } })}>{b.code}</button></td>
                               <td className="py-2 px-3" title={b.description + (b.revisionReason ? ` | ขอแก้: ${b.revisionReason}` : "") + (b.rejectReason ? ` | ปฏิเสธ: ${b.rejectReason}` : "")}>
                                 <span className="cell-text">{b.description}</span>
                               </td>
@@ -4181,12 +4162,12 @@ const BudgetView = React.memo(() => {
               )}
 
               {/* ----- Sub-Item Approval Table (MD only) ----- */}
-              {pendingSubItemsForProject.length > 0 && (
+              {roleSubs.length > 0 && (
                 <Card className="overflow-hidden border-l-4 border-l-purple-500 w-full min-w-0">
                   <div className="p-3 bg-purple-50 border-b flex items-center gap-2">
                     <CheckCircle size={15} className="text-purple-600" />
                     <h4 className="font-bold text-xs text-purple-800 uppercase tracking-wide">
-                      Project Budget (Sub-Items) — รออนุมัติ ({pendingSubItemsForProject.length} รายการ)
+                      Project Budget (Sub-Items) — รออนุมัติ ({roleSubs.length} รายการ)
                     </h4>
                   </div>
                   <div ref={dashSubitemTableRef} className="w-full min-w-0">
@@ -4202,7 +4183,7 @@ const BudgetView = React.memo(() => {
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {(() => {
-                          const groupedSubs = pendingSubItemsForProject.reduce((acc, sub) => {
+                          const groupedSubs = roleSubs.reduce((acc, sub) => {
                             if (!acc[sub.budgetId]) acc[sub.budgetId] = { budgetCode: sub.budgetCode, subItems: [] };
                             acc[sub.budgetId].subItems.push(sub);
                             return acc;
@@ -4244,7 +4225,7 @@ const BudgetView = React.memo(() => {
                                     <td className="py-1 px-3 border-r pl-8 flex items-center justify-between text-slate-600">
                                       <div className="flex items-center gap-2">
                                         <CornerDownRight size={12} className="text-slate-300" />
-                                        {sub.description}
+                                        <button type="button" className="text-blue-700 underline text-left" onClick={() => setPendingDetail({ type: "budget", document: { ...sub, code: b.code } })}>{sub.description}</button>
                                       </div>
                                       <div className="text-slate-400 text-[10px]">
                                         @ {formatCurrency(sub.unitPrice)}
@@ -4292,31 +4273,16 @@ const BudgetView = React.memo(() => {
               )}
 
               {/* ----- PR Approval Table (PM / GM / MD by role) ----- */}
-              {pendingPRsForProject.length > 0 && (
+              {rolePrs.length > 0 && (
                 <Card className="overflow-hidden border-l-4 border-l-green-500 w-full min-w-0">
                   <div className="p-3 bg-green-50 border-b flex items-center gap-2">
                     <FileText size={15} className="text-green-600" />
                     <h4 className="font-bold text-xs text-green-800 uppercase tracking-wide">
-                      Purchase Request (PR) — รออนุมัติ ({pendingPRsForProject.length} รายการ)
+                      Purchase Request (PR) — รออนุมัติ ({rolePrs.length} รายการ)
                     </h4>
                   </div>
-                  <div ref={dashPrTableRef} className="w-full min-w-0 overflow-x-auto">
-                    <table className="w-full min-w-[860px] text-left text-xs text-slate-600 table-fixed md:min-w-0">
-                      <thead className="bg-slate-200 text-slate-800 uppercase font-bold border-b text-sm">
-                        <tr>
-                          <th className="py-0.5 px-2 text-center md:hidden" style={{ width: dashPrLayout.scaled.actions }}>Actions</th>
-                          <ResizableTh tableId="dash-pr" colKey="prNo" className="py-0.5 px-2" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.prNo}>PR No.</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="date" className="py-0.5 px-2" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.date}>วันที่</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="costCode" className="py-0.5 px-2" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.costCode}>Cost Code</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="type" className="py-0.5 px-2" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.type}>ประเภท</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="requestor" className="py-0.5 px-2" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.requestor}>ผู้ขอซื้อ</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="amount" className="py-0.5 px-2 text-right" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.amount}>จำนวนเงิน</ResizableTh>
-                          <ResizableTh tableId="dash-pr" colKey="status" className="py-0.5 px-2 text-center" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPrLayout.scaled.status}>สถานะ</ResizableTh>
-                          <th className="hidden py-0.5 px-2 text-center md:table-cell" style={{ width: dashPrLayout.scaled.actions }}>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {pendingPRsForProject.map((pr) => {
+                  <div className="p-3 space-y-3">
+                    {rolePrs.map((pr) => {
                           const approveLabel =
                             pr.status === "Pending CM"
                               ? "CM Approve"
@@ -4329,19 +4295,27 @@ const BudgetView = React.memo(() => {
                                     : "Approve";
 
                           const isActivePr = pr.status === PR_PENDING_ACTIVE;
-                          const canApprove =
-                            (pr.status === "Pending CM" && (userRoles.includes("CM") || userRoles.includes("Administrator"))) ||
-                            (pr.status === "Pending PM" && (userRoles.includes("PM") || userRoles.includes("Administrator"))) ||
-                            (pr.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator"))) ||
-                            (pr.status === "Pending MD" && (userRoles.includes("MD") || userRoles.includes("Administrator"))) ||
-                            (isActivePr && canActivatePR(pr, pos) && (userRoles.includes("PCM") || userRoles.includes("Administrator")));
-
-                          if (!canApprove) return null;
 
                           return (
-                            <tr key={pr.id} className={`hover:bg-green-50/40 ${isActivePr ? "bg-teal-50/30" : ""}`}>
-                              <td className="py-0.5 px-2 text-center md:hidden">
-                                <div className="flex justify-center gap-1">
+                            <article key={pr.id} className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                              <button type="button" onClick={() => setPendingDetail({ type: "pr", document: pr })}
+                                className="w-full p-3 text-left hover:bg-green-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-green-500">
+                                <div className="flex flex-wrap items-start justify-between gap-2">
+                                  <span className="font-bold text-sm text-slate-800 break-all">{pr.prNo || pr.id}</span>
+                                  <span className="font-bold text-green-700">{formatCurrency(pr.totalAmount ?? pr.amount)}</span>
+                                </div>
+                                <div className="mt-2 text-xs text-slate-600 grid grid-cols-1 sm:grid-cols-2 gap-1 break-words">
+                                  <span>วันที่: {pr.requestDate || "—"}</span>
+                                  <span>Cost Code: {pr.costCode || "—"}</span>
+                                  <span>ผู้ขอซื้อ: {pr.requestor || "—"}</span>
+                                  <span>ประเภท: {getPurchaseTypeDisplayLabel(pr.purchaseType)}</span>
+                                </div>
+                                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                                  <Badge status={pr.status} />
+                                  <span className="text-xs font-semibold text-blue-700">ดูรายละเอียด →</span>
+                                </div>
+                              </button>
+                              <div className="px-3 py-2 border-t bg-slate-50"><div className="flex flex-wrap gap-2">
                                   {isActivePr ? (
                                     <Button
                                       variant="success"
@@ -4387,105 +4361,25 @@ const BudgetView = React.memo(() => {
                                       </Button>
                                     </>
                                   )}
-                                </div>
-                              </td>
-                              <td className="py-0.5 px-2 font-medium text-slate-800" title={pr.prNo}><span className="cell-text">{pr.prNo}</span></td>
-                              <td className="py-0.5 px-2 text-slate-500" title={pr.requestDate}><span className="cell-text">{pr.requestDate}</span></td>
-                              <td className="py-0.5 px-2">
-                                <span className="bg-gray-100 px-1.5 py-0 rounded text-xs border border-gray-200 cell-text" title={pr.costCode}>
-                                  {pr.costCode}
-                                </span>
-                              </td>
-                              <td className="py-0.5 px-2" title={pr.purchaseType}><span className="cell-text">{getPurchaseTypeDisplayLabel(pr.purchaseType)}</span></td>
-                              <td className="py-0.5 px-2" title={pr.requestor}><span className="cell-text">{pr.requestor}</span></td>
-                              <td className="py-0.5 px-2 text-right font-semibold text-green-700">
-                                {formatCurrency(pr.totalAmount || pr.amount)}
-                              </td>
-                              <td className="hidden py-0.5 px-2 text-center md:table-cell">
-                                <Badge status={pr.status} />
-                              </td>
-                              <td className="py-0.5 px-2 text-center">
-                                <div className="flex justify-center gap-1">
-                                  {isActivePr ? (
-                                    <Button
-                                      variant="success"
-                                      className="px-2 py-0.5 text-[10px] whitespace-nowrap"
-                                      onClick={async () => {
-                                        const { status: resume, usedAmount, totalAmount } = getResumeStatusForPR(pr, pos);
-                                        try {
-                                          await transitionPrActivation({ db, appId, prId: pr.id, action: "approve", resumeStatus: resume, pos });
-                                        } catch (error: any) {
-                                          showAlert("Active PR ไม่สำเร็จ", error?.message || String(error), "warning");
-                                          return;
-                                        }
-                                        logAction(
-                                          "Approved Active PR",
-                                          `อนุมัติ Active PR ${pr.prNo || pr.id} → ${resume} (PO linked ${formatCurrency(usedAmount)} / PR ${formatCurrency(totalAmount)})`,
-                                          selectedProjectId
-                                        );
-                                        const returnedAmount = Math.max(0, totalAmount - usedAmount);
-                                        showAlert(
-                                          "สำเร็จ",
-                                          `PR กลับสถานะ ${resume} แล้ว ยอดคงเหลือที่เปิดใช้ได้ ${formatCurrency(returnedAmount)}${usedAmount > 0 ? ` (ยังมี PO ผูกอยู่ ${formatCurrency(usedAmount)})` : ""}`,
-                                          "success"
-                                        );
-                                      }}
-                                    >
-                                      <CheckCircle size={11} /> Active PR
-                                    </Button>
-                                  ) : (
-                                    <>
-                                      <Button
-                                        variant="success"
-                                        className="px-2 py-0.5 text-[10px] whitespace-nowrap"
-                                        onClick={() => handlePRAction(pr.id, "approve")}
-                                      >
-                                        <CheckCircle size={11} /> {approveLabel}
-                                      </Button>
-                                      <Button
-                                        variant="danger"
-                                        className="px-2 py-0.5 text-[10px] whitespace-nowrap"
-                                        onClick={() => handlePRAction(pr.id, "reject")}
-                                      >
-                                        <XCircle size={11} /> Reject
-                                      </Button>
-                                    </>
-                                  )}
-                                </div>
-                              </td>
-                            </tr>
+                                </div></div>
+                            </article>
                           );
                         })}
-                      </tbody>
-                    </table>
                   </div>
                 </Card>
               )}
 
               {/* ----- PO Approval Table (PCM / GM by role) ----- */}
-              {pendingPOsForProject.length > 0 && (
+              {rolePos.length > 0 && (
                 <Card className="overflow-hidden border-l-4 border-l-orange-500 w-full min-w-0">
                   <div className="p-3 bg-orange-50 border-b flex items-center gap-2">
                     <FileText size={15} className="text-orange-600" />
                     <h4 className="font-bold text-xs text-orange-800 uppercase tracking-wide">
-                      Purchase Order (PO) — รออนุมัติ ({pendingPOsForProject.length} รายการ)
+                      Purchase Order (PO) — รออนุมัติ ({rolePos.length} รายการ)
                     </h4>
                   </div>
-                  <div ref={dashPoTableRef} className="w-full min-w-0 overflow-x-auto">
-                    <table className="w-full min-w-[780px] text-left text-xs text-slate-600 table-fixed md:min-w-0">
-                      <thead className="bg-slate-200 text-slate-800 uppercase font-bold border-b text-sm">
-                        <tr>
-                          <th className="py-1.5 px-3 text-center md:hidden" style={{ width: dashPoLayout.scaled.actions }}>Actions</th>
-                          <ResizableTh tableId="dash-po" colKey="poNo" className="py-1.5 px-3" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.poNo}>PO No.</ResizableTh>
-                          <ResizableTh tableId="dash-po" colKey="date" className="py-1.5 px-3" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.date}>วันที่</ResizableTh>
-                          <ResizableTh tableId="dash-po" colKey="costCode" className="py-1.5 px-3" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.costCode}>Cost Code</ResizableTh>
-                          <ResizableTh tableId="dash-po" colKey="amount" className="py-1.5 px-3 text-right" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.amount}>จำนวนเงิน (Ex VAT)</ResizableTh>
-                          <ResizableTh tableId="dash-po" colKey="status" className="py-1.5 px-3 text-center" isAdmin={userRole === "Administrator"} onResize={onBudgetViewColumnResize} currentWidth={dashPoLayout.scaled.status}>สถานะ</ResizableTh>
-                          <th className="hidden py-1.5 px-3 text-center md:table-cell" style={{ width: dashPoLayout.scaled.actions }}>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {pendingPOsForProject.map((po) => {
+                  <div className="p-3 space-y-3">
+                    {rolePos.map((po) => {
                           const isPoRevPcm = po.status === PO_REVISION_PENDING_PCM;
                           const isPoRevGm = po.status === PO_REVISION_PENDING_GM;
                           const approveLabel =
@@ -4505,69 +4399,27 @@ const BudgetView = React.memo(() => {
 
                           if (!canApprove) return null;
 
+
                           return (
-                            <tr key={po.id} className="hover:bg-orange-50/40">
-                              <td className="py-2 px-3 text-center md:hidden">
-                                <div className="flex justify-center gap-1 flex-wrap">
-                                  {(canAllowPoRevisionFromBudget || canDenyPoRevisionFromBudget) && (isPoRevPcm || isPoRevGm) ? (
-                                    <>
-                                      {canAllowPoRevisionFromBudget && <Button
-                                        variant="success"
-                                        className="px-2 py-0.5 text-[10px] whitespace-nowrap"
-                                        onClick={() => handlePORevisionAllow(po.id)}
-                                      >
-                                        <CheckCircle size={11} /> อนุญาตแก้ไข
-                                      </Button>}
-                                      {canDenyPoRevisionFromBudget && <Button
-                                        variant="danger"
-                                        className="px-2 py-0.5 text-[10px] whitespace-nowrap"
-                                        onClick={() => handlePORevisionDeny(po.id)}
-                                      >
-                                        <XCircle size={11} /> ไม่อนุญาต
-                                      </Button>}
-                                    </>
-                                  ) : (canApprovePoFromBudget || canRejectPoFromBudget) ? (
-                                    <>
-                                      {canApprovePoFromBudget && <Button
-                                        variant="success"
-                                        className="px-2 py-0.5 text-[10px] whitespace-nowrap"
-                                        onClick={() => handlePOAction(po.id, "approve")}
-                                      >
-                                        <CheckCircle size={11} /> {approveLabel}
-                                      </Button>}
-                                      {canRejectPoFromBudget && <Button
-                                        variant="danger"
-                                        className="px-2 py-0.5 text-[10px] whitespace-nowrap"
-                                        onClick={() => handlePOAction(po.id, "reject")}
-                                      >
-                                        <XCircle size={11} /> Reject
-                                      </Button>}
-                                    </>
-                                  ) : null}
+                            <article key={po.id} className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
+                              <button type="button" onClick={() => setPendingDetail({ type: "po", document: po })}
+                                className="w-full p-3 text-left hover:bg-orange-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-orange-500">
+                                <div className="flex flex-wrap items-start justify-between gap-2">
+                                  <span className="font-bold text-sm text-slate-800 break-all">{po.poNo || po.id}</span>
+                                  <span className="font-bold text-orange-700">{formatCurrency(getPoAmountExVat(po))} <span className="text-xs font-normal">Ex VAT</span></span>
                                 </div>
-                              </td>
-                              <td className="py-2 px-3 font-medium text-slate-800" title={po.poNo}><span className="cell-text">{po.poNo}</span></td>
-                              <td className="py-2 px-3 text-slate-500" title={po.date || po.poDate}><span className="cell-text">{po.date || po.poDate}</span></td>
-                              <td className="py-2 px-3">
-                                <span className="bg-gray-100 px-2 py-0.5 rounded text-xs border border-gray-200 cell-text" title={po.costCode}>
-                                  {po.costCode}
-                                </span>
-                              </td>
-                              <td className="py-2 px-3 text-right font-semibold text-orange-700">
-                                {formatCurrency(getPoAmountExVat(po))}
-                              </td>
-                              <td className="hidden py-2 px-3 text-center md:table-cell">
-                                <div className="flex flex-col items-center gap-0.5">
+                                <div className="mt-2 text-xs text-slate-600 grid grid-cols-1 sm:grid-cols-2 gap-1 break-words">
+                                  <span>วันที่: {po.date || po.poDate || "—"}</span>
+                                  <span>Cost Code: {po.costCode || "—"}</span>
+                                  <span>ผู้ขาย: {po.vendorName || "—"}</span>
+                                </div>
+                                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                                   <Badge status={po.status} />
-                                  {po.poEditRevisionReason ? (
-                                    <span className="text-[9px] text-amber-700 max-w-[120px] truncate" title={po.poEditRevisionReason}>
-                                      เหตุผล: {po.poEditRevisionReason}
-                                    </span>
-                                  ) : null}
+                                  <span className="text-xs font-semibold text-blue-700">ดูรายละเอียด →</span>
                                 </div>
-                              </td>
-                              <td className="py-2 px-3 text-center">
-                                <div className="flex justify-center gap-1 flex-wrap">
+                                {po.poEditRevisionReason && <p className="mt-2 text-xs text-amber-700 break-words">เหตุผล: {po.poEditRevisionReason}</p>}
+                              </button>
+                              <div className="px-3 py-2 border-t bg-slate-50"><div className="flex flex-wrap gap-2">
                                   {(canAllowPoRevisionFromBudget || canDenyPoRevisionFromBudget) && (isPoRevPcm || isPoRevGm) ? (
                                     <>
                                       {canAllowPoRevisionFromBudget && <Button
@@ -4603,16 +4455,18 @@ const BudgetView = React.memo(() => {
                                       </Button>}
                                     </>
                                   ) : null}
-                                </div>
-                              </td>
-                            </tr>
+                                </div></div>
+                            </article>
                           );
                         })}
-                      </tbody>
-                    </table>
                   </div>
                 </Card>
               )}
+                    </div>
+                  </section>
+                );
+              })}
+              </div>
             </div>
           )}
         </>
@@ -5312,6 +5166,7 @@ const BudgetView = React.memo(() => {
         onChange={handleAttachmentFilesSelected}
       />
       {/* Modals - Same as previous version, condensed for brevity */}
+      {pendingDetail && <RelatedDocumentDetailModal documentType={pendingDetail.type} document={pendingDetail.document} onClose={() => setPendingDetail(null)} />}
       {isExportDetailModalOpen && (
         <div
           className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[10010] animate-in fade-in duration-200 p-4"

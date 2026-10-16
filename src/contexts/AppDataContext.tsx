@@ -42,6 +42,8 @@ import {
 } from "../lib/systemLogDetails";
 import { buildPoApprovalIdentityFields } from "../lib/poSignatureStamps";
 import { ensurePaymentInvoiceDraft } from "../lib/paymentInvoiceDraft";
+import { createReceiveWithMaterialGuard } from "../lib/materialReceiveStore";
+import { isMaterialPending } from "../lib/materialReceive";
 
 // Firestore document paths for dynamic permissions
 const ROLE_PERMISSIONS_DOC = ["artifacts", appId, "public", "data", "settings", "rolePermissions"];
@@ -268,6 +270,7 @@ export const AppDataProvider = ({
   const [pendingBudgetDocs, setPendingBudgetDocs] = useState([]);
   const [pendingPrDocs, setPendingPrDocs] = useState([]);
   const [pendingPoDocs, setPendingPoDocs] = useState([]);
+  const [materialReceiveDocs, setMaterialReceiveDocs] = useState([]);
   const [pendingPaymentDocs, setPendingPaymentDocs] = useState([]);
   const [vendorEvaluations, setVendorEvaluations] = useState([]);
   const [availableRoles, setAvailableRoles] = useState<string[]>(() => normalizeRoleNames(USER_ROLES));
@@ -496,6 +499,21 @@ export const AppDataProvider = ({
   const canReadAnyModule = useCallback((moduleKeys) => (
     rolePermissionsReady && moduleKeys.some((moduleKey) => hasModuleAccessForCurrentRoles(moduleKey))
   ), [rolePermissionsReady, hasModuleAccessForCurrentRoles]);
+
+  // Keep the Receive menu badge live even when the active menu does not load
+  // POs. Limit this listener to Material POs in the selected, accessible project.
+  const canSyncMaterialReceive = canReadAnyModule(["receive"]);
+  useEffect(() => {
+    setMaterialReceiveDocs([]);
+    if (!canSyncMaterialReceive) return undefined;
+    const queries = buildProjectScopedQueries("pos", "selected", selectedProjectId)
+      .map((scopedQuery) => query(scopedQuery, where("materialReceiveRequired", "==", true)));
+    return subscribeMergedQueries(queries, setMaterialReceiveDocs, "pos:material-receive");
+  }, [canSyncMaterialReceive, selectedProjectId, buildProjectScopedQueries, subscribeMergedQueries]);
+
+  const pendingMaterialReceiveCount = useMemo(() => canSyncMaterialReceive
+    ? materialReceiveDocs.filter((po) => po.projectId === selectedProjectId && isMaterialPending(po)).length
+    : 0, [canSyncMaterialReceive, materialReceiveDocs, selectedProjectId]);
 
   const roleKey = [...new Set(roles)].sort().join("|");
   const pendingStatuses = useMemo(() => {
@@ -753,7 +771,9 @@ export const AppDataProvider = ({
     const { skipLog = false } = options || {};
     try {
       let newId = customId;
-      if (collectionName === "invoices" && data?.sourceType === "payment" && data?.status === "Draft") {
+      if (collectionName === "receives" && data?.poId) {
+        newId = await createReceiveWithMaterialGuard({ db, appId, data, customId });
+      } else if (collectionName === "invoices" && data?.sourceType === "payment" && data?.status === "Draft") {
         // Both Payment approval and Invoice auto-creation pass through here.
         // This path intentionally never overwrites an existing invoice.
         newId = await ensurePaymentInvoiceDraft(db, appId, data);
@@ -1321,6 +1341,7 @@ export const AppDataProvider = ({
     pendingBudgetsGlobal, pendingSubItemsGlobal,
     pendingPRsGlobal, pendingPOsGlobal, pendingPaymentsGlobal,
     totalPendingCount, pendingByProject, pendingCountByMenu, pendingBudgetReturnByProject,
+    pendingMaterialReceiveCount,
     // CRUD
     addData, updateData, deleteData,
     // lazy / one-shot load (ลดโควต้า — โหลดเมื่อเข้าหน้าที่ใช้)
@@ -1349,6 +1370,7 @@ export const AppDataProvider = ({
     pendingBudgetsGlobal, pendingSubItemsGlobal,
     pendingPRsGlobal, pendingPOsGlobal, pendingPaymentsGlobal,
     totalPendingCount, pendingByProject, pendingCountByMenu, pendingBudgetReturnByProject,
+    pendingMaterialReceiveCount,
     addData, updateData, deleteData,
     loadVendors, loadMaterials, loadVendorEvaluations,
     vendorsLoading, materialsLoading, vendorEvaluationsLoading, vendorEvaluations,

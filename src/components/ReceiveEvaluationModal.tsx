@@ -1,3 +1,4 @@
+import { RECEIVE_WEIGHTS, evaluationTotal } from "../lib/vendorScoring";
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
@@ -95,9 +96,9 @@ export const ReceiveEvaluationModal: React.FC<ReceiveEvaluationModalProps> = ({ 
 
             {/* Content */}
             <div className="p-5 sm:p-6 overflow-y-auto flex-1 space-y-6">
-              {questions.map((q) => (
+              {questions.map((q, index) => (
                 <div key={q.id} className="space-y-3">
-                  <h4 className="font-semibold text-slate-800 text-base">{q.label}</h4>
+                  <h4 className="font-semibold text-slate-800 text-base">{q.label} (เต็ม {RECEIVE_WEIGHTS[index]} คะแนน)</h4>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     {q.options.map((opt) => {
                       const isSelected = scores[q.id as keyof typeof scores] === opt.value;
@@ -123,7 +124,7 @@ export const ReceiveEvaluationModal: React.FC<ReceiveEvaluationModalProps> = ({ 
                                 : "text-slate-600"
                               }
                             `}>
-                              {opt.label}
+                              {opt.label} ({(opt.value * RECEIVE_WEIGHTS[index]).toFixed(2)} คะแนน)
                             </span>
                             {isSelected && (
                               <CheckCircle size={16} className={
@@ -159,8 +160,8 @@ export const ReceiveEvaluationModal: React.FC<ReceiveEvaluationModalProps> = ({ 
             <div className="p-5 border-t border-slate-100 bg-slate-50 flex justify-between items-center">
               <div className="text-sm font-semibold text-slate-600">
                 คะแนนรวม: <span className="text-lg text-emerald-600">
-                  {isComplete ? ((scores.q1 || 0) + (scores.q2 || 0)).toFixed(2) : "-"}
-                </span> / 2.00
+                  {isComplete ? evaluationTotal(scores, RECEIVE_WEIGHTS).toFixed(2) : "-"}
+                </span> / 70
               </div>
               <div className="flex gap-3">
                 <button

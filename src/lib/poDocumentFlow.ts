@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { requiresMaterialReceive } from "./materialReceive";
 
 import { generateReceiveNo, getPrNoFromPo, isPayBeforeReceiveType, isReceiveAutoType } from "./receiveAuto";
 
@@ -13,6 +14,7 @@ export function hasConfiguredPayBeforeReceive(po) {
 
 export function hasConfiguredReceiveAfterPayment(po) {
   return Boolean(
+    !requiresMaterialReceive(po) &&
     hasConfiguredPayBeforeReceive(po) &&
     po?.receivedAfterPaymentChecked &&
     po?.receivedAfterPaymentSetup &&
@@ -22,6 +24,10 @@ export function hasConfiguredReceiveAfterPayment(po) {
 }
 
 export function getPoFinalApprovalStatus(po) {
+  if (requiresMaterialReceive(po)) {
+    if (hasConfiguredPayBeforeReceive(po)) return "Approved";
+    return isPayBeforeReceiveType(po?.receiveType) ? "Wait Invoice" : "Approved";
+  }
   if (hasConfiguredReceiveAfterPayment(po)) return "Paid";
   if (hasConfiguredPayBeforeReceive(po)) return "Approved";
   if (isReceiveAutoType(po?.receiveType)) return "Received";
@@ -144,7 +150,7 @@ export function buildConfiguredReceiveData({
   userData = null,
   now = new Date(),
 }) {
-  if (!po || !setup) return null;
+  if (!po || !setup || requiresMaterialReceive(po)) return null;
 
   const receiveNo = generateReceiveNo({
     project,

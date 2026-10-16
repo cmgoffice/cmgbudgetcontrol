@@ -169,12 +169,16 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
     { key: "import", label: "Import CSV" },
   ],
   invoice: [
+    { key: "viewEntry", label: "เปิดแท็บรับ Invoice" },
+    { key: "viewHistory", label: "ดูประวัติ Invoice (อ่านอย่างเดียว)" },
     { key: "add",     label: "รับ Invoice" },
     { key: "edit",    label: "แก้ไข Invoice" },
     { key: "approve", label: "อนุมัติ Invoice" },
     { key: "delete",  label: "ลบ Invoice" },
   ],
   receive: [
+    { key: "viewEntry", label: "เปิดแท็บรับของ" },
+    { key: "viewMaterialReceived", label: "เปิดแท็บ Material Received" },
     { key: "sendToCmgStore", label: "ส่งข้อมูลไป CMG Store" },
     { key: "receive",     label: "ทำรับของ" },
     { key: "viewHistory", label: "ดูประวัติรับของ" },
@@ -233,7 +237,13 @@ export const MODULE_FUNCTIONS: Record<string, { key: string; label: string }[]> 
   ],
 };
 
+export const MODULE_TABS: Record<string, { key: string; label: string }[]> = {
+ invoice: [{ key: "viewEntry", label: "รับ Invoice" }, { key: "viewHistory", label: "ประวัติ Invoice" }],
+ receive: [{ key: "viewEntry", label: "รับของ" }, { key: "viewHistory", label: "รายการ Receive" }, { key: "viewMaterialReceived", label: "Material Received" }],
+};
+
 export const USER_ROLES = [
+  "QC",
   "Administrator",
   "MD",
   "GM",
@@ -433,6 +443,10 @@ export function mergeFunctionPermissionsWithDefaults(
     });
   });
 
+  // Preserve existing Invoice entry access when tab permissions have not been saved.
+  if (!Object.prototype.hasOwnProperty.call(raw.invoice || {}, "viewEntry")) {
+    out.invoice.viewEntry = Array.from(new Set(["add", "edit", "approve", "delete"].flatMap((key) => out.invoice[key] || [])));
+  }
   return out;
 }
 

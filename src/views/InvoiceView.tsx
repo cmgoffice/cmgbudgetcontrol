@@ -5,11 +5,7 @@ import {
   collection,
   doc,
   getDocs,
-  getCountFromServer,
-  limit,
-  orderBy,
   query,
-  startAfter,
   where,
   writeBatch,
 } from "firebase/firestore";
@@ -44,6 +40,7 @@ import { uploadAttachment } from "../lib/uploadAttachment";
 import { getInvoiceAmount, validateInvoiceAmountForPo } from "../lib/billingPayUtils";
 import { isHiddenDuplicateDraft, partitionInvoiceDrafts } from "../lib/invoiceDuplicateVisibility";
 import { buildPaymentInvoiceFormItems, validatePaymentInvoiceAmount } from "../lib/paymentInvoice";
+import RelatedDocumentDetailModal from "../components/RelatedDocumentDetailModal";
 import {
   PO_DISCOUNT_ALLOCATION_VERSION,
   appendPaymentDiscountAdjustment,
@@ -74,7 +71,6 @@ const BANK_ACCOUNT_OPTIONS = [
 ];
 
 const HISTORY_PAGE_SIZE_OPTIONS = [50, 100, 150, 200];
-const HISTORY_INVOICE_STATUSES = ["Deposit", "Inpay", "Invcredit", "paid", "Paid", "Pending PM", "Approved"];
 
 // Alternating pastel group colors
 const GROUP_COLORS = [
@@ -115,6 +111,26 @@ const getInvoiceConfiguredAmount = (invoice: any) =>
   Array.isArray(invoice?.items)
     ? invoice.items.reduce((sum: number, item: any) => sum + Number(item?.amount || (Number(item?.quantity || 0) * Number(item?.price || 0))), 0)
     : 0;
+
+const hasUploadedReceiveInv = (receive: any) => {
+  if (!receive) return false;
+  if (receive.hasInv === true) return true;
+
+  const attachments = [
+    receive.invAttachment,
+    receive.invFile,
+    receive.invoiceAttachment,
+    ...(Array.isArray(receive.invAttachments) ? receive.invAttachments : []),
+    ...(Array.isArray(receive.attachments) ? receive.attachments.filter((attachment: any) => {
+      const type = String(attachment?.type || attachment?.category || attachment?.kind || "").trim().toLowerCase();
+      return ["inv", "invoice", "tax-invoice"].includes(type);
+    }) : []),
+  ].filter(Boolean);
+
+  return attachments.some((attachment: any) => (
+    typeof attachment === "string" || Boolean(attachment?.url || attachment?.path || attachment?.name)
+  ));
+};
 
 const getInvoiceOutstandingDepositAmount = (invoice: any) => {
   if (!invoice?.isDeposit) return 0;
@@ -195,14 +211,14 @@ const InvoiceView = React.memo(() => {
   const [histSearch, setHistSearch] = useState("");
   const [histPaymentType, setHistPaymentType] = useState("");
   const [histStatus, setHistStatus] = useState("");
+  const [histCostCode, setHistCostCode] = useState("");
   const [historyPage, setHistoryPage] = useState(1);
   const [historyPageSize, setHistoryPageSize] = useState(50);
   const [historyInvoicesPage, setHistoryInvoicesPage] = useState<any[]>([]);
   const [historyTotalCount, setHistoryTotalCount] = useState(0);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyLoadError, setHistoryLoadError] = useState("");
-  const historyRequestIdRef = useRef(0);
-  const historyPageCursorsRef = useRef<Record<number, any>>({});
+  const [relatedDocument, setRelatedDocument] = useState<{ type: "invoice" | "receive"; document: any } | null>(null);
 
   // Export Excel Modal State
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -223,6 +239,8 @@ const InvoiceView = React.memo(() => {
   });
   const isEditingInvoice = Boolean(editingInvoice);
   const canEditInvoiceHistory = canUseFunction("invoice", "edit");
+  const canViewInvoiceHistory = canUseFunction("invoice", "viewHistory");
+  const canViewInvoiceEntry = canUseFunction("invoice", "viewEntry");
   const canDeleteInvoiceSource = userRoles.includes("Administrator");
   const isFixedPayBeforeReceiveInvoice = Boolean(
     viewingPO?.payBeforeReceiveChecked ||
@@ -489,6 +507,26 @@ const InvoiceView = React.memo(() => {
     });
     return groups;
   }, [filteredDraftInvoices, pos]);
+
+  const hasInvForDraftInvoice = useCallback((draftInv: any, po: any) => {
+    const receiveIds = new Set(
+      [
+        ...(Array.isArray(draftInv?.receiveIds) ? draftInv.receiveIds : []),
+        ...(Array.isArray(po?.receiveIds) ? po.receiveIds : []),
+      ].map((id: any) => String(id || "").trim()).filter(Boolean)
+    );
+    const poId = String(draftInv?.poId || po?.id || "").trim();
+    const poNo = String(draftInv?.poNo || draftInv?.poRef || po?.poNo || "").trim();
+
+    return (receives || []).some((receive: any) => {
+      const receiveId = String(receive?.id || "").trim();
+      const linkedByReceiveId = receiveIds.size > 0 && receiveIds.has(receiveId);
+      const linkedByPo = Boolean(poId && String(receive?.poId || "").trim() === poId) ||
+        Boolean(poNo && String(receive?.poNo || receive?.poRef || "").trim() === poNo);
+      const isLinked = receiveIds.size > 0 ? linkedByReceiveId : linkedByPo;
+      return isLinked && hasUploadedReceiveInv(receive);
+    });
+  }, [receives]);
 
   const filteredPOs = useMemo(() => {
     return invoiceEligiblePOs.filter((po) => {
@@ -977,6 +1015,7 @@ const InvoiceView = React.memo(() => {
       "วันที่ PO",
       "รายละเอียด",
       "ใบตรวจรับ",
+      "inv",
       "ยอดรวม (บาท)",
     ];
 
@@ -996,6 +1035,7 @@ const InvoiceView = React.memo(() => {
           formatDate(draftInv.createdAt || draftInv.invDate),
           draftInv.description || poDescription(po),
           `มาจาก ${(draftInv.receiveIds || []).length} ใบรับของ`,
+          hasInvForDraftInvoice(draftInv, po) ? "มี" : "ไม่มี",
           draftInv.amount ?? 0,
         ]);
       });
@@ -1027,6 +1067,7 @@ const InvoiceView = React.memo(() => {
     getInvoiceCostCode,
     getPoVendorName,
     formatDate,
+    hasInvForDraftInvoice,
     projects,
     selectedProjectId,
     showAlert,
@@ -1034,7 +1075,10 @@ const InvoiceView = React.memo(() => {
 
   const getInvoiceSource = useCallback(
     (invoice: any) => {
-      const matchedPO = pos.find((po) => po.id === invoice.poId);
+      const matchedPO = pos.find((po) => (
+        String(po.id || "") === String(invoice?.poId || "") ||
+        String(po.poNo || "") === String(invoice?.poNo || invoice?.poRef || "")
+      ));
       if (matchedPO) {
         const configuredItems = Array.isArray(matchedPO?.payBeforeReceiveInvoiceSetup?.items)
           ? matchedPO.payBeforeReceiveInvoiceSetup.items
@@ -1093,6 +1137,85 @@ const InvoiceView = React.memo(() => {
     },
     [normalizePaymentSource, payments, pos]
   );
+
+  const getInvoiceCostCodes = useCallback((invoice: any) => {
+    const codes = new Set<string>();
+    const addCode = (value: any) => {
+      const code = String(value || "").trim();
+      if (code) codes.add(code);
+    };
+    const addRecordCodes = (record: any) => {
+      if (!record) return;
+      addCode(record.costCode);
+      addCode(record.budgetCode);
+      (Array.isArray(record.items) ? record.items : []).forEach((item: any) => addCode(item?.costCode));
+    };
+
+    addRecordCodes(invoice);
+    const source = getInvoiceSource(invoice);
+    addRecordCodes(source);
+
+    const linkedPrIds = new Set<string>();
+    const addPrId = (value: any) => {
+      const id = String(value || "").trim();
+      if (id) linkedPrIds.add(id);
+    };
+    [
+      invoice?.prId,
+      source?.prId,
+      source?.prRefId,
+      ...(Array.isArray(invoice?.prIds) ? invoice.prIds : []),
+      ...(Array.isArray(source?.prIds) ? source.prIds : []),
+      ...(Array.isArray(source?.selectedPrIds) ? source.selectedPrIds : []),
+    ].forEach(addPrId);
+    (Array.isArray(source?.items) ? source.items : []).forEach((item: any) => {
+      addPrId(item?.prId);
+      (Array.isArray(item?.disPrAllocations) ? item.disPrAllocations : []).forEach((allocation: any) => addPrId(allocation?.prId));
+    });
+
+    prs.forEach((pr: any) => {
+      if (
+        linkedPrIds.has(String(pr?.id || "")) ||
+        [invoice?.prNo, invoice?.sourcePrNo, source?.prNo].some((value) => (
+          value && String(value) === String(pr?.prNo || "")
+        ))
+      ) {
+        addRecordCodes(pr);
+      }
+    });
+
+    return Array.from(codes).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  }, [getInvoiceSource, prs]);
+
+  const getInvoiceReceiveDocuments = useCallback((invoice: any) => {
+    const normalize = (value: any) => String(value || "").trim();
+    const receiveIds = new Set(
+      (Array.isArray(invoice?.receiveIds) ? invoice.receiveIds : []).map(normalize).filter(Boolean)
+    );
+    const poId = normalize(invoice?.poId);
+    const poNumber = normalize(invoice?.poNo || invoice?.poRef);
+    const linked = (receives || []).filter((receive: any) => (
+      (receiveIds.size > 0 && receiveIds.has(normalize(receive?.id))) ||
+      (receiveIds.size === 0 && (
+        (poId && normalize(receive?.poId) === poId) ||
+        (poNumber && normalize(receive?.poNo || receive?.poRef) === poNumber)
+      ))
+    ));
+    return Array.from(new Map(linked.map((receive: any) => [String(receive.id), receive])).values());
+  }, [receives]);
+
+  const getDocumentUrl = useCallback((documentType: "invoice" | "receive", document: any) => {
+    if (!document) return "";
+    if (documentType === "invoice") {
+      return document.pdfUrl ||
+        document.invoicePdfUrl ||
+        document.attachmentUrl ||
+        document.invoiceAttachments?.find?.((attachment: any) => attachment?.url)?.url ||
+        document.attachments?.find?.((attachment: any) => attachment?.url)?.url ||
+        "";
+    }
+    return document.pdfUrl || document.attachmentUrl || document.attachments?.find?.((attachment: any) => attachment?.url)?.url || "";
+  }, []);
 
   const buildInvoiceItemsForForm = useCallback((source: any, invoice?: any) => {
     if (source?.isPaymentSubcontract) return buildPaymentInvoiceFormItems(source, invoice);
@@ -1655,132 +1778,62 @@ const InvoiceView = React.memo(() => {
 
   const pendingInvoices = useMemo(() => [], []);
 
+  const historyProjectInvoices = useMemo(() => {
+    const historyProjectId = String(selectedProjectId || "");
+    if (!historyProjectId || !visibleProjectIds.has(historyProjectId)) return [];
+    return Array.from(
+      new Map((invoices || []).filter((invoice: any) => invoice?.id).map((invoice: any) => [String(invoice.id), invoice])).values()
+    )
+      .filter((invoice: any) => invoice.status !== "Draft")
+      .filter((invoice: any) => String(getInvoiceProjectId(invoice)) === historyProjectId);
+  }, [getInvoiceProjectId, invoices, selectedProjectId, visibleProjectIds]);
+
+  const historyCostCodes = useMemo(
+    () => Array.from(new Set(historyProjectInvoices.flatMap((invoice: any) => getInvoiceCostCodes(invoice))))
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
+    [getInvoiceCostCodes, historyProjectInvoices]
+  );
+
+  const historyFilteredRows = useMemo(() => {
+    const search = String(histSearch || "").trim().toLowerCase();
+    return historyProjectInvoices
+      .filter((invoice: any) => !histPaymentType || invoice.paymentType === histPaymentType)
+      .filter((invoice: any) => !histStatus || getInvoiceDisplayStatus(invoice).toLowerCase() === String(histStatus).toLowerCase())
+      .filter((invoice: any) => !histCostCode || getInvoiceCostCodes(invoice).includes(histCostCode))
+      .filter((invoice: any) => {
+        if (!search) return true;
+        const costCodes = getInvoiceCostCodes(invoice);
+        return [invoice.invNo, invoice.poNo || invoice.poRef, invoice.vendorName, ...costCodes]
+          .some((value: any) => String(value || "").toLowerCase().includes(search));
+      })
+      .sort((a: any, b: any) => {
+        const aTime = new Date(a.invDate || a.createdAt || 0).getTime();
+        const bTime = new Date(b.invDate || b.createdAt || 0).getTime();
+        return bTime - aTime;
+      });
+  }, [getInvoiceCostCodes, getInvoiceDisplayStatus, histCostCode, histPaymentType, histSearch, histStatus, historyProjectInvoices]);
+
   const historyPageCount = Math.max(1, Math.ceil(historyTotalCount / historyPageSize));
 
-  const loadHistoryPage = useCallback(async () => {
-    const requestId = ++historyRequestIdRef.current;
-    const historyProjectId = String(selectedProjectId || "");
-
-    if (!historyProjectId || !visibleProjectIds.has(historyProjectId)) {
-      setHistoryInvoicesPage([]);
-      setHistoryTotalCount(0);
-      setHistoryLoading(false);
-      return;
-    }
-
+  const loadHistoryPage = useCallback(() => {
     setHistoryLoading(true);
     setHistoryLoadError("");
-
-    try {
-      const invoicesRef = collection(db, "artifacts", appId, "public", "data", "invoices");
-      // History follows the project selected in the header, like Budget/PR/PO/Receive.
-      const filters: any[] = [
-        where("status", histStatus ? "==" : "in", histStatus || HISTORY_INVOICE_STATUSES),
-        where("projectId", "==", historyProjectId),
-      ];
-      if (histPaymentType) filters.push(where("paymentType", "==", histPaymentType));
-
-      const countQuery = query(invoicesRef, ...filters);
-      const pageCursor = historyPageCursorsRef.current[historyPage];
-      const pageQueryParts: any[] = [
-        invoicesRef,
-        ...filters,
-        orderBy("invDate", "desc"),
-      ];
-      if (pageCursor) pageQueryParts.push(startAfter(pageCursor));
-      pageQueryParts.push(limit(historyPageSize));
-      const pageQuery = query(...pageQueryParts);
-
-      const [countSnapshot, pageSnapshot] = await Promise.all([
-        getCountFromServer(countQuery),
-        getDocs(pageQuery),
-      ]);
-
-      if (requestId !== historyRequestIdRef.current) return;
-
-      const pageRows = pageSnapshot.docs
-        // Keep the Firestore document id authoritative for edit and validation
-        // flows, even when a legacy invoice payload contains its own `id` field.
-        .map((entry: any) => ({ ...entry.data(), id: entry.id }))
-        .filter((invoice: any) => invoice.status !== "Draft")
-        .filter((invoice: any) => String(getInvoiceProjectId(invoice)) === historyProjectId);
-
-      if (pageSnapshot.docs.length > 0) {
-        historyPageCursorsRef.current[historyPage + 1] = pageSnapshot.docs[pageSnapshot.docs.length - 1];
-      }
-      setHistoryTotalCount(Number(countSnapshot.data().count || 0));
-      setHistoryInvoicesPage(pageRows);
-    } catch (error: any) {
-      if (requestId !== historyRequestIdRef.current) return;
-      console.error("Error loading paginated invoice history:", error);
-
-      // If Firestore has not built the required composite index yet, keep the
-      // history usable by falling back to the already-synced invoice cache.
-      // The normal path above still reads only the requested page.
-      const localHistoryInvoices = Array.from(
-        new Map((invoices || []).filter((invoice: any) => invoice?.id).map((invoice: any) => [String(invoice.id), invoice])).values()
-      )
-        .filter((invoice: any) => invoice.status !== "Draft")
-        .filter((invoice: any) => String(getInvoiceProjectId(invoice)) === historyProjectId)
-        .filter((invoice: any) => !histPaymentType || invoice.paymentType === histPaymentType)
-        .filter((invoice: any) => !histStatus || getInvoiceDisplayStatus(invoice).toLowerCase() === String(histStatus).toLowerCase())
-        .filter((invoice: any) => {
-          if (!histSearch) return true;
-          const search = histSearch.toLowerCase();
-          return [invoice.invNo, invoice.poNo || invoice.poRef, invoice.vendorName]
-            .some((value: any) => String(value || "").toLowerCase().includes(search));
-        })
-        .sort((a: any, b: any) => {
-          const aTime = new Date(a.invDate || a.createdAt || 0).getTime();
-          const bTime = new Date(b.invDate || b.createdAt || 0).getTime();
-          return bTime - aTime;
-        });
-
-      const localStart = (historyPage - 1) * historyPageSize;
-      setHistoryTotalCount(localHistoryInvoices.length);
-      setHistoryInvoicesPage(localHistoryInvoices.slice(localStart, localStart + historyPageSize));
-      setHistoryLoadError("");
-    } finally {
-      if (requestId === historyRequestIdRef.current) setHistoryLoading(false);
-    }
-  }, [appId, db, getInvoiceDisplayStatus, getInvoiceProjectId, histPaymentType, histSearch, histStatus, historyPage, historyPageSize, invoices, selectedProjectId, visibleProjectIds]);
+    setHistoryTotalCount(historyFilteredRows.length);
+    const start = (historyPage - 1) * historyPageSize;
+    setHistoryInvoicesPage(historyFilteredRows.slice(start, start + historyPageSize));
+    setHistoryLoading(false);
+  }, [historyFilteredRows, historyPage, historyPageSize]);
 
   useEffect(() => {
-    historyPageCursorsRef.current = {};
     setHistoryPage(1);
-  }, [histPaymentType, histSearch, histStatus, selectedProjectId]);
+  }, [histCostCode, histPaymentType, histSearch, histStatus, selectedProjectId]);
 
   useEffect(() => {
     if (activeTab !== "history") return;
     loadHistoryPage();
   }, [activeTab, invoices, loadHistoryPage]);
 
-  const filteredHistoryInvoices = useMemo(() => {
-    return historyInvoicesPage.filter((inv) => {
-      // 1. Text search filter
-      if (histSearch) {
-        const q = histSearch.toLowerCase();
-        const matchesSearch =
-          (inv.invNo || "").toLowerCase().includes(q) ||
-          (inv.poNo || inv.poRef || "").toLowerCase().includes(q) ||
-          (inv.vendorName || "").toLowerCase().includes(q);
-        if (!matchesSearch) return false;
-      }
-
-      // 2. Payment Type filter
-      if (histPaymentType) {
-        if (inv.paymentType !== histPaymentType) return false;
-      }
-
-      // 3. Status filter
-      if (histStatus) {
-        const displayStatus = getInvoiceDisplayStatus(inv);
-        if (displayStatus.toLowerCase() !== histStatus.toLowerCase()) return false;
-      }
-
-      return true;
-    });
-  }, [getInvoiceDisplayStatus, histPaymentType, histSearch, histStatus, historyInvoicesPage]);
+  const filteredHistoryInvoices = historyInvoicesPage;
 
   // ─── Computed totals for invoice items ────────────────────────────────────
   const invoiceTotalAmount = useMemo(
@@ -1813,23 +1866,16 @@ const InvoiceView = React.memo(() => {
   );
 
   const historyAllInvoicesTotal = useMemo(() => {
-    const historyProjectId = String(selectedProjectId || "");
-    if (!historyProjectId) return 0;
-    const allHistory = Array.from(
-      new Map((invoices || []).filter((inv: any) => inv?.id).map((inv: any) => [String(inv.id), inv])).values()
-    )
-      .filter((inv: any) => inv.status !== "Draft")
-      .filter((inv: any) => String(getInvoiceProjectId(inv)) === historyProjectId)
-      .filter((inv: any) => !histPaymentType || inv.paymentType === histPaymentType)
-      .filter((inv: any) => !histStatus || getInvoiceDisplayStatus(inv).toLowerCase() === String(histStatus).toLowerCase())
-      .filter((inv: any) => {
-        if (!histSearch) return true;
-        const search = histSearch.toLowerCase();
-        return [inv.invNo, inv.poNo || inv.poRef, inv.vendorName]
-          .some((val: any) => String(val || "").toLowerCase().includes(search));
-      });
-    return allHistory.reduce((sum: number, inv: any) => sum + Number(inv.amount || 0), 0);
-  }, [getInvoiceDisplayStatus, getInvoiceProjectId, histPaymentType, histSearch, histStatus, invoices, selectedProjectId]);
+    return historyFilteredRows.reduce((sum: number, invoice: any) => sum + Number(invoice.amount || 0), 0);
+  }, [historyFilteredRows]);
+
+  useEffect(() => {
+    if (!canViewInvoiceEntry && canViewInvoiceHistory && activeTab !== "history") {
+      setActiveTab("history");
+    } else if (!canViewInvoiceHistory && canViewInvoiceEntry && activeTab !== "po") {
+      setActiveTab("po");
+    }
+  }, [activeTab, canViewInvoiceEntry, canViewInvoiceHistory]);
 
   return (
     <div className="space-y-4">
@@ -1852,48 +1898,52 @@ const InvoiceView = React.memo(() => {
 
           {/* ── Tabs ── */}
           <div className="flex items-center gap-1 bg-violet-50/50 rounded-xl border border-violet-100/50 p-1 w-fit">
-            <button
-              type="button"
-              onClick={() => setActiveTab("po")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                activeTab === "po"
-                  ? "bg-white text-violet-600 shadow-sm ring-1 ring-violet-200"
-                  : "text-violet-400 hover:text-violet-600 hover:bg-white/50"
-              }`}
-            >
-              <Package size={13} />
-              PO พร้อมวางบิล
-              <span
-                className={`text-[9px] font-bold rounded-full px-1 py-0.5 min-w-[16px] text-center ${
+            {canViewInvoiceEntry && (
+              <button
+                type="button"
+                onClick={() => setActiveTab("po")}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                   activeTab === "po"
-                    ? "bg-violet-100 text-violet-600"
-                    : "bg-violet-50 text-violet-400"
+                    ? "bg-white text-violet-600 shadow-sm ring-1 ring-violet-200"
+                    : "text-violet-400 hover:text-violet-600 hover:bg-white/50"
                 }`}
               >
-                {invoiceEligiblePOs.length}
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("history")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                activeTab === "history"
-                  ? "bg-white text-amber-600 shadow-sm ring-1 ring-amber-200"
-                  : "text-amber-400 hover:text-amber-600 hover:bg-white/50"
-              }`}
-            >
-              <DollarSign size={13} />
-              ประวัติ Invoice
-              <span
-                className={`text-[9px] font-bold rounded-full px-1 py-0.5 min-w-[16px] text-center ${
+                <Package size={13} />
+                PO พร้อมวางบิล
+                <span
+                  className={`text-[9px] font-bold rounded-full px-1 py-0.5 min-w-[16px] text-center ${
+                    activeTab === "po"
+                      ? "bg-violet-100 text-violet-600"
+                      : "bg-violet-50 text-violet-400"
+                  }`}
+                >
+                  {invoiceEligiblePOs.length}
+                </span>
+              </button>
+            )}
+            {canViewInvoiceHistory && (
+              <button
+                type="button"
+                onClick={() => setActiveTab("history")}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                   activeTab === "history"
-                    ? "bg-amber-100 text-amber-600"
-                    : "bg-amber-50 text-amber-400"
+                    ? "bg-white text-amber-600 shadow-sm ring-1 ring-amber-200"
+                    : "text-amber-400 hover:text-amber-600 hover:bg-white/50"
                 }`}
               >
-                {historyLoading ? "…" : historyTotalCount}
-              </span>
-            </button>
+                <DollarSign size={13} />
+                ประวัติ Invoice
+                <span
+                  className={`text-[9px] font-bold rounded-full px-1 py-0.5 min-w-[16px] text-center ${
+                    activeTab === "history"
+                      ? "bg-amber-100 text-amber-600"
+                      : "bg-amber-50 text-amber-400"
+                  }`}
+                >
+                  {historyLoading ? "…" : historyTotalCount}
+                </span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1901,7 +1951,7 @@ const InvoiceView = React.memo(() => {
       {/* ══════════════════════════════════════
           Tab: PO พร้อมวางบิล
       ══════════════════════════════════════ */}
-      {activeTab === "po" && (
+      {canViewInvoiceEntry && activeTab === "po" && (
         <div className="space-y-2">
           {/* Search toolbar */}
           <Card className="px-4 py-3 bg-gradient-to-r from-violet-50 to-purple-50 border-violet-100">
@@ -1953,23 +2003,15 @@ const InvoiceView = React.memo(() => {
                 </button>
               )}
               <div className="ml-auto flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setExportSelectedTypes(["INW", "SM"]);
-                    setIsExportModalOpen(true);
-                  }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs shadow-sm bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg transition-colors cursor-pointer"
-                >
-                  <span>📊</span> Export Excel
-                </button>
-                <Button
-                  variant="primary"
-                  className="px-3 py-1.5 text-xs shadow-sm bg-violet-600 hover:bg-violet-700 text-white font-medium"
-                  onClick={() => setIsCreateInvoiceModalOpen(true)}
-                >
-                  สร้าง Invoice
-                </Button>
+                {canUseFunction("invoice", "add") && (
+                  <Button
+                    variant="primary"
+                    className="px-3 py-1.5 text-xs shadow-sm bg-violet-600 hover:bg-violet-700 text-white font-medium"
+                    onClick={() => setIsCreateInvoiceModalOpen(true)}
+                  >
+                    สร้าง Invoice
+                  </Button>
+                )}
               </div>
             </div>
           </Card>
@@ -2061,6 +2103,7 @@ const InvoiceView = React.memo(() => {
                           <th className="py-1.5 px-3">วันที่ PO</th>
                           <th className="py-1.5 px-3">รายละเอียด</th>
                           <th className="py-1.5 px-3 text-center">ใบตรวจรับ</th>
+                          <th className="py-1.5 px-3 text-center">inv</th>
                           <th className="py-1.5 px-3 text-right">ยอดรวม</th>
                           <th className="hidden py-1.5 px-3 text-center md:table-cell">Actions</th>
                         </tr>
@@ -2069,6 +2112,7 @@ const InvoiceView = React.memo(() => {
                         {draftList.map((draftInv) => (
                           (() => {
                             const po = getDraftInvoiceSource(draftInv);
+                            const hasInv = hasInvForDraftInvoice(draftInv, po);
                             return (
                               <tr
                                 key={draftInv.id}
@@ -2150,6 +2194,15 @@ const InvoiceView = React.memo(() => {
                                 </td>
                                 <td className="hidden py-1.5 px-3 text-center md:table-cell">
                                   <span className="text-slate-400 text-[10px]">มาจาก {(draftInv.receiveIds || []).length} ใบรับของ</span>
+                                </td>
+                                <td className="py-1.5 px-3 text-center">
+                                  <span className={`inline-flex items-center justify-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                                    hasInv
+                                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                      : "border-slate-200 bg-slate-50 text-slate-400"
+                                  }`}>
+                                    {hasInv ? "มี" : "ไม่มี"}
+                                  </span>
                                 </td>
                                 <td className="py-1.5 px-3 text-right font-semibold text-violet-700">
                                   {formatCurrency(draftInv.amount || 0)}
@@ -2346,7 +2399,7 @@ const InvoiceView = React.memo(() => {
       {/* ══════════════════════════════════════
           Tab: ประวัติ Invoice
       ══════════════════════════════════════ */}
-      {activeTab === "history" && (
+      {canViewInvoiceHistory && activeTab === "history" && (
         <div className="space-y-2">
           {/* Search */}
           <Card className="px-4 py-3 bg-gradient-to-r from-amber-50 to-orange-50 border-amber-100">
@@ -2360,7 +2413,7 @@ const InvoiceView = React.memo(() => {
                   type="text"
                   value={histSearch}
                   onChange={(e) => setHistSearch(e.target.value)}
-                  placeholder="ค้นหา Invoice / PO / Vendor"
+                  placeholder="ค้นหา Invoice / PO / Vendor / Cost Code"
                   className="pl-7 pr-2 py-1.5 text-xs border border-amber-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-400 w-60"
                 />
               </div>
@@ -2387,6 +2440,18 @@ const InvoiceView = React.memo(() => {
               </select>
 
               <select
+                value={histCostCode}
+                onChange={(e) => setHistCostCode(e.target.value)}
+                className="px-2 py-1.5 text-xs border border-amber-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-400 w-36 cursor-pointer text-slate-600 font-medium"
+                aria-label="กรอง Cost Code"
+              >
+                <option value="">Cost Code ทั้งหมด</option>
+                {historyCostCodes.map((costCode) => (
+                  <option key={costCode} value={costCode}>{costCode}</option>
+                ))}
+              </select>
+
+              <select
                 value={histStatus}
                 onChange={(e) => setHistStatus(e.target.value)}
                 className="px-2 py-1.5 text-xs border border-amber-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-400 w-32 cursor-pointer text-slate-600 font-medium"
@@ -2398,13 +2463,14 @@ const InvoiceView = React.memo(() => {
                 <option value="paid">จ่ายแล้ว (Paid)</option>
               </select>
 
-              {(histSearch || histPaymentType || histStatus) && (
+              {(histSearch || histPaymentType || histStatus || histCostCode) && (
                 <button
                   type="button"
                   onClick={() => {
                     setHistSearch("");
                     setHistPaymentType("");
                     setHistStatus("");
+                    setHistCostCode("");
                   }}
                   className="text-slate-400 hover:text-red-500 transition-colors text-xs font-semibold flex items-center gap-0.5 ml-1"
                   title="ล้างตัวกรองทั้งหมด"
@@ -2414,41 +2480,55 @@ const InvoiceView = React.memo(() => {
                 </button>
               )}
 
-              <span className="ml-auto text-[11px] text-amber-400">
-                {filteredHistoryInvoices.length} รายการในหน้านี้ · ทั้งหมด {historyTotalCount} รายการ
-              </span>
+              <div className="ml-auto flex items-center gap-3">
+                <span className="text-[11px] text-amber-400">
+                  {filteredHistoryInvoices.length} รายการในหน้านี้ · ทั้งหมด {historyTotalCount} รายการ
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExportSelectedTypes(["INW", "SM"]);
+                    setIsExportModalOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs shadow-sm bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg transition-colors cursor-pointer"
+                >
+                  <span>📊</span> Export Excel
+                </button>
+              </div>
             </div>
           </Card>
 
           {/* Invoice table */}
           <Card className="overflow-x-auto border-amber-100">
-            <table className="w-full min-w-[860px] text-left text-xs text-slate-600 md:min-w-0">
+            <table className="w-full min-w-[1160px] text-left text-xs text-slate-600 md:min-w-0">
               <thead className="bg-gradient-to-r from-amber-50 to-orange-50 text-slate-600 uppercase font-semibold border-b border-amber-100">
                 <tr>
                   <th className="py-1.5 px-3">วันที่สร้างรายการ</th>
                   <th className="py-1.5 px-3 text-center md:hidden">Actions</th>
                   <th className="py-1.5 px-3">Invoice No.</th>
                   <th className="py-1.5 px-3">Ref. PO</th>
+                  <th className="py-1.5 px-3">Cost Code</th>
                   <th className="py-1.5 px-3">โครงการ</th>
                   <th className="py-1.5 px-3">Vendor</th>
                   <th className="py-1.5 px-3">วันที่</th>
                   <th className="py-1.5 px-3">ประเภทชำระ</th>
                   <th className="py-1.5 px-3 text-right">จำนวนเงิน</th>
                   <th className="py-1.5 px-3 text-center">สถานะ</th>
+                  <th className="py-1.5 px-3 text-center">เอกสาร</th>
                   <th className="hidden py-1.5 px-3 text-center md:table-cell">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-amber-50">
                 {historyLoading ? (
                   <tr>
-                    <td colSpan={11} className="py-10 text-center text-slate-400">
+                    <td colSpan={13} className="py-10 text-center text-slate-400">
                       กำลังโหลดประวัติ Invoice...
                     </td>
                   </tr>
                 ) : filteredHistoryInvoices.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={11}
+                      colSpan={13}
                       className="py-10 text-center text-slate-400"
                     >
                       <DollarSign
@@ -2516,6 +2596,9 @@ const InvoiceView = React.memo(() => {
                           </button>
                         ) : "-"}
                       </td>
+                      <td className="py-1.5 px-3 font-mono text-slate-700" title={getInvoiceCostCodes(inv).join(", ") || "-"}>
+                        {getInvoiceCostCodes(inv).join(", ") || "-"}
+                      </td>
                       <td className="py-1.5 px-3 max-w-[180px] truncate" title={getProjectLabel(getInvoiceProjectId(inv))}>
                         {getProjectLabel(getInvoiceProjectId(inv))}
                       </td>
@@ -2549,6 +2632,59 @@ const InvoiceView = React.memo(() => {
                       </td>
                       <td className="py-1.5 px-3 text-center">
                         <Badge status={getInvoiceDisplayStatus(inv)} />
+                      </td>
+                      <td className="py-1.5 px-3">
+                        <div className="flex flex-wrap items-center justify-center gap-1">
+                          {(() => {
+                            const invoiceUrl = getDocumentUrl("invoice", inv);
+                            return invoiceUrl ? (
+                              <a
+                                href={invoiceUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 hover:bg-violet-100"
+                                title="เปิดเอกสาร Invoice"
+                              >
+                                <ExternalLink size={10} /> INV
+                              </a>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setRelatedDocument({ type: "invoice", document: inv })}
+                                className="inline-flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 hover:bg-violet-100"
+                                title="ดูรายละเอียด Invoice"
+                              >
+                                <Eye size={10} /> INV
+                              </button>
+                            );
+                          })()}
+                          {getInvoiceReceiveDocuments(inv).map((receive: any) => {
+                            const receiveUrl = getDocumentUrl("receive", receive);
+                            const receiveLabel = receive.rpNo || receive.receiveNo || receive.id || "RP";
+                            return receiveUrl ? (
+                              <a
+                                key={receive.id}
+                                href={receiveUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex max-w-[120px] items-center gap-1 truncate rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100"
+                                title={`เปิดเอกสารตรวจรับ ${receiveLabel}`}
+                              >
+                                <ExternalLink size={10} /> {receiveLabel}
+                              </a>
+                            ) : (
+                              <button
+                                key={receive.id}
+                                type="button"
+                                onClick={() => setRelatedDocument({ type: "receive", document: receive })}
+                                className="inline-flex max-w-[120px] items-center gap-1 truncate rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100"
+                                title={`ดูรายละเอียดตรวจรับ ${receiveLabel}`}
+                              >
+                                <Eye size={10} /> {receiveLabel}
+                              </button>
+                            );
+                          })}
+                        </div>
                       </td>
                       <td className="py-1.5 px-3">
                         <div className="flex items-center justify-center gap-1">
@@ -2591,11 +2727,12 @@ const InvoiceView = React.memo(() => {
                   <td className="py-2 px-3"></td>
                   <td className="py-2 px-3"></td>
                   <td className="py-2 px-3"></td>
+                  <td className="py-2 px-3"></td>
                   <td className="hidden py-2 px-3 md:table-cell"></td>
                   <td colSpan={3} className="py-2 px-3 text-right">
                     <div className="flex items-center justify-end gap-6 flex-wrap">
                       <div className="flex items-center gap-1.5 whitespace-nowrap">
-                        <span className="text-xs font-semibold text-slate-600">ยอดรวมทั้งหมด:</span>
+                        <span className="text-xs font-semibold text-slate-600">ยอดรวมตามตัวกรอง:</span>
                         <span className="text-sm font-bold text-slate-800">
                           {formatCurrency(historyAllInvoicesTotal)}
                         </span>
@@ -2608,6 +2745,7 @@ const InvoiceView = React.memo(() => {
                       </div>
                     </div>
                   </td>
+                  <td className="py-2 px-3"></td>
                   <td className="py-2 px-3"></td>
                   <td className="hidden py-2 px-3 md:table-cell"></td>
                 </tr>
@@ -2623,7 +2761,6 @@ const InvoiceView = React.memo(() => {
                 <select
                   value={historyPageSize}
                   onChange={(event) => {
-                    historyPageCursorsRef.current = {};
                     setHistoryPageSize(Number(event.target.value));
                     setHistoryPage(1);
                   }}
@@ -2671,6 +2808,14 @@ const InvoiceView = React.memo(() => {
             </div>
           )}
         </div>
+      )}
+
+      {relatedDocument && (
+        <RelatedDocumentDetailModal
+          documentType={relatedDocument.type}
+          document={relatedDocument.document}
+          onClose={() => setRelatedDocument(null)}
+        />
       )}
 
       {/* ══════════════════════════════════════

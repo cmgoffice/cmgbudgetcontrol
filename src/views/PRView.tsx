@@ -624,6 +624,8 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
     urgency: "Normal",
     purchaseType: "",
     deliveryLocation: "",
+    materialApprove: false,
+    materialApproveNo: "",
     attachment: null as File | null,
     attachments: [] as File[],
     existingAttachments: [] as { url: string; name: string }[],
@@ -880,6 +882,8 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
       urgency: pr.urgency || "Normal",
       purchaseType: pr.purchaseType || "",
       deliveryLocation: pr.deliveryLocation || "",
+      materialApprove: pr.materialApprove === true,
+      materialApproveNo: pr.materialApproveNo || "",
       attachment: null,
       attachments: [],
       existingAttachments: pr.attachments || [],
@@ -892,6 +896,9 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
   };
 
   const performSavePR = async () => {
+    if (headerData.materialApprove && !String(headerData.materialApproveNo || "").trim()) {
+      return showAlert("ข้อมูลไม่ครบ", "กรุณากรอก Material Approve No.", "warning");
+    }
     let resolvedPrNo = headerData.prNo;
     const isNewPR = !editingPRId;
     if (
@@ -1132,6 +1139,8 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
     const prCreator = getUserIdentity(userData, user);
     const prPayload = {
       ...headerWithoutFile,
+      materialApprove: headerData.materialApprove === true,
+      materialApproveNo: headerData.materialApprove ? String(headerData.materialApproveNo || "").trim() : "",
       prNo: resolvedPrNo,
       attachmentUrl: attachmentUrl || null,
       attachmentName: attachmentName || null,
@@ -1229,6 +1238,8 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
         urgency: "Normal",
         purchaseType: "",
         deliveryLocation: "",
+        materialApprove: false,
+        materialApproveNo: "",
         attachment: null,
         attachments: [],
         existingAttachments: [],
@@ -2217,6 +2228,8 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
                   urgency: "Normal",
                   purchaseType: "",
                   deliveryLocation: "",
+                  materialApprove: false,
+                  materialApproveNo: "",
                   attachment: null,
                   attachments: [],
                   existingAttachments: [],
@@ -2471,6 +2484,7 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
                       { label: "ประเภท", value: getPurchaseTypeDisplayLabel(prLive.purchaseType) },
                       { label: "ความเร่งด่วน", value: prLive.urgency || "-" },
                       { label: "สถานที่รับของ", value: prLive.deliveryLocation || "-" },
+                      { label: "Material Approve", value: prLive.materialApprove ? (prLive.materialApproveNo || "เลือกแล้ว") : "ไม่เลือก" },
                       { label: "Email", value: prLive.requestorEmail || "-" },
                     ].map(({ label, value }) => (
                       <div key={label} className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
@@ -2972,6 +2986,20 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
                 </div>
                 <div className="p-5">
                   <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-x-4 gap-y-4">
+                    <div className="col-span-full rounded-lg border border-blue-200 bg-blue-50 p-3">
+                      <label className="flex items-center gap-2 text-sm font-semibold text-blue-900">
+                        <input type="checkbox" checked={!!headerData.materialApprove}
+                          onChange={(e) => setHeaderData({ ...headerData, materialApprove: e.target.checked, materialApproveNo: e.target.checked ? headerData.materialApproveNo : "" })} />
+                        Material Approve
+                      </label>
+                      {headerData.materialApprove && <div className="mt-2">
+                        <label htmlFor="pr-material-approve-no" className="block text-xs font-medium mb-1">Material Approve No. *</label>
+                        <input id="pr-material-approve-no" type="text" value={headerData.materialApproveNo || ""} maxLength={200}
+                          onChange={(e) => setHeaderData({ ...headerData, materialApproveNo: e.target.value })}
+                          className="w-full rounded-lg border border-blue-200 px-3 py-2 text-sm" />
+                        <p className="text-xs text-blue-800 mt-1">PO ที่อ้างอิง PR นี้ต้องผ่าน Material Received ก่อนบันทึกจำนวนรับของ</p>
+                      </div>}
+                    </div>
                     {/* Row 1: PR No. / ประเภท / Sub-Code */}
                     <div className="col-span-2">
                       <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 mb-1.5 uppercase tracking-wider">

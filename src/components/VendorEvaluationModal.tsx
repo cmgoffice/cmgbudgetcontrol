@@ -1,3 +1,4 @@
+import { poEvaluationWeights, evaluationTotal } from "../lib/vendorScoring";
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { modalOverlayVariants, modalContentVariants, modalTransition, overlayTransition } from "../lib/animations";
@@ -8,9 +9,10 @@ interface VendorEvaluationModalProps {
   onClose: () => void;
   onSubmit: (scores: { q1: number; q2: number; q3: number }, suggestion: string) => void;
   vendorName: string;
+  poType: string;
 }
 
-export const VendorEvaluationModal: React.FC<VendorEvaluationModalProps> = ({ isOpen, onClose, onSubmit, vendorName }) => {
+export const VendorEvaluationModal: React.FC<VendorEvaluationModalProps> = ({ isOpen, onClose, onSubmit, vendorName, poType }) => {
   const [scores, setScores] = useState<{ q1: number | null; q2: number | null; q3: number | null }>({ q1: null, q2: null, q3: null });
   const [suggestion, setSuggestion] = useState("");
 
@@ -32,6 +34,7 @@ export const VendorEvaluationModal: React.FC<VendorEvaluationModalProps> = ({ is
     }
   };
 
+  const weights = poEvaluationWeights(poType);
   const questions = [
     {
       id: "q1",
@@ -99,9 +102,9 @@ export const VendorEvaluationModal: React.FC<VendorEvaluationModalProps> = ({ is
                 </p>
               </div>
 
-              {questions.map((q) => (
+              {questions.map((q, index) => (
                 <div key={q.id} className="space-y-3">
-                  <h4 className="font-semibold text-slate-800 text-base">{q.title}</h4>
+                  <h4 className="font-semibold text-slate-800 text-base">{q.title} (เต็ม {weights[index]} คะแนน)</h4>
                   <div className="grid grid-cols-1 gap-3">
                     {q.options.map((opt) => {
                       const isSelected = scores[q.id as keyof typeof scores] === opt.value;
@@ -122,7 +125,7 @@ export const VendorEvaluationModal: React.FC<VendorEvaluationModalProps> = ({ is
                             />
                           </div>
                           <div>
-                            <span className="block font-semibold text-sm mb-0.5">{opt.label} <span className="font-normal text-slate-500">({opt.value} คะแนน)</span></span>
+                            <span className="block font-semibold text-sm mb-0.5">{opt.label} <span className="font-normal text-slate-500">({(opt.value * weights[index]).toFixed(2)} คะแนน)</span></span>
                             <span className={`block text-xs ${isSelected ? "" : "text-slate-500"}`}>{opt.desc}</span>
                           </div>
                         </label>
@@ -148,8 +151,8 @@ export const VendorEvaluationModal: React.FC<VendorEvaluationModalProps> = ({ is
             <div className="p-5 border-t border-slate-100 bg-slate-50 flex justify-between items-center">
               <div className="text-sm font-semibold text-slate-600">
                 คะแนนรวม: <span className="text-lg text-blue-600">
-                  {isComplete ? ((scores.q1 || 0) + (scores.q2 || 0) + (scores.q3 || 0)).toFixed(2) : "-"}
-                </span> / 3.00
+                  {isComplete ? evaluationTotal(scores, weights).toFixed(2) : "-"}
+                </span> / {weights.reduce((sum, weight) => sum + weight, 0)}
               </div>
               <div className="flex gap-3">
                 <button

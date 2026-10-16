@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { requiresMaterialReceive } from "./materialReceive";
 
 export function normalizeReceiveType(receiveType) {
   return String(receiveType || "").trim().toLowerCase();
@@ -66,7 +67,7 @@ export function buildAutoReceiveData({
   userData = null,
   now = new Date(),
 }) {
-  if (!po) return null;
+  if (!po || requiresMaterialReceive(po)) return null;
 
   const receiveNo = generateReceiveNo({
     project,

@@ -1,8 +1,9 @@
 // @ts-nocheck
+import { RECEIVE_WEIGHTS, evaluationTotal } from "../lib/vendorScoring";
 import React, { useState, useMemo, useCallback, useContext, useEffect } from "react";
 import {
   ChevronDown, ChevronLeft, ChevronRight, Package, Eye, FileText,
-  Plus, X, Check, Clock, ExternalLink, Truck, ImageIcon, List, Search, Trash2, Boxes,
+  Plus, X, Check, Clock, ExternalLink, Truck, ImageIcon, List, Search, Trash2, Boxes, Paperclip,
 } from "lucide-react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
@@ -15,6 +16,7 @@ import { uploadAttachment } from "../lib/uploadAttachment";
 import { generateRPPdfBytes, uploadGeneratedPdf, deleteGeneratedPdf, generatePOPdfBytes } from "../lib/pdfForms";
 import { PDFDocument } from "pdf-lib";
 import { combineImagesToPdf, createPdfThumbnail, generateCombinedPdfFilename } from "../lib/imageToPdf";
+import { appendMaterialCertificatesToPdf, getMaterialPdfCertificates } from "../lib/materialReceivePdf";
 import ColumnVisibilityToggle from "../components/ColumnVisibilityToggle";
 import { ReceiveEvaluationModal } from "../components/ReceiveEvaluationModal";
 import {
@@ -25,6 +27,8 @@ import {
 } from "../lib/systemLogDetails";
 import { resolveCurrentUserSignatureImage, stampPoSignaturesToPdf } from "../lib/poSignatureStamps";
 import { isPoReadyForManualReceive } from "../lib/constants";
+import { canReceiveAfterMaterial, hasPassedMaterialReceive, isMaterialPending, requiresMaterialReceive, assertMaterialManualReceive, buildReceiveQueueResetPatch } from "../lib/materialReceive";
+import MaterialReceivedModal from "../components/MaterialReceivedModal";
 import {
   getCmgStoreTargetProjectCode,
   isCmgStoreEligibleInventoryStatus,
@@ -46,6 +50,15 @@ const PO_TYPE_LABELS = {
 
 const RECEIVE_HISTORY_PAGE_SIZE = 100;
 const PO_PDF_OPEN_COUNTDOWN_SECONDS = 6;
+
+const appendPdfFileToPdf = async (existingPdfBytes, file) => {
+  const sourceBytes = new Uint8Array(await file.arrayBuffer());
+  const mergedPdf = await PDFDocument.load(existingPdfBytes);
+  const invPdf = await PDFDocument.load(sourceBytes);
+  const copiedPages = await mergedPdf.copyPages(invPdf, invPdf.getPageIndices());
+  copiedPages.forEach((page) => mergedPdf.addPage(page));
+  return mergedPdf.save();
+};
 
 const getReceiveLogSummary = (receive: any, patch: any = null) =>
   buildRecordSummary("receives", patch ? { ...receive, ...patch } : receive, receive?.id);
@@ -83,9 +96,12 @@ const ReceiveView = React.memo(() => {
     addData, updateData, deleteData, showAlert, openConfirm, canUseFunction, userRoles = [],
     isColumnVisible,
     visibleProjects, loadVendors,
+    pendingMaterialReceiveCount = 0,
   } = useAppData();
   const { selectedProjectId } = useUI();
   const { user, userData, logAction } = useContext(AuthContext);
+  const canViewReceiveEntry = canUseFunction("receive", "viewEntry");
+  const canViewMaterialReceived = canUseFunction("receive", "viewMaterialReceived");
   const canViewReceiveHistory = canUseFunction("receive", "viewHistory");
   const canSendToCmgStore = canUseFunction("receive", "sendToCmgStore");
   const canDeleteReceivePo = canUseFunction("receive", "delete") || userRoles.includes("MasterAdmin");
@@ -93,6 +109,14 @@ const ReceiveView = React.memo(() => {
   // ไม่โหลด vendors ตอน mount — โหลดเมื่อ user เปิด PO detail จริงๆ (ลด Firebase reads)
 
   const [activeTab, setActiveTab] = useState<"po" | "history" | "material_received">("po");
+  const [materialPoId, setMaterialPoId] = useState<string | null>(null);
+  const [materialHistory, setMaterialHistory] = useState(false);
+  const [materialSearch, setMaterialSearch] = useState("");
+  const materialPo = pos.find((po) => po.id === materialPoId && po.projectId === selectedProjectId);
+  const materialPOs = useMemo(() => pos.filter((po) => po.projectId === selectedProjectId && requiresMaterialReceive(po) &&
+    (materialHistory ? hasPassedMaterialReceive(po) : isMaterialPending(po)) &&
+    `${po.poNo || ""} ${po.vendorName || ""} ${(po.materialApproveRefs || []).map((ref) => `${ref.prNo} ${ref.no}`).join(" ")}`.toLowerCase().includes(materialSearch.toLowerCase())
+  ), [pos, selectedProjectId, materialHistory, materialSearch]);
   const [viewingPO, setViewingPO] = useState(null);
   const [receiveMode, setReceiveMode] = useState(false);
   const [receiveForm, setReceiveForm] = useState([]);
@@ -100,6 +124,8 @@ const ReceiveView = React.memo(() => {
   const [receiveDate, setReceiveDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [receiveVendorName, setReceiveVendorName] = useState("");
   const [receiveDocumentNo, setReceiveDocumentNo] = useState("");
+  const [receiveHasInv, setReceiveHasInv] = useState(false);
+  const [receiveInvFile, setReceiveInvFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [savingStep, setSavingStep] = useState("");
   const [expandedTypes, setExpandedTypes] = useState({});
@@ -123,10 +149,10 @@ const ReceiveView = React.memo(() => {
   const [receiveHistoryPage, setReceiveHistoryPage] = useState(1);
 
   useEffect(() => {
-    if (!canViewReceiveHistory && activeTab === "history") {
-      setActiveTab("po");
-    }
-  }, [activeTab, canViewReceiveHistory]);
+    if (!canViewReceiveHistory) setMaterialHistory(false);
+    const allowed = { po: canViewReceiveEntry, history: canViewReceiveHistory, material_received: canViewMaterialReceived };
+    if (!allowed[activeTab]) setActiveTab(canViewReceiveEntry ? "po" : canViewReceiveHistory ? "history" : "material_received");
+  }, [activeTab, canViewReceiveEntry, canViewReceiveHistory, canViewMaterialReceived]);
 
   const currentProject = projects.find((p) => p.id === selectedProjectId);
 
@@ -196,7 +222,7 @@ const ReceiveView = React.memo(() => {
     if (!selectedProjectId) return [];
     return pos.filter(
       (po) => po.projectId === selectedProjectId &&
-        isPoReadyForManualReceive(po)
+        isPoReadyForManualReceive(po) && canReceiveAfterMaterial(po)
     );
   }, [pos, selectedProjectId]);
 
@@ -338,6 +364,8 @@ const ReceiveView = React.memo(() => {
     setReceiveNote("");
     setReceiveVendorName(getVendorName(po?.vendorId));
     setReceiveDocumentNo("");
+    setReceiveHasInv(false);
+    setReceiveInvFile(null);
     setReceiveDate(new Date().toISOString().split("T")[0]);
     loadVendors();
   };
@@ -386,6 +414,8 @@ const ReceiveView = React.memo(() => {
       };
     });
     setReceiveForm(form);
+    setReceiveHasInv(false);
+    setReceiveInvFile(null);
     setReceiveMode(true);
   };
 
@@ -395,6 +425,21 @@ const ReceiveView = React.memo(() => {
         i === idx ? { ...item, [field]: value } : item
       )
     );
+  };
+
+  const handleReceiveInvFileChange = (file) => {
+    if (!file) return;
+    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    const isImage = file.type.startsWith("image/");
+    if (!isPdf && !isImage) {
+      showAlert("ไฟล์ไม่รองรับ", "เอกสาร INV ต้องเป็น PDF หรือรูปภาพเท่านั้น", "warning");
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      showAlert("ไฟล์ใหญ่เกินไป", "เอกสาร INV ต้องมีขนาดไม่เกิน 20MB", "warning");
+      return;
+    }
+    setReceiveInvFile(file);
   };
 
   const handlePhotoAdd = async (itemIdx, files) => {
@@ -542,10 +587,16 @@ const ReceiveView = React.memo(() => {
   const handleSaveReceive = async () => {
     const po = viewingPO;
     if (!po) return;
+    try { assertMaterialManualReceive(pos.find((entry) => entry.id === po.id) || po); }
+    catch (error: any) { return showAlert("Material Received", error.message, "warning"); }
 
     const itemsToSave = receiveForm.filter((item) => item.receivedQty > 0);
     if (itemsToSave.length === 0) {
       return showAlert("ไม่มีรายการ", "กรุณาระบุจำนวนรับอย่างน้อย 1 รายการ", "warning");
+    }
+
+    if (receiveHasInv && !receiveInvFile) {
+      return showAlert("ยังไม่ได้เลือกเอกสาร INV", "กรุณากดปุ่มอัปโหลดเอกสาร INV หรือเลือก ไม่มี INV", "warning");
     }
 
     for (const item of itemsToSave) {
@@ -601,6 +652,21 @@ const ReceiveView = React.memo(() => {
         (receiveVendorName && receiveVendorName !== "-")
           ? receiveVendorName
           : (vendorObj?.name || po.vendorName || "");
+
+      let invAttachment = null;
+      if (receiveHasInv && receiveInvFile) {
+        setSavingStep("กำลังอัปโหลดเอกสาร INV...");
+        const uploadedInv = await uploadAttachment(receiveInvFile, {
+          type: "receive-inv",
+          projectId: selectedProjectId,
+          subPath: receiveNo,
+        });
+        invAttachment = {
+          ...uploadedInv,
+          type: "inv",
+          uploadedAt: now.toISOString(),
+        };
+      }
 
       // Upload photos and combine into PDF
       const savedItems = [];
@@ -683,7 +749,14 @@ const ReceiveView = React.memo(() => {
           copiedPages.forEach((page) => mergedPdf.addPage(page));
           rpPdfBytes = await mergedPdf.save();
         } catch (poMergeErr) {
+          if (getMaterialPdfCertificates(po).length) throw poMergeErr;
           console.warn("[ReceiveView] Failed to merge PO to RP PDF:", poMergeErr);
+        }
+
+        // Material only: RP -> PO -> Material certificates -> receiving photos -> INV.
+        if (getMaterialPdfCertificates(po).length) {
+          setSavingStep("กำลังรวมไฟล์ Material Received ลงใน PDF...");
+          rpPdfBytes = await appendMaterialCertificatesToPdf(rpPdfBytes, po);
         }
 
         // If there are photos, append them to the RP PDF
@@ -696,6 +769,18 @@ const ReceiveView = React.memo(() => {
           });
         }
 
+        if (receiveHasInv && receiveInvFile) {
+          setSavingStep("กำลังเพิ่มเอกสาร INV ลงใน PDF ใบตรวจรับสินค้า...");
+          const isPdf = receiveInvFile.type === "application/pdf" || receiveInvFile.name.toLowerCase().endsWith(".pdf");
+          rpPdfBytes = isPdf
+            ? await appendPdfFileToPdf(rpPdfBytes, receiveInvFile)
+            : await combineImagesToPdf([receiveInvFile], {
+                title: `ใบตรวจรับสินค้า ${receiveNo} พร้อมเอกสาร INV`,
+                maintainAspectRatio: true,
+                existingPdfBytes: rpPdfBytes,
+              });
+        }
+
         const safeRpNo = receiveNo.replace(/[^a-zA-Z0-9\-_]/g, "_");
         const safeProjId = selectedProjectId || "unknown";
         pdfPath = `generated/receives/${safeProjId}/${safeRpNo}.pdf`;
@@ -704,6 +789,8 @@ const ReceiveView = React.memo(() => {
         pdfUrl = await uploadGeneratedPdf(rpPdfBytes, pdfPath);
         
       } catch (pdfErr) {
+        // Do not save a Material receipt with a missing or incomplete certificate PDF.
+        if (getMaterialPdfCertificates(po).length) throw pdfErr;
         console.warn("[ReceiveView] PDF generation failed (non-fatal):", pdfErr);
         pdfUrl = null;
         pdfPath = null;
@@ -727,6 +814,11 @@ const ReceiveView = React.memo(() => {
         receivedByUid: user?.uid || null,
         receivedByName,
         note: receiveNote,
+        hasInv: Boolean(invAttachment),
+        ...(invAttachment ? {
+          invAttachment,
+          invAttachments: [invAttachment],
+        } : {}),
         createdAt: now.toISOString(),
         receiveType: po.receiveType || "",
         inventoryType: po.inventoryType || "",
@@ -818,7 +910,9 @@ const ReceiveView = React.memo(() => {
           evaluatorName: creatorDisplayName || (creatorFirstName ? `${creatorFirstName} ${creatorLastName}` : (user?.email || "Unknown")),
           evaluationDate: new Date().toISOString(),
           scores: receiveEvalScoresRef.current,
-          totalScore: receiveEvalScoresRef.current.q1 + receiveEvalScoresRef.current.q2,
+          totalScore: evaluationTotal(receiveEvalScoresRef.current, RECEIVE_WEIGHTS),
+          maxTotalScore: 70,
+          scoringVersion: 2,
           suggestion: receiveEvalScoresRef.current.suggestion || "",
           evaluationStage: "Receive"
         };
@@ -854,6 +948,8 @@ const ReceiveView = React.memo(() => {
 
       setViewingPO(null);
       setReceiveMode(false);
+      setReceiveHasInv(false);
+      setReceiveInvFile(null);
     } catch (e) {
       showAlert("Error", "เกิดข้อผิดพลาด: " + e.message, "error");
     } finally {
@@ -1131,9 +1227,12 @@ const ReceiveView = React.memo(() => {
   }, [deleteData, getPoStatusAfterReceiveDocs, invoices, logAction, openConfirm, pos, projectReceives, selectedProjectId, showAlert, updateData]);
 
   const handleDeleteReceivePo = useCallback((po) => {
+    const isMaterialType = po.receiveType === "Material";
     openConfirm(
       "ยืนยันการย้อนสถานะ",
-      `คุณต้องการคืน PO ${po.poNo || po.id} กลับเป็นสถานะ Approved ใช่หรือไม่?`,
+      isMaterialType
+        ? `คุณต้องการคืน PO ${po.poNo || po.id} กลับเป็นสถานะ Approved และส่งกลับไปรอตรวจที่แท็บ Material Received ใช่หรือไม่?`
+        : `คุณต้องการคืน PO ${po.poNo || po.id} กลับเป็นสถานะ Approved ใช่หรือไม่?`,
       async () => {
         const hasReceiveItems = projectReceives.some(
           (entry) =>
@@ -1153,17 +1252,22 @@ const ReceiveView = React.memo(() => {
         const updated = await updateData(
           "pos",
           po.id,
-          { status: "Approved", statusNow: "Approved" },
+          buildReceiveQueueResetPatch(po),
           { skipLog: true }
         );
         if (!updated) return;
 
         await logAction?.(
           "Reset PO From Receive",
-          `คืนสถานะ PO | ${buildRecordSummary("pos", po, po.id)} | สถานะใหม่: Approved`,
+          `คืนสถานะ PO | ${buildRecordSummary("pos", po, po.id)} | สถานะใหม่: Approved${isMaterialType ? " | ส่งกลับ Material Received รอตรวจใหม่" : ""}`,
           po.projectId || selectedProjectId
         );
-        showAlert("สำเร็จ", `คืน PO ${po.poNo || po.id} กลับเป็นสถานะ Approved แล้ว`, "success");
+        if (isMaterialType) {
+          setMaterialHistory(false);
+          setMaterialSearch("");
+          setActiveTab("material_received");
+        }
+        showAlert("สำเร็จ", `คืน PO ${po.poNo || po.id} กลับเป็นสถานะ Approved แล้ว${isMaterialType ? " และส่งกลับไปรอตรวจที่แท็บ Material Received" : ""}`, "success");
       },
       "danger"
     );
@@ -1268,6 +1372,7 @@ const ReceiveView = React.memo(() => {
 
           {/* ── Tabs ── */}
           <div className="flex items-center gap-1 bg-emerald-50/50 rounded-xl border border-emerald-100/50 p-1 w-fit">
+            {canViewReceiveEntry && (
             <button
               type="button"
               onClick={() => setActiveTab("po")}
@@ -1280,7 +1385,8 @@ const ReceiveView = React.memo(() => {
               <Package size={13} />
               รับของ
             </button>
-            {canViewReceiveHistory && (
+   
+            )}         {canViewReceiveHistory && (
               <button
                 type="button"
                 onClick={() => setActiveTab("history")}
@@ -1301,6 +1407,7 @@ const ReceiveView = React.memo(() => {
                 )}
               </button>
             )}
+            {canViewMaterialReceived && (
             <button
               type="button"
               onClick={() => setActiveTab("material_received")}
@@ -1312,18 +1419,53 @@ const ReceiveView = React.memo(() => {
             >
               <Boxes size={13} />
               Material Received
+              {pendingMaterialReceiveCount > 0 && (
+                <span
+                  className="bg-red-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5 min-w-[18px] text-center"
+                  aria-label={`รอตรวจ Material ${pendingMaterialReceiveCount} รายการ`}
+                  title={`รอตรวจ Material ${pendingMaterialReceiveCount} รายการ`}
+                >
+                  {pendingMaterialReceiveCount > 99 ? "99+" : pendingMaterialReceiveCount}
+                </span>
+              )}
             </button>
-          </div>
+   
+            )}       </div>
         </div>
       </div>
 
       {/* ── Tab: Material Received ── */}
-      {activeTab === "material_received" && (
-        <Card className="p-8 text-center text-slate-400">
-          <Boxes size={40} className="mx-auto mb-3 opacity-40" />
-          <p className="font-medium">Material Received</p>
+      {canViewMaterialReceived && activeTab === "material_received" && (
+        <Card className="overflow-hidden">
+          <div className="flex flex-wrap items-center gap-3 p-3 bg-blue-50 border-b">
+            <input aria-label="ค้นหา Material Received" placeholder="ค้นหา PO / PR / No. / ผู้จำหน่าย" value={materialSearch} onChange={(event) => setMaterialSearch(event.target.value)} className="border rounded-lg px-3 py-2 text-xs min-w-[240px]" />
+            <button onClick={() => setMaterialHistory(false)} className={`flex items-center gap-1.5 text-xs rounded-lg px-3 py-2 ${!materialHistory ? "bg-blue-700 text-white" : "bg-white"}`}>
+              รอตรวจ Material
+              {pendingMaterialReceiveCount > 0 && (
+                <span className="bg-red-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5 min-w-[18px] text-center">
+                  {pendingMaterialReceiveCount > 99 ? "99+" : pendingMaterialReceiveCount}
+                </span>
+              )}
+            </button>
+            {canViewReceiveHistory && <button onClick={() => setMaterialHistory(true)} className={`text-xs rounded-lg px-3 py-2 ${materialHistory ? "bg-blue-700 text-white" : "bg-white"}`}>ผ่านแล้ว / เอกสารย้อนหลัง</button>}
+          </div>
+          {!materialPOs.length ? <p className="p-8 text-center text-sm text-slate-400">ไม่มีรายการ {materialHistory ? "ที่ผ่าน Material Received" : "รอตรวจ Material"} ในโครงการนี้</p> :
+            <div className="overflow-x-auto"><table className="w-full text-xs text-left">
+              <thead className="bg-slate-50"><tr><th className="p-3">PO</th><th className="p-3">ผู้จำหน่าย</th><th className="p-3">PR / Material Approve No.</th><th className="p-3">สถานะ</th><th className="p-3">ดำเนินการ</th></tr></thead>
+              <tbody>{materialPOs.map((po) => <tr key={po.id} className="border-t hover:bg-slate-50">
+                <td className="p-3 font-semibold">{po.poNo}</td><td className="p-3">{po.vendorName || getVendorName(po.vendorId)}</td>
+                <td className="p-3">{(po.materialApproveRefs || []).map((reference) => <div key={reference.prId}>{reference.prNo} / {reference.no}</div>)}</td>
+                <td className="p-3">{hasPassedMaterialReceive(po) ? (isPoReadyForManualReceive(po) && !getReceiveProgress(po).done ? "ผ่าน Material — ไปแท็บรับของ" : "ผ่าน Material — ตรวจสถานะ PO / การจ่ายเงิน") : "รอตรวจ Material"}</td>
+                <td className="p-3"><button onClick={() => setMaterialPoId(po.id)} className="text-blue-700 font-semibold underline">เปิดรายการ</button></td>
+              </tr>)}</tbody>
+            </table></div>}
         </Card>
       )}
+      {materialPo && <MaterialReceivedModal key={materialPo.id} po={materialPo} user={user}
+        userName={`${userData?.firstName || ""} ${userData?.lastName || ""}`.trim() || user?.email || ""}
+        canConfirm={canUseFunction("receive", "receive")} showAlert={showAlert}
+        onClose={() => setMaterialPoId(null)}
+        onSaved={async (po) => { await logAction?.("Material Received", `ยืนยัน Material Received | PO: ${po.poNo} | ไม่มีการบันทึกจำนวนรับหรือยอดเงิน`, po.projectId); }} />}
 
       {/* ── Tab: รายการ Receive ── */}
       {canViewReceiveHistory && activeTab === "history" && (
@@ -1542,7 +1684,7 @@ const ReceiveView = React.memo(() => {
       )}
 
       {/* ── Tab: รับของ ── */}
-      {activeTab === "po" && (approvedPOs.length === 0 ? (
+      {canViewReceiveEntry && activeTab === "po" && (approvedPOs.length === 0 ? (
         <Card className="p-8 text-center text-slate-400">
           <Package size={40} className="mx-auto mb-3 opacity-40" />
           <p className="font-medium">ไม่มี PO ที่พร้อมรับของในโครงการนี้</p>
@@ -2003,6 +2145,50 @@ const ReceiveView = React.memo(() => {
                           onChange={(e) => setReceiveNote(e.target.value)}
                         />
                       </div>
+                    </div>
+
+                    <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-3">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-semibold text-violet-800">
+                          <input
+                            type="checkbox"
+                            checked={receiveHasInv}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setReceiveHasInv(checked);
+                              if (!checked) setReceiveInvFile(null);
+                            }}
+                            className="h-4 w-4 rounded border-violet-300 text-violet-600 focus:ring-violet-500"
+                          />
+                          มี INV
+                        </label>
+                        <span className={`text-xs font-semibold ${receiveHasInv ? "text-emerald-700" : "text-slate-500"}`}>
+                          สถานะ: {receiveHasInv ? "มี" : "ไม่มี"}
+                        </span>
+                      </div>
+                      {receiveHasInv && (
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-violet-300 bg-white px-3 py-1.5 text-xs font-semibold text-violet-700 transition-colors hover:bg-violet-100">
+                            <Paperclip size={13} />
+                            {receiveInvFile ? "เปลี่ยนเอกสาร INV" : "อัปโหลดเอกสาร INV"}
+                            <input
+                              type="file"
+                              accept="application/pdf,image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                handleReceiveInvFileChange(e.target.files?.[0]);
+                                e.target.value = "";
+                              }}
+                            />
+                          </label>
+                          <span className="max-w-full truncate text-xs text-slate-600" title={receiveInvFile?.name || ""}>
+                            {receiveInvFile?.name || "ยังไม่ได้เลือกไฟล์"}
+                          </span>
+                        </div>
+                      )}
+                      <p className="mt-1 text-[10px] text-violet-600">
+                        เลือก มี INV แล้วต้องแนบไฟล์ PDF หรือรูปภาพก่อนบันทึกรับของ
+                      </p>
                     </div>
 
                     <div className="border rounded-lg overflow-x-auto">

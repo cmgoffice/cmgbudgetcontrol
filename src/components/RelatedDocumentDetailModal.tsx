@@ -12,6 +12,8 @@ import {
 import { Badge, formatCurrency } from "./ui";
 
 const TYPE_CONFIG = {
+  po: { title: "รายละเอียด PO", icon: FileText, color: "orange" },
+  budget: { title: "รายละเอียด Budget", icon: ClipboardList, color: "blue" },
   pr: { title: "รายละเอียด PR", icon: ClipboardList, color: "blue" },
   payment: { title: "รายละเอียด Payment", icon: DollarSign, color: "orange" },
   receive: { title: "รายละเอียด Receive", icon: Package, color: "emerald" },
@@ -29,6 +31,8 @@ const HEADER_CLASSES = {
 
 const getDocumentNo = (type, doc) => {
   if (!doc) return "-";
+  if (type === "po") return doc.poNo || doc.id || "-";
+  if (type === "budget") return doc.code || doc.id || "-";
   if (type === "pr") return doc.prNo || doc.docNo || doc.id || "-";
   if (type === "payment") return doc.paymentNo || doc.docNo || doc.id || "-";
   if (type === "receive") return doc.rpNo || doc.receiveNo || doc.docNo || doc.id || "-";
@@ -42,6 +46,7 @@ const getPdfUrl = (doc) => (
   doc?.paySlipUrl?.url ||
   doc?.paySlipUrl ||
   doc?.slipUrl ||
+  doc?.invoiceAttachments?.find?.((att) => att?.url)?.url ||
   doc?.paymentAttachments?.find?.((att) => att?.url)?.url ||
   doc?.attachments?.find?.((att) => att?.url)?.url ||
   ""
@@ -67,6 +72,7 @@ const getItemAmount = (type, item) => {
 const getAttachments = (doc) => {
   const attachments = [];
   if (Array.isArray(doc?.attachments)) attachments.push(...doc.attachments);
+  if (Array.isArray(doc?.invoiceAttachments)) attachments.push(...doc.invoiceAttachments);
   if (Array.isArray(doc?.paymentAttachments)) attachments.push(...doc.paymentAttachments);
   if (doc?.attachmentUrl) attachments.push({ url: doc.attachmentUrl, name: doc.attachmentName });
   if (doc?.paySlipUrl) {
@@ -97,6 +103,21 @@ export default function RelatedDocumentDetailModal({ documentType, document, onC
   ) || 0;
 
   const detailsByType = {
+    po: [
+      ["PO No.", docNo],
+      ["วันที่", document.date || document.poDate],
+      ["ผู้ขาย", document.vendorName],
+      ["Cost Code", document.costCode],
+      ["เหตุผลขอแก้ไข", document.poEditRevisionReason],
+    ],
+    budget: [
+      ["Cost Code", docNo],
+      ["รายละเอียด", document.description],
+      ["จำนวน", document.quantity],
+      ["หน่วย", document.unit],
+      ["ราคาต่อหน่วย", document.unitPrice != null ? formatCurrency(document.unitPrice) : "-"],
+      ["เหตุผลขอแก้ไข", document.revisionReason],
+    ],
     pr: [
       ["PR No.", docNo],
       ["Request date", document.requestDate || document.createdAt],

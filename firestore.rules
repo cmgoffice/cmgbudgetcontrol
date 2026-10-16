@@ -107,6 +107,83 @@ service cloud.firestore {
         assignedToProject(appId, request.resource.data.get('projectId', ''));
     }
 
+    // Material inspection only writes its own metadata. Financial writes keep their existing rules.
+    function materialReceiveActionAllowed(appId, action) {
+      let permissionsPath = /databases/$(database)/documents/artifacts/$(appId)/public/data/settings/functionPermissions;
+      let roles = exists(permissionsPath)
+        ? get(permissionsPath).data.get('receive', {}).get(action, ['Administrator', 'MD', 'GM', 'PM', 'PCM', 'Staff'])
+        : ['Administrator', 'MD', 'GM', 'PM', 'PCM', 'Staff'];
+      return isAdmin(appId) || primaryRole(appId) in roles || secondaryRoles(appId).hasAny(roles);
+    }
+
+    function materialReceiverAllowed(appId) {
+      return materialReceiveActionAllowed(appId, 'receive');
+    }
+
+    function validMaterialQueueReset(appId) {
+      let previous = resource.data;
+      let next = request.resource.data;
+      let inspection = next.get('materialReceive', {});
+      return previous.get('receiveType', '') == 'Material' &&
+        !(previous.get('poType', '') in ['SP', 'DC']) &&
+        materialPoStatus(previous) in ['Approved', 'Approve', 'Partial Receive', 'paid'] &&
+        moduleAllowed(appId, 'receive') && materialReceiveActionAllowed(appId, 'delete') &&
+        next.diff(previous).affectedKeys().hasOnly(['status', 'statusNow', 'materialReceiveRequired', 'materialReceive', 'updatedAt']) &&
+        next.get('status', '') == 'Approved' && next.get('statusNow', '') == 'Approved' &&
+        next.get('materialReceiveRequired', false) && inspection.get('status', '') == 'pending' &&
+        inspection.diff(previous.get('materialReceive', {})).affectedKeys().hasOnly(['status']);
+    }
+
+    function materialPoStatus(po) {
+      let status = po.get('status', '');
+      let mirror = po.get('statusNow', '');
+      return status in ['Draft', 'Rejected', 'Pending PCM', 'Pending GM', 'PO Edit Pending PCM', 'PO Edit Pending GM', 'Pending Close PO', 'Closed PO', 'Cancelled', 'Canceled']
+        ? status : (mirror == '' || mirror == 'Draft' ? status : mirror);
+    }
+
+    function validMaterialPoUpdate(appId) {
+      let previous = resource.data;
+      let next = request.resource.data;
+      let changes = next.diff(previous).affectedKeys();
+      let inspection = next.get('materialReceive', {});
+      return (!previous.get('materialSnapshotLocked', false) || next.get('materialSnapshotLocked', false)) &&
+        (!previous.get('materialReceiveRequired', false) || next.get('materialReceiveRequired', false) ||
+        (previous.get('status', '') == 'Draft' && !previous.get('materialSnapshotLocked', false) && moduleAllowed(appId, 'po'))) &&
+        (!changes.hasAny(['materialReceive']) || validMaterialQueueReset(appId) || (
+          changes.hasOnly(['materialReceive']) &&
+          previous.get('materialReceiveRequired', false) &&
+          previous.get('materialReceive', {}).get('status', '') != 'passed' &&
+          !(previous.get('poType', '') in ['SP', 'DC']) &&
+          materialPoStatus(previous) in ['Approved', 'Approve', 'Partial Receive', 'Wait Invoice', 'Deposit', 'Invcredit', 'Inpay', 'paid', 'Paid', 'Received'] &&
+          moduleAllowed(appId, 'receive') && materialReceiverAllowed(appId) &&
+          inspection.keys().hasOnly(['status', 'certificates', 'note', 'confirmedByUid', 'confirmedByName', 'confirmedAt']) &&
+          inspection.get('status', '') == 'passed' &&
+          inspection.get('certificates', []) is list && inspection.get('note', '') is string &&
+          inspection.get('confirmedByUid', '') == request.auth.uid &&
+          inspection.get('confirmedAt', null) == request.time
+        ));
+    }
+
+    function materialReceiveWriteAllowed(appId) {
+      let receive = request.resource.data;
+      let poId = receive.get('poId', '');
+      let poPath = /databases/$(database)/documents/artifacts/$(appId)/public/data/pos/$(poId);
+      return poId == '' || !exists(poPath) || !get(poPath).data.get('materialReceiveRequired', false) || (
+        moduleAllowed(appId, 'receive') && materialReceiverAllowed(appId) &&
+        get(poPath).data.get('materialReceive', {}).get('status', '') == 'passed' &&
+        get(poPath).data.get('projectId', '') == receive.get('projectId', '') &&
+        !(get(poPath).data.get('poType', '') in ['SP', 'DC']) &&
+        (materialPoStatus(get(poPath).data) in ['Approved', 'Approve', 'Partial Receive'] ||
+          (materialPoStatus(get(poPath).data) == 'paid' &&
+            (get(poPath).data.get('payBeforeReceiveChecked', false) ||
+             get(poPath).data.get('receiveType', '').lower().matches('.*pay before.*') ||
+             get(poPath).data.get('invoiceMode', '') == 'pay_before_receive'))) &&
+        !receive.get('autoCreatedFromPoApproval', false) &&
+        !receive.get('autoCreatedFromPayDocument', false) &&
+        !receive.get('autoCreatedFromPayBeforeReceiveFlow', false)
+      );
+    }
+
     match /artifacts/{appId}/public/data {
       match /users/{uid} {
         allow get: if signedIn() && (request.auth.uid == uid || isAdmin(appId));
@@ -209,8 +286,9 @@ service cloud.firestore {
           moduleAllowed(appId, 'billing') || moduleAllowed(appId, 'pay') ||
           moduleAllowed(appId, 'budget-summary') || moduleAllowed(appId, 'project-spending')
         );
-        allow create: if canCreateInProject(appId) && moduleAllowed(appId, 'po');
-        allow update: if canUpdateExistingProjectDoc(appId) && (
+        allow create: if canCreateInProject(appId) && moduleAllowed(appId, 'po') &&
+          !request.resource.data.keys().hasAny(['materialReceive']);
+        allow update: if canUpdateExistingProjectDoc(appId) && validMaterialPoUpdate(appId) && (
           moduleAllowed(appId, 'po') || moduleAllowed(appId, 'payment-subcontract') ||
           moduleAllowed(appId, 'receive') || moduleAllowed(appId, 'invoice') ||
           moduleAllowed(appId, 'billing') || moduleAllowed(appId, 'pay') || moduleAllowed(appId, 'budget') ||
@@ -271,7 +349,7 @@ service cloud.firestore {
           moduleAllowed(appId, 'receive') || moduleAllowed(appId, 'invoice') ||
           moduleAllowed(appId, 'billing') || moduleAllowed(appId, 'pay')
         );
-        allow create: if canCreateInProject(appId) && (
+        allow create: if canCreateInProject(appId) && materialReceiveWriteAllowed(appId) && (
           moduleAllowed(appId, 'receive') || moduleAllowed(appId, 'po')
         );
         allow update: if canUpdateExistingProjectDoc(appId) && moduleAllowed(appId, 'receive');

@@ -31,6 +31,7 @@ import { TABLE_LAYOUT_DEFAULTS } from "./lib/tableLayoutDefaults";
 import {
   MODULE_ACCESS,
   MODULE_FUNCTIONS,
+  MODULE_TABS,
   PURCHASE_TYPES,
   PO_REVISION_PENDING_PCM,
   PO_REVISION_PENDING_GM,
@@ -274,6 +275,7 @@ const AppShell = () => {
     addData, updateData, deleteData,
     loadVendors, loadMaterials,
     totalPendingCount, pendingByProject, pendingCountByMenu,
+    pendingMaterialReceiveCount,
     pendingBudgetReturnByProject,
     handlePRAction, handlePOAction,
     showAlert, openConfirm,
@@ -555,6 +557,7 @@ const AppShell = () => {
                 active={activeMenu === "receive"}
                 onClick={() => changeMenu("receive")}
                 collapsed={sidebarCollapsed}
+                badge={pendingMaterialReceiveCount}
                 dense={sidebarDense}
               />
             )}
@@ -5564,7 +5567,7 @@ const AdminDashboard = () => {
                     <Key size={16} className="text-orange-500" /> Set Role Permissions
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    <strong>อ่าน</strong> = แสดงเมนูใน Sidebar &nbsp;|&nbsp; <strong>เขียน</strong> = เลือกฟังก์ชันที่ใช้ได้ในเมนูนั้น
+                    <strong>อ่าน</strong> = แสดงเมนูใน Sidebar &nbsp;|&nbsp; <strong>เขียน</strong> = เลือกฟังก์ชันที่ใช้ได้ในเมนูนั้น &nbsp;|&nbsp; <strong>Tab</strong> = เลือกแท็บที่มองเห็น
                   </p>
                 </div>
 
@@ -5665,7 +5668,7 @@ const AdminDashboard = () => {
                     <th
                       key={m.key}
                       className="px-2 py-2 text-center font-semibold text-slate-600 border-b border-slate-200 border-l border-slate-100 min-w-[88px]"
-                      colSpan={MODULE_FUNCTIONS[m.key]?.length > 0 ? 2 : 1}
+                      colSpan={(MODULE_FUNCTIONS[m.key]?.length > 0 ? 2 : 1) + (MODULE_TABS[m.key] ? 1 : 0)}
                       title={m.label}
                     >
                       <span className="text-[11px] leading-tight">{m.shortLabel || m.label}</span>
@@ -5683,6 +5686,7 @@ const AdminDashboard = () => {
                       <React.Fragment key={m.key}>
                         <th className="px-1.5 py-1 text-center font-medium border-l border-slate-100 text-orange-500">อ่าน</th>
                         <th className="px-1.5 py-1 text-center font-medium text-blue-500">เขียน</th>
+                        {MODULE_TABS[m.key] && <th className="px-1.5 py-1 text-center font-medium text-purple-500">Tab</th>}
                       </React.Fragment>
                     ) : (
                       <th key={m.key} className="px-1.5 py-1 text-center font-medium border-l border-slate-100 text-orange-500">อ่าน</th>
@@ -5709,7 +5713,8 @@ const AdminDashboard = () => {
                       {visibleRoleModules.map((m) => {
                         const readChecked = isAdminRole ? true : (localPermissions[m.key] || []).includes(role);
                         const readDisabled = isAdminRole || !canSaveAdminRolePermissions;
-                        const funcs = MODULE_FUNCTIONS[m.key] || [];
+                        const tabs = MODULE_TABS[m.key] || [];
+                        const funcs = (MODULE_FUNCTIONS[m.key] || []).filter((f) => !tabs.some((tab) => tab.key === f.key));
                         const dropdownKey = `${m.key}:${role}`;
                         const isDropdownOpen = openFuncDropdown === dropdownKey;
 
@@ -5721,6 +5726,7 @@ const AdminDashboard = () => {
                           return allowedRoles.includes(role);
                         }).length;
 
+                        const enabledTabCount = tabs.filter((tab) => isAdminRole || (localFunctionPermissions[m.key]?.[tab.key] || []).includes(role)).length;
                         return (
                           <React.Fragment key={m.key}>
                             {/* READ column */}
@@ -5772,6 +5778,54 @@ const AdminDashboard = () => {
                                                 checked={isEnabled}
                                                 onChange={() => handleFunctionToggle(m.key, role, f.key)}
                                                 className="w-3.5 h-3.5 shrink-0 rounded border-slate-300 accent-blue-500"
+                                              />
+                                              <span className="min-w-0 whitespace-normal text-left text-xs text-slate-700">{f.label}</span>
+                                            </label>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </td>
+                            )}
+                            {/* WRITE column (only if module has functions) */}
+                            {tabs.length > 0 && (
+                              <td className="px-1.5 py-2 text-center relative">
+                                {!readChecked && !isAdminRole ? (
+                                  <span className="text-[10px] text-slate-300">—</span>
+                                ) : (
+                                  <div className="relative inline-block" onClick={(e) => e.stopPropagation()}>
+                                    <button
+                                      onClick={() => setOpenFuncDropdown((openFuncDropdown === `${dropdownKey}:tabs`) ? null : `${dropdownKey}:tabs`)}
+                                      disabled={isAdminRole || !canSaveAdminRolePermissions}
+                                      className={`min-w-[48px] px-2 py-0.5 rounded text-[10px] font-semibold border transition-colors ${isAdminRole
+                                        ? "bg-purple-50 text-purple-400 border-purple-100 cursor-not-allowed"
+                                        : enabledTabCount > 0
+                                          ? "bg-purple-50 text-purple-600 border-purple-200 hover:bg-purple-100"
+                                          : "bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100"
+                                        }`}
+                                    >
+                                      {isAdminRole ? `${tabs.length}/${tabs.length}` : `${enabledTabCount}/${tabs.length}`} ▾
+                                    </button>
+                                    {(openFuncDropdown === `${dropdownKey}:tabs`) && (
+                                      <div className="absolute z-50 top-full left-1/2 -translate-x-1/2 mt-1 w-56 max-h-80 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-xl py-1">
+                                        <div className="px-3 py-1.5 border-b border-slate-100 text-[10px] font-bold text-slate-500 uppercase tracking-wide sticky top-0 bg-white z-10">
+                                          {m.label} — {role}
+                                        </div>
+                                        {tabs.map((f) => {
+                                          const allowedRoles = localFunctionPermissions[m.key]?.[f.key];
+                                          const isEnabled = allowedRoles ? allowedRoles.includes(role) : false;
+                                          return (
+                                            <label
+                                              key={f.key}
+                                              className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer"
+                                            >
+                                              <input
+                                                type="checkbox"
+                                                checked={isEnabled}
+                                                onChange={() => handleFunctionToggle(m.key, role, f.key)}
+                                                className="w-3.5 h-3.5 shrink-0 rounded border-slate-300 accent-purple-500"
                                               />
                                               <span className="min-w-0 whitespace-normal text-left text-xs text-slate-700">{f.label}</span>
                                             </label>

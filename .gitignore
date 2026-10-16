@@ -74,3 +74,9 @@ node_modules/
 # Local production audit evidence and backups (keep out of Git)
 /output/payment-invoice-audit-2026-10-05/
 /output/duplicate-visibility-2026-10-05/
+
+# Material Receive local build, baseline and emulator evidence
+/output/material-*/
+/output/material-*.cjs
+/output/material-*.json
+/output/material-firestore.rules

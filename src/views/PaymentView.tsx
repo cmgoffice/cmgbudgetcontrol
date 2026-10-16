@@ -1079,11 +1079,11 @@ const PaymentView = React.memo(({
       const project = (projects || []).find((p: any) => p.id === completionPayment.projectId);
       const rateMap: Record<string, number> = { good: 1, fair: 0.75, poor: 0.5 };
       const questions = [
-        { key: "q1", max: 1, label: "วัสดุที่นำมาใช้ต้องมีคุณภาพและตรงตามข้อกำหนด" },
-        { key: "q2", max: 1, label: "การจัดสรรแรงงานที่มีความรู้และเพียงพอต่องาน" },
-        { key: "q3", max: 1, label: "การปฏิบัติตามกฎหมาย ข้อกำหนดของโครงการ และกฎระเบียบข้อบังคับด้านความปลอดภัยและอาชีวอนามัย" },
-        { key: "q4", max: 1, label: "การจัดสรรเครื่องมือและอุปกรณ์ให้พร้อมใช้งานและตรงตามข้อกำหนดของโครงการและความปลอดภัย" },
-        { key: "q5", max: 1, label: "การส่งมอบงานตามเวลาที่กำหนด" },
+        { key: "q1", max: 20, label: "วัสดุที่นำมาใช้ต้องมีคุณภาพและตรงตามข้อกำหนด" },
+        { key: "q2", max: 15, label: "การจัดสรรแรงงานที่มีความรู้และเพียงพอต่องาน" },
+        { key: "q3", max: 5, label: "การปฏิบัติตามกฎหมาย ข้อกำหนดของโครงการ และกฎระเบียบข้อบังคับด้านความปลอดภัยและอาชีวอนามัย" },
+        { key: "q4", max: 15, label: "การจัดสรรเครื่องมือและอุปกรณ์ให้พร้อมใช้งานและตรงตามข้อกำหนดของโครงการและความปลอดภัย" },
+        { key: "q5", max: 20, label: "การส่งมอบงานตามเวลาที่กำหนด" },
       ];
       let totalScore = 0;
       const scores: any = {};
@@ -1107,7 +1107,9 @@ const PaymentView = React.memo(({
         jobNo: evalForm.jobNo.trim(),
         scores,
         totalScore,
-        maxTotalScore: 5,
+        maxTotalScore: 75,
+        scoringVersion: 2,
+        evaluationStage: "Payment",
         recommendations: evalForm.recommendations.trim(),
         createdAt: completedAt,
         createdBy: completedByName,
@@ -1223,7 +1225,7 @@ const PaymentView = React.memo(({
       }
       await logAction(
         "Complete Job & Evaluate",
-        `จบงานและประเมินผู้รับเหมา | ${getPaymentLogSummary(completionPayment, { status: "Paid" })}${emptyPeriodCleanup ? ` | ลบงวดว่าง: ${emptyPeriodCleanup.activePayment.paymentNo || emptyPeriodCleanup.activePayment.id}` : ""} | ผู้จบงาน: ${completedByName || "-"} | คะแนนรวม: ${Number(totalScore || 0).toLocaleString("th-TH")}/5`,
+        `จบงานและประเมินผู้รับเหมา | ${getPaymentLogSummary(completionPayment, { status: "Paid" })}${emptyPeriodCleanup ? ` | ลบงวดว่าง: ${emptyPeriodCleanup.activePayment.paymentNo || emptyPeriodCleanup.activePayment.id}` : ""} | ผู้จบงาน: ${completedByName || "-"} | คะแนนรวม: ${Number(totalScore || 0).toLocaleString("th-TH")}/75`,
         selectedProjectId
       );
       if (queuedReturnCount > 0) {
@@ -3039,8 +3041,8 @@ const PaymentView = React.memo(({
         const rateMap: Record<string, number> = { good: 1, fair: 0.75, poor: 0.5 };
         const questions = [
           {
-            key: "q1", max: 1, label: "1. วัสดุที่นำมาใช้ต้องมีคุณภาพและตรงตามข้อกำหนด",
-            desc: "เต็ม 1 คะแนน",
+            key: "q1", max: 20, label: "1. วัสดุที่นำมาใช้ต้องมีคุณภาพและตรงตามข้อกำหนด",
+            desc: "เต็ม 20 คะแนน (ผู้รับเหมาค่าแรงอย่างเดียวให้เลือก ดี)",
             criteria: {
               good: "วัสดุมีคุณภาพและถูกต้องตามข้อกำหนด",
               fair: "วัสดุมีปัญหาเล็กน้อยไม่กระทบต่อลูกค้า 1-3 ครั้ง",
@@ -3048,8 +3050,8 @@ const PaymentView = React.memo(({
             },
           },
           {
-            key: "q2", max: 1, label: "2. การจัดสรรแรงงานที่มีความรู้และเพียงพอต่องาน",
-            desc: "เต็ม 1 คะแนน",
+            key: "q2", max: 15, label: "2. การจัดสรรแรงงานที่มีความรู้และเพียงพอต่องาน",
+            desc: "เต็ม 15 คะแนน",
             criteria: {
               good: "ไม่พบปัญหาเกิดขึ้นเลย",
               fair: "มีปัญหาเล็กน้อยไม่กระทบต่อลูกค้า 1-3 ครั้ง",
@@ -3057,17 +3059,17 @@ const PaymentView = React.memo(({
             },
           },
           {
-            key: "q3", max: 1, label: "3. การปฏิบัติตามกฎหมาย ข้อกำหนดของโครงการ และกฎระเบียบข้อบังคับด้านความปลอดภัยและอาชีวอนามัย",
-            desc: "เต็ม 1 คะแนน",
+            key: "q3", max: 5, label: "3. การปฏิบัติตามกฎหมาย ข้อกำหนดของโครงการ และกฎระเบียบข้อบังคับด้านความปลอดภัยและอาชีวอนามัย",
+            desc: "เต็ม 5 คะแนน",
             criteria: {
-              good: "ส่งรวดเร็วทันเวลาที่กำหนดทุกครั้ง",
-              fair: "ส่งล่าช้ากว่าเวลาที่กำหนด 1-3 ครั้ง",
-              poor: "ส่งล่าช้ากว่าเวลาที่กำหนด 3 ครั้ง",
+              good: "ปฏิบัติตามมาตรฐานอย่างเคร่งครัด ไม่เคยถูกตักเตือน",
+              fair: "ปฏิบัติตามมาตรฐานได้ดีมีข้อบกพร่องเล็กน้อยและแก้ไขทันที",
+              poor: "ปฏิบัติตามมาตรฐานบางส่วน ต้องมีการตักเตือนหรือสั่งแก้ไขบ่อยครั้ง",
             },
           },
           {
-            key: "q4", max: 1, label: "4. การจัดสรรเครื่องมือและอุปกรณ์ให้พร้อมใช้งานและตรงตามข้อกำหนดของโครงการและความปลอดภัย",
-            desc: "เต็ม 1 คะแนน",
+            key: "q4", max: 15, label: "4. การจัดสรรเครื่องมือและอุปกรณ์ให้พร้อมใช้งานและตรงตามข้อกำหนดของโครงการและความปลอดภัย",
+            desc: "เต็ม 15 คะแนน",
             criteria: {
               good: "มีความพร้อมจัดหาและเตรียมเครื่องมือ",
               fair: "มีปัญหาเล็กน้อยไม่กระทบต่อลูกค้า 1-3 ครั้ง",
@@ -3075,8 +3077,8 @@ const PaymentView = React.memo(({
             },
           },
           {
-            key: "q5", max: 1, label: "5. การส่งมอบงานตามเวลาที่กำหนด",
-            desc: "เต็ม 1 คะแนน",
+            key: "q5", max: 20, label: "5. การส่งมอบงานตามเวลาที่กำหนด",
+            desc: "เต็ม 20 คะแนน",
             criteria: {
               good: "จัดส่งสินค้าภายในระยะเวลาที่กำหนดทุกครั้ง",
               fair: "มีปัญหาเล็กน้อยไม่กระทบลูกค้า 1-3 ครั้ง",
@@ -3173,7 +3175,7 @@ const PaymentView = React.memo(({
                               onChange={() => setEvalForm((prev) => ({ ...prev, [q.key]: r }))}
                               className="accent-blue-600 w-3.5 h-3.5"
                             />
-                            {ratingLabels[r]}
+                            {ratingLabels[r]} ({(q.max * rateMap[r]).toFixed(2)} คะแนน)
                           </label>
                         ))}
                       </div>
@@ -3182,7 +3184,7 @@ const PaymentView = React.memo(({
                 </div>
                 {/* ── Recommendations (14) ── */}
                 <div className="space-y-1 border border-slate-200 rounded-lg p-4 bg-white">
-                  <label className="text-[11px] font-semibold text-slate-700">14. คำแนะนำเพิ่มเติมที่ต้องการให้ผู้รับเหมาช่วงแก้ไขปรับปรุง</label>
+                  <label className="text-[11px] font-semibold text-slate-700">คำแนะนำเพิ่มเติมที่ต้องการให้ผู้รับเหมาช่วงแก้ไขปรับปรุง</label>
                   <textarea
                     rows={4}
                     value={evalForm.recommendations}
@@ -3193,8 +3195,8 @@ const PaymentView = React.memo(({
                 </div>
                 {/* ── Score summary ── */}
                 <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
-                  <span className="text-xs font-semibold text-blue-800">คะแนนรวมทั้งหมด / TOTAL SCORE</span>
-                  <span className="text-sm font-bold text-blue-900">{totalScore.toFixed(2)} / 100</span>
+                  <span className="text-xs font-semibold text-blue-800">คะแนนส่วน Payment (รวมกับ PO 25 คะแนน)</span>
+                  <span className="text-sm font-bold text-blue-900">{totalScore.toFixed(2)} / 75</span>
                 </div>
               </div>
               <div className="px-6 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0 rounded-b-2xl">
