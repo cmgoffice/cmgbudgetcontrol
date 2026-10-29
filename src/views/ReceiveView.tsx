@@ -3,7 +3,7 @@ import { RECEIVE_WEIGHTS, evaluationTotal } from "../lib/vendorScoring";
 import React, { useState, useMemo, useCallback, useContext, useEffect } from "react";
 import {
   ChevronDown, ChevronLeft, ChevronRight, Package, Eye, FileText,
-  Plus, X, Check, Clock, ExternalLink, Truck, ImageIcon, List, Search, Trash2, Boxes, Paperclip,
+  Plus, X, Check, Clock, ExternalLink, Truck, ImageIcon, List, Search, Trash2, Boxes, Paperclip, RefreshCw,
 } from "lucide-react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
@@ -131,6 +131,8 @@ const ReceiveView = React.memo(() => {
   const [expandedTypes, setExpandedTypes] = useState({});
   const [photoPreview, setPhotoPreview] = useState(null);
   const [viewingRcv, setViewingRcv] = useState(null);
+  const [recreatingPdf, setRecreatingPdf] = useState(false);
+  const [recreatedPdfVersion, setRecreatedPdfVersion] = useState(null);
   const [uploadingPhotos, setUploadingPhotos] = useState({});
   const [cmgStoreRetryingId, setCmgStoreRetryingId] = useState<string | null>(null);
   const [receiveSafePoPdfUrl, setReceiveSafePoPdfUrl] = useState<string | null>(null);
@@ -580,6 +582,105 @@ const ReceiveView = React.memo(() => {
     } catch (error) {
       console.error("[Photo Upload] Error creating file input:", error);
       showAlert("เกิดข้อผิดพลาด", "ไม่สามารถเปิดตัวเลือกไฟล์ได้ กรุณาลองใหม่", "error");
+    }
+  };
+
+  const handleRecreateReceivePdf = async ({ rcv, po, vendor }) => {
+    if (recreatingPdf) return;
+    setRecreatingPdf(true);
+    try {
+      const receiveNo = rcv.rpNo || rcv.receiveNo;
+      if (!receiveNo || !rcv.projectId || !po) {
+        throw new Error("ไม่พบเลขที่รับของ โครงการ หรือใบสั่งซื้อที่จำเป็นสำหรับสร้าง PDF");
+      }
+
+      const photos = (rcv.items || []).flatMap((item) => item.photos || []);
+      const photoFiles = await Promise.all(photos.map(async (photo, index) => {
+        if (!photo.url) throw new Error(`ไม่พบลิงก์รูปภาพที่ ${index + 1}`);
+        const response = await fetch(photo.url);
+        if (!response.ok) throw new Error(`ไม่สามารถโหลดรูปภาพที่ ${index + 1} ได้`);
+        const blob = await response.blob();
+        return new File([blob], photo.name || `photo-${index + 1}`, { type: blob.type });
+      }));
+
+      const project = projects.find((p) => p.id === rcv.projectId);
+      const receiverData = rcv.receivedByUid === user?.uid ? userData : { uid: rcv.receivedByUid };
+      const signatureUrl = rcv.receivedByUid
+        ? await resolveCurrentUserSignatureImage(receiverData, rcv.receivedByUid === user?.uid ? user : null)
+        : null;
+      let pdfBytes = await generateRPPdfBytes({
+        ...rcv,
+        location: rcv.deliveryLocation || po.location || project?.location || project?.name || "",
+      }, { signatureUrl, hideAmounts: true });
+
+      const poPdfBytes = await generatePOPdfBytes(po, { vendor, project, hideAmounts: true });
+      const signedPoPdfBytes = await stampPoSignaturesToPdf(poPdfBytes, po, {
+        currentUserData: userData,
+        currentAuthUser: user,
+        logPrefix: "[ReceiveView Recreate PO]",
+      });
+      const mergedPdf = await PDFDocument.load(pdfBytes);
+      const poDoc = await PDFDocument.load(signedPoPdfBytes);
+      const poPages = await mergedPdf.copyPages(poDoc, poDoc.getPageIndices());
+      poPages.forEach((page) => mergedPdf.addPage(page));
+      pdfBytes = await mergedPdf.save();
+
+      if (getMaterialPdfCertificates(po).length) {
+        pdfBytes = await appendMaterialCertificatesToPdf(pdfBytes, po);
+      }
+
+      if (photoFiles.length > 0) {
+        const originalPageCount = (await PDFDocument.load(pdfBytes)).getPageCount();
+        pdfBytes = await combineImagesToPdf(photoFiles, {
+          title: `ใบตรวจรับสินค้า ${receiveNo} พร้อมรูปภาพ`,
+          maintainAspectRatio: true,
+          existingPdfBytes: pdfBytes,
+        });
+        const combinedPdf = await PDFDocument.load(pdfBytes);
+        if (combinedPdf.getPageCount() !== originalPageCount + photoFiles.length) {
+          throw new Error("ไม่สามารถรวมรูปภาพทั้งหมดใน PDF ได้");
+        }
+      }
+
+      const invAttachment = rcv.invAttachment || rcv.invAttachments?.[0];
+      if (rcv.hasInv || invAttachment) {
+        if (!invAttachment?.url) throw new Error("ไม่พบเอกสาร INV สำหรับสร้าง PDF");
+        const response = await fetch(invAttachment.url);
+        if (!response.ok) throw new Error("ไม่สามารถโหลดเอกสาร INV ได้");
+        const blob = await response.blob();
+        const invFile = new File([blob], invAttachment.name || "inv", {
+          type: invAttachment.contentType || blob.type,
+        });
+        if (invFile.type === "application/pdf" || invFile.name.toLowerCase().endsWith(".pdf")) {
+          pdfBytes = await appendPdfFileToPdf(pdfBytes, invFile);
+        } else {
+          const originalPageCount = (await PDFDocument.load(pdfBytes)).getPageCount();
+          pdfBytes = await combineImagesToPdf([invFile], {
+            title: `ใบตรวจรับสินค้า ${receiveNo} พร้อมเอกสาร INV`,
+            maintainAspectRatio: true,
+            existingPdfBytes: pdfBytes,
+          });
+          if ((await PDFDocument.load(pdfBytes)).getPageCount() !== originalPageCount + 1) {
+            throw new Error("ไม่สามารถรวมเอกสาร INV ใน PDF ได้");
+          }
+        }
+      }
+
+      const safeRpNo = receiveNo.replace(/[^a-zA-Z0-9\-_]/g, "_");
+      const pdfPath = rcv.pdfPath || `generated/receives/${rcv.projectId}/${safeRpNo}.pdf`;
+      const pdfUrl = await uploadGeneratedPdf(pdfBytes, pdfPath);
+      const updated = await updateData("receives", rcv.id, { pdfUrl, pdfPath }, { skipLog: true });
+      if (!updated) throw new Error("สร้าง PDF แล้ว แต่บันทึกข้อมูล PDF ไม่สำเร็จ");
+      setViewingRcv((prev) => prev?.rcv?.id === rcv.id
+        ? { ...prev, rcv: { ...prev.rcv, pdfUrl, pdfPath } }
+        : prev);
+      setRecreatedPdfVersion({ id: rcv.id, value: Date.now() });
+      showAlert("สร้าง PDF สำเร็จ", "สร้าง PDF ใบรับของใหม่เรียบร้อยแล้ว", "success");
+    } catch (error) {
+      console.error("[ReceiveView] Failed to recreate receive PDF:", error);
+      showAlert("สร้าง PDF ไม่สำเร็จ", error?.message || "กรุณาลองใหม่อีกครั้ง", "error");
+    } finally {
+      setRecreatingPdf(false);
     }
   };
 
@@ -2362,6 +2463,12 @@ const ReceiveView = React.memo(() => {
       <AnimatePresence>
         {viewingRcv && (() => {
           const { rcv, po, vendor } = viewingRcv;
+          let displayPdfUrl = rcv.pdfUrl;
+          if (displayPdfUrl && recreatedPdfVersion?.id === rcv.id) {
+            const url = new URL(displayPdfUrl);
+            url.searchParams.set("recreated", String(recreatedPdfVersion.value));
+            displayPdfUrl = url.toString();
+          }
           const rcvItems = rcv.items || [];
           const poType = po?.poType;
           return (
@@ -2405,11 +2512,11 @@ const ReceiveView = React.memo(() => {
                       <div className="inline-block rounded-2xl bg-gradient-to-br from-teal-50 via-emerald-50 to-cyan-50 border border-teal-100 p-3 shadow-sm shrink-0">
                         <div
                           className="relative w-[210px] rounded-xl overflow-hidden border border-teal-100 shadow-md bg-white cursor-pointer group"
-                          onClick={() => window.open(rcv.pdfUrl, "_blank")}
+                          onClick={() => window.open(displayPdfUrl, "_blank")}
                           title="คลิกเพื่อเปิด PDF ใบตรวจรับสินค้า"
                         >
                           <iframe
-                            src={`${rcv.pdfUrl}#view=FitH&toolbar=0&navpanes=0&scrollbar=0`}
+                            src={`${displayPdfUrl}#view=FitH&toolbar=0&navpanes=0&scrollbar=0`}
                             title="RP PDF preview"
                             className="w-full border-0 pointer-events-none select-none"
                             style={{ height: 296, transformOrigin: "top left" }}
@@ -2433,7 +2540,7 @@ const ReceiveView = React.memo(() => {
                             )}
                           </div>
                           <a
-                            href={rcv.pdfUrl}
+                            href={displayPdfUrl}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-teal-100 hover:bg-teal-200 text-teal-600 text-[10px] font-semibold transition-colors"
@@ -2558,9 +2665,18 @@ const ReceiveView = React.memo(() => {
 
                 {/* Footer */}
                 <div className="flex items-center justify-end px-6 py-4 border-t border-slate-100 bg-slate-50/50 rounded-b-2xl">
+                  <button
+                    type="button"
+                    onClick={() => handleRecreateReceivePdf(viewingRcv)}
+                    disabled={recreatingPdf}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-teal-600 text-teal-700 hover:bg-teal-50 text-sm font-semibold transition-colors mr-3 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <RefreshCw size={14} className={recreatingPdf ? "animate-spin" : ""} />
+                    {recreatingPdf ? "กำลังสร้าง PDF..." : "Recreate PDF"}
+                  </button>
                   {rcv.pdfUrl && (
                     <a
-                      href={rcv.pdfUrl}
+                      href={displayPdfUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold transition-colors mr-3"
