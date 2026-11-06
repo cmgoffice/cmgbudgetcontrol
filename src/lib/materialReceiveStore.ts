@@ -1,4 +1,4 @@
-import { collection, doc, runTransaction, serverTimestamp } from "firebase/firestore";
+import { collection, doc, getDocs, query, runTransaction, serverTimestamp, where } from "firebase/firestore";
 import { assertMaterialManualReceive, hasPassedMaterialReceive, isMaterialPending, materialInspectionScope } from "./materialReceive";
 
 export async function confirmMaterialReceive({ db, appId, poId, projectId, certificates, removedCertificateUrls = [], note, userId, userName, expectedScope }: any) {
@@ -33,4 +33,37 @@ export async function createReceiveWithMaterialGuard({ db, appId, data, customId
     transaction.set(receiveRef, data);
   });
   return receiveRef.id;
+}
+
+export const sumReceivedQtyByPoItem = (receives: any[] = []) => {
+  const totals: Record<number, number> = {};
+  (receives || []).forEach((receive: any) => {
+    (receive?.items || []).forEach((item: any) => {
+      const index = Number(item?.poItemIndex);
+      if (!Number.isInteger(index) || index < 0) return;
+      totals[index] = (totals[index] || 0) + Number(item?.receivedQty || 0);
+    });
+  });
+  return totals;
+};
+
+/** Lines whose new quantity would take the PO line past its ordered quantity. */
+export const getOverReceivedItems = (po: any, itemsToSave: any[] = [], receivedByIndex: Record<number, number> = {}) =>
+  (itemsToSave || []).filter((item: any) => {
+    const index = Number(item?.poItemIndex);
+    const ordered = Number(po?.items?.[index]?.quantity || 0);
+    const alreadyReceived = Number(receivedByIndex[index] || 0);
+    return alreadyReceived + Number(item?.receivedQty || 0) > ordered + 0.000001;
+  }).map((item: any) => {
+    const index = Number(item?.poItemIndex);
+    const ordered = Number(po?.items?.[index]?.quantity || 0);
+    return { ...item, remaining: Math.max(0, ordered - Number(receivedByIndex[index] || 0)) };
+  });
+
+// The page listener can lag behind another tab/user, so quantity checks read
+// the latest Receive documents of this PO directly before saving.
+export async function fetchReceivedQtyByPoItem({ db, appId, poId, projectId }: any) {
+  const receiveCollection = collection(db, "artifacts", appId, "public", "data", "receives");
+  const snapshot = await getDocs(query(receiveCollection, where("projectId", "==", projectId), where("poId", "==", poId)));
+  return sumReceivedQtyByPoItem(snapshot.docs.map((entry: any) => entry.data()));
 }

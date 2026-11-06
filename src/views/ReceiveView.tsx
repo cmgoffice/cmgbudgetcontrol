@@ -29,6 +29,8 @@ import { resolveCurrentUserSignatureImage, stampPoSignaturesToPdf } from "../lib
 import { isPoReadyForManualReceive } from "../lib/constants";
 import { canReceiveAfterMaterial, hasPassedMaterialReceive, isMaterialPending, requiresMaterialReceive, assertMaterialManualReceive, buildReceiveQueueResetPatch } from "../lib/materialReceive";
 import MaterialReceivedModal from "../components/MaterialReceivedModal";
+import { fetchReceivedQtyByPoItem, getOverReceivedItems } from "../lib/materialReceiveStore";
+import { db, appId } from "../lib/firebase";
 import {
   getCmgStoreTargetProjectCode,
   isCmgStoreEligibleInventoryStatus,
@@ -142,6 +144,8 @@ const ReceiveView = React.memo(() => {
   // Receive Evaluation state
   const [receiveEvalModalOpen, setReceiveEvalModalOpen] = useState(false);
   const receiveEvalScoresRef = React.useRef<{ q1: number; q2: number; suggestion?: string } | null>(null);
+  // Synchronous guard: `saving` state updates too late to stop a second click.
+  const savingReceiveRef = React.useRef(false);
 
   // Search states
   const [poPOSearch, setPoPOSearch] = useState("");
@@ -687,7 +691,7 @@ const ReceiveView = React.memo(() => {
   // Save receive transaction
   const handleSaveReceive = async () => {
     const po = viewingPO;
-    if (!po) return;
+    if (!po || saving || savingReceiveRef.current) return;
     try { assertMaterialManualReceive(pos.find((entry) => entry.id === po.id) || po); }
     catch (error: any) { return showAlert("Material Received", error.message, "warning"); }
 
@@ -700,14 +704,15 @@ const ReceiveView = React.memo(() => {
       return showAlert("ยังไม่ได้เลือกเอกสาร INV", "กรุณากดปุ่มอัปโหลดเอกสาร INV หรือเลือก ไม่มี INV", "warning");
     }
 
-    for (const item of itemsToSave) {
-      if (item.receivedQty > item.remaining) {
-        return showAlert(
-          "จำนวนเกิน",
-          `"${item.description}" รับได้สูงสุด ${item.remaining} ${item.unit}`,
-          "error"
-        );
-      }
+    // `item.remaining` was calculated when the form opened; re-check against
+    // the receives currently loaded so a save from a stale form cannot exceed the PO.
+    const [overItem] = getOverReceivedItems(po, itemsToSave, receiveSummary[po.id] || {});
+    if (overItem) {
+      return showAlert(
+        "จำนวนเกิน",
+        `"${overItem.description}" รับได้สูงสุด ${overItem.remaining} ${overItem.unit}`,
+        "error"
+      );
     }
 
     const summary = { ...(receiveSummary[po.id] || {}) };
@@ -730,11 +735,32 @@ const ReceiveView = React.memo(() => {
 
   const executeSaveReceive = async (itemsToSave: any[], allFullyReceived: boolean, summary: any) => {
     const po = viewingPO;
-    if (!po) return;
+    if (!po || savingReceiveRef.current) return;
 
+    savingReceiveRef.current = true;
     setSaving(true);
-    setSavingStep("กำลังอัปโหลดรูปภาพ...");
+    setSavingStep("กำลังตรวจสอบจำนวนรับล่าสุด...");
     try {
+      const latestReceived = await fetchReceivedQtyByPoItem({ db, appId, poId: po.id, projectId: po.projectId });
+      const [overItem] = getOverReceivedItems(po, itemsToSave, latestReceived);
+      if (overItem) {
+        receiveEvalScoresRef.current = null;
+        showAlert(
+          "จำนวนเกิน",
+          `"${overItem.description}" มีการรับของไปแล้ว รับเพิ่มได้สูงสุด ${overItem.remaining} ${overItem.unit}\nกรุณาปิดแล้วเปิดรายการรับของใหม่`,
+          "error"
+        );
+        return;
+      }
+      const latestSummary = { ...latestReceived };
+      itemsToSave.forEach((item) => {
+        latestSummary[item.poItemIndex] = (latestSummary[item.poItemIndex] || 0) + Number(item.receivedQty || 0);
+      });
+      allFullyReceived = (po.items || []).every(
+        (item, idx) => Number(latestSummary[idx] || 0) >= Number(item.quantity || 0)
+      );
+
+      setSavingStep("กำลังอัปโหลดรูปภาพ...");
       const receiveNo = generateReceiveNo();
       const now = new Date();
       const receivedByName = `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim();
@@ -1054,6 +1080,7 @@ const ReceiveView = React.memo(() => {
     } catch (e) {
       showAlert("Error", "เกิดข้อผิดพลาด: " + e.message, "error");
     } finally {
+      savingReceiveRef.current = false;
       setSavingStep("");
       setSaving(false);
     }

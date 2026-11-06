@@ -1,5 +1,11 @@
-import { runTransaction } from "firebase/firestore";
-import { confirmMaterialReceive, createReceiveWithMaterialGuard } from "./materialReceiveStore";
+import { getDocs, runTransaction, where } from "firebase/firestore";
+import {
+  confirmMaterialReceive,
+  createReceiveWithMaterialGuard,
+  fetchReceivedQtyByPoItem,
+  getOverReceivedItems,
+  sumReceivedQtyByPoItem,
+} from "./materialReceiveStore";
 import { materialInspectionScope } from "./materialReceive";
 
 jest.mock("firebase/firestore", () => ({
@@ -7,6 +13,9 @@ jest.mock("firebase/firestore", () => ({
   doc: (...parts) => ({ id: "new-receive", path: parts.map(String).join("/") }),
   serverTimestamp: () => "SERVER_TIME",
   runTransaction: jest.fn(),
+  getDocs: jest.fn(),
+  query: (...parts) => parts,
+  where: jest.fn((...parts) => parts),
 }));
 const material = { projectId: "project-1", poType: "CR", status: "Approved", materialReceiveRequired: true, amount: 963, grandTotal: 963, items: [{ quantity: 10, price: 100, amount: 1000 }] };
 const args = { db: {}, appId: "app", poId: "po-1", projectId: "project-1", certificates: [{ url: "https://example.test/cert.pdf", name: "cert.pdf" }], note: "  ผ่าน  ", userId: "user-1", userName: "ผู้รับ", expectedScope: materialInspectionScope(material) };
@@ -66,4 +75,28 @@ test("removes only selected certificates while preserving concurrently added fil
   const transaction = mockPo({ ...material, materialReceive: { status: "pending", certificates: [removed, kept] } });
   await expect(confirmMaterialReceive({ ...args, removedCertificateUrls: [removed.url] })).resolves.toBe(true);
   expect(transaction.update.mock.calls[0][1].materialReceive.certificates).toEqual([kept, ...args.certificates]);
+});
+
+// Mirrors PO26J74-CR0258: two Receive saves of 200 against a 200-unit line.
+const receivePo = { id: "po-r", projectId: "project-1", items: [{ quantity: 200 }, { quantity: 5 }] };
+
+test("sums received quantity per PO line across Receive documents", () => {
+  expect(sumReceivedQtyByPoItem([
+    { items: [{ poItemIndex: 0, receivedQty: 120 }, { poItemIndex: 1, receivedQty: 2 }] },
+    { items: [{ poItemIndex: 0, receivedQty: "80" }] },
+  ])).toEqual({ 0: 200, 1: 2 });
+});
+
+test("flags a second Receive that would exceed the ordered quantity", () => {
+  const items = [{ poItemIndex: 0, receivedQty: 200, description: "ใบตัดเหล็ก", unit: "ใบ" }];
+  expect(getOverReceivedItems(receivePo, items, {})).toEqual([]);
+  expect(getOverReceivedItems(receivePo, items, { 0: 200 })).toEqual([{ ...items[0], remaining: 0 }]);
+  expect(getOverReceivedItems(receivePo, [{ poItemIndex: 1, receivedQty: 3 }], { 1: 2 })).toEqual([]);
+});
+
+test("reads the latest Receive documents of the PO within its project", async () => {
+  getDocs.mockResolvedValue({ docs: [{ data: () => ({ items: [{ poItemIndex: 0, receivedQty: 200 }] }) }] });
+  await expect(fetchReceivedQtyByPoItem({ db: {}, appId: "app", poId: "po-r", projectId: "project-1" })).resolves.toEqual({ 0: 200 });
+  expect(where).toHaveBeenCalledWith("projectId", "==", "project-1");
+  expect(where).toHaveBeenCalledWith("poId", "==", "po-r");
 });

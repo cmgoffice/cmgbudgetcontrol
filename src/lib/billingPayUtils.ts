@@ -58,6 +58,10 @@ export const getInvoiceAmountForPo = (invoice: any, po: any) => {
 const sameText = (left: any, right: any) =>
   String(left || "").trim() !== "" && String(left || "") === String(right || "");
 
+const invoiceBelongsToPo = (invoice: any, po: any) =>
+  sameText(invoice?.poId, po?.id) ||
+  (!invoice?.poId && (sameText(invoice?.poRef, po?.poNo) || sameText(invoice?.poNo, po?.poNo)));
+
 export const getSpentInvoiceAmountForPo = (
   invoices: any[] = [],
   po: any,
@@ -68,13 +72,63 @@ export const getSpentInvoiceAmountForPo = (
   return invoices.reduce((sum: number, invoice: any) => {
     if (!invoice || !isSpentInvoiceRecord(invoice)) return sum;
     if (excludedInvoiceId && sameText(invoice.id, excludedInvoiceId)) return sum;
-
-    const belongsToPo =
-      sameText(invoice.poId, po.id) ||
-      (!invoice.poId && (sameText(invoice.poRef, po.poNo) || sameText(invoice.poNo, po.poNo)));
-
-    return belongsToPo ? sum + getInvoiceAmountForPo(invoice, po) : sum;
+    return invoiceBelongsToPo(invoice, po) ? sum + getInvoiceAmountForPo(invoice, po) : sum;
   }, 0);
+};
+
+/**
+ * Quantity already billed per PO line by spent invoices. Returns null when a
+ * linked invoice has no line detail (legacy), because coverage cannot be known.
+ */
+export const getInvoicedQtyByPoItem = (
+  invoices: any[] = [],
+  po: any,
+  excludedInvoiceId: any = ""
+): Map<number, number> | null => {
+  const quantities = new Map<number, number>();
+  if (!po) return quantities;
+
+  for (const invoice of invoices || []) {
+    if (!invoice || !isSpentInvoiceRecord(invoice)) continue;
+    if (excludedInvoiceId && sameText(invoice.id, excludedInvoiceId)) continue;
+    if (!invoiceBelongsToPo(invoice, po)) continue;
+
+    const lines = Array.isArray(invoice.items) ? invoice.items : [];
+    if (lines.length === 0) return null;
+    lines.forEach((line: any) => {
+      if (line?.isDiscountAdjustment) return;
+      const index = Number(line?.poItemIndex);
+      if (!Number.isInteger(index) || index < 0) return;
+      quantities.set(index, (quantities.get(index) || 0) + Number(line?.quantity ?? line?.invoiceQty ?? 0));
+    });
+  }
+  return quantities;
+};
+
+/**
+ * A PO may move to a paid/credit status only when every ordered line has been
+ * billed in full. Prices may differ from the PO; missing lines or quantities
+ * mean the remaining work still needs an invoice.
+ */
+export const isPoFullyInvoiced = ({
+  po,
+  invoices = [],
+  candidateInvoice = null,
+  excludedInvoiceId = "",
+}: any) => {
+  const items = Array.isArray(po?.items) ? po.items : [];
+  if (items.length === 0) return true;
+
+  const rows = candidateInvoice
+    ? [...(invoices || []), { ...candidateInvoice, id: "__candidate__", status: "paid", poId: po.id }]
+    : invoices;
+  const quantities = getInvoicedQtyByPoItem(rows, po, excludedInvoiceId);
+  if (!quantities) return true;
+
+  return items.every((item: any, index: number) => {
+    const ordered = Number(item?.quantity || 0);
+    return ordered <= 0 || (quantities.get(index) || 0) >= ordered - 0.000001;
+  });
 };
 
 export const validateInvoiceAmountForPo = ({

@@ -39,7 +39,13 @@ import {
   truncateLogText,
 } from "../lib/systemLogDetails";
 import { uploadAttachment } from "../lib/uploadAttachment";
-import { getInvoiceAmount, validateInvoiceAmountForPo } from "../lib/billingPayUtils";
+import {
+  getInvoiceAmount,
+  getInvoicedQtyByPoItem,
+  isPoFullyInvoiced,
+  isSpentInvoiceRecord,
+  validateInvoiceAmountForPo,
+} from "../lib/billingPayUtils";
 import { isHiddenDuplicateDraft, partitionInvoiceDrafts } from "../lib/invoiceDuplicateVisibility";
 import { buildPaymentInvoiceFormItems, validatePaymentInvoiceAmount } from "../lib/paymentInvoice";
 import RelatedDocumentDetailModal from "../components/RelatedDocumentDetailModal";
@@ -105,6 +111,8 @@ const PAYMENT_TYPE_BADGE_STYLES: Record<string, string> = {
 
 const getPoInvoiceStatus = (paymentType?: string, isDeposit = false) =>
   getInvoiceStatusByPaymentType(paymentType, isDeposit);
+
+const PARTIAL_INVOICE_NOTICE = "PO ยังมีรายการที่ยังไม่ได้วาง Invoice ครบ จึงคงสถานะ PO เดิมไว้ เพื่อวาง Invoice รายการที่เหลือต่อได้";
 
 const getInvoiceLogSummary = (invoice: any, patch: any = null) =>
   buildRecordSummary("invoices", patch ? { ...invoice, ...patch } : invoice, invoice?.id);
@@ -321,6 +329,15 @@ const InvoiceView = React.memo(() => {
   const getPoAmountExVat = useCallback((po: any) => {
     return resolvePoAmountExVat(po);
   }, []);
+
+  // A partial invoice must not close the PO, otherwise the remaining lines can
+  // no longer be invoiced. Deposits keep their own status flow.
+  const shouldUpdatePoInvoiceStatus = useCallback(
+    (po: any, invoiceStatus: string, candidateInvoice: any, excludedInvoiceId = "") =>
+      invoiceStatus === "Deposit" ||
+      isPoFullyInvoiced({ po, invoices, candidateInvoice, excludedInvoiceId }),
+    [invoices]
+  );
 
   const validateInvoiceAmount = useCallback(
     (po: any, candidateAmount: number, candidateStatus: string, excludedInvoiceId = "") => {
@@ -1323,6 +1340,18 @@ const InvoiceView = React.memo(() => {
     []
   );
 
+  // A PO left open after a partial invoice should default to the lines and
+  // quantities that are still unbilled, not the full PO again.
+  const withRemainingInvoiceQty = (source: any, items: any[]) => {
+    if (source?.isPaymentSubcontract) return items;
+    const invoicedQty = getInvoicedQtyByPoItem(invoices, source);
+    if (!invoicedQty || invoicedQty.size === 0) return items;
+    return items.map((item: any) => {
+      const remaining = Math.max(0, Number(item.quantity || 0) - (invoicedQty.get(Number(item.poItemIndex)) || 0));
+      return { ...item, invoiceQty: remaining, checked: remaining > 0 };
+    });
+  };
+
   const openPODetail = (po: any) => {
     const source = getInvoiceSource({
       poId: po.id,
@@ -1340,7 +1369,7 @@ const InvoiceView = React.memo(() => {
         depositAmount: Number(po?.payBeforeReceiveInvoiceSetup?.depositAmount || 0),
         originalDepositAmount: Number(po?.payBeforeReceiveInvoiceSetup?.depositAmount || 0),
         settleRemaining: false,
-        items: buildInvoiceItemsForForm(source, { items: source?.items || [] }),
+        items: withRemainingInvoiceQty(source, buildInvoiceItemsForForm(source, { items: source?.items || [] })),
       });
   };
 
@@ -1473,8 +1502,13 @@ const InvoiceView = React.memo(() => {
       const originalInvoiceAmount = isEditingInvoice
         ? getInvoiceAmount(editingInvoice)
         : 0;
+      // Skip re-validation only for an invoice that was already counted against
+      // the PO. A Draft (e.g. created from receives) was never validated, so
+      // confirming it with the same amount must still check the PO limit.
       const invoiceAmountUnchanged =
-        isEditingInvoice && Math.abs(totalAmount - originalInvoiceAmount) <= 0.01;
+        isEditingInvoice &&
+        isSpentInvoiceRecord(editingInvoice) &&
+        Math.abs(totalAmount - originalInvoiceAmount) <= 0.01;
       const invoiceStatus = getPoInvoiceStatus(
         invoiceForm.paymentType,
         !invoiceForm.settleRemaining && invoiceForm.isDeposit
@@ -1604,7 +1638,13 @@ const InvoiceView = React.memo(() => {
             }, { skipLog: true });
             if (!paymentUpdated) throw new Error("อัปเดตสถานะ Payment เป็น In Process ไม่สำเร็จ");
           }
-          if (!viewingPO.isPaymentSubcontract) {
+          const poStatusUpdated = !viewingPO.isPaymentSubcontract && shouldUpdatePoInvoiceStatus(
+            viewingPO,
+            invoiceStatus,
+            invoicePayload,
+            editingInvoice.id
+          );
+          if (poStatusUpdated) {
             await updateData(
               "pos",
               viewingPO.id,
@@ -1622,7 +1662,13 @@ const InvoiceView = React.memo(() => {
             editingInvoice.projectId || selectedProjectId
           );
           closeInvoiceModal(true);
-          showAlert("สำเร็จ", invoiceForm.settleRemaining ? "บันทึกยอดส่วนที่เหลือและส่งกลับเข้า flow หลักแล้ว" : "แก้ไขใบแจ้งหนี้เรียบร้อยแล้ว", "success");
+          showAlert(
+            "สำเร็จ",
+            `${invoiceForm.settleRemaining ? "บันทึกยอดส่วนที่เหลือและส่งกลับเข้า flow หลักแล้ว" : "แก้ไขใบแจ้งหนี้เรียบร้อยแล้ว"}${
+              !viewingPO.isPaymentSubcontract && !poStatusUpdated ? `\n${PARTIAL_INVOICE_NOTICE}` : ""
+            }`,
+            "success"
+          );
         }
       } else {
         const success = await addData("invoices", invoicePayload, null, { skipLog: true });
@@ -1654,7 +1700,13 @@ const InvoiceView = React.memo(() => {
           selectedProjectId
         );
 
-        if (!viewingPO.isPaymentSubcontract) {
+        const poStatusUpdated = !viewingPO.isPaymentSubcontract && shouldUpdatePoInvoiceStatus(
+          viewingPO,
+          invoiceStatus,
+          invoicePayload,
+          typeof success === "string" ? success : ""
+        );
+        if (poStatusUpdated) {
           await updateData(
             "pos",
             viewingPO.id,
@@ -1668,7 +1720,11 @@ const InvoiceView = React.memo(() => {
         }
 
         closeInvoiceModal(true);
-        showAlert("สำเร็จ", "บันทึกใบแจ้งหนี้เรียบร้อยแล้ว", "success");
+        showAlert(
+          "สำเร็จ",
+          `บันทึกใบแจ้งหนี้เรียบร้อยแล้ว${!viewingPO.isPaymentSubcontract && !poStatusUpdated ? `\n${PARTIAL_INVOICE_NOTICE}` : ""}`,
+          "success"
+        );
       }
     } catch (e: any) {
       showAlert("เกิดข้อผิดพลาด", e.message, "error");
@@ -1776,7 +1832,12 @@ const InvoiceView = React.memo(() => {
              selectedProjectId
            );
 
-           if (!isDraft && String(po.statusNow) !== "Partial Receive" && !po.isPaymentSubcontract) {
+           if (
+             !isDraft &&
+             String(po.statusNow) !== "Partial Receive" &&
+             !po.isPaymentSubcontract &&
+             shouldUpdatePoInvoiceStatus(po, invoiceStatus, invoicePayload, typeof success === "string" ? success : "")
+           ) {
                await updateData("pos", po.id, { status: invoiceStatus, statusNow: invoiceStatus }, { skipLog: true });
            }
         }
