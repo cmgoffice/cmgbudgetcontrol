@@ -480,7 +480,7 @@ const MaterialView = React.memo(() => {
                   <td className="py-1.5 px-3 text-center text-slate-500" title={m.unit}><span className="cell-text">{m.unit || "-"}</span></td>
                   )}
                   {isColumnVisible("material", "actions") && (
-                  <td className="py-1.5 px-3 text-right">
+                  <td className="mobile-icon-actions py-1.5 px-3 text-right">
                     <div className="flex justify-end gap-1">
                       {canUseFunction("material", "edit") && (
                         <button className="text-blue-500 hover:text-blue-700 p-1 hover:bg-blue-50 rounded" onClick={() => handleOpenEdit(m)} title="แก้ไข">

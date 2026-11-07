@@ -1882,32 +1882,59 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
       ? "hover:bg-teal-50/60 border-b cursor-pointer transition-colors odd:bg-white even:bg-teal-50/25"
       : "hover:bg-blue-50 border-b cursor-pointer transition-colors odd:bg-white even:bg-slate-50";
 
+  const confirmDeletePr = (pr) => {
+    openConfirm(
+      "ยืนยันการลบ",
+      "คุณต้องการลบรายการ PR นี้ใช่หรือไม่?",
+      async () => {
+        if (pr.pdfUrl) {
+          const safePRNo = (pr.prNo || pr.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
+          const safeProjId = pr.projectId || "unknown";
+          await deleteGeneratedPdf(`generated/prs/${safeProjId}/${safePRNo}.pdf`);
+        }
+        await deleteData("prs", pr.id);
+      },
+      "danger"
+    );
+  };
+
+  const confirmClosePr = (pr) => {
+    openConfirm(
+      "ยืนยันการปิด PR",
+      `คุณต้องการปิด PR ${pr.prNo} ใช่หรือไม่?`,
+      async () => {
+        await updateData("prs", pr.id, { status: "Closed PR" });
+      },
+      "success"
+    );
+  };
+
   const renderPrActionCell = (pr, className, rowDisplayData) => (
     isColumnVisible("pr", "actions") && (
-      <td className={`py-0.5 px-2 text-right ${className}`} onClick={(e) => e.stopPropagation()}>
+      <td className={`mobile-icon-actions py-0.5 px-2 text-right ${className}`} onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-start gap-1 md:justify-end">
             {canApprovePR && (userRoles.includes("CM") || userRoles.includes("PM") || userRoles.includes("Administrator")) && pr.status === "Pending CM" && !isPrApproveInFlight(pr) && (
               <>
-                <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>CM Approve</Button>
-                {canRejectPR && <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>}
+                <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}><CheckCircle size={13} className="md:hidden" />CM Approve</Button>
+                {canRejectPR && <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}><XCircle size={13} className="md:hidden" />Reject</Button>}
               </>
             )}
             {canApprovePR && (userRoles.includes("PM") || userRoles.includes("Administrator")) && pr.status === "Pending PM" && !isPrApproveInFlight(pr) && (
               <>
-                <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>PM Approve</Button>
-                {canRejectPR && <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>}
+                <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}><CheckCircle size={13} className="md:hidden" />PM Approve</Button>
+                {canRejectPR && <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}><XCircle size={13} className="md:hidden" />Reject</Button>}
               </>
             )}
             {canApprovePR && (userRoles.includes("GM") || userRoles.includes("Administrator")) && pr.status === "Pending GM" && !isPrApproveInFlight(pr) && (
               <>
-                <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>GM Approve</Button>
-                {canRejectPR && <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>}
+                <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}><CheckCircle size={13} className="md:hidden" />GM Approve</Button>
+                {canRejectPR && <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}><XCircle size={13} className="md:hidden" />Reject</Button>}
               </>
             )}
             {canApprovePR && (userRoles.includes("MD") || userRoles.includes("Administrator")) && pr.status === "Pending MD" && !isPrApproveInFlight(pr) && (
               <>
-                <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}>MD Approve</Button>
-                {canRejectPR && <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}>Reject</Button>}
+                <Button variant="success" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "approve")}><CheckCircle size={13} className="md:hidden" />MD Approve</Button>
+                {canRejectPR && <Button variant="danger" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(pr.id, "reject")}><XCircle size={13} className="md:hidden" />Reject</Button>}
               </>
             )}
             {canEditBudgetPR && (userRoles.includes("Procurement") || userRoles.includes("PCM") || userRoles.includes("Administrator")) && pr.status === "Approved" && (
@@ -1948,21 +1975,7 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
             {canUseFunction("pr", "delete") && (
               <button
                 className="text-red-500 hover:bg-red-50 p-1 rounded-full transition-colors"
-                onClick={() => {
-                  openConfirm(
-                    "ยืนยันการลบ",
-                    "คุณต้องการลบรายการ PR นี้ใช่หรือไม่?",
-                    async () => {
-                      if (pr.pdfUrl) {
-                        const safePRNo = (pr.prNo || pr.id).replace(/[^a-zA-Z0-9\-_]/g, "_");
-                        const safeProjId = pr.projectId || "unknown";
-                        await deleteGeneratedPdf(`generated/prs/${safeProjId}/${safePRNo}.pdf`);
-                      }
-                      await deleteData("prs", pr.id);
-                    },
-                    "danger"
-                  );
-                }}
+                onClick={() => confirmDeletePr(pr)}
               >
                 <Trash2 size={13} />
               </button>
@@ -1972,17 +1985,9 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
               <Button
                 variant="success"
                 className="px-2 py-0.5 text-[10px] whitespace-nowrap"
-                onClick={() => {
-                  openConfirm(
-                    "ยืนยันการปิด PR",
-                    `คุณต้องการปิด PR ${pr.prNo} ใช่หรือไม่?`,
-                    async () => {
-                      await updateData("prs", pr.id, { status: "Closed PR" });
-                    },
-                    "success"
-                  );
-                }}
+                onClick={() => confirmClosePr(pr)}
               >
+                <CheckSquare size={13} className="md:hidden" />
                 ยืนยัน Close
               </Button>
             )}
@@ -2342,23 +2347,23 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
           ...allBudgetAttachments.map((attachment: any) => ({ ...attachment, source: "งบประมาณ" })),
           ...prAttachmentsList.map((attachment: any) => ({ ...attachment, source: "PR" })),
         ];
-        return (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10010] p-4">
-            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-[90vh] flex flex-col">
+        return createPortal(
+          <div className="mobile-sheet-modal fixed inset-0 bg-black/60 backdrop-blur-sm flex items-stretch sm:items-center justify-center z-[10010] p-0 sm:p-4">
+            <div className="bg-white sm:rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl h-[100dvh] sm:h-auto max-h-[100dvh] sm:max-h-[90vh] flex flex-col">
               {/* Header */}
-              <div className="px-6 py-4 bg-slate-700 rounded-t-2xl flex items-center justify-between shrink-0">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center">
+              <div className="px-3 py-2 sm:px-6 sm:py-4 bg-slate-700 sm:rounded-t-2xl flex items-center justify-between gap-2 shrink-0">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="hidden sm:flex w-9 h-9 bg-white/20 rounded-xl items-center justify-center">
                     <ClipboardList size={18} className="text-white" />
                   </div>
-                  <div>
-                    <h3 className="text-base font-bold text-white">ใบขอซื้อ (PR)</h3>
-                    <p className="text-slate-300 text-xs mt-0.5">{prLive.prNo}</p>
+                  <div className="min-w-0">
+                    <h3 className="text-sm sm:text-base font-bold text-white">ใบขอซื้อ (PR)</h3>
+                    <p className="text-slate-300 text-xs sm:mt-0.5 truncate">{prLive.prNo}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                   <Badge status={prLive.status} />
-                  <button onClick={() => setViewingPR(null)} className="text-white/60 hover:text-white hover:bg-white/20 p-2 rounded-xl transition-all ml-2">
+                  <button onClick={() => setViewingPR(null)} className="text-white/60 hover:text-white hover:bg-white/20 p-1.5 sm:p-2 rounded-xl transition-all sm:ml-2">
                     <XCircle size={20} />
                   </button>
                 </div>
@@ -2378,26 +2383,26 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
 
               {/* Reject reason banner */}
               {prLive.status === "Rejected" && prLive.rejectReason && (
-                <div className="px-6 py-2.5 bg-red-50 border-b border-red-200 shrink-0 flex items-center gap-2">
+                <div className="px-3 py-2 sm:px-6 sm:py-2.5 bg-red-50 border-b border-red-200 shrink-0 flex items-center gap-2">
                   <AlertCircle size={14} className="text-red-500 shrink-0" />
                   <p className="text-red-700 text-xs"><span className="font-semibold">เหตุผลปฏิเสธ:</span> {prLive.rejectReason}</p>
                 </div>
               )}
 
               {/* Body */}
-              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+              <div className="flex-1 overflow-y-auto px-3 py-3 sm:px-6 sm:py-5 space-y-3 sm:space-y-4">
                 {/* PDF Preview — iframe thumbnail ใช้ fresh URL (bypass CDN cache) */}
                 {(() => {
                   const hasPdf = Boolean(prLive.pdfUrl || prLive.pdfPath);
                   const ready = !!prPdfReadyUrl;
                   return (
-                    <div className="mb-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">เอกสาร PDF</span>
+                    <div className="sm:mb-4">
+                      <div className="flex items-center justify-between mb-1 sm:mb-2">
+                        <span className="text-[11px] sm:text-xs font-bold text-slate-700 uppercase tracking-wide">เอกสาร PDF</span>
                         {hasPdf && !ready && <span className="text-[10px] text-slate-400 animate-pulse">กำลังโหลด...</span>}
                       </div>
                       <div
-                        className={`relative w-48 h-64 border rounded-xl overflow-hidden bg-slate-50 shadow-sm transition-all ${ready ? "border-slate-200" : "border-slate-100"}`}
+                        className={`relative w-24 h-32 md:w-48 md:h-64 border rounded-xl overflow-hidden bg-slate-50 shadow-sm transition-all ${ready ? "border-slate-200" : "border-slate-100"}`}
                       >
                         {hasPdf ? (
                           ready ? (
@@ -2438,7 +2443,7 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
                         type="button"
                         disabled={isRecreatingPr}
                         onClick={() => handleRecreatePRClick(prLive)}
-                        className="mt-2 w-48 py-2 px-3 bg-white hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 border border-slate-300 shadow-sm transition-all hover:border-blue-400 hover:text-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="mt-1.5 sm:mt-2 w-24 md:w-48 py-1.5 sm:py-2 px-1.5 sm:px-3 bg-white hover:bg-slate-50 text-slate-700 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1 sm:gap-1.5 border border-slate-300 shadow-sm transition-all hover:border-blue-400 hover:text-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
                         title="สร้างหรือ Recreate ไฟล์ PDF ของ PR ใหม่"
                       >
                         <RefreshCw size={13} className={isRecreatingPr ? "animate-spin text-blue-600" : "text-slate-500"} />
@@ -2449,7 +2454,7 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
                 })()}
 
                 {/* Info grid */}
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-1.5 sm:gap-3 text-xs">
                   {(() => {
                     // Resolve budget item (ค้นหาจาก budgetId ก่อน แล้ว fallback ด้วย costCode)
                     const headerBudgetItem = prLive.budgetId
@@ -2487,8 +2492,8 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
                       { label: "Material Approve", value: prLive.materialApprove ? (prLive.materialApproveNo || "เลือกแล้ว") : "ไม่เลือก" },
                       { label: "Email", value: prLive.requestorEmail || "-" },
                     ].map(({ label, value }) => (
-                      <div key={label} className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
-                        <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">{label}</p>
+                      <div key={label} className="bg-slate-50 rounded-lg px-2 py-1 sm:px-3 sm:py-2 border border-slate-100">
+                        <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider sm:mb-0.5">{label}</p>
                         <p className="font-semibold text-slate-700 truncate" title={value}>{value || "-"}</p>
                       </div>
                     ));
@@ -2497,9 +2502,9 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
 
                 {/* Item notes + attachments */}
                 {(itemNotes.length > 0 || allDetailAttachments.length > 0) && (
-                  <div className={`grid gap-3 ${itemNotes.length > 0 && allDetailAttachments.length > 0 ? "md:grid-cols-2" : "grid-cols-1"}`}>
+                  <div className={`grid gap-2 sm:gap-3 ${itemNotes.length > 0 && allDetailAttachments.length > 0 ? "md:grid-cols-2" : "grid-cols-1"}`}>
                     {itemNotes.length > 0 && (
-                      <div className="rounded-xl border-2 border-amber-200 bg-amber-50 px-4 py-3">
+                      <div className="rounded-xl border-2 border-amber-200 bg-amber-50 px-3 py-2 sm:px-4 sm:py-3">
                         <p className="text-xs font-extrabold text-amber-900 flex items-center gap-1.5 mb-2">
                           <FileText size={14} className="text-amber-700" />
                           หมายเหตุรายการ ({itemNotes.length})
@@ -2523,7 +2528,7 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
                     )}
 
                     {allDetailAttachments.length > 0 && (
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 sm:px-4 sm:py-3">
                         <p className="text-xs font-bold text-slate-700 flex items-center gap-1.5 mb-2">
                           <Paperclip size={13} /> ไฟล์แนบทั้งหมด ({allDetailAttachments.length} ไฟล์)
                         </p>
@@ -2553,11 +2558,12 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
 
                 {/* Line Items */}
                 <div className="rounded-xl border border-slate-200 overflow-hidden">
-                  <div className="bg-slate-100 px-4 py-2 flex items-center justify-between">
+                  <div className="bg-slate-100 px-3 py-1.5 sm:px-4 sm:py-2 flex items-center justify-between">
                     <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">รายการสินค้า</span>
                     <span className="bg-slate-600 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">{prLive.items?.length || 0} รายการ</span>
                   </div>
-                  <table className="w-full table-fixed text-xs text-left">
+                  <div className="overflow-x-auto overscroll-x-contain">
+                  <table className="w-full min-w-[600px] table-fixed text-[11px] sm:text-xs text-left">
                     <colgroup>
                       <col className="w-[5%]" />
                       <col className="w-[29%]" />
@@ -2614,7 +2620,6 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
                                         title={`${allocation.poNo} · รายการที่ ${allocation.poItemIndex + 1} · ${allocation.poItemDescription} · ${formatCurrency(allocation.amount)}`}
                                       >
                                         <span className="font-semibold text-blue-700">{allocation.poNo}</span>
-                                        <span className="text-slate-500"> · รายการที่ {allocation.poItemIndex + 1} · {allocation.poItemDescription} · {formatCurrency(allocation.amount)}</span>
                                       </div>
                                     ))}
                                   </div>
@@ -2633,17 +2638,19 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
                       </tr>
                     </tfoot>
                   </table>
+                  </div>
                 </div>
 
                 {Array.isArray(prLive.budgetReturnRevisions) && prLive.budgetReturnRevisions.length > 0 && (
                   <div className="rounded-xl border border-emerald-200 overflow-hidden bg-emerald-50/40">
-                    <div className="bg-emerald-100 px-4 py-2 flex items-center justify-between">
+                    <div className="bg-emerald-100 px-3 py-1.5 sm:px-4 sm:py-2 flex items-center justify-between">
                       <span className="text-xs font-bold text-emerald-900 uppercase tracking-wide">ประวัติคืน Balance PR กลับ Budget</span>
                       <span className="bg-white text-emerald-700 text-[10px] font-semibold px-2 py-0.5 rounded-full border border-emerald-200">
                         {prLive.budgetReturnRevisions.length} Rev
                       </span>
                     </div>
-                    <table className="w-full text-xs text-left">
+                    <div className="overflow-x-auto overscroll-x-contain">
+                    <table className="w-full min-w-[640px] text-[11px] sm:text-xs text-left">
                       <thead className="bg-white/70 text-emerald-900 font-semibold border-b border-emerald-100">
                         <tr>
                           <th className="px-3 py-2">Rev</th>
@@ -2684,16 +2691,17 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   </div>
                 )}
               </div>
 
               {/* Footer — ปุ่ม Approve/Reject ตาม Role */}
-              <div className="px-6 py-3.5 border-t border-slate-200 bg-slate-50 rounded-b-2xl flex items-center justify-between gap-2 shrink-0">
-                <button onClick={() => setViewingPR(null)} className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-600 text-sm font-medium hover:bg-slate-50 transition-all flex items-center gap-2">
+              <div className="px-3 py-2 sm:px-6 sm:py-3.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:pb-3.5 border-t border-slate-200 bg-slate-50 sm:rounded-b-2xl flex items-center justify-between gap-2 shrink-0">
+                <button onClick={() => setViewingPR(null)} className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-slate-200 bg-white text-slate-600 text-sm font-medium hover:bg-slate-50 transition-all flex items-center gap-2">
                   <XCircle size={15} /> ปิด
                 </button>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap justify-end">
                   {canReturnPrBalance && (() => {
                     const info = getPrBudgetReturnInfo(prLive, pos, prPoUsageIndex);
                     if (info.returnAmount <= 0) return null;
@@ -2727,10 +2735,55 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
                       <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(prLive.id, "approve"); setViewingPR(null); }}>MD Approve</Button>
                     </>
                   )}
+                  {/* Row actions — phones only (the table's Actions column is hidden there) */}
+                  <div className="flex md:hidden items-center gap-2 flex-wrap justify-end">
+                    {canEditBudgetPR && (userRoles.includes("Procurement") || userRoles.includes("PCM") || userRoles.includes("Administrator")) && prLive.status === "Approved" && (
+                      <Button
+                        variant="secondary"
+                        className="px-3 py-1.5 text-xs text-red-600"
+                        onClick={() => {
+                          setViewingPR(null);
+                          setSelectedPrForEditBudget(prLive);
+                          setEditBudgetReason("");
+                          setIsEditBudgetModalOpen(true);
+                        }}
+                      >
+                        <Settings size={13} /> แก้ไข Budget
+                      </Button>
+                    )}
+                    {canUseFunction("pr", "edit") && (prLive.status === "Rejected" || prLive.status === "Edit Budget") && (
+                      <Button
+                        variant="secondary"
+                        className="px-3 py-1.5 text-xs"
+                        onClick={() => { setViewingPR(null); handleEditClick(prLive); }}
+                      >
+                        <Edit size={13} /> แก้ไข PR
+                      </Button>
+                    )}
+                    {canUseFunction("pr", "closePR") && prLive.status === "Pending Close" && (
+                      <Button
+                        variant="success"
+                        className="px-3 py-1.5 text-xs whitespace-nowrap"
+                        onClick={() => { setViewingPR(null); confirmClosePr(prLive); }}
+                      >
+                        <CheckSquare size={13} /> ยืนยัน Close
+                      </Button>
+                    )}
+                    {canUseFunction("pr", "delete") && (
+                      <Button
+                        variant="danger"
+                        className="px-3 py-1.5 text-xs"
+                        onClick={() => { setViewingPR(null); confirmDeletePr(prLive); }}
+                      >
+                        <Trash2 size={13} /> ลบ
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          </div>,
+          document.body
         )
       })()}
 
@@ -2815,7 +2868,7 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
         const maxReturn = Math.max(0, Math.round(Number(latestInfo?.returnAmount || 0) * 100) / 100);
         const requested = Math.round(parseReturnBalanceInput(returnBalanceValue) * 100) / 100;
         const isRequestedValid = Number.isFinite(requested) && requested > 0 && requested <= maxReturn;
-        return (
+        return createPortal(
           <div className="fixed inset-0 bg-black/55 backdrop-blur-sm flex items-center justify-center z-[10011] p-4">
             <div className="bg-white rounded-2xl shadow-2xl border border-emerald-200 p-6 w-full max-w-md">
               <div className="flex items-center gap-3 mb-4">
@@ -2904,7 +2957,8 @@ const PRView = React.memo(({ onRecreatePR, recreatePoInFlightId }: any = {}) => 
                 </button>
               </div>
             </div>
-          </div>
+          </div>,
+          document.body
         );
       })()}
 

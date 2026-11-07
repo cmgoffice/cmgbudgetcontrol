@@ -496,6 +496,39 @@ thead th > div {
   }
 }
 
+/* =============================
+   Action columns on smartphones: every action collapses to an icon-only
+   square button. Text labels stay in the DOM (font-size 0) so they remain
+   the accessible name; desktop keeps its labelled buttons.
+   ============================= */
+@media (max-width: 767px) {
+  .mobile-icon-actions :is(button, a, .mobile-icon-badge) {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex-shrink: 0 !important;
+    width: 26px !important;
+    min-width: 26px !important;
+    height: 26px !important;
+    padding: 0 !important;
+    gap: 0 !important;
+    font-size: 0 !important;
+    line-height: 0 !important;
+    white-space: nowrap !important;
+  }
+
+  .mobile-icon-actions :is(button, a, .mobile-icon-badge) svg {
+    width: 14px !important;
+    height: 14px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .mobile-icon-actions > div {
+    flex-wrap: wrap !important;
+    gap: 3px !important;
+  }
+}
+
 /* ===== Custom Scrollbar ===== */
 .custom-scrollbar::-webkit-scrollbar {
   width: 5px;
@@ -606,6 +639,22 @@ input[type="checkbox"] {
 }
 
 /* =============================
+   Detail modals portaled to <body> (PO view, related document view).
+   They no longer sit under the sticky header, so drop the header offset and
+   go full-screen on phones; stay just below the global alert layer (500).
+   ============================= */
+div.fixed.inset-0.mobile-sheet-modal {
+  z-index: 499 !important;
+}
+
+@media (max-width: 639px) {
+  div.fixed.inset-0.mobile-sheet-modal {
+    padding: 0;
+    align-items: stretch;
+  }
+}
+
+/* =============================
    Receive detail modal
    Keep long PO item text inside its own cell. The global responsive table
    rules intentionally compact tables, so this table gets its own readable
@@ -644,6 +693,22 @@ input[type="checkbox"] {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+}
+
+/* Phones: Receive document modals go full-screen like the PO detail modal. */
+@media (max-width: 639px) {
+  .receive-modal-root > div.receive-document-overlay.fixed.inset-0 {
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .receive-document-overlay > div {
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
 }
 
 /* Keep Log PR / PO text within its column at every desktop width. */

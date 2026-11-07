@@ -8,7 +8,7 @@ import {
   CreditCard, AlertTriangle, CheckCircle, RotateCcw,
   ThumbsUp, ThumbsDown, Zap, Clock, ShieldCheck,
   ChevronLeft, ChevronRight, Paperclip, Send,
-  FileText, Download,
+  FileText, Download, Play, PauseCircle,
 } from "lucide-react";
 import { useAppData } from "../contexts/AppDataContext";
 import { useUI } from "../contexts/UIContext";
@@ -1722,7 +1722,7 @@ const PaymentView = React.memo(({
               return (
                 <tr key={`po-draft-${po.id}`} className="bg-sky-50/60 border-b border-sky-100 hover:bg-sky-100/50 transition-colors cursor-pointer" onClick={() => { setActivatingPO(po); setActivatingContractTitle(po.contractTitle || ""); }}>
                   {isColumnVisible("payment", "actions") && (
-                    <td className="py-2 px-3 md:hidden" onClick={(e) => e.stopPropagation()}>
+                    <td className="mobile-icon-actions py-2 px-3 md:hidden" onClick={(e) => e.stopPropagation()}>
                       {canActivatePayment && (
                         <Button
                           variant="success"
@@ -1731,6 +1731,7 @@ const PaymentView = React.memo(({
                           disabled={actioning}
                           onClick={(e) => { e.stopPropagation(); setActivatingPO(po); setActivatingContractTitle(po.contractTitle || ""); }}
                         >
+                          <Play size={13} className="md:hidden" />
                           Active
                         </Button>
                       )}
@@ -1781,7 +1782,7 @@ const PaymentView = React.memo(({
                     </td>
                   )}
                   {isColumnVisible("payment", "actions") && (
-                    <td className="py-2 px-3 text-right" onClick={(e) => e.stopPropagation()}>
+                    <td className="mobile-icon-actions py-2 px-3 text-right" onClick={(e) => e.stopPropagation()}>
                       {canActivatePayment && (
                         <Button
                           variant="success"
@@ -1790,6 +1791,7 @@ const PaymentView = React.memo(({
                           disabled={actioning}
                           onClick={(e) => { e.stopPropagation(); setActivatingPO(po); setActivatingContractTitle(po.contractTitle || ""); }}
                         >
+                          <Play size={13} className="md:hidden" />
                           Active
                         </Button>
                       )}
@@ -1824,7 +1826,7 @@ const PaymentView = React.memo(({
                   >
                     {isColumnVisible("payment", "actions") && (
                       <td
-                        className="py-2 px-3 md:hidden"
+                        className="mobile-icon-actions py-2 px-3 md:hidden"
                         onClick={(e) => e.stopPropagation()}
                       >
                         <div className="flex justify-start gap-1 flex-wrap">
@@ -1836,6 +1838,7 @@ const PaymentView = React.memo(({
                                 className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                 onClick={() => handlePeriodApprove(p)}
                               >
+                                <CheckCircle size={13} className="md:hidden" />
                                 {p.status === "งวดงาน Pending CM" ? "CM Check" : "PM Approve"}
                               </Button>
                               <Button
@@ -1844,6 +1847,7 @@ const PaymentView = React.memo(({
                                 className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                 onClick={() => { setPeriodRejectModal(p); setPeriodRejectReason(""); }}
                               >
+                                <XCircle size={13} className="md:hidden" />
                                 Reject
                               </Button>
                             </>
@@ -1856,6 +1860,7 @@ const PaymentView = React.memo(({
                                 className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                 onClick={() => { setHoldModalPayment(p); setHoldReasonInput(""); setHoldDecision("keepHold"); }}
                               >
+                                <PauseCircle size={13} className="md:hidden" />
                                 Hold
                               </Button>
                             </>
@@ -1951,7 +1956,7 @@ const PaymentView = React.memo(({
                     )}
                     {isColumnVisible("payment", "actions") && (
                       <td
-                        className="py-2 px-3 text-right"
+                        className="mobile-icon-actions py-2 px-3 text-right"
                         onClick={(e) => e.stopPropagation()}
                       >
                         <div className="flex justify-end gap-1 flex-wrap">
@@ -1964,6 +1969,7 @@ const PaymentView = React.memo(({
                                 className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                 onClick={() => handlePeriodApprove(p)}
                               >
+                                <CheckCircle size={13} className="md:hidden" />
                                 {p.status === "งวดงาน Pending CM" ? "CM Check" : "PM Approve"}
                               </Button>
                               <Button
@@ -1972,6 +1978,7 @@ const PaymentView = React.memo(({
                                 className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                 onClick={() => { setPeriodRejectModal(p); setPeriodRejectReason(""); }}
                               >
+                                <XCircle size={13} className="md:hidden" />
                                 Reject
                               </Button>
                             </>
@@ -1981,9 +1988,11 @@ const PaymentView = React.memo(({
                           {p.revisionRequested && isPendingForMe(p.status === "Active" ? "Pending Procurement" : p.status, myRoles) && (
                             <>
                               {canApproveRevision && <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleApproveRevision(p)}>
+                                <ThumbsUp size={13} className="md:hidden" />
                                 Approve Rev
                               </Button>}
                               {canRejectRevision && <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleRejectRevision(p)}>
+                                <ThumbsDown size={13} className="md:hidden" />
                                 Reject Rev
                               </Button>}
                             </>
@@ -2013,6 +2022,7 @@ const PaymentView = React.memo(({
                                 className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                 onClick={() => { setHoldModalPayment(p); setHoldReasonInput(""); setHoldDecision("keepHold"); }}
                               >
+                                <PauseCircle size={13} className="md:hidden" />
                                 Hold
                               </Button>
                             </>
@@ -2112,13 +2122,13 @@ const PaymentView = React.memo(({
          const totalPeriodCount = allPeriods.length + 1;
 
         return (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[10010] p-3 sm:p-4">
-            <div className="bg-white shadow-2xl border border-slate-300 w-full max-w-[1500px] max-h-[calc(100vh-1.5rem)] sm:max-h-[calc(100vh-2rem)] flex flex-col rounded-2xl overflow-hidden">
+          <div className="mobile-sheet-modal fixed inset-0 bg-black/60 backdrop-blur-md flex items-stretch sm:items-center justify-center z-[10010] p-0 sm:p-4">
+            <div className="bg-white shadow-2xl border border-slate-300 w-full max-w-[1500px] h-[100dvh] sm:h-auto max-h-[100dvh] sm:max-h-[calc(100vh-2rem)] flex flex-col sm:rounded-2xl overflow-hidden">
 
               {/* ─ Title bar ─ */}
-              <div className="flex items-center justify-between px-5 py-2.5 bg-gradient-to-r from-blue-900 to-blue-700 shrink-0 rounded-t-2xl">
-                <h3 className="text-sm font-bold text-white tracking-wide">แบบฟอร์มเบิกงวดงาน / PAYMENT APPLICATION</h3>
-                <div className="flex items-center gap-2">
+              <div className="flex items-center justify-between gap-2 px-3 py-2 sm:px-5 sm:py-2.5 bg-gradient-to-r from-blue-900 to-blue-700 shrink-0 sm:rounded-t-2xl">
+                <h3 className="min-w-0 truncate text-xs sm:text-sm font-bold text-white tracking-wide">แบบฟอร์มเบิกงวดงาน<span className="hidden sm:inline"> / PAYMENT APPLICATION</span></h3>
+                <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                   <button
                     onClick={() => handleViewPdf(vp)}
                     disabled={generatingPdf}
@@ -2146,26 +2156,26 @@ const PaymentView = React.memo(({
               {/* ─ Scrollable body ─ */}
               <div className="flex-1 min-h-0 overflow-y-auto">
                 {vp.id && !isViewingOldPeriod && <AdvanceRecoveryPanel documentType="payments" document={vp} onChange={() => setActiveQtyEdits({})} />}
-                <div className="p-4 space-y-3">
+                <div className="p-2 sm:p-4 space-y-2 sm:space-y-3">
 
                   {/* ── Header info grid ── */}
-                  <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-xs leading-tight border border-slate-200 rounded-lg p-3 bg-slate-50/50">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-1 text-[11px] sm:text-xs leading-tight border border-slate-200 rounded-lg p-2 sm:p-3 bg-slate-50/50">
                     {/* Left */}
                     <div className="space-y-1">
                       <div className="flex">
-                        <span className="w-52 text-slate-500 font-semibold shrink-0">ชื่อโครงการ / PROJECT NAME :</span>
+                        <span className="w-28 sm:w-52 text-slate-500 font-semibold shrink-0">ชื่อโครงการ / PROJECT NAME :</span>
                         <span className="font-bold text-slate-800">{project?.name || vp.projectId || "-"}</span>
                       </div>
                       <div className="flex">
-                        <span className="w-52 text-slate-500 font-semibold shrink-0">ผู้รับเหมาช่วง / SUBCONTRACTOR :</span>
+                        <span className="w-28 sm:w-52 text-slate-500 font-semibold shrink-0">ผู้รับเหมาช่วง / SUBCONTRACTOR :</span>
                         <span className="font-bold text-slate-800">{contractor?.name || "-"}</span>
                       </div>
                       <div className="flex">
-                        <span className="w-52 text-slate-500 font-semibold shrink-0">อ้างอิง PO / REF PO NO. :</span>
+                        <span className="w-28 sm:w-52 text-slate-500 font-semibold shrink-0">อ้างอิง PO / REF PO NO. :</span>
                         <span className="font-medium text-slate-700">{contractTitle || "-"}</span>
                       </div>
                       <div className="flex">
-                        <span className="w-52 text-slate-500 font-semibold shrink-0">ชื่อสัญญา / CONTRACT TITLE :</span>
+                        <span className="w-28 sm:w-52 text-slate-500 font-semibold shrink-0">ชื่อสัญญา / CONTRACT TITLE :</span>
                         {isQtyEditMode && !isViewingOldPeriod && (vp.status || "Draft") === "Draft" ? (
                           <input
                             type="text"
@@ -2180,7 +2190,7 @@ const PaymentView = React.memo(({
                       </div>
                       {paymentDiscountEnabled && (
                         <div className="flex">
-                          <span className="w-52 text-slate-500 font-semibold shrink-0">ส่วนลด / DISCOUNT :</span>
+                          <span className="w-28 sm:w-52 text-slate-500 font-semibold shrink-0">ส่วนลด / DISCOUNT :</span>
                           <span className="font-medium text-red-700">
                             {formatCurrency(displayDiscount)}{discountSource?.discountPrNo ? ` (PR ${discountSource.discountPrNo})` : ""}
                           </span>
@@ -2190,15 +2200,15 @@ const PaymentView = React.memo(({
                     {/* Right */}
                     <div className="space-y-1">
                       <div className="flex">
-                        <span className="w-56 text-slate-500 font-semibold shrink-0">เลขที่เบิกงวดงาน / PAYMENT NO. :</span>
+                        <span className="w-28 sm:w-56 text-slate-500 font-semibold shrink-0">เลขที่เบิกงวดงาน / PAYMENT NO. :</span>
                         <span className="font-bold text-blue-800">{displayPaymentNo}</span>
                       </div>
                       <div className="flex">
-                        <span className="w-56 text-slate-500 font-semibold shrink-0">Payment Type :</span>
+                        <span className="w-28 sm:w-56 text-slate-500 font-semibold shrink-0">Payment Type :</span>
                         <span className="font-bold text-slate-800">{vp.paymentType || "-"}</span>
                       </div>
                       <div className="flex items-center">
-                        <span className="w-56 text-slate-500 font-semibold shrink-0">งวดงาน / PERIOD NO. :</span>
+                        <span className="w-28 sm:w-56 text-slate-500 font-semibold shrink-0">งวดงาน / PERIOD NO. :</span>
                         <div className="flex items-center gap-1">
                           {totalPeriodCount > 1 && (
                             <button
@@ -2241,7 +2251,7 @@ const PaymentView = React.memo(({
                         </div>
                       </div>
                       <div className="flex items-center">
-                        <span className="w-56 text-slate-500 font-semibold shrink-0">รอบวางบิล :</span>
+                        <span className="w-28 sm:w-56 text-slate-500 font-semibold shrink-0">รอบวางบิล :</span>
                         {isQtyEditMode && !isViewingOldPeriod ? (
                           <select
                             value={periodBillingCycle}
@@ -2259,12 +2269,12 @@ const PaymentView = React.memo(({
                         )}
                       </div>
                       <div className="flex">
-                        <span className="w-56 text-slate-500 font-semibold shrink-0">วันที่จัดทำเอกสาร / Date :</span>
+                        <span className="w-28 sm:w-56 text-slate-500 font-semibold shrink-0">วันที่จัดทำเอกสาร / Date :</span>
                         <span className="font-medium text-slate-700">{vp.openDate || "-"}</span>
                       </div>
                       {vp.jobCompleted && (
                         <div className="flex">
-                          <span className="w-56 text-teal-700 font-semibold shrink-0">สถานะงาน / JOB STATUS :</span>
+                          <span className="w-28 sm:w-56 text-teal-700 font-semibold shrink-0">สถานะงาน / JOB STATUS :</span>
                           <span className="font-semibold text-teal-800">
                             จบงาน — โดย {vp.jobCompletedBy || vp.completedBy || "-"}
                             {(vp.jobCompletedAt || vp.completedAt) ? ` (${new Date(vp.jobCompletedAt || vp.completedAt).toLocaleString("th-TH")})` : ""}
@@ -2273,7 +2283,7 @@ const PaymentView = React.memo(({
                       )}
                       {vp.attachmentUrl && (
                         <div className="flex items-center">
-                          <span className="w-56 text-slate-500 font-semibold shrink-0">เอกสารแนบ :</span>
+                          <span className="w-28 sm:w-56 text-slate-500 font-semibold shrink-0">เอกสารแนบ :</span>
                           <a href={vp.attachmentUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline font-medium flex items-center gap-1">
                             <Paperclip size={11} /> {vp.attachmentName || "ดูเอกสาร"}
                           </a>
@@ -2282,7 +2292,7 @@ const PaymentView = React.memo(({
                       {/* ── Payment Attachments (uploaded via Upload File button) ── */}
                       {Array.isArray(vp.paymentAttachments) && vp.paymentAttachments.length > 0 && (
                         <div className="flex flex-col gap-0.5">
-                          <span className="w-56 text-blue-700 font-semibold shrink-0 text-[11px]">ไฟล์แนบ PAYMENT ({vp.paymentAttachments.length}):</span>
+                          <span className="sm:w-56 text-blue-700 font-semibold shrink-0 text-[11px]">ไฟล์แนบ PAYMENT ({vp.paymentAttachments.length}):</span>
                           {vp.paymentAttachments.map((att: any, idx: number) => (
                             <div key={idx} className="flex items-center gap-1 ml-1 group">
                               <Paperclip size={10} className="text-blue-400 shrink-0" />
@@ -2305,7 +2315,7 @@ const PaymentView = React.memo(({
                       )}
                       {displayPaySlipUrl && (
                         <div className="flex items-center">
-                          <span className="w-56 text-emerald-600 font-semibold shrink-0">เอกสารการจ่ายเงิน (Pay / Slip) :</span>
+                          <span className="w-28 sm:w-56 text-emerald-600 font-semibold shrink-0">เอกสารการจ่ายเงิน (Pay / Slip) :</span>
                           <a href={displayPaySlipUrl} target="_blank" rel="noopener noreferrer" className="text-emerald-700 bg-emerald-50 px-2 py-0.5 border border-emerald-200 rounded underline font-medium flex items-center gap-1 text-[11px]">
                             <Paperclip size={11} /> {displayPaySlipName || "ดูเอกสารการจ่ายเงิน"}
                           </a>
@@ -2528,7 +2538,7 @@ const PaymentView = React.memo(({
                   </div>
 
                   {/* ── Signature section ── */}
-                  <div className="grid grid-cols-3 gap-3 text-xs mt-3 px-2">
+                  <div className="grid grid-cols-3 gap-1.5 sm:gap-3 text-xs mt-2 sm:mt-3 sm:px-2">
                     {(() => {
                       const src = isViewingOldPeriod ? activePeriod : vp;
                       return [
@@ -2552,7 +2562,7 @@ const PaymentView = React.memo(({
                       const hasResolvedSignature = Object.prototype.hasOwnProperty.call(paymentSignatureImages, sig.slot);
                       const signatureImageUrl = paymentSignatureImages[sig.slot];
                       return (
-                        <div key={sig.title} className={`border rounded-lg p-2.5 text-center space-y-2 ${sig.filled ? "border-green-300 bg-green-50/40" : "border-slate-200 bg-slate-50/50"}`}>
+                        <div key={sig.title} className={`border rounded-lg p-1.5 sm:p-2.5 text-center space-y-1 sm:space-y-2 min-w-0 ${sig.filled ? "border-green-300 bg-green-50/40" : "border-slate-200 bg-slate-50/50"}`}>
                           <p className="font-bold text-slate-700 text-[11px]">{sig.title}</p>
                           <div className={`h-10 flex items-center justify-center px-2 py-1 ${sig.filled ? "border-b-2 border-green-500" : ""}`}>
                             {sig.filled ? (
@@ -2622,7 +2632,7 @@ const PaymentView = React.memo(({
               </div>
 
               {/* ─ Footer buttons ─ */}
-              <div className="px-5 py-2.5 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-2 shrink-0 rounded-b-2xl">
+              <div className="px-2 py-2 sm:px-5 sm:py-2.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:pb-2.5 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-2 shrink-0 sm:rounded-b-2xl">
                 {/* Left: action buttons based on status */}
                 <div className="flex items-center gap-2 flex-wrap">
                   {/* Submit (Draft) */}
@@ -2630,7 +2640,7 @@ const PaymentView = React.memo(({
                     <button
                       disabled={actioning}
                       onClick={() => handleSubmit(vp)}
-                      className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-700 text-white text-sm font-medium flex items-center gap-2 disabled:opacity-60"
+                      className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg bg-orange-600 hover:bg-orange-700 text-white text-sm font-medium flex items-center gap-2 disabled:opacity-60"
                     >
                       <Send size={14} /> ส่งอนุมัติ
                     </button>
@@ -2641,14 +2651,14 @@ const PaymentView = React.memo(({
                       <button
                         disabled={actioning}
                         onClick={() => handleApprove(vp)}
-                        className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium flex items-center gap-2 disabled:opacity-60"
+                        className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium flex items-center gap-2 disabled:opacity-60"
                       >
                         <ThumbsUp size={14} /> อนุมัติ
                       </button>
                       {canRejectFlow && <button
                         disabled={actioning}
                         onClick={() => { setRejectModalPayment(vp); setRejectReason(""); }}
-                        className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium flex items-center gap-2 disabled:opacity-60"
+                        className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium flex items-center gap-2 disabled:opacity-60"
                       >
                         <ThumbsDown size={14} /> ปฏิเสธ
                       </button>}
@@ -2660,14 +2670,14 @@ const PaymentView = React.memo(({
                       <button
                         disabled={actioning}
                         onClick={() => handleApprove(vp)}
-                        className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium flex items-center gap-2 disabled:opacity-60"
+                        className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium flex items-center gap-2 disabled:opacity-60"
                       >
                         <ThumbsUp size={14} /> Active
                       </button>
                       {canRejectFlow && <button
                         disabled={actioning}
                         onClick={() => { setRejectModalPayment(vp); setRejectReason(""); }}
-                        className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium flex items-center gap-2 disabled:opacity-60"
+                        className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium flex items-center gap-2 disabled:opacity-60"
                       >
                         <ThumbsDown size={14} /> Reject
                       </button>}
@@ -2679,14 +2689,14 @@ const PaymentView = React.memo(({
                       {canApproveRevision && <button
                         disabled={actioning}
                         onClick={() => handleApproveRevision(vp)}
-                        className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium flex items-center gap-2 disabled:opacity-60"
+                        className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium flex items-center gap-2 disabled:opacity-60"
                       >
                         <ShieldCheck size={14} /> อนุมัติขอแก้ไข
                       </button>}
                       {canRejectRevision && <button
                         disabled={actioning}
                         onClick={() => handleRejectRevision(vp)}
-                        className="px-4 py-2 rounded-lg border border-red-300 text-red-600 text-sm font-medium flex items-center gap-2 hover:bg-red-50 disabled:opacity-60"
+                        className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-red-300 text-red-600 text-sm font-medium flex items-center gap-2 hover:bg-red-50 disabled:opacity-60"
                       >
                         <XCircle size={14} /> ปฏิเสธขอแก้ไข
                       </button>}
@@ -2698,7 +2708,7 @@ const PaymentView = React.memo(({
                       <button
                         disabled={actioning}
                         onClick={() => handlePeriodApprove(vp)}
-                        className="px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+                        className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
                       >
                         <ThumbsUp size={14} />
                         {vp.status === "งวดงาน Pending CM" ? "CHECK — ตรวจสอบ (CM)" : "APPROVE — อนุมัติ (PM)"}
@@ -2706,7 +2716,7 @@ const PaymentView = React.memo(({
                       <button
                         disabled={actioning}
                         onClick={() => { setPeriodRejectModal(vp); setPeriodRejectReason(""); }}
-                        className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+                        className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
                       >
                         <ThumbsDown size={14} />
                         {vp.status === "งวดงาน Pending CM" ? "Reject (CM)" : "Reject (PM)"}
@@ -2722,7 +2732,7 @@ const PaymentView = React.memo(({
                     ) : (
                       <button
                         onClick={() => { setIsQtyEditMode(true); setPeriodBillingCycle(vp.billingCycle || ""); setActiveQtyEdits({}); }}
-                        className="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-semibold flex items-center gap-2"
+                        className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-semibold flex items-center gap-2"
                       >
                         <Edit size={14} /> ใส่ปริมาณ
                       </button>
@@ -2740,7 +2750,7 @@ const PaymentView = React.memo(({
                             <button
                               disabled={savingActiveQty || uploadingAttach}
                               onClick={() => handleSaveActiveQty(vp, true)}
-                              className="px-4 py-2 rounded-lg bg-green-700 hover:bg-green-800 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+                              className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg bg-green-700 hover:bg-green-800 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
                               title={uploadingAttach ? "กำลังอัปโหลดไฟล์แนบ กรุณารอ..." : undefined}
                             >
                               {savingActiveQty ? <span className="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full" /> : uploadingAttach ? <span className="animate-spin w-3 h-3 border-2 border-blue-300 border-t-transparent rounded-full" /> : <Save size={14} />}
@@ -2750,7 +2760,7 @@ const PaymentView = React.memo(({
                           {canSavePeriodDraft && <button
                             disabled={savingActiveQty || uploadingAttach}
                             onClick={() => handleSaveActiveQty(vp, false)}
-                            className="px-4 py-2 rounded-lg border border-green-400 text-green-700 hover:bg-green-50 text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+                            className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-green-400 text-green-700 hover:bg-green-50 text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
                             title={uploadingAttach ? "กำลังอัปโหลดไฟล์แนบ กรุณารอ..." : undefined}
                           >
                             {savingActiveQty ? <span className="animate-spin w-3 h-3 border-2 border-green-500 border-t-transparent rounded-full" /> : <Save size={14} />}
@@ -2766,7 +2776,7 @@ const PaymentView = React.memo(({
                       <button
                         disabled={actioning}
                         onClick={() => { setHoldModalPayment(vp); setHoldReasonInput(""); setHoldDecision("keepHold"); }}
-                        className="px-4 py-2 rounded-lg border border-amber-400 text-amber-700 hover:bg-amber-50 text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+                        className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-amber-400 text-amber-700 hover:bg-amber-50 text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
                       >
                         <Clock size={14} /> Hold
                       </button>
@@ -2777,7 +2787,7 @@ const PaymentView = React.memo(({
                     <button
                       disabled={actioning}
                       onClick={() => openJobEvaluation(vp)}
-                      className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+                      className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
                     >
                       <CheckCircle size={14} /> จบงาน
                     </button>
@@ -2787,7 +2797,7 @@ const PaymentView = React.memo(({
                     <button
                       disabled={actioning}
                       onClick={() => openJobEvaluation(vp)}
-                      className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+                      className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
                       title="จบงานจากงวด Active"
                     >
                       <CheckCircle size={14} /> จบงาน
@@ -2798,7 +2808,7 @@ const PaymentView = React.memo(({
                     <button
                       disabled={actioning}
                       onClick={() => handleStartNextPeriod(vp)}
-                      className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
+                      className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60"
                     >
                       {actioning ? <span className="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full" /> : <Edit size={14} />}
                       ใส่ปริมาณ (เปิดงวดถัดไป)
@@ -2819,7 +2829,7 @@ const PaymentView = React.memo(({
                   {["Draft", "Reject", "Rejected"].includes(vp.status || "Draft") && !isQtyEditMode && !isViewingOldPeriod && canEditPayment && !["Reject", "Rejected"].includes(vp.status) && (
                     <button
                       onClick={() => { setIsQtyEditMode(true); setPeriodBillingCycle(vp.billingCycle || ""); setActiveQtyEdits({}); }}
-                      className={`px-4 py-2 rounded-lg text-white text-sm font-medium flex items-center gap-2 ${["Reject", "Rejected"].includes(vp.status) ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"}`}
+                      className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg text-white text-sm font-medium flex items-center gap-2 ${["Reject", "Rejected"].includes(vp.status) ? "bg-red-600 hover:bg-red-700" : "bg-blue-600 hover:bg-blue-700"}`}
                     >
                       <Edit size={14} /> แก้ไข{["Reject", "Rejected"].includes(vp.status) ? " (ส่งใหม่)" : ""}
                     </button>
@@ -2828,7 +2838,7 @@ const PaymentView = React.memo(({
                 {/* Right: close */}
                 <button
                   onClick={() => { setViewingPayment(null); setActiveQtyEdits({}); setIsQtyEditMode(false); setPeriodBillingCycle(""); setViewPeriodIdx(-1); }}
-                  className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-600 text-sm font-medium hover:bg-slate-50 flex items-center gap-2"
+                  className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-slate-200 bg-white text-slate-600 text-sm font-medium hover:bg-slate-50 flex items-center gap-2"
                 >
                   <XCircle size={15} /> ปิด
                 </button>
@@ -3261,11 +3271,11 @@ const PaymentView = React.memo(({
         const activationPaymentNo = `${activationBaseNo}-${String(activationPeriodNo).padStart(3, '0')}`;
         const canActivate = activatingContractTitle.trim().length > 0;
         return (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[10010] p-4">
-            <div className="bg-white shadow-2xl border border-slate-300 w-[80vw] max-w-[900px] max-h-[90vh] flex flex-col rounded-2xl overflow-hidden">
-              <div className="flex items-center justify-between px-6 py-3 bg-gradient-to-r from-blue-900 to-blue-700 shrink-0 rounded-t-2xl">
-                <h3 className="text-sm font-bold text-white tracking-wide">แบบฟอร์มเบิกงวดงาน / PAYMENT APPLICATION</h3>
-                <div className="flex items-center gap-2">
+          <div className="mobile-sheet-modal fixed inset-0 bg-black/60 backdrop-blur-md flex items-stretch sm:items-center justify-center z-[10010] p-0 sm:p-4">
+            <div className="bg-white shadow-2xl border border-slate-300 w-full sm:w-[80vw] max-w-[900px] h-[100dvh] sm:h-auto max-h-[100dvh] sm:max-h-[90vh] flex flex-col sm:rounded-2xl overflow-hidden">
+              <div className="flex items-center justify-between gap-2 px-3 py-2 sm:px-6 sm:py-3 bg-gradient-to-r from-blue-900 to-blue-700 shrink-0 sm:rounded-t-2xl">
+                <h3 className="min-w-0 truncate text-xs sm:text-sm font-bold text-white tracking-wide">แบบฟอร์มเบิกงวดงาน<span className="hidden sm:inline"> / PAYMENT APPLICATION</span></h3>
+                <div className="flex items-center gap-2 shrink-0">
                   <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">Draft</span>
                   <button onClick={() => { setActivatingPO(null); setActivatingContractTitle(""); }} className="text-white/60 hover:text-white hover:bg-white/20 p-1.5 rounded-lg transition-all">
                     <XCircle size={18} />
@@ -3273,14 +3283,14 @@ const PaymentView = React.memo(({
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto">
-                <div className="p-5 space-y-4">
-                  <div className="grid grid-cols-2 gap-x-8 gap-y-1.5 text-xs border border-slate-200 rounded-lg p-4 bg-slate-50/50">
+                <div className="p-2 sm:p-5 space-y-2 sm:space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-1.5 text-[11px] sm:text-xs border border-slate-200 rounded-lg p-2 sm:p-4 bg-slate-50/50">
                     <div className="space-y-2">
-                      <div className="flex"><span className="w-52 text-slate-500 font-semibold shrink-0">ชื่อโครงการ / PROJECT NAME :</span><span className="font-bold text-slate-800">{project?.name || selectedProjectId || "-"}</span></div>
-                      <div className="flex"><span className="w-52 text-slate-500 font-semibold shrink-0">ผู้รับเหมาช่วง / SUBCONTRACTOR :</span><span className="font-bold text-slate-800">{vendor?.name || "-"}</span></div>
-                      <div className="flex"><span className="w-52 text-slate-500 font-semibold shrink-0">อ้างอิง PO / REF PO NO. :</span><span className="font-medium text-slate-700">{po.poNo || "-"}</span></div>
+                      <div className="flex"><span className="w-28 sm:w-52 text-slate-500 font-semibold shrink-0">ชื่อโครงการ / PROJECT NAME :</span><span className="font-bold text-slate-800">{project?.name || selectedProjectId || "-"}</span></div>
+                      <div className="flex"><span className="w-28 sm:w-52 text-slate-500 font-semibold shrink-0">ผู้รับเหมาช่วง / SUBCONTRACTOR :</span><span className="font-bold text-slate-800">{vendor?.name || "-"}</span></div>
+                      <div className="flex"><span className="w-28 sm:w-52 text-slate-500 font-semibold shrink-0">อ้างอิง PO / REF PO NO. :</span><span className="font-medium text-slate-700">{po.poNo || "-"}</span></div>
                       <div className="flex items-center gap-2">
-                        <span className="w-52 text-red-600 font-semibold shrink-0 text-xs">ชื่อสัญญา / CONTRACT TITLE : <span className="text-red-500">*</span></span>
+                        <span className="w-28 sm:w-52 text-red-600 font-semibold shrink-0 text-xs">ชื่อสัญญา / CONTRACT TITLE : <span className="text-red-500">*</span></span>
                         <input
                           type="text"
                           value={activatingContractTitle}
@@ -3291,10 +3301,10 @@ const PaymentView = React.memo(({
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <div className="flex"><span className="w-56 text-slate-500 font-semibold shrink-0">เลขที่เบิกงวดงาน / PAYMENT NO. :</span><span className="font-bold text-blue-800">{activationPaymentNo}</span></div>
-                      <div className="flex"><span className="w-56 text-slate-500 font-semibold shrink-0">Payment Type :</span><span className="font-bold text-slate-800">{po.poType || "-"}</span></div>
-                      <div className="flex items-center"><span className="w-56 text-slate-500 font-semibold shrink-0">งวดงาน / PERIOD NO. :</span><span title="ระบบกำหนดเลขงวดงานอัตโนมัติและไม่สามารถแก้ไขได้" className="font-bold px-2 py-0.5 rounded border text-orange-700 bg-orange-50 border-orange-200">{activationPeriodNo} / {activationPeriodNo}</span><span className="text-[10px] text-slate-400 ml-1">(อัตโนมัติ)</span></div>
-                      <div className="flex"><span className="w-56 text-slate-500 font-semibold shrink-0">วันที่จัดทำเอกสาร / Date :</span><span className="font-medium text-slate-700">{new Date().toISOString().split("T")[0]}</span></div>
+                      <div className="flex"><span className="w-28 sm:w-56 text-slate-500 font-semibold shrink-0">เลขที่เบิกงวดงาน / PAYMENT NO. :</span><span className="font-bold text-blue-800">{activationPaymentNo}</span></div>
+                      <div className="flex"><span className="w-28 sm:w-56 text-slate-500 font-semibold shrink-0">Payment Type :</span><span className="font-bold text-slate-800">{po.poType || "-"}</span></div>
+                      <div className="flex items-center"><span className="w-28 sm:w-56 text-slate-500 font-semibold shrink-0">งวดงาน / PERIOD NO. :</span><span title="ระบบกำหนดเลขงวดงานอัตโนมัติและไม่สามารถแก้ไขได้" className="font-bold px-2 py-0.5 rounded border text-orange-700 bg-orange-50 border-orange-200">{activationPeriodNo} / {activationPeriodNo}</span><span className="text-[10px] text-slate-400 ml-1">(อัตโนมัติ)</span></div>
+                      <div className="flex"><span className="w-28 sm:w-56 text-slate-500 font-semibold shrink-0">วันที่จัดทำเอกสาร / Date :</span><span className="font-medium text-slate-700">{new Date().toISOString().split("T")[0]}</span></div>
                     </div>
                   </div>
                   <div className="border border-slate-300 rounded-lg overflow-hidden">
@@ -3347,7 +3357,7 @@ const PaymentView = React.memo(({
                   )}
                 </div>
               </div>
-              <div className="px-6 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-2 shrink-0 rounded-b-2xl">
+              <div className="px-3 py-2 sm:px-6 sm:py-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:pb-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-2 shrink-0 sm:rounded-b-2xl">
                 <button
                   disabled={actioning || !canActivate}
                   onClick={async () => { await handleActivatePayment(po, activatingContractTitle.trim()); setActivatingPO(null); setActivatingContractTitle(""); }}

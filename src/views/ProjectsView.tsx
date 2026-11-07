@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useState, useEffect, useMemo, useCallback, useRef, useContext } from "react";
-import { Plus, Trash2, Edit, Upload, Download, Lock, Unlock, Users, UserCheck, History } from "lucide-react";
+import { Plus, Trash2, Edit, Upload, Download, Lock, Unlock, Users, UserCheck, History, CheckCircle, XCircle } from "lucide-react";
 import { addDoc, collection, deleteDoc, doc, getDocs, query, where } from "firebase/firestore";
 import { useAppData } from "../contexts/AppDataContext";
 import { Card, Button, InputGroup, Badge, formatCurrency } from "../components/ui";
@@ -887,10 +887,11 @@ const ProjectsView = React.memo(() => {
                 </td>
                 )}
                 {isColumnVisible("project", "actions") && (
-                <td className="py-2 px-3 text-right flex justify-end gap-1">
+                <td className="mobile-icon-actions py-2 px-3 text-right flex justify-end gap-1">
                   {p.budgetRevisionRequest?.status === "Pending MD" && canApproveRevBudget && (
                     <>
-                      <span className="inline-flex items-center px-2 py-1 rounded bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold">
+                      <span className="mobile-icon-badge inline-flex items-center px-2 py-1 rounded bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold" title="Rev Pending">
+                        <History size={13} className="md:hidden" />
                         Rev Pending
                       </span>
                       <button
@@ -901,6 +902,7 @@ const ProjectsView = React.memo(() => {
                           handleBudgetRevisionRequestAction(p, "approve");
                         }}
                       >
+                        <CheckCircle size={13} className="md:hidden" />
                         Approve
                       </button>
                       <button
@@ -911,6 +913,7 @@ const ProjectsView = React.memo(() => {
                           handleBudgetRevisionRequestAction(p, "reject");
                         }}
                       >
+                        <XCircle size={13} className="md:hidden" />
                         Reject
                       </button>
                     </>

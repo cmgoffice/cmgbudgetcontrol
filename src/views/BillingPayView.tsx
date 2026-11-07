@@ -2624,7 +2624,7 @@ const BillingPayView = React.memo(({ menuType = "billing" }) => {
                       <Badge status={row.status || "Draft"} />
                     </span>
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="mobile-icon-actions px-3 py-2">
                     <div className="flex items-center justify-center gap-2">
                       {canEdit && row.sourceType !== "invoice" && (
                         <button

@@ -676,7 +676,7 @@ const VendorView = React.memo(() => {
                   <td className="py-1.5 px-3" title={v.creditTerm}><span className="cell-text">{v.creditTerm || "-"}</span></td>
                   )}
                   {isColumnVisible("vendor", "actions") && (
-                  <td className="py-1.5 px-3 text-right">
+                  <td className="mobile-icon-actions py-1.5 px-3 text-right">
                     <div className="flex justify-end gap-1">
                       {isAdmin && duplicateCodes.has(normalizeVendorCode(v.code)) && (
                         <button

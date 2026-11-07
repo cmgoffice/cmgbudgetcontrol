@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React from "react";
+import { createPortal } from "react-dom";
 import {
   ClipboardList,
   DollarSign,
@@ -170,43 +171,43 @@ export default function RelatedDocumentDetailModal({ documentType, document, onC
     ? ["Description", "Contract qty", "This period qty", "This period amount"]
     : ["Description", "Quantity", "Unit", "Amount"];
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-[10030] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      className="mobile-sheet-modal fixed inset-0 z-[10030] flex items-stretch sm:items-center justify-center bg-black/60 backdrop-blur-sm p-0 sm:p-4"
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden"
+        className="bg-white sm:rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl h-[100dvh] sm:h-auto max-h-[100dvh] sm:max-h-[92vh] flex flex-col overflow-hidden"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className={`px-6 py-4 bg-gradient-to-r ${HEADER_CLASSES[config.color]} flex items-center justify-between shrink-0`}>
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center">
+        <div className={`px-3 py-2 sm:px-6 sm:py-4 bg-gradient-to-r ${HEADER_CLASSES[config.color]} flex items-center justify-between gap-2 shrink-0`}>
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="hidden sm:flex w-9 h-9 bg-white/20 rounded-xl items-center justify-center">
               <Icon size={18} className="text-white" />
             </div>
-            <div>
-              <h3 className="text-base font-bold text-white">{config.title}</h3>
-              <p className="text-white/70 text-xs mt-0.5">{docNo}</p>
+            <div className="min-w-0">
+              <h3 className="text-sm sm:text-base font-bold text-white">{config.title}</h3>
+              <p className="text-white/70 text-xs sm:mt-0.5 truncate">{docNo}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <Badge status={document.status || document.statusNow || "-"} />
-            <button type="button" onClick={onClose} className="text-white/70 hover:text-white hover:bg-white/20 p-2 rounded-xl transition-all">
+            <button type="button" onClick={onClose} className="text-white/70 hover:text-white hover:bg-white/20 p-1.5 sm:p-2 rounded-xl transition-all">
               <XCircle size={20} />
             </button>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-5 space-y-4">
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+        <div className="flex-1 overflow-y-auto p-3 sm:p-5 space-y-3 sm:space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-1.5 sm:gap-3 text-xs">
             {details.map(([label, value]) => (
-              <div key={label} className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100 min-w-0">
-                <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">{label}</p>
+              <div key={label} className="bg-slate-50 rounded-lg px-2 py-1 sm:px-3 sm:py-2 border border-slate-100 min-w-0">
+                <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider sm:mb-0.5">{label}</p>
                 <p className="font-semibold text-slate-700 break-words">{valueOrDash(value)}</p>
               </div>
             ))}
-            <div className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
-              <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">Total</p>
+            <div className="bg-slate-50 rounded-lg px-2 py-1 sm:px-3 sm:py-2 border border-slate-100">
+              <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider sm:mb-0.5">Total</p>
               <p className="font-bold text-slate-800">{formatCurrency(total)}</p>
             </div>
           </div>
@@ -268,15 +269,16 @@ export default function RelatedDocumentDetailModal({ documentType, document, onC
           )}
         </div>
 
-        <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-2 shrink-0">
+        <div className="px-3 py-2 sm:px-5 sm:py-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:pb-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-2 shrink-0">
           {pdfUrl ? (
             <a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-blue-700">
               <FileOutput size={14} /> Open PDF
             </a>
           ) : <span />}
-          <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-600 text-sm font-medium hover:bg-slate-100">Close</button>
+          <button type="button" onClick={onClose} className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-slate-200 bg-white text-slate-600 text-sm font-medium hover:bg-slate-100">Close</button>
         </div>
       </div>
-    </div>
+    </div>,
+    window.document.body
   );
 }

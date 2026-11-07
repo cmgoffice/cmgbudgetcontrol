@@ -3980,30 +3980,30 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
           { label: "Ref PO", value: refPoNos || "-" },
         ];
 
-        return (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10010] p-4" onClick={() => setViewingPR(null)}>
-            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[90vh] flex flex-col" onClick={(event) => event.stopPropagation()}>
-              <div className="px-6 py-4 bg-gradient-to-r from-slate-700 to-slate-900 rounded-t-2xl flex items-center justify-between shrink-0">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center">
+        return ReactDOM.createPortal(
+          <div className="mobile-sheet-modal fixed inset-0 bg-black/60 backdrop-blur-sm flex items-stretch sm:items-center justify-center z-[10010] p-0 sm:p-4" onClick={() => setViewingPR(null)}>
+            <div className="bg-white sm:rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl h-[100dvh] sm:h-auto max-h-[100dvh] sm:max-h-[90vh] flex flex-col" onClick={(event) => event.stopPropagation()}>
+              <div className="px-3 py-2 sm:px-6 sm:py-4 bg-gradient-to-r from-slate-700 to-slate-900 sm:rounded-t-2xl flex items-center justify-between gap-2 shrink-0">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="hidden sm:flex w-9 h-9 bg-white/20 rounded-xl items-center justify-center">
                     <ClipboardList size={18} className="text-white" />
                   </div>
-                  <div>
-                    <h3 className="text-base font-bold text-white">ใบขอซื้อ (PR)</h3>
-                    <p className="text-slate-300 text-xs mt-0.5">{pr.prNo || pr.id}</p>
+                  <div className="min-w-0">
+                    <h3 className="text-sm sm:text-base font-bold text-white">ใบขอซื้อ (PR)</h3>
+                    <p className="text-slate-300 text-xs sm:mt-0.5 truncate">{pr.prNo || pr.id}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                   <Badge status={pr.status} />
-                  <button type="button" onClick={() => setViewingPR(null)} className="text-white/60 hover:text-white hover:bg-white/20 p-2 rounded-xl transition-all ml-2">
+                  <button type="button" onClick={() => setViewingPR(null)} className="text-white/60 hover:text-white hover:bg-white/20 p-1.5 sm:p-2 rounded-xl transition-all sm:ml-2">
                     <XCircle size={20} />
                   </button>
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+              <div className="flex-1 overflow-y-auto px-3 py-3 sm:px-6 sm:py-5 space-y-3 sm:space-y-4">
                 <div>
-                  <div className="flex items-center justify-between mb-2 w-48">
+                  <div className="hidden sm:flex items-center justify-between mb-2 w-48">
                     <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">เอกสาร PDF</span>
                     {pdfUrl && (
                       <a href={pdfUrlWithCacheBuster} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-blue-600 hover:underline flex items-center gap-1">
@@ -4012,7 +4012,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                     )}
                   </div>
                   {pdfUrl ? (
-                    <a href={pdfUrlWithCacheBuster} target="_blank" rel="noopener noreferrer" className="group relative block w-48 h-64 border border-slate-200 rounded-xl overflow-hidden bg-slate-50 hover:border-blue-400 hover:shadow-md transition-all" title="คลิกเพื่อเปิด PDF ในแท็บใหม่">
+                    <a href={pdfUrlWithCacheBuster} target="_blank" rel="noopener noreferrer" className="group relative block w-24 h-32 md:w-48 md:h-64 border border-slate-200 rounded-xl overflow-hidden bg-slate-50 hover:border-blue-400 hover:shadow-md transition-all" title="คลิกเพื่อเปิด PDF ในแท็บใหม่">
                       <iframe key={pdfUrlWithCacheBuster} src={`${pdfUrlWithCacheBuster}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`} className="w-full h-full pointer-events-none opacity-80 group-hover:opacity-100 transition-opacity" title="PR PDF Thumbnail" />
                       <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors flex items-center justify-center">
                         <span className="bg-white/90 text-blue-600 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5">
@@ -4021,13 +4021,13 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                       </div>
                     </a>
                   ) : (
-                    <div className="w-48 h-64 border border-dashed border-slate-200 rounded-xl bg-slate-50 flex items-center justify-center text-xs font-semibold text-slate-400">ไม่มี PDF</div>
+                    <div className="w-24 h-32 md:w-48 md:h-64 border border-dashed border-slate-200 rounded-xl bg-slate-50 flex items-center justify-center text-xs font-semibold text-slate-400">ไม่มี PDF</div>
                   )}
                   <button
                     type="button"
                     disabled={Boolean(recreatePoInFlightId)}
                     onClick={() => handleRecreatePR(pr)}
-                    className="mt-2 w-48 py-2 px-3 bg-white hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 border border-slate-300 shadow-sm transition-all hover:border-blue-400 hover:text-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="mt-1.5 sm:mt-2 w-24 md:w-48 py-1.5 sm:py-2 px-1.5 sm:px-3 bg-white hover:bg-slate-50 text-slate-700 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1 sm:gap-1.5 border border-slate-300 shadow-sm transition-all hover:border-blue-400 hover:text-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
                     title="สร้างหรือ Recreate ไฟล์ PDF ของ PR ใหม่"
                   >
                     <RefreshCw size={13} className={recreatePoInFlightId === pr.id ? "animate-spin text-blue-600" : "text-slate-500"} />
@@ -4035,17 +4035,17 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                   </button>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-1.5 sm:gap-3 text-xs">
                   {fields.map(({ label, value }) => (
-                    <div key={label} className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
-                      <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">{label}</p>
+                    <div key={label} className="bg-slate-50 rounded-lg px-2 py-1 sm:px-3 sm:py-2 border border-slate-100">
+                      <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider sm:mb-0.5">{label}</p>
                       <p className="font-semibold text-slate-700 truncate" title={String(value)}>{value}</p>
                     </div>
                   ))}
                 </div>
 
                 {attachments.length > 0 && (
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 sm:px-4 sm:py-3">
                     <p className="text-xs font-bold text-slate-700 flex items-center gap-1.5 mb-2"><Paperclip size={13} /> ไฟล์แนบ ({attachments.length} ไฟล์)</p>
                     <div className="space-y-1">
                       {attachments.map((attachment: any, index: number) => (
@@ -4058,11 +4058,39 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                 )}
 
                 <div className="rounded-xl border border-slate-200 overflow-hidden">
-                  <div className="bg-slate-700 px-4 py-2 flex items-center justify-between">
+                  <div className="bg-slate-700 px-3 py-1.5 sm:px-4 sm:py-2 flex items-center justify-between">
                     <span className="text-xs font-bold text-white uppercase tracking-wide">รายการสินค้า</span>
                     <span className="bg-white/20 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">{items.length} รายการ</span>
                   </div>
-                  <table className="w-full text-xs text-left">
+                  {/* Phones: stacked rows that fit the width instead of a squeezed table */}
+                  <div className="md:hidden">
+                    <div className="divide-y divide-slate-100">
+                      {items.map((item: any, index: number) => {
+                        const qty = Number(item?.quantity ?? item?.qty ?? 0);
+                        const price = Number(item?.price ?? item?.unitPrice ?? 0);
+                        const amount = Number(item?.amount ?? (qty * price));
+                        return (
+                          <div key={index} className="flex items-start gap-2 px-3 py-2">
+                            <span className="w-4 shrink-0 text-[11px] text-slate-400">{index + 1}</span>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-medium text-slate-700 break-words">{item?.description || item?.name || "-"}</p>
+                              <p className="text-[11px] text-slate-500">
+                                {qty.toLocaleString("th-TH")} {item?.unit || ""} × {formatCurrency(price)}
+                                {item?.requiredDate ? ` · ใช้ ${item.requiredDate}` : ""}
+                              </p>
+                            </div>
+                            <span className="shrink-0 text-xs font-semibold text-slate-800">{formatCurrency(amount)}</span>
+                          </div>
+                        );
+                      })}
+                      {items.length === 0 && <p className="px-3 py-6 text-center text-xs text-slate-400">ไม่มีรายการสินค้า</p>}
+                    </div>
+                    <div className="flex justify-between gap-2 bg-slate-50 border-t border-slate-200 px-3 py-2 text-xs font-bold text-slate-700">
+                      <span>ยอดรวมทั้งสิ้น</span>
+                      <span>{formatCurrency(totalAmount)}</span>
+                    </div>
+                  </div>
+                  <table className="hidden md:table w-full text-xs text-left">
                     <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
                       <tr>
                         <th className="px-3 py-2 w-8 text-center">#</th>
@@ -4101,18 +4129,35 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                 </div>
               </div>
 
-              <div className="px-6 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0 rounded-b-2xl">
-                <button type="button" onClick={() => setViewingPR(null)} className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-600 text-sm font-medium hover:bg-slate-50 transition-all flex items-center gap-2">
+              <div className="px-3 py-2 sm:px-6 sm:py-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:pb-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-2 shrink-0 sm:rounded-b-2xl">
+                <button type="button" onClick={() => setViewingPR(null)} className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-slate-200 bg-white text-slate-600 text-sm font-medium hover:bg-slate-50 transition-all flex items-center gap-2">
                   <XCircle size={15} /> ปิด
                 </button>
-                {pdfUrl && (
-                  <a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-800 text-white text-sm font-semibold transition-all flex items-center gap-2">
-                    <FileOutput size={15} /> เปิด PDF
-                  </a>
-                )}
+                <div className="flex items-center gap-2">
+                  {pdfUrl && (
+                    <a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg bg-slate-700 hover:bg-slate-800 text-white text-sm font-semibold transition-all flex items-center gap-2">
+                      <FileOutput size={15} /> เปิด PDF
+                    </a>
+                  )}
+                  {/* Row actions — phones only (the Log table's Action column is hidden there) */}
+                  {isPR && (
+                    <div className="md:hidden">
+                      <TableActionMenu
+                        hasPendingAction={isActionTaskRow(pr)}
+                        pendingActionLabel={getPendingActionLabel(pr)}
+                        pendingActionLoading={pendingActionId === String(pr.id)}
+                        pendingActionIsActive={isActivePoTaskRow(pr)}
+                        onPendingAction={() => handlePendingTask(pr)}
+                      >
+                        {() => renderActionMenuItems(pr)}
+                      </TableActionMenu>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
+          </div>,
+          document.body
         );
       })()}
 
@@ -4226,31 +4271,31 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
         const pdfUrl = po.pdfUrl || "";
         const pdfUrlWithCacheBuster = pdfUrl ? `${pdfUrl}${pdfUrl.includes("?") ? "&" : "?"}t=${Date.now()}` : "";
 
-        return (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10010] p-4" onClick={() => setViewingPO(null)}>
-            <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
-              <div className="px-6 py-4 bg-gradient-to-r from-red-700 to-red-900 rounded-t-2xl flex items-center justify-between shrink-0">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center">
+        return ReactDOM.createPortal(
+          <div className="mobile-sheet-modal fixed inset-0 bg-black/60 backdrop-blur-sm flex items-stretch sm:items-center justify-center z-[10010] p-0 sm:p-4" onClick={() => setViewingPO(null)}>
+            <div className="bg-white sm:rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl h-[100dvh] sm:h-auto max-h-[100dvh] sm:max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+              <div className="px-3 py-2 sm:px-6 sm:py-4 bg-gradient-to-r from-red-700 to-red-900 sm:rounded-t-2xl flex items-center justify-between gap-2 shrink-0">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="hidden sm:flex w-9 h-9 bg-white/20 rounded-xl items-center justify-center">
                     <ShoppingCart size={18} className="text-white" />
                   </div>
-                  <div>
-                    <h3 className="text-base font-bold text-white">ใบสั่งซื้อ (PO)</h3>
-                    <p className="text-red-200 text-xs mt-0.5">{po.poNo || po.id}</p>
+                  <div className="min-w-0">
+                    <h3 className="text-sm sm:text-base font-bold text-white">ใบสั่งซื้อ (PO)</h3>
+                    <p className="text-red-200 text-xs sm:mt-0.5 truncate">{po.poNo || po.id}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                   <Badge status={po.status} />
-                  <button onClick={() => setViewingPO(null)} className="text-white/60 hover:text-white hover:bg-white/20 p-2 rounded-xl transition-all ml-2">
+                  <button onClick={() => setViewingPO(null)} className="text-white/60 hover:text-white hover:bg-white/20 p-1.5 sm:p-2 rounded-xl transition-all sm:ml-2">
                     <XCircle size={20} />
                   </button>
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-                <div className="mb-4 grid grid-cols-1 md:grid-cols-[12rem_1fr] gap-4 items-start">
+              <div className="flex-1 overflow-y-auto px-3 py-3 sm:px-6 sm:py-5 space-y-3 sm:space-y-4">
+                <div className="sm:mb-4 grid grid-cols-[6rem_1fr] md:grid-cols-[12rem_1fr] gap-2 sm:gap-4 items-start">
                   <div>
-                    <div className="flex items-center justify-between mb-2">
+                    <div className="hidden sm:flex items-center justify-between mb-2">
                       <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">เอกสาร PDF</span>
                       {pdfUrl && (
                         <a href={pdfUrlWithCacheBuster} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-blue-600 hover:underline flex items-center gap-1">
@@ -4259,7 +4304,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                       )}
                     </div>
                     {pdfUrl ? (
-                      <a href={pdfUrlWithCacheBuster} target="_blank" rel="noopener noreferrer" className="group relative block w-48 h-64 border border-slate-200 rounded-xl overflow-hidden bg-slate-50 hover:border-blue-400 hover:shadow-md transition-all" title="คลิกเพื่อเปิด PDF ในแท็บใหม่">
+                      <a href={pdfUrlWithCacheBuster} target="_blank" rel="noopener noreferrer" className="group relative block w-24 h-32 md:w-48 md:h-64 border border-slate-200 rounded-xl overflow-hidden bg-slate-50 hover:border-blue-400 hover:shadow-md transition-all" title="คลิกเพื่อเปิด PDF ในแท็บใหม่">
                         <iframe key={pdfUrlWithCacheBuster} src={`${pdfUrlWithCacheBuster}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`} className="w-full h-full pointer-events-none opacity-80 group-hover:opacity-100 transition-opacity" title="PO PDF Thumbnail" />
                         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors flex items-center justify-center">
                           <div className="bg-white/90 backdrop-blur-sm text-blue-600 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1.5 transform translate-y-2 group-hover:translate-y-0">
@@ -4268,13 +4313,13 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                         </div>
                       </a>
                     ) : (
-                      <div className="w-48 h-64 border border-dashed border-slate-200 rounded-xl bg-slate-50 flex items-center justify-center text-xs font-semibold text-slate-400">ไม่มี PDF</div>
+                      <div className="w-24 h-32 md:w-48 md:h-64 border border-dashed border-slate-200 rounded-xl bg-slate-50 flex items-center justify-center text-xs font-semibold text-slate-400">ไม่มี PDF</div>
                     )}
                     <button
                       type="button"
                       disabled={Boolean(recreatePoInFlightId)}
                       onClick={() => handleRecreatePO(po)}
-                      className="mt-2 w-48 py-2 px-3 bg-white hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 border border-slate-300 shadow-sm transition-all hover:border-blue-400 hover:text-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="mt-1.5 sm:mt-2 w-24 md:w-48 py-1.5 sm:py-2 px-1.5 sm:px-3 bg-white hover:bg-slate-50 text-slate-700 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1 sm:gap-1.5 border border-slate-300 shadow-sm transition-all hover:border-blue-400 hover:text-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
                       title="Recreate ไฟล์ PDF ของ PO ใหม่"
                     >
                       <RefreshCw size={13} className={recreatePoInFlightId === po.id ? "animate-spin text-blue-600" : "text-slate-500"} />
@@ -4282,17 +4327,17 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                     </button>
                   </div>
 
-                  <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-3 self-start">
-                    <div className="flex items-center justify-between gap-2 mb-2">
-                      <span className="text-xs font-bold text-blue-900 uppercase tracking-wide">เอกสารที่ผูกกับ PO นี้</span>
+                  <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-2 sm:p-3 self-start min-w-0">
+                    <div className="flex items-center justify-between gap-2 mb-1 sm:mb-2">
+                      <span className="text-[11px] sm:text-xs font-bold text-blue-900 uppercase tracking-wide truncate">เอกสารที่ผูกกับ PO นี้</span>
                       <span className="text-[10px] font-semibold text-blue-700 bg-white border border-blue-100 rounded-full px-2 py-0.5">{relatedDocGroups.reduce((sum, group) => sum + group.docs.length, 0)} รายการ</span>
                     </div>
-                    <div className="space-y-1">
+                    <div className="space-y-0.5 sm:space-y-1">
                       {relatedDocGroups.map((group) => {
                         const Icon = group.icon;
                         return (
-                          <div key={group.key} className="flex items-center gap-2 min-h-7 rounded-md px-1">
-                            <span className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 w-20 shrink-0">
+                          <div key={group.key} className="flex items-center gap-1.5 sm:gap-2 min-h-6 sm:min-h-7 rounded-md sm:px-1">
+                            <span className="flex items-center gap-1 sm:gap-1.5 text-[11px] font-bold text-slate-600 w-16 sm:w-20 shrink-0">
                               <Icon size={13} className="text-slate-400" /> {group.label}
                             </span>
                             <div className="flex-1 min-w-0">
@@ -4311,7 +4356,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                                 <span className="text-[11px] text-slate-400">ยังไม่มีรายการ</span>
                               )}
                             </div>
-                            <span className="text-[10px] text-slate-400 font-semibold w-14 text-right shrink-0">{group.docs.length} รายการ</span>
+                            <span className="hidden sm:inline text-[10px] text-slate-400 font-semibold w-14 text-right shrink-0">{group.docs.length} รายการ</span>
                           </div>
                         );
                       })}
@@ -4319,7 +4364,7 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-1.5 sm:gap-3 text-xs">
                   {[
                     { label: "PO NO.", value: po.poNo || po.id },
                     { label: "PO TYPE", value: po.poType || "-" },
@@ -4330,19 +4375,62 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                     { label: "ประเภทรับของ", value: po.receiveType || "-" },
                     { label: "VAT", value: po.vatType || "-" },
                   ].map(({ label, value }) => (
-                    <div key={label} className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
-                      <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">{label}</p>
+                    <div key={label} className="bg-slate-50 rounded-lg px-2 py-1 sm:px-3 sm:py-2 border border-slate-100">
+                      <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider sm:mb-0.5">{label}</p>
                       <p className="font-semibold text-slate-700 truncate" title={String(value)}>{value}</p>
                     </div>
                   ))}
                 </div>
 
                 <div className="rounded-xl border border-slate-200 overflow-hidden">
-                  <div className="bg-red-700 px-4 py-2 flex items-center justify-between">
+                  <div className="bg-red-700 px-3 py-1.5 sm:px-4 sm:py-2 flex items-center justify-between">
                     <span className="text-xs font-bold text-white uppercase tracking-wide">รายการสั่งซื้อ</span>
                     <span className="bg-white/20 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">{po.items?.length || 0} รายการ</span>
                   </div>
-                  <table className="w-full text-xs text-left">
+                  {/* Phones: stacked rows that fit the width instead of a scrolling table */}
+                  <div className="md:hidden">
+                    <div className="divide-y divide-slate-100">
+                      {(po.items || []).map((item: any, idx: number) => {
+                        const qty = Number(item.quantity || item.qty || 0);
+                        const price = Number(item.price || item.unitPrice || 0);
+                        return (
+                          <div key={idx} className="flex items-start gap-2 px-3 py-2">
+                            <span className="w-4 shrink-0 text-[11px] text-slate-400">{idx + 1}</span>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-medium text-slate-700 break-words">{item.description || item.name || "-"}</p>
+                              <p className="text-[11px] text-slate-500">{qty.toLocaleString("th-TH")} × {formatCurrency(price)}</p>
+                            </div>
+                            <span className="shrink-0 text-xs font-semibold text-slate-800">{formatCurrency(qty * price)}</span>
+                          </div>
+                        );
+                      })}
+                      {(!po.items || po.items.length === 0) && (
+                        <p className="px-3 py-6 text-center text-xs text-slate-400">ไม่มีรายการสินค้า</p>
+                      )}
+                    </div>
+                    <div className="bg-slate-50 border-t border-slate-200 px-3 py-2 space-y-1 text-xs">
+                      <div className="flex justify-between gap-2 font-bold text-slate-700">
+                        <span>Sub Total</span>
+                        <span>{formatCurrency(subtotal)}</span>
+                      </div>
+                      {discount > 0 && (
+                        <div className="flex justify-between gap-2 font-semibold text-red-700">
+                          <span>ส่วนลด{discountPrNo ? ` (PR ${discountPrNo})` : ""}</span>
+                          <span>-{formatCurrency(discount)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between gap-2 font-semibold text-slate-600">
+                        <span>ยอดหลังหักส่วนลด</span>
+                        <span className="text-slate-700">{formatCurrency(subtotalAfterDiscount)}</span>
+                      </div>
+                      <div className="flex justify-between gap-2 text-slate-500">
+                        <span>Grand Total (inc. VAT)</span>
+                        <span className="font-bold text-red-700">{formatCurrency(grandTotal)}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="hidden md:block overflow-x-auto overscroll-x-contain">
+                  <table className="w-full min-w-[520px] text-[11px] sm:text-xs text-left [&_th]:px-2 sm:[&_th]:px-3 [&_td]:px-2 sm:[&_td]:px-3">
                     <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
                       <tr>
                         <th className="px-3 py-2 w-8 text-center">#</th>
@@ -4393,22 +4481,40 @@ const PRPOTableView = ({ mode, prs, pos, budgets, projects, vendors, columnWidth
                       </tr>
                     </tfoot>
                   </table>
+                  </div>
                 </div>
                 <PoRevisionHistory po={po} />
               </div>
 
-              <div className="px-6 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0 rounded-b-2xl">
-                <button onClick={() => setViewingPO(null)} className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-600 text-sm font-medium hover:bg-slate-50 transition-all flex items-center gap-2">
+              <div className="px-3 py-2 sm:px-6 sm:py-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:pb-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0 sm:rounded-b-2xl">
+                <button onClick={() => setViewingPO(null)} className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-slate-200 bg-white text-slate-600 text-sm font-medium hover:bg-slate-50 transition-all flex items-center gap-2">
                   <XCircle size={15} /> ปิด
                 </button>
-                {pdfUrl && (
-                  <a href={pdfUrlWithCacheBuster} target="_blank" rel="noopener noreferrer" className="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-800 text-white text-sm font-semibold transition-all flex items-center gap-2">
-                    <FileOutput size={15} /> เปิด PDF
-                  </a>
-                )}
+                <div className="flex items-center gap-2">
+                  {pdfUrl && (
+                    <a href={pdfUrlWithCacheBuster} target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg bg-red-700 hover:bg-red-800 text-white text-sm font-semibold transition-all flex items-center gap-2">
+                      <FileOutput size={15} /> เปิด PDF
+                    </a>
+                  )}
+                  {/* Row actions — phones only (the Log table's Action column is hidden there) */}
+                  {!isPR && (
+                    <div className="md:hidden">
+                      <TableActionMenu
+                        hasPendingAction={isActionTaskRow(po)}
+                        pendingActionLabel={getPendingActionLabel(po)}
+                        pendingActionLoading={pendingActionId === String(po.id)}
+                        pendingActionIsActive={isActivePoTaskRow(po)}
+                        onPendingAction={() => handlePendingTask(po)}
+                      >
+                        {() => renderActionMenuItems(po)}
+                      </TableActionMenu>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
+          </div>,
+          document.body
         );
       })()}
 
@@ -5420,13 +5526,14 @@ const AdminDashboard = () => {
                         </td>
                       )}
                       {isColumnVisible("users", "actions") && (
-                        <td className="p-4 text-right">
+                        <td className="mobile-icon-actions p-4 text-right">
                           <div className="flex justify-end gap-2 items-center">
                             {u.status === "Pending" && canApproveUsers && (
                               <Button
                                 variant="success"
                                 onClick={() => handleApprove(u.id, u.email)}
                               >
+                                <CheckCircle size={14} className="md:hidden" />
                                 Approve
                               </Button>
                             )}

@@ -27,7 +27,12 @@ import {
   findAutoReceiveForPO,
   isReceiveAutoType,
 } from "../lib/receiveAuto";
-import { TABLE_COLUMN_DEFS } from "../lib/tableColumnDefs";
+import {
+  TABLE_COLUMN_DEFS,
+  MOBILE_COLUMN_QUERY,
+  getColumnPrefKey,
+  getColumnDefaultVisible,
+} from "../lib/tableColumnDefs";
 import {
   buildConfiguredInvoiceData,
   buildConfiguredReceiveData,
@@ -367,6 +372,17 @@ export const AppDataProvider = ({
   // ── Column visibility (per-user, synced to Firestore) ─────────────────────
   const [columnVisibility, setColumnVisibility] = useState<Record<string, Record<string, boolean>>>({});
   const colVisSaveTimer = useRef(null);
+  // Phone-width screens use their own column defaults/prefs for tables that define them.
+  const [isMobileColumnLayout, setIsMobileColumnLayout] = useState(
+    () => typeof window !== "undefined" && !!window.matchMedia?.(MOBILE_COLUMN_QUERY).matches
+  );
+  useEffect(() => {
+    const mq = window.matchMedia?.(MOBILE_COLUMN_QUERY);
+    if (!mq) return;
+    const handleChange = (e) => setIsMobileColumnLayout(e.matches);
+    mq.addEventListener("change", handleChange);
+    return () => mq.removeEventListener("change", handleChange);
+  }, []);
 
   // ── Lazy / one-shot loaded collections (getDocs แทน onSnapshot — ลด Firebase read quota) ──
   const [vendorsLoading,   setVendorsLoading]   = useState(false);
@@ -743,8 +759,9 @@ export const AppDataProvider = ({
   // ── Column visibility (per-user) ────────────────────────────────────────
   const saveColumnVisibility = useCallback((tableId, colKey, visible) => {
     if (!user?.uid) return;
+    const prefKey = getColumnPrefKey(tableId, isMobileColumnLayout);
     setColumnVisibility((prev) => {
-      const next = { ...prev, [tableId]: { ...(prev[tableId] || {}), [colKey]: visible } };
+      const next = { ...prev, [prefKey]: { ...(prev[prefKey] || {}), [colKey]: visible } };
       if (colVisSaveTimer.current) clearTimeout(colVisSaveTimer.current);
       colVisSaveTimer.current = setTimeout(async () => {
         try {
@@ -757,14 +774,15 @@ export const AppDataProvider = ({
       }, 700);
       return next;
     });
-  }, [user?.uid]);
+  }, [user?.uid, isMobileColumnLayout]);
 
   const isColumnVisible = useCallback((tableId, colKey) => {
-    const userPref = columnVisibility[tableId]?.[colKey];
-    if (userPref !== undefined) return userPref;
     const columnDef = TABLE_COLUMN_DEFS[tableId]?.find((column) => column.key === colKey);
-    return columnDef?.defaultVisible ?? true;
-  }, [columnVisibility]);
+    if (isMobileColumnLayout && columnDef?.mobileHidden) return false;
+    const userPref = columnVisibility[getColumnPrefKey(tableId, isMobileColumnLayout)]?.[colKey];
+    if (userPref !== undefined) return userPref;
+    return getColumnDefaultVisible(columnDef, isMobileColumnLayout);
+  }, [columnVisibility, isMobileColumnLayout]);
 
   // ── ป้องกันการบันทึกซ้ำ (double submit) ───────────────────────────────────
   const pendingUpdatesRef = useRef(new Set());
@@ -1353,7 +1371,7 @@ export const AppDataProvider = ({
     // column widths
     columnWidths, handleColumnResize,
     // column visibility (per-user)
-    columnVisibility, saveColumnVisibility, isColumnVisible,
+    columnVisibility, saveColumnVisibility, isColumnVisible, isMobileColumnLayout,
     // approval actions
     handlePRAction, handlePOAction,
     handlePORevisionAllow, handlePORevisionDeny,
@@ -1378,7 +1396,7 @@ export const AppDataProvider = ({
     loadVendors, loadMaterials, loadVendorEvaluations,
     vendorsLoading, materialsLoading, vendorEvaluationsLoading, vendorEvaluations,
     columnWidths, handleColumnResize,
-    columnVisibility, saveColumnVisibility, isColumnVisible,
+    columnVisibility, saveColumnVisibility, isColumnVisible, isMobileColumnLayout,
     handlePRAction, handlePOAction, handlePORevisionAllow, handlePORevisionDeny,
     showAlert, openConfirm, logAction,
     userRole, roles, userData, user,

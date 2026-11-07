@@ -2223,7 +2223,7 @@ const InvoiceView = React.memo(() => {
                                   });
                                 }}
                               >
-                                <td className="py-1.5 px-3 text-center md:hidden">
+                                <td className="mobile-icon-actions py-1.5 px-3 text-center md:hidden">
                                   <div className="flex items-center justify-center gap-1">
                                     <button
                                       type="button"
@@ -2399,7 +2399,7 @@ const InvoiceView = React.memo(() => {
                         idx % 2 === 0 ? "bg-white" : "bg-violet-50/20"
                       } hover:bg-violet-50/40`}
                     >
-                      <td className="py-1.5 px-3 md:hidden">
+                      <td className="mobile-icon-actions py-1.5 px-3 md:hidden">
                         <div className="flex items-center justify-center gap-1">
                           {canUseFunction("invoice", "approve") &&
                             (userRoles.includes("PM") || userRoles.includes("Administrator")) &&
@@ -2410,6 +2410,7 @@ const InvoiceView = React.memo(() => {
                                 className="px-2 py-0.5 text-[10px]"
                                 onClick={() => undefined}
                               >
+                                <Check size={13} className="md:hidden" />
                                 PM อนุมัติจ่าย
                               </Button>
                             )}
@@ -2464,6 +2465,7 @@ const InvoiceView = React.memo(() => {
                                 className="px-2 py-0.5 text-[10px]"
                                 onClick={() => undefined}
                               >
+                                <Check size={13} className="md:hidden" />
                                 PM อนุมัติจ่าย
                               </Button>
                             )}
@@ -2639,7 +2641,7 @@ const InvoiceView = React.memo(() => {
                       <td className="py-1.5 px-3 whitespace-nowrap">
                         {formatDate(inv.createdAt || inv.invDate)}
                       </td>
-                      <td className="py-1.5 px-3 md:hidden">
+                      <td className="mobile-icon-actions py-1.5 px-3 md:hidden">
                         <div className="flex items-center justify-center gap-1">
                           {canEditInvoiceHistory && (
                             <button
@@ -2656,6 +2658,7 @@ const InvoiceView = React.memo(() => {
                               onClick={() => openDepositSettlement(inv)}
                               title="จ่ายส่วนที่เหลือ"
                             >
+                              <DollarSign size={13} className="md:hidden" />
                               จ่ายส่วนที่เหลือ
                             </button>
                           )}
@@ -2794,6 +2797,7 @@ const InvoiceView = React.memo(() => {
                               onClick={() => openDepositSettlement(inv)}
                               title="จ่ายส่วนที่เหลือ"
                             >
+                              <DollarSign size={13} className="md:hidden" />
                               จ่ายส่วนที่เหลือ
                             </button>
                           )}

@@ -498,7 +498,7 @@ const PaymentTableView = React.memo(({ onRequestCompleteJob = null }: any) => {
       >
         {isColumnVisible("payment-table", "actions") && (
           <td
-            className="py-2 px-3 md:hidden"
+            className="mobile-icon-actions py-2 px-3 md:hidden"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex justify-start gap-1">

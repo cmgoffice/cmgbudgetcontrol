@@ -2,24 +2,20 @@
 import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Columns3, RotateCcw } from "lucide-react";
-import { TABLE_COLUMN_DEFS } from "../lib/tableColumnDefs";
+import { TABLE_COLUMN_DEFS, getColumnDefaultVisible } from "../lib/tableColumnDefs";
 import { useAppData } from "../contexts/AppDataContext";
 
 const ColumnVisibilityToggle = React.memo(({ tableId }: { tableId: string }) => {
-  const { columnVisibility, saveColumnVisibility } = useAppData();
+  const { saveColumnVisibility, isColumnVisible, isMobileColumnLayout } = useAppData();
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  const defs = TABLE_COLUMN_DEFS[tableId];
-  if (!defs || defs.length === 0) return null;
+  // Columns hidden on phones (e.g. Action) are not offered in the list there.
+  const defs = (TABLE_COLUMN_DEFS[tableId] || []).filter((d) => !(isMobileColumnLayout && d.mobileHidden));
+  if (defs.length === 0) return null;
 
-  const isVisible = (key: string) => {
-    const userPref = columnVisibility?.[tableId]?.[key];
-    if (userPref !== undefined) return userPref;
-    const def = defs.find((d) => d.key === key);
-    return def?.defaultVisible ?? true;
-  };
+  const isVisible = (key: string) => isColumnVisible(tableId, key);
 
   const toggle = (key: string) => {
     const current = isVisible(key);
@@ -28,7 +24,7 @@ const ColumnVisibilityToggle = React.memo(({ tableId }: { tableId: string }) => 
 
   const resetAll = () => {
     defs.forEach((d) => {
-      if (!d.locked) saveColumnVisibility(tableId, d.key, d.defaultVisible);
+      if (!d.locked) saveColumnVisibility(tableId, d.key, getColumnDefaultVisible(d, isMobileColumnLayout));
     });
   };
 

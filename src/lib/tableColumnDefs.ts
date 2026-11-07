@@ -3,6 +3,28 @@ export type ColumnDef = {
   label: string;
   defaultVisible: boolean;
   locked?: boolean;
+  /** Default on phone-width screens; tables with any mobile setting keep separate phone prefs. */
+  mobileDefaultVisible?: boolean;
+  /** Never shown on phone-width screens (e.g. Action — moved into the detail modal). */
+  mobileHidden?: boolean;
+};
+
+/** Phone-width breakpoint for column visibility (matches Tailwind `md`). */
+export const MOBILE_COLUMN_QUERY = "(max-width: 767px)";
+
+export const hasMobileColumnSettings = (tableId: string) =>
+  (TABLE_COLUMN_DEFS[tableId] || []).some(
+    (def) => def.mobileDefaultVisible !== undefined || def.mobileHidden
+  );
+
+/** Key under which a table's visibility prefs are stored for the current layout. */
+export const getColumnPrefKey = (tableId: string, isMobile: boolean) =>
+  isMobile && hasMobileColumnSettings(tableId) ? `${tableId}@mobile` : tableId;
+
+export const getColumnDefaultVisible = (def: ColumnDef | undefined, isMobile: boolean) => {
+  if (!def) return true;
+  if (isMobile && def.mobileDefaultVisible !== undefined) return def.mobileDefaultVisible;
+  return def.defaultVisible ?? true;
 };
 
 export const TABLE_COLUMN_DEFS: Record<string, ColumnDef[]> = {
@@ -52,30 +74,30 @@ export const TABLE_COLUMN_DEFS: Record<string, ColumnDef[]> = {
     { key: "actions",  label: "Actions",        defaultVisible: true, locked: true },
   ],
   pr: [
-    { key: "prNo",        label: "PR No.",       defaultVisible: true },
-    { key: "date",        label: "Date",         defaultVisible: true },
-    { key: "costCode",    label: "Cost Code",    defaultVisible: true },
-    { key: "description", label: "Description",  defaultVisible: true },
-    { key: "type",        label: "Type",         defaultVisible: true },
-    { key: "requestor",   label: "Requestor",    defaultVisible: true },
-    { key: "items",       label: "Items",        defaultVisible: true },
-    { key: "amount",      label: "Amount",       defaultVisible: true },
-    { key: "balance",     label: "Balance",      defaultVisible: true },
-    { key: "status",      label: "Status",       defaultVisible: true },
-    { key: "refDoc",      label: "Ref Doc",      defaultVisible: true },
-    { key: "actions",     label: "Actions",      defaultVisible: true, locked: true },
+    { key: "prNo",        label: "PR No.",       defaultVisible: true, mobileDefaultVisible: true },
+    { key: "date",        label: "Date",         defaultVisible: true, mobileDefaultVisible: false },
+    { key: "costCode",    label: "Cost Code",    defaultVisible: true, mobileDefaultVisible: true },
+    { key: "description", label: "Description",  defaultVisible: true, mobileDefaultVisible: true },
+    { key: "type",        label: "Type",         defaultVisible: true, mobileDefaultVisible: false },
+    { key: "requestor",   label: "Requestor",    defaultVisible: true, mobileDefaultVisible: false },
+    { key: "items",       label: "Items",        defaultVisible: true, mobileDefaultVisible: false },
+    { key: "amount",      label: "Amount",       defaultVisible: true, mobileDefaultVisible: true },
+    { key: "balance",     label: "Balance",      defaultVisible: true, mobileDefaultVisible: false },
+    { key: "status",      label: "Status",       defaultVisible: true, mobileDefaultVisible: true },
+    { key: "refDoc",      label: "Ref Doc",      defaultVisible: true, mobileDefaultVisible: false },
+    { key: "actions",     label: "Actions",      defaultVisible: true, locked: true, mobileHidden: true },
   ],
   po: [
-    { key: "poNo",        label: "PO No.",         defaultVisible: true },
-    { key: "poType",      label: "Type",           defaultVisible: true },
-    { key: "prNos",       label: "Ref PR No.",     defaultVisible: true },
-    { key: "description", label: "Description PR", defaultVisible: true },
-    { key: "vendor",      label: "Vendor",         defaultVisible: true },
-    { key: "creator",     label: "ผู้เปิด/สร้าง PO", defaultVisible: true },
-    { key: "items",       label: "Item",           defaultVisible: true },
-    { key: "amount",      label: "Amount (Ex VAT)", defaultVisible: true },
-    { key: "status",      label: "Status",         defaultVisible: true },
-    { key: "actions",     label: "Action",         defaultVisible: true, locked: true },
+    { key: "poNo",        label: "PO No.",         defaultVisible: true, mobileDefaultVisible: true },
+    { key: "poType",      label: "Type",           defaultVisible: true, mobileDefaultVisible: false },
+    { key: "prNos",       label: "Ref PR No.",     defaultVisible: true, mobileDefaultVisible: false },
+    { key: "description", label: "Description PR", defaultVisible: true, mobileDefaultVisible: true },
+    { key: "vendor",      label: "Vendor",         defaultVisible: true, mobileDefaultVisible: false },
+    { key: "creator",     label: "ผู้เปิด/สร้าง PO", defaultVisible: true, mobileDefaultVisible: false },
+    { key: "items",       label: "Item",           defaultVisible: true, mobileDefaultVisible: false },
+    { key: "amount",      label: "Amount (Ex VAT)", defaultVisible: true, mobileDefaultVisible: true },
+    { key: "status",      label: "Status",         defaultVisible: true, mobileDefaultVisible: true },
+    { key: "actions",     label: "Action",         defaultVisible: true, locked: true, mobileHidden: true },
   ],
   "select-items": [
     { key: "pick",        label: "เลือก",          defaultVisible: true, locked: true },
@@ -160,33 +182,33 @@ export const TABLE_COLUMN_DEFS: Record<string, ColumnDef[]> = {
     { key: "actions",      label: "Action",       defaultVisible: true, locked: true },
   ],
   "pr-table": [
-    { key: "rowNum",      label: "#",              defaultVisible: true, locked: true },
-    { key: "no",          label: "PR No.",         defaultVisible: true },
-    { key: "project",     label: "โครงการ",        defaultVisible: true },
-    { key: "costCode",    label: "Cost Code",      defaultVisible: true },
-    { key: "description", label: "รายการงบ",       defaultVisible: true },
-    { key: "date",        label: "วันที่",          defaultVisible: true },
-    { key: "requestor",   label: "ผู้ขอ",          defaultVisible: true },
-    { key: "type",        label: "ประเภท",         defaultVisible: true },
-    { key: "items",       label: "จำนวนรายการ",    defaultVisible: true },
-    { key: "amount",      label: "ยอดรวม",         defaultVisible: true },
-    { key: "balance",     label: "Balance",        defaultVisible: true },
-    { key: "status",      label: "สถานะ",          defaultVisible: true },
-    { key: "poRef",       label: "Ref PO",         defaultVisible: true },
-    { key: "action",      label: "Action",         defaultVisible: true, locked: true },
+    { key: "rowNum",      label: "#",              defaultVisible: true, locked: true, mobileHidden: true },
+    { key: "no",          label: "PR No.",         defaultVisible: true, mobileDefaultVisible: true },
+    { key: "project",     label: "โครงการ",        defaultVisible: true, mobileDefaultVisible: false },
+    { key: "costCode",    label: "Cost Code",      defaultVisible: true, mobileDefaultVisible: true },
+    { key: "description", label: "รายการงบ",       defaultVisible: true, mobileDefaultVisible: true },
+    { key: "date",        label: "วันที่",          defaultVisible: true, mobileDefaultVisible: false },
+    { key: "requestor",   label: "ผู้ขอ",          defaultVisible: true, mobileDefaultVisible: false },
+    { key: "type",        label: "ประเภท",         defaultVisible: true, mobileDefaultVisible: false },
+    { key: "items",       label: "จำนวนรายการ",    defaultVisible: true, mobileDefaultVisible: false },
+    { key: "amount",      label: "ยอดรวม",         defaultVisible: true, mobileDefaultVisible: true },
+    { key: "balance",     label: "Balance",        defaultVisible: true, mobileDefaultVisible: false },
+    { key: "status",      label: "สถานะ",          defaultVisible: true, mobileDefaultVisible: true },
+    { key: "poRef",       label: "Ref PO",         defaultVisible: true, mobileDefaultVisible: false },
+    { key: "action",      label: "Action",         defaultVisible: true, locked: true, mobileHidden: true },
   ],
   "po-table": [
-    { key: "rowNum",   label: "#",             defaultVisible: true, locked: true },
-    { key: "no",       label: "PO No.",        defaultVisible: true },
-    { key: "project",  label: "โครงการ",       defaultVisible: true },
-    { key: "costCode", label: "Cost Code",     defaultVisible: true },
-    { key: "vendor",   label: "Vendor",        defaultVisible: true },
-    { key: "prRef",    label: "Ref PR No.",    defaultVisible: true },
-    { key: "date",     label: "วันที่",         defaultVisible: true },
-    { key: "items",    label: "จำนวนรายการ",   defaultVisible: true },
-    { key: "amount",   label: "ยอดรวม (Ex VAT)", defaultVisible: true },
-    { key: "status",   label: "สถานะ",         defaultVisible: true },
-    { key: "action",   label: "Action",        defaultVisible: true, locked: true },
+    { key: "rowNum",   label: "#",             defaultVisible: true, locked: true, mobileHidden: true },
+    { key: "no",       label: "PO No.",        defaultVisible: true, mobileDefaultVisible: true },
+    { key: "project",  label: "โครงการ",       defaultVisible: true, mobileDefaultVisible: false },
+    { key: "costCode", label: "Cost Code",     defaultVisible: true, mobileDefaultVisible: false },
+    { key: "vendor",   label: "Vendor",        defaultVisible: true, mobileDefaultVisible: true },
+    { key: "prRef",    label: "Ref PR No.",    defaultVisible: true, mobileDefaultVisible: false },
+    { key: "date",     label: "วันที่",         defaultVisible: true, mobileDefaultVisible: false },
+    { key: "items",    label: "จำนวนรายการ",   defaultVisible: true, mobileDefaultVisible: false },
+    { key: "amount",   label: "ยอดรวม (Ex VAT)", defaultVisible: true, mobileDefaultVisible: true },
+    { key: "status",   label: "สถานะ",         defaultVisible: true, mobileDefaultVisible: true },
+    { key: "action",   label: "Action",        defaultVisible: true, locked: true, mobileHidden: true },
   ],
   users: [
     { key: "name",     label: "Name",       defaultVisible: true },

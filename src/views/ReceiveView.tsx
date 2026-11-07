@@ -1674,7 +1674,7 @@ const ReceiveView = React.memo(() => {
                       className="hover:bg-blue-50/40 cursor-pointer transition-colors"
                       onClick={() => setViewingRcv({ rcv, po, vendor })}
                     >
-                      <td className="py-1 px-3 text-center md:hidden" onClick={(e) => e.stopPropagation()}>
+                      <td className="mobile-icon-actions py-1 px-3 text-center md:hidden" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-center gap-1">
                           <button
                             type="button"
@@ -1908,7 +1908,7 @@ const ReceiveView = React.memo(() => {
                               className="hover:bg-blue-50/40 cursor-pointer transition-colors"
                               onClick={() => openPODetail(po)}
                             >
-                              <td className="py-1 px-3 text-center md:hidden">
+                              <td className="mobile-icon-actions py-1 px-3 text-center md:hidden">
                                 <div className="flex items-center justify-center gap-1">
                                   <button
                                     type="button"
@@ -2009,34 +2009,34 @@ const ReceiveView = React.memo(() => {
               onClick={(e) => e.stopPropagation()}
             >
               {/* Header */}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center">
+              <div className="flex items-center justify-between gap-2 px-3 py-2 sm:px-6 sm:py-4 border-b border-slate-100">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="hidden sm:flex w-10 h-10 rounded-xl bg-blue-50 items-center justify-center">
                     {receiveMode ? <Truck size={20} className="text-blue-600" /> : <FileText size={20} className="text-blue-600" />}
                   </div>
-                  <div>
-                    <h3 className="text-lg font-bold text-slate-800">
+                  <div className="min-w-0">
+                    <h3 className="text-base sm:text-lg font-bold text-slate-800">
                       {receiveMode ? "ทำรับของ" : "รายละเอียด Receive"}
                     </h3>
-                    <p className="text-xs text-slate-400">{viewingPO.poNo}</p>
+                    <p className="text-xs text-slate-400 truncate">{viewingPO.poNo}</p>
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => { if (!saving) { setViewingPO(null); setReceiveMode(false); } }}
-                  className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+                  className="p-1.5 sm:p-2 rounded-lg shrink-0 hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
                 >
                   <X size={20} />
                 </button>
               </div>
 
               {/* Body */}
-              <div className={`p-6 overflow-y-auto custom-scrollbar ${receiveMode ? "max-h-[70vh]" : "max-h-[78vh]"}`}>
+              <div className={`p-3 sm:p-6 overflow-y-auto custom-scrollbar ${receiveMode ? "sm:max-h-[70vh]" : "sm:max-h-[78vh]"}`}>
                 {!receiveMode ? (
                   /* ── PO Detail View ── */
-                  <div className="space-y-5">
+                  <div className="space-y-3 sm:space-y-5">
                     {/* PO Info Grid */}
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5 sm:gap-3">
                       {[
                         { label: "PO No.", value: viewingPO.poNo },
                         { label: "Type", value: PO_TYPE_LABELS[viewingPO.poType] || viewingPO.poType || "-" },
@@ -2046,9 +2046,9 @@ const ReceiveView = React.memo(() => {
                         { label: "สถานะ", value: viewingPO.status },
                         { label: "Receive Type", value: viewingPO.receiveType || "-" },
                       ].map((f) => (
-                        <div key={f.label} className="bg-slate-50 rounded-lg p-3 min-w-0">
+                        <div key={f.label} className="bg-slate-50 rounded-lg px-2 py-1 sm:p-3 min-w-0">
                           <p className="text-[10px] text-slate-400 uppercase font-semibold">{f.label}</p>
-                          <p className="text-sm font-medium text-slate-800 truncate min-w-0" title={String(f.value)}>{f.value}</p>
+                          <p className="text-xs sm:text-sm font-medium text-slate-800 truncate min-w-0" title={String(f.value)}>{f.value}</p>
                         </div>
                       ))}
                     </div>
@@ -2105,10 +2105,10 @@ const ReceiveView = React.memo(() => {
                     {viewingPO.pdfUrl && (
                       <div>
                         <h4 className="text-sm font-bold text-slate-700 mb-2">เอกสาร PDF (ฉบับทำรับของ ไม่แสดงยอดเงิน)</h4>
-                        <div className="inline-block rounded-2xl bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 border border-indigo-100 p-3 shadow-sm">
+                        <div className="inline-block rounded-2xl bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 border border-indigo-100 p-1.5 sm:p-3 shadow-sm">
                           {/* iframe thumbnail — pointer-events-none ป้องกัน scroll/interact */}
                           <div
-                            className="relative w-[220px] rounded-xl overflow-hidden border border-indigo-100 shadow-md bg-white cursor-pointer group"
+                            className="relative w-24 sm:w-[220px] rounded-xl overflow-hidden border border-indigo-100 shadow-md bg-white cursor-pointer group"
                             onClick={() => receiveSafePoPdfUrl && window.open(receiveSafePoPdfUrl, "_blank", "noopener,noreferrer")}
                             title="คลิกเพื่อเปิด PDF"
                           >
@@ -2116,12 +2116,12 @@ const ReceiveView = React.memo(() => {
                               <iframe
                                 src={`${receiveSafePoPdfUrl}#view=FitH&toolbar=0&navpanes=0&scrollbar=0`}
                                 title="PO PDF preview without amounts"
-                                className="w-full border-0 pointer-events-none select-none"
-                                style={{ height: 290, transform: "scale(1)", transformOrigin: "top left" }}
+                                className="w-full h-32 sm:h-[290px] border-0 pointer-events-none select-none"
+                                style={{ transform: "scale(1)", transformOrigin: "top left" }}
                                 scrolling="no"
                               />
                             ) : (
-                              <div className="h-[290px] w-full flex items-center justify-center px-5 text-center text-xs text-slate-400">
+                              <div className="h-32 sm:h-[290px] w-full flex items-center justify-center px-5 text-center text-xs text-slate-400">
                                 {receiveSafePoPdfLoading
                                   ? `กำลังเปิด PDF PO (${receiveSafePoPdfRemainingSeconds} วินาที)`
                                   : "ไม่สามารถเตรียม PDF ได้"}
@@ -2135,8 +2135,8 @@ const ReceiveView = React.memo(() => {
                             </div>
                           </div>
                           {/* ชื่อไฟล์ + ปุ่ม */}
-                          <div className="mt-2 w-[220px] flex items-center justify-between">
-                            <p className="text-[10px] text-indigo-500 font-medium truncate max-w-[150px]">
+                          <div className="mt-1.5 sm:mt-2 w-24 sm:w-[220px] flex items-center justify-center sm:justify-between">
+                            <p className="hidden sm:block text-[10px] text-indigo-500 font-medium truncate max-w-[150px]">
                               {viewingPO.poNo}-receive.pdf
                             </p>
                             {receiveSafePoPdfUrl ? (
@@ -2164,7 +2164,7 @@ const ReceiveView = React.memo(() => {
                         </h4>
                         <div className="space-y-2">
                           {poReceiveHistory.map((rcv) => (
-                            <div key={rcv.id} className="border rounded-lg p-3 bg-slate-50/50">
+                            <div key={rcv.id} className="border rounded-lg p-2 sm:p-3 bg-slate-50/50">
                               <div className="flex items-center justify-between mb-1.5">
                                 <span className="text-xs font-bold text-blue-700">{rcv.receiveNo}</span>
                                 <span className="text-[10px] text-slate-400">
@@ -2196,8 +2196,8 @@ const ReceiveView = React.memo(() => {
                   </div>
                 ) : (
                   /* ── Receive Form ── */
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="space-y-3 sm:space-y-4">
+                    <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-4">
                       <div>
                         <label className="block text-xs font-medium text-slate-700 mb-1">RP No.</label>
                         <input
@@ -2443,7 +2443,7 @@ const ReceiveView = React.memo(() => {
               </div>
 
               {/* Footer */}
-              <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100 bg-slate-50/50 rounded-b-2xl">
+              <div className="flex items-center justify-between gap-2 px-3 py-2 sm:px-6 sm:py-4 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:pb-4 border-t border-slate-100 bg-slate-50/50 sm:rounded-b-2xl">
                 {!receiveMode ? (
                   <>
                     <Button variant="secondary" onClick={() => { setViewingPO(null); setReceiveMode(false); }}>
@@ -2511,42 +2511,42 @@ const ReceiveView = React.memo(() => {
                 onClick={(e) => e.stopPropagation()}
               >
                 {/* Header */}
-                <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-teal-50 flex items-center justify-center">
+                <div className="flex items-center justify-between gap-2 px-3 py-2 sm:px-6 sm:py-4 border-b border-slate-100">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="hidden sm:flex w-10 h-10 rounded-xl bg-teal-50 items-center justify-center">
                       <Truck size={20} className="text-teal-600" />
                     </div>
-                    <div>
-                      <h3 className="text-lg font-bold text-slate-800">รายละเอียดการรับของ</h3>
-                      <p className="text-xs text-slate-400">{rcv.rpNo || rcv.receiveNo || "-"}</p>
+                    <div className="min-w-0">
+                      <h3 className="text-base sm:text-lg font-bold text-slate-800">รายละเอียดการรับของ</h3>
+                      <p className="text-xs text-slate-400 truncate">{rcv.rpNo || rcv.receiveNo || "-"}</p>
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => setViewingRcv(null)}
-                    className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+                    className="p-1.5 sm:p-2 rounded-lg shrink-0 hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
                   >
                     <X size={20} />
                   </button>
                 </div>
 
                 {/* Body */}
-                <div className="p-6 max-h-[75vh] overflow-y-auto custom-scrollbar space-y-6">
+                <div className="p-3 sm:p-6 sm:max-h-[75vh] overflow-y-auto custom-scrollbar space-y-3 sm:space-y-6">
 
                   {/* PDF Thumbnail — อยู่บนสุด */}
                   {rcv.pdfUrl && (
-                    <div className="flex flex-col sm:flex-row gap-4 items-start">
-                      <div className="inline-block rounded-2xl bg-gradient-to-br from-teal-50 via-emerald-50 to-cyan-50 border border-teal-100 p-3 shadow-sm shrink-0">
+                    <div className="flex flex-row gap-2 sm:gap-4 items-start">
+                      <div className="inline-block rounded-2xl bg-gradient-to-br from-teal-50 via-emerald-50 to-cyan-50 border border-teal-100 p-1.5 sm:p-3 shadow-sm shrink-0">
                         <div
-                          className="relative w-[210px] rounded-xl overflow-hidden border border-teal-100 shadow-md bg-white cursor-pointer group"
+                          className="relative w-24 sm:w-[210px] rounded-xl overflow-hidden border border-teal-100 shadow-md bg-white cursor-pointer group"
                           onClick={() => window.open(displayPdfUrl, "_blank")}
                           title="คลิกเพื่อเปิด PDF ใบตรวจรับสินค้า"
                         >
                           <iframe
                             src={`${displayPdfUrl}#view=FitH&toolbar=0&navpanes=0&scrollbar=0`}
                             title="RP PDF preview"
-                            className="w-full border-0 pointer-events-none select-none"
-                            style={{ height: 296, transformOrigin: "top left" }}
+                            className="w-full h-32 sm:h-[296px] border-0 pointer-events-none select-none"
+                            style={{ transformOrigin: "top left" }}
                             scrolling="no"
                           />
                           <div className="absolute inset-0 bg-teal-600/0 group-hover:bg-teal-600/10 transition-colors flex items-center justify-center">
@@ -2555,8 +2555,8 @@ const ReceiveView = React.memo(() => {
                             </span>
                           </div>
                         </div>
-                        <div className="mt-2 w-[210px] flex items-center justify-between">
-                          <div className="flex flex-col">
+                        <div className="mt-1.5 sm:mt-2 w-24 sm:w-[210px] flex items-center justify-center sm:justify-between">
+                          <div className="hidden sm:flex flex-col">
                             <p className="text-[10px] text-teal-600 font-medium truncate max-w-[140px]">
                               ใบตรวจรับสินค้า{rcv.totalPhotos > 0 ? ` + ${rcv.totalPhotos} รูป` : ""}.pdf
                             </p>
@@ -2578,7 +2578,7 @@ const ReceiveView = React.memo(() => {
                       </div>
 
                       {/* Info summary ด้านข้าง thumbnail (บน sm ขึ้นไป) */}
-                      <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2 self-start">
+                      <div className="flex-1 min-w-0 grid grid-cols-1 sm:grid-cols-2 gap-1 sm:gap-2 self-start">
                         {[
                           { label: "RP No.", value: rcv.rpNo || rcv.receiveNo || "-" },
                           { label: "วันที่รับสินค้า", value: rcv.receivedDate ? new Date(rcv.receivedDate).toLocaleDateString("th-TH", { day: "2-digit", month: "long", year: "numeric" }) : "-" },
@@ -2589,15 +2589,15 @@ const ReceiveView = React.memo(() => {
                           { label: "สินค้าของโครงการ", value: rcv.projectItemCode || "-" },
                           { label: "ผู้รับของ", value: getReceiveReceiverName(rcv, po) },
                         ].map((f) => (
-                          <div key={f.label} className="bg-slate-50 rounded-xl px-3 py-2">
+                          <div key={f.label} className="bg-slate-50 rounded-lg sm:rounded-xl px-2 py-1 sm:px-3 sm:py-2 min-w-0">
                             <p className="text-[10px] text-slate-400 uppercase font-semibold">{f.label}</p>
-                            <p className="text-sm font-medium text-slate-800 truncate" title={String(f.value)}>{f.value}</p>
+                            <p className="text-xs sm:text-sm font-medium text-slate-800 truncate" title={String(f.value)}>{f.value}</p>
                           </div>
                         ))}
                         {rcv.note && (
-                          <div className="bg-amber-50 rounded-xl px-3 py-2 col-span-1 sm:col-span-2">
+                          <div className="bg-amber-50 rounded-lg sm:rounded-xl px-2 py-1 sm:px-3 sm:py-2 col-span-1 sm:col-span-2">
                             <p className="text-[10px] text-amber-500 uppercase font-semibold">หมายเหตุ</p>
-                            <p className="text-sm text-slate-700">{rcv.note}</p>
+                            <p className="text-xs sm:text-sm text-slate-700">{rcv.note}</p>
                           </div>
                         )}
                       </div>
@@ -2606,7 +2606,7 @@ const ReceiveView = React.memo(() => {
 
                   {/* Info Grid — แสดงเมื่อไม่มี PDF */}
                   {!rcv.pdfUrl && (
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-1.5 sm:gap-3">
                       {[
                         { label: "RP No.", value: rcv.rpNo || rcv.receiveNo || "-" },
                         { label: "วันที่รับสินค้า", value: rcv.receivedDate ? new Date(rcv.receivedDate).toLocaleDateString("th-TH", { day: "2-digit", month: "long", year: "numeric" }) : "-" },
@@ -2618,15 +2618,15 @@ const ReceiveView = React.memo(() => {
                         { label: "Type", value: poType ? `${poType} — ${PO_TYPE_LABELS[poType]?.replace(/^\w+\s—\s/, "") || poType}` : "-" },
                         { label: "ผู้รับของ", value: getReceiveReceiverName(rcv, po) },
                       ].map((f) => (
-                        <div key={f.label} className="bg-slate-50 rounded-xl p-3">
-                          <p className="text-[10px] text-slate-400 uppercase font-semibold mb-0.5">{f.label}</p>
-                          <p className="text-sm font-medium text-slate-800 truncate" title={String(f.value)}>{f.value}</p>
+                        <div key={f.label} className="bg-slate-50 rounded-lg sm:rounded-xl px-2 py-1 sm:p-3 min-w-0">
+                          <p className="text-[10px] text-slate-400 uppercase font-semibold sm:mb-0.5">{f.label}</p>
+                          <p className="text-xs sm:text-sm font-medium text-slate-800 truncate" title={String(f.value)}>{f.value}</p>
                         </div>
                       ))}
                       {rcv.note && (
-                        <div className="bg-amber-50 rounded-xl p-3 col-span-2 md:col-span-3">
-                          <p className="text-[10px] text-amber-500 uppercase font-semibold mb-0.5">หมายเหตุ</p>
-                          <p className="text-sm text-slate-700">{rcv.note}</p>
+                        <div className="bg-amber-50 rounded-lg sm:rounded-xl px-2 py-1 sm:p-3 col-span-2 md:col-span-3">
+                          <p className="text-[10px] text-amber-500 uppercase font-semibold sm:mb-0.5">หมายเหตุ</p>
+                          <p className="text-xs sm:text-sm text-slate-700">{rcv.note}</p>
                         </div>
                       )}
                     </div>
@@ -2637,8 +2637,8 @@ const ReceiveView = React.memo(() => {
                     <h4 className="text-sm font-bold text-slate-700 mb-2 flex items-center gap-1.5">
                       <Package size={14} /> รายการสินค้าที่รับ ({rcvItems.length} รายการ)
                     </h4>
-                    <div className="border border-slate-100 rounded-xl overflow-hidden">
-                      <table className="w-full text-xs text-slate-600">
+                    <div className="border border-slate-100 rounded-xl overflow-x-auto overscroll-x-contain">
+                      <table className="w-full min-w-[560px] text-[11px] sm:text-xs text-slate-600">
                         <thead className="bg-slate-50 text-slate-500 uppercase font-semibold">
                           <tr>
                             <th className="py-2 px-3 text-left">#</th>
@@ -2691,12 +2691,12 @@ const ReceiveView = React.memo(() => {
                 </div>
 
                 {/* Footer */}
-                <div className="flex items-center justify-end px-6 py-4 border-t border-slate-100 bg-slate-50/50 rounded-b-2xl">
+                <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3 px-3 py-2 sm:px-6 sm:py-4 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:pb-4 border-t border-slate-100 bg-slate-50/50 sm:rounded-b-2xl">
                   <button
                     type="button"
                     onClick={() => handleRecreateReceivePdf(viewingRcv)}
                     disabled={recreatingPdf}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-teal-600 text-teal-700 hover:bg-teal-50 text-sm font-semibold transition-colors mr-3 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-teal-600 text-teal-700 hover:bg-teal-50 text-xs sm:text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <RefreshCw size={14} className={recreatingPdf ? "animate-spin" : ""} />
                     {recreatingPdf ? "กำลังสร้าง PDF..." : "Recreate PDF"}
@@ -2706,7 +2706,7 @@ const ReceiveView = React.memo(() => {
                       href={displayPdfUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-sm font-semibold transition-colors mr-3"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-xs sm:text-sm font-semibold transition-colors"
                     >
                       <ExternalLink size={14} /> เปิด PDF เต็มหน้า{rcv.totalPhotos > 0 ? ` (รวม ${rcv.totalPhotos} รูป)` : ""}
                     </a>

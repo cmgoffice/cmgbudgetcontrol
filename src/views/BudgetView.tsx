@@ -6,7 +6,7 @@ import {
   PlusCircle, Briefcase, Calendar, MapPin, DollarSign, Info, FileOutput, Search, ListFilter,
   Truck, Package, Paperclip, Clock, Hash, Tag, ClipboardList, FileSpreadsheet, Upload, Download,
   BarChart3, Zap, Building2, Wallet, ShoppingCart, FileInput, RefreshCw, UserCheck, History,
-  Bell, CircleDot, AtSign, MapPinned, UserCircle, Square, CheckSquare, Flame, Mail, Settings, Send
+  Bell, CircleDot, AtSign, MapPinned, UserCircle, Square, CheckSquare, Flame, Mail, Settings, Send, Lock, Unlock
 } from "lucide-react";
 import { doc, getDoc, setDoc, updateDoc, deleteDoc, deleteField, runTransaction } from "firebase/firestore";
 import { motion, AnimatePresence } from "framer-motion";
@@ -4112,7 +4112,7 @@ const BudgetView = React.memo(() => {
                               <td className="py-2 px-3 text-center">
                                 <Badge status={b.status} />
                               </td>
-                              <td className="py-2 px-3 text-center">
+                              <td className="mobile-icon-actions py-2 px-3 text-center">
                                 <div className="flex justify-center gap-1">
                                   {!isRevisionPending && (canApproveBudget || canRejectBudget) && (
                                     <>
@@ -4139,6 +4139,7 @@ const BudgetView = React.memo(() => {
                                         className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                         onClick={() => handleAllowEdit(b.id)}
                                       >
+                                        <Unlock size={11} className="md:hidden" />
                                         อนุญาตแก้ไข
                                       </Button>}
                                       {canRejectBudgetRevision && <Button
@@ -4146,6 +4147,7 @@ const BudgetView = React.memo(() => {
                                         className="px-2 py-0.5 text-[10px] whitespace-nowrap"
                                         onClick={() => handleRejectRevision(b.id)}
                                       >
+                                        <Lock size={11} className="md:hidden" />
                                         ไม่อนุญาตแก้ไข
                                       </Button>}
                                     </>
@@ -4237,14 +4239,16 @@ const BudgetView = React.memo(() => {
                                     <td className="py-1 px-3 text-center border-b border-slate-100">
                                       <Badge status={sub.status} />
                                     </td>
-                                    <td className="py-1 px-3 text-center border-b border-slate-100">
+                                    <td className="mobile-icon-actions py-1 px-3 text-center border-b border-slate-100">
                                       <div className="flex justify-center gap-1">
                                         {(canAllowEditSubItem || canRejectSubItemRevision) && sub.status === "Revision Pending" ? (
                                           <>
                                             {canAllowEditSubItem && <Button variant="warning" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAllowEditSubItem(b.id, sub.id)}>
+                                              <Unlock size={11} className="md:hidden" />
                                               อนุญาตแก้ไข
                                             </Button>}
                                             {canRejectSubItemRevision && <Button variant="secondary" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleRejectRevisionSubItem(b.id, sub.id)}>
+                                              <Lock size={11} className="md:hidden" />
                                               ไม่อนุญาตแก้ไข
                                             </Button>}
                                           </>

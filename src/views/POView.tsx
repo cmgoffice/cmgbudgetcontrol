@@ -8,7 +8,7 @@ import {
   CircleArrowRight, CircleArrowDown, CornerDownRight, AlertCircle, Save, Play,
   PlusCircle, Briefcase, Calendar, MapPin, DollarSign, FileOutput, Search, ListFilter,
   Truck, Package, Paperclip, Clock, Hash, Tag, ClipboardList, FileSpreadsheet, Upload, Download,
-  BarChart3, Zap, Building2, ShoppingCart, RefreshCw
+  BarChart3, Zap, Building2, ShoppingCart, RefreshCw, Eye, CheckSquare
 } from "lucide-react";
 import { doc, runTransaction, collection, getDocs, query, where, deleteDoc, deleteField } from "firebase/firestore";
 import { db, appId } from "../lib/firebase";
@@ -3238,24 +3238,78 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
     </>
   );
 
+  const startEditPo = (po) => {
+    // เตรียมฟอร์มสำหรับแก้ไข PO ที่ถูก Reject
+    const prIdsFromItems = getPoRefPrIds(po);
+    const poOpenDateVal = po.poDate ? (po.poDate.split("T")[0] || new Date().toISOString().split("T")[0]) : new Date().toISOString().split("T")[0];
+    setPoPendingFiles([]);
+    setPoSavedAttachments(
+      Array.isArray(po.attachments)
+        ? po.attachments.filter((a: any) => a?.url).map((a: any) => ({ url: a.url, name: a.name || "ไฟล์" }))
+        : []
+    );
+    setFormData({
+      poNo: po.poNo || "",
+      poType: po.poType || "",
+      receiveType: po.receiveType || "",
+      inventoryType: po.inventoryType || "",
+      vendorId: po.vendorId || "",
+      vendorName: po.vendorName || po.vendor || po.supplierName || "",
+      vendorCode: po.vendorCode || "",
+      vendorType: po.vendorType || "",
+      vendorAddress: po.vendorAddress || "",
+      vendorTel: po.vendorTel || "",
+      vendorCreditTerm: po.vendorCreditTerm ?? "",
+      requiredDate: po.requiredDate || "",
+      poOpenDate: poOpenDateVal,
+      vatType: po.vatType || "ex-vat",
+      selectedPrIds: prIdsFromItems,
+      items: (po.items || []).map((it, idx) => ((it.prId == null || it.prId === "") && !it.id) ? { ...it, id: `free-${idx}-${Date.now()}` } : it),
+       reason: po.reason || "",
+       note: po.note || "",
+       discount: po.discount ?? 0,
+       discountPrId: po.discountPrId || "",
+       discountPrNo: po.discountPrNo || "",
+       location: po.location || "",
+      payBeforeReceiveChecked: !!po.payBeforeReceiveChecked,
+      payBeforeReceiveInvoiceSetup: po.payBeforeReceiveInvoiceSetup || null,
+      receivedAfterPaymentChecked: !!po.receivedAfterPaymentChecked,
+      receivedAfterPaymentSetup: po.receivedAfterPaymentSetup || null,
+    });
+    setInvoiceSetupDraft(createInvoiceSetupDraft(po.items || [], po.payBeforeReceiveInvoiceSetup || null));
+    setReceiveSetupDraft(createReceiveSetupDraft(po.items || [], po.vendorName || "", po.receivedAfterPaymentSetup || null));
+    if (po.location && !DELIVERY_LOCATIONS.includes(po.location)) {
+      setLocationOptions(prev => prev.includes(po.location) ? prev : [...prev, po.location]);
+    }
+    setManualVatOverride(po.manualVat != null ? Number(po.manualVat) : null);
+    setVatEditOpen(false);
+    setVatEditValue("");
+    setDiscountEnabled((po.discount ?? 0) > 0);
+    setDiscountInput(po.discount != null ? String(po.discount) : "");
+    setEditingPoId(po.id);
+    setIsModalOpen(true);
+    setIsFullScreenModalOpen(true);
+  };
+
   const renderMobilePoActions = (po) => (
     isColumnVisible("po", "actions") && (
-      <td className="py-2 px-3 md:hidden" onClick={(e) => e.stopPropagation()}>
+      <td className="mobile-icon-actions py-2 px-3 md:hidden" onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-start gap-1 flex-wrap">
           {canApprovePO && po.status === "Pending PCM" && (userRoles.includes("PCM") || userRoles.includes("Administrator")) && !isPoApproveInFlight(po) && (
             <>
-              <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(po.id, "approve")}>PCM Approve</Button>
-              {canRejectPO && <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>}
+              <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(po.id, "approve")}><CheckCircle size={13} />PCM Approve</Button>
+              {canRejectPO && <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}><XCircle size={13} />Reject</Button>}
             </>
           )}
           {canApprovePO && po.status === "Pending GM" && (userRoles.includes("GM") || userRoles.includes("Administrator")) && !isPoApproveInFlight(po) && (
             <>
-              <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(po.id, "approve")}>GM Approve</Button>
-              {canRejectPO && <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}>Reject</Button>}
+              <Button variant="success" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => handleAction(po.id, "approve")}><CheckCircle size={13} />GM Approve</Button>
+              {canRejectPO && <Button variant="danger" size="sm" className="px-2 py-0.5 text-[10px] whitespace-nowrap" onClick={() => { setRejectPoId(po.id); setRejectReason(""); }}><XCircle size={13} />Reject</Button>}
             </>
           )}
           {canUseFunction("po", "edit") && (po.status === "Rejected" || po.status === "Draft") && (userRoles.includes("Procurement") || userRoles.includes("Administrator")) && (
             <Button variant="secondary" size="sm" className="px-2 py-0.5 text-[10px]" onClick={() => openPoDetail(po)}>
+              <Eye size={13} />
               View
             </Button>
           )}
@@ -3287,6 +3341,7 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
                 );
               }}
             >
+              <CheckSquare size={13} />
               ยืนยัน Close
             </Button>
           )}
@@ -3643,58 +3698,7 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
                                     variant="secondary"
                                     size="sm"
                                     className="px-2 py-0.5 text-[10px]"
-                                    onClick={() => {
-                                      // เตรียมฟอร์มสำหรับแก้ไข PO ที่ถูก Reject
-                                      const prIdsFromItems = getPoRefPrIds(po);
-                                      const poOpenDateVal = po.poDate ? (po.poDate.split("T")[0] || new Date().toISOString().split("T")[0]) : new Date().toISOString().split("T")[0];
-                                      setPoPendingFiles([]);
-                                      setPoSavedAttachments(
-                                        Array.isArray(po.attachments)
-                                          ? po.attachments.filter((a: any) => a?.url).map((a: any) => ({ url: a.url, name: a.name || "ไฟล์" }))
-                                          : []
-                                      );
-                                      setFormData({
-                                        poNo: po.poNo || "",
-                                        poType: po.poType || "",
-                                        receiveType: po.receiveType || "",
-                                        inventoryType: po.inventoryType || "",
-                                        vendorId: po.vendorId || "",
-                                        vendorName: po.vendorName || po.vendor || po.supplierName || "",
-                                        vendorCode: po.vendorCode || "",
-                                        vendorType: po.vendorType || "",
-                                        vendorAddress: po.vendorAddress || "",
-                                        vendorTel: po.vendorTel || "",
-                                        vendorCreditTerm: po.vendorCreditTerm ?? "",
-                                        requiredDate: po.requiredDate || "",
-                                        poOpenDate: poOpenDateVal,
-                                        vatType: po.vatType || "ex-vat",
-                                        selectedPrIds: prIdsFromItems,
-                                        items: (po.items || []).map((it, idx) => ((it.prId == null || it.prId === "") && !it.id) ? { ...it, id: `free-${idx}-${Date.now()}` } : it),
-                                         reason: po.reason || "",
-                                         note: po.note || "",
-                                         discount: po.discount ?? 0,
-                                         discountPrId: po.discountPrId || "",
-                                         discountPrNo: po.discountPrNo || "",
-                                         location: po.location || "",
-                                        payBeforeReceiveChecked: !!po.payBeforeReceiveChecked,
-                                        payBeforeReceiveInvoiceSetup: po.payBeforeReceiveInvoiceSetup || null,
-                                        receivedAfterPaymentChecked: !!po.receivedAfterPaymentChecked,
-                                        receivedAfterPaymentSetup: po.receivedAfterPaymentSetup || null,
-                                      });
-                                      setInvoiceSetupDraft(createInvoiceSetupDraft(po.items || [], po.payBeforeReceiveInvoiceSetup || null));
-                                      setReceiveSetupDraft(createReceiveSetupDraft(po.items || [], po.vendorName || "", po.receivedAfterPaymentSetup || null));
-                                      if (po.location && !DELIVERY_LOCATIONS.includes(po.location)) {
-                                        setLocationOptions(prev => prev.includes(po.location) ? prev : [...prev, po.location]);
-                                      }
-                                      setManualVatOverride(po.manualVat != null ? Number(po.manualVat) : null);
-                                      setVatEditOpen(false);
-                                      setVatEditValue("");
-                                      setDiscountEnabled((po.discount ?? 0) > 0);
-                                      setDiscountInput(po.discount != null ? String(po.discount) : "");
-                                      setEditingPoId(po.id);
-                                      setIsModalOpen(true);
-                                      setIsFullScreenModalOpen(true);
-                                    }}
+                                    onClick={() => startEditPo(po)}
                                   >
                                     Edit
                                   </Button>
@@ -3858,58 +3862,7 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
                                   variant="secondary"
                                   size="sm"
                                   className="px-2 py-0.5 text-[10px]"
-                                  onClick={() => {
-                                    // เตรียมฟอร์มสำหรับแก้ไข PO ที่ถูก Reject
-                                    const prIdsFromItems = getPoRefPrIds(po);
-                                    const poOpenDateVal = po.poDate ? (po.poDate.split("T")[0] || new Date().toISOString().split("T")[0]) : new Date().toISOString().split("T")[0];
-                                    setPoPendingFiles([]);
-                                    setPoSavedAttachments(
-                                      Array.isArray(po.attachments)
-                                        ? po.attachments.filter((a: any) => a?.url).map((a: any) => ({ url: a.url, name: a.name || "ไฟล์" }))
-                                        : []
-                                    );
-                                    setFormData({
-                                      poNo: po.poNo || "",
-                                      poType: po.poType || "",
-                                      receiveType: po.receiveType || "",
-                                      inventoryType: po.inventoryType || "",
-                                      vendorId: po.vendorId || "",
-                                      vendorName: po.vendorName || po.vendor || po.supplierName || "",
-                                      vendorCode: po.vendorCode || "",
-                                      vendorType: po.vendorType || "",
-                                      vendorAddress: po.vendorAddress || "",
-                                      vendorTel: po.vendorTel || "",
-                                      vendorCreditTerm: po.vendorCreditTerm ?? "",
-                                      requiredDate: po.requiredDate || "",
-                                      poOpenDate: poOpenDateVal,
-                                      vatType: po.vatType || "ex-vat",
-                                      selectedPrIds: prIdsFromItems,
-                                      items: (po.items || []).map((it, idx) => ((it.prId == null || it.prId === "") && !it.id) ? { ...it, id: `free-${idx}-${Date.now()}` } : it),
-                                       reason: po.reason || "",
-                                       note: po.note || "",
-                                       discount: po.discount ?? 0,
-                                       discountPrId: po.discountPrId || "",
-                                       discountPrNo: po.discountPrNo || "",
-                                       location: po.location || "",
-                                      payBeforeReceiveChecked: !!po.payBeforeReceiveChecked,
-                                      payBeforeReceiveInvoiceSetup: po.payBeforeReceiveInvoiceSetup || null,
-                                      receivedAfterPaymentChecked: !!po.receivedAfterPaymentChecked,
-                                      receivedAfterPaymentSetup: po.receivedAfterPaymentSetup || null,
-                                    });
-                                    setInvoiceSetupDraft(createInvoiceSetupDraft(po.items || [], po.payBeforeReceiveInvoiceSetup || null));
-                                    setReceiveSetupDraft(createReceiveSetupDraft(po.items || [], po.vendorName || "", po.receivedAfterPaymentSetup || null));
-                                    if (po.location && !DELIVERY_LOCATIONS.includes(po.location)) {
-                                      setLocationOptions(prev => prev.includes(po.location) ? prev : [...prev, po.location]);
-                                    }
-                                    setManualVatOverride(po.manualVat != null ? Number(po.manualVat) : null);
-                                    setVatEditOpen(false);
-                                    setVatEditValue("");
-                                    setDiscountEnabled((po.discount ?? 0) > 0);
-                                    setDiscountInput(po.discount != null ? String(po.discount) : "");
-                                    setEditingPoId(po.id);
-                                    setIsModalOpen(true);
-                                    setIsFullScreenModalOpen(true);
-                                  }}
+                                  onClick={() => startEditPo(po)}
                                 >
                                   Edit
                                 </Button>
@@ -4081,28 +4034,28 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
               violet: "border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 hover:text-violet-800",
               cyan: "border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100 hover:text-cyan-800",
             };
-            return (
-              <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[10010] p-4">
-                <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-[90vh] flex flex-col">
+            return createPortal(
+              <div className="mobile-sheet-modal fixed inset-0 bg-black/60 backdrop-blur-sm flex items-stretch sm:items-center justify-center z-[10010] p-0 sm:p-4">
+                <div className="bg-white sm:rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl h-[100dvh] sm:h-auto max-h-[100dvh] sm:max-h-[90vh] flex flex-col">
                   {/* Header */}
-                  <div className="px-6 py-4 bg-gradient-to-r from-red-700 to-red-900 rounded-t-2xl flex items-center justify-between shrink-0">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center">
+                  <div className="px-3 py-2 sm:px-6 sm:py-4 bg-gradient-to-r from-red-700 to-red-900 sm:rounded-t-2xl flex items-center justify-between gap-2 shrink-0">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="hidden sm:flex w-9 h-9 bg-white/20 rounded-xl items-center justify-center">
                         <ShoppingCart size={18} className="text-white" />
                       </div>
-                      <div>
-                        <h3 className="text-base font-bold text-white">ใบสั่งซื้อ (PO)</h3>
-                        <p className="text-red-200 text-xs mt-0.5">{viewingPO.poNo}</p>
+                      <div className="min-w-0">
+                        <h3 className="text-sm sm:text-base font-bold text-white">ใบสั่งซื้อ (PO)</h3>
+                        <p className="text-red-200 text-xs sm:mt-0.5 truncate">{viewingPO.poNo}</p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                       <Badge status={getPoDisplayStatus(viewingPO)} />
                       {viewingPO.jobCompleted && (
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 border border-teal-300">
                           จบงาน
                         </span>
                       )}
-                      <button onClick={() => setViewingPO(null)} className="text-white/60 hover:text-white hover:bg-white/20 p-2 rounded-xl transition-all ml-2">
+                      <button onClick={() => setViewingPO(null)} className="text-white/60 hover:text-white hover:bg-white/20 p-1.5 sm:p-2 rounded-xl transition-all sm:ml-2">
                         <XCircle size={20} />
                       </button>
                     </div>
@@ -4110,23 +4063,23 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
 
                   {/* Reject reason banner */}
                   {viewingPO.rejectReason && (
-                    <div className="px-6 py-2.5 bg-red-50 border-b border-red-200 shrink-0 flex items-center gap-2">
+                    <div className="px-3 py-2 sm:px-6 sm:py-2.5 bg-red-50 border-b border-red-200 shrink-0 flex items-center gap-2">
                       <AlertCircle size={14} className="text-red-500 shrink-0" />
                       <p className="text-red-700 text-xs"><span className="font-semibold">เหตุผลปฏิเสธ:</span> {viewingPO.rejectReason}</p>
                     </div>
                   )}
 
                   {/* Body */}
-                  <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+                  <div className="flex-1 overflow-y-auto px-3 py-3 sm:px-6 sm:py-5 space-y-3 sm:space-y-4">
                     {/* PDF Thumbnail (ถ้ามี) — ใช้ key บังคับ remount เมื่อ status เปลี่ยน เพื่อโชว์ฉบับลายเซ็นล่าสุด */}
                     {(() => {
                       const basePdfUrl = viewingPO.pdfUrl || "";
                       const pdfUrlWithCacheBuster = basePdfUrl ? `${basePdfUrl}${basePdfUrl.includes("?") ? "&" : "?"}t=${Date.now()}` : "";
                       const iframeKey = `po-pdf-${viewingPO.id}-${viewingPO.status}-${viewingPO.pdfUpdatedAt || viewingPO.pdfUrl || ""}`;
                       return (
-                        <div className="mb-4 grid grid-cols-1 md:grid-cols-[12rem_1fr] gap-4 items-stretch">
+                        <div className="sm:mb-4 grid grid-cols-[6rem_1fr] md:grid-cols-[12rem_1fr] gap-2 sm:gap-4 items-stretch">
                           <div>
-                            <div className="flex items-center justify-between mb-2">
+                            <div className="hidden sm:flex items-center justify-between mb-2">
                               <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">เอกสาร PDF</span>
                             </div>
                             {viewingPO.pdfUrl ? (
@@ -4134,7 +4087,7 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
                                 href={pdfUrlWithCacheBuster}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="group relative block w-48 h-64 border border-slate-200 rounded-xl overflow-hidden bg-slate-50 hover:border-blue-400 hover:shadow-md transition-all"
+                                className="group relative block w-24 h-32 md:w-48 md:h-64 border border-slate-200 rounded-xl overflow-hidden bg-slate-50 hover:border-blue-400 hover:shadow-md transition-all"
                                 title="คลิกเพื่อเปิด PDF ในแท็บใหม่"
                               >
                                 <iframe
@@ -4150,7 +4103,7 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
                                 </div>
                               </a>
                             ) : (
-                              <div className="w-48 h-64 border border-dashed border-slate-200 rounded-xl bg-slate-50 flex items-center justify-center text-xs font-semibold text-slate-400">
+                              <div className="w-24 h-32 md:w-48 md:h-64 border border-dashed border-slate-200 rounded-xl bg-slate-50 flex items-center justify-center text-xs font-semibold text-slate-400">
                                 ไม่มี PDF
                               </div>
                             )}
@@ -4158,7 +4111,7 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
                               type="button"
                               disabled={isRecreatingPo}
                               onClick={() => handleRecreatePOClick(viewingPO)}
-                              className="mt-2 w-48 py-2 px-3 bg-white hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 border border-slate-300 shadow-sm transition-all hover:border-blue-400 hover:text-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                              className="mt-1.5 sm:mt-2 w-24 md:w-48 py-1.5 sm:py-2 px-1.5 sm:px-3 bg-white hover:bg-slate-50 text-slate-700 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1 sm:gap-1.5 border border-slate-300 shadow-sm transition-all hover:border-blue-400 hover:text-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
                               title="Recreate ไฟล์ PDF ของ PO ใหม่"
                             >
                               <RefreshCw size={13} className={isRecreatingPo ? "animate-spin text-blue-600" : "text-slate-500"} />
@@ -4166,19 +4119,19 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
                             </button>
                           </div>
 
-                          <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-3 self-start">
-                            <div className="flex items-center justify-between gap-2 mb-2">
-                              <span className="text-xs font-bold text-blue-900 uppercase tracking-wide">เอกสารที่ผูกกับ PO นี้</span>
+                          <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-2 sm:p-3 self-start min-w-0">
+                            <div className="flex items-center justify-between gap-2 mb-1 sm:mb-2">
+                              <span className="text-[11px] sm:text-xs font-bold text-blue-900 uppercase tracking-wide truncate">เอกสารที่ผูกกับ PO นี้</span>
                               <span className="text-[10px] font-semibold text-blue-700 bg-white border border-blue-100 rounded-full px-2 py-0.5">
                                 {relatedDocGroups.reduce((sum, group) => sum + group.docs.length, 0)} รายการ
                               </span>
                             </div>
-                            <div className="space-y-1">
+                            <div className="space-y-0.5 sm:space-y-1">
                               {relatedDocGroups.map((group) => {
                                 const Icon = group.icon;
                                 return (
-                                  <div key={group.key} className="flex items-center gap-2 min-h-7 rounded-md px-1">
-                                    <span className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 w-20 shrink-0">
+                                  <div key={group.key} className="flex items-center gap-1.5 sm:gap-2 min-h-6 sm:min-h-7 rounded-md sm:px-1">
+                                    <span className="flex items-center gap-1 sm:gap-1.5 text-[11px] font-bold text-slate-600 w-16 sm:w-20 shrink-0">
                                       <Icon size={13} className="text-slate-400" /> {group.label}
                                     </span>
                                     <div className="flex-1 min-w-0">
@@ -4206,7 +4159,7 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
                                         <span className="text-[11px] text-slate-400">ยังไม่มีรายการ</span>
                                       )}
                                     </div>
-                                    <span className="text-[10px] text-slate-400 font-semibold w-14 text-right shrink-0">
+                                    <span className="hidden sm:inline text-[10px] text-slate-400 font-semibold w-14 text-right shrink-0">
                                       {group.docs.length} รายการ
                                     </span>
                                   </div>
@@ -4219,7 +4172,7 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
                     })()}
 
                     {/* Info grid */}
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-1.5 sm:gap-3 text-xs">
                       {[
                         { label: L.docNo, value: viewingPO.poNo },
                         { label: L.docType, value: viewingPO.poType || "-" },
@@ -4230,8 +4183,8 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
                         { label: "ประเภทรับของ", value: viewingPO.receiveType || "-" },
                         { label: "VAT", value: viewingPO.vatType || "-" },
                       ].map(({ label, value }) => (
-                        <div key={label} className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
-                          <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">{label}</p>
+                        <div key={label} className="bg-slate-50 rounded-lg px-2 py-1 sm:px-3 sm:py-2 border border-slate-100">
+                          <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider sm:mb-0.5">{label}</p>
                           <p className="font-semibold text-slate-700 truncate" title={value}>{value}</p>
                         </div>
                       ))}
@@ -4315,7 +4268,7 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
                         if (allAttachments.length === 0) return null;
 
                         return (
-                          <div className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100 col-span-2 md:col-span-3">
+                          <div className="bg-slate-50 rounded-lg px-2 py-1.5 sm:px-3 sm:py-2 border border-slate-100 col-span-2 md:col-span-3">
                             <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1.5 flex items-center gap-1">
                               <Paperclip size={11} /> ไฟล์แนบทั้งหมด ({allAttachments.length} ไฟล์)
                             </p>
@@ -4355,11 +4308,64 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
 
                     {/* Line Items */}
                     <div className="rounded-xl border border-slate-200 overflow-hidden">
-                      <div className="bg-red-700 px-4 py-2 flex items-center justify-between">
+                      <div className="bg-red-700 px-3 py-1.5 sm:px-4 sm:py-2 flex items-center justify-between">
                         <span className="text-xs font-bold text-white uppercase tracking-wide">รายการสั่งซื้อ</span>
                         <span className="bg-white/20 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">{viewingPO.items?.length || 0} รายการ</span>
                       </div>
-                      <table className="w-full text-xs text-left">
+                      {/* Phones: stacked rows that fit the width instead of a scrolling table */}
+                      <div className="md:hidden">
+                        <div className="divide-y divide-slate-100">
+                          {(viewingPO.items || []).map((it: any, idx: number) => {
+                            const allocations = Array.isArray(it.disPrAllocations) && it.disPrAllocations.length > 0
+                              ? it.disPrAllocations
+                              : it.prId
+                                ? [{ prId: it.prId, prNo: it.prNo, prItemIndex: it.prItemIndex, amount: it.amount }]
+                                : [];
+                            const allocationPrNos = allocations
+                              .map((allocation: any) => allocation?.prNo || prs.find((pr: any) => pr.id === allocation?.prId)?.prNo || allocation?.prId)
+                              .filter(Boolean);
+                            return (
+                              <div key={idx} className="flex items-start gap-2 px-3 py-2">
+                                <span className="w-4 shrink-0 text-[11px] text-slate-400">{idx + 1}</span>
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-xs font-medium text-slate-700 break-words">{it.description}</p>
+                                  <p className="text-[11px] text-slate-500">
+                                    {it.quantity} {it.unit} × {formatCurrency(it.price)}
+                                  </p>
+                                  {allocationPrNos.length > 0 && (
+                                    <p className="text-[10px] text-slate-500">
+                                      ตัดจาก <span className="font-semibold text-blue-700">{allocationPrNos.join(", ")}</span>
+                                    </p>
+                                  )}
+                                </div>
+                                <span className="shrink-0 text-xs font-semibold text-slate-800">{formatCurrency(Number(it.quantity) * Number(it.price))}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="bg-slate-800 px-3 py-2 space-y-1 text-xs">
+                          <div className="flex justify-between gap-2 font-bold text-white">
+                            <span>Sub Total</span>
+                            <span>{formatCurrency(subtotal)}</span>
+                          </div>
+                          {discount > 0 && (
+                            <div className="flex justify-between gap-2 font-semibold text-red-200">
+                              <span>ส่วนลด{discountPrNo ? ` (PR ${discountPrNo})` : ""}</span>
+                              <span>-{formatCurrency(discount)}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between gap-2 font-semibold text-slate-300">
+                            <span>ยอดหลังหักส่วนลด</span>
+                            <span className="text-white">{formatCurrency(subtotalAfterDiscount)}</span>
+                          </div>
+                          <div className="flex justify-between gap-2 text-slate-300">
+                            <span>Grand Total (inc. VAT)</span>
+                            <span className="font-semibold text-slate-200">{formatCurrency(viewingPO.amount ?? viewingPO.grandTotal ?? subtotalAfterDiscount)}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="hidden md:block overflow-x-auto overscroll-x-contain">
+                      <table className="w-full min-w-[560px] text-[11px] sm:text-xs text-left [&_th]:px-2 sm:[&_th]:px-3 [&_td]:px-2 sm:[&_td]:px-3">
                         <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
                           <tr>
                             <th className="px-3 py-2 w-8 text-center">#</th>
@@ -4393,9 +4399,12 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
                                         const sourceItem = sourcePr?.items?.[allocation?.prItemIndex];
                                         const sourceDescription = allocation?.prItemDescription || sourceItem?.description || "PR ระดับเอกสาร";
                                         return (
-                                          <div key={`${allocation?.prId || "pr"}-${allocation?.prItemIndex ?? "all"}-${allocationIdx}`}>
-                                            <span className="font-semibold text-blue-700">{allocation?.prNo || sourcePr?.prNo || allocation?.prId || "-"}</span>
-                                            <span className="text-slate-500"> · {sourceDescription} · {formatCurrency(allocation?.amount || 0)}</span>
+                                          <div
+                                            key={`${allocation?.prId || "pr"}-${allocation?.prItemIndex ?? "all"}-${allocationIdx}`}
+                                            className="font-semibold text-blue-700 truncate"
+                                            title={`${sourceDescription} · ${formatCurrency(allocation?.amount || 0)}`}
+                                          >
+                                            {allocation?.prNo || sourcePr?.prNo || allocation?.prId || "-"}
                                           </div>
                                         );
                                       })}
@@ -4429,13 +4438,14 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
                             </tr>
                          </tfoot>
                        </table>
+                      </div>
                      </div>
 
                     <PoRevisionHistory po={viewingPO} />
 
 
                     {viewingPO.jobCompleted && (
-                      <div className="bg-teal-50 border border-teal-200 rounded-lg px-4 py-3 text-xs text-teal-900">
+                      <div className="bg-teal-50 border border-teal-200 rounded-lg px-3 py-2 sm:px-4 sm:py-3 text-xs text-teal-900">
                         <span className="font-bold">จบงานแล้ว:</span> โดย {viewingPO.jobCompletedBy || "-"}
                         {viewingPO.jobCompletedPaymentNo ? ` · Payment ${viewingPO.jobCompletedPaymentNo}` : ""}
                         {viewingPO.jobCompletedAt ? ` · ${new Date(viewingPO.jobCompletedAt).toLocaleString("th-TH")}` : ""}
@@ -4443,21 +4453,21 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
                     )}
 
                     {viewingPO.note && (
-                      <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-800">
+                      <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 sm:px-4 sm:py-3 text-xs text-amber-800">
                         <span className="font-bold">หมายเหตุ:</span> {viewingPO.note}
                       </div>
                     )}
 
                     {viewingPO.poEditRevisionReason && (viewingPO.status === PO_REVISION_PENDING_PCM || viewingPO.status === PO_REVISION_PENDING_GM) && (
-                      <div className="bg-orange-50 border border-orange-200 rounded-lg px-4 py-3 text-xs text-orange-900">
+                      <div className="bg-orange-50 border border-orange-200 rounded-lg px-3 py-2 sm:px-4 sm:py-3 text-xs text-orange-900">
                         <span className="font-bold">{L.revisionReasonLabel}</span> {viewingPO.poEditRevisionReason}
                       </div>
                     )}
                   </div>
 
                   {/* Footer — ปุ่ม Approve/Reject ตาม Role */}
-                  <div className="px-6 py-3.5 border-t border-slate-200 bg-slate-50 rounded-b-2xl flex items-center justify-between gap-2 shrink-0">
-                    <button onClick={() => setViewingPO(null)} className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-600 text-sm font-medium hover:bg-slate-50 transition-all flex items-center gap-2">
+                  <div className="px-3 py-2 sm:px-6 sm:py-3.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:pb-3.5 border-t border-slate-200 bg-slate-50 sm:rounded-b-2xl flex items-center justify-between gap-2 shrink-0">
+                    <button onClick={() => setViewingPO(null)} className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg border border-slate-200 bg-white text-slate-600 text-sm font-medium hover:bg-slate-50 transition-all flex items-center gap-2">
                       <XCircle size={15} /> ปิด
                     </button>
                     <div className="flex items-center gap-2 flex-wrap justify-end">
@@ -4485,10 +4495,59 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
                           <Button variant="success" className="px-4 py-2 text-sm" onClick={() => { handleAction(viewingPO.id, "approve"); setViewingPO(null); }}>GM Approve</Button>
                         </>
                       )}
+                      {/* Row actions — phones only (the table's Action column is hidden there) */}
+                      <div className="flex md:hidden items-center gap-2 flex-wrap justify-end">
+                        {canUseFunction("po", "requestRevision") &&
+                          getPORevisionFlow(viewingPO.status) &&
+                          viewingPO.status !== PO_REVISION_PENDING_PCM &&
+                          viewingPO.status !== PO_REVISION_PENDING_GM && (
+                            <Button
+                              variant="secondary"
+                              className="px-3 py-1.5 text-xs text-orange-700"
+                              onClick={() => {
+                                const poId = viewingPO.id;
+                                setViewingPO(null);
+                                setPoRevisionPoId(poId);
+                                setPoRevisionReason("");
+                                setIsPoRevisionModalOpen(true);
+                              }}
+                            >
+                              <RefreshCw size={13} /> ขอแก้ไข
+                            </Button>
+                          )}
+                        {canUseFunction("po", "edit") && (viewingPO.status === "Rejected" || viewingPO.status === "Draft") && (userRoles.includes("Procurement") || userRoles.includes("Administrator")) && (
+                          <Button
+                            variant="secondary"
+                            className="px-3 py-1.5 text-xs"
+                            onClick={() => { const po = viewingPO; setViewingPO(null); startEditPo(po); }}
+                          >
+                            <Edit size={13} /> Edit
+                          </Button>
+                        )}
+                        {canUseFunction("po", "closePO") && viewingPO.status === "Pending Close PO" && (
+                          <Button
+                            variant="success"
+                            className="px-3 py-1.5 text-xs whitespace-nowrap"
+                            onClick={() => { const po = viewingPO; setViewingPO(null); handleConfirmClosePo(po); }}
+                          >
+                            <CheckSquare size={13} /> ยืนยัน Close
+                          </Button>
+                        )}
+                        {canUseFunction("po", "delete") && (
+                          <Button
+                            variant="danger"
+                            className="px-3 py-1.5 text-xs"
+                            onClick={() => { const po = viewingPO; setViewingPO(null); handleDeletePo(po); }}
+                          >
+                            <Trash2 size={13} /> ลบ
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
+              </div>,
+              document.body
             );
           })()}
 
@@ -5138,31 +5197,231 @@ const POView = React.memo(({ onRecreatePO, recreatePoInFlightId }: any = {}) => 
                   {/* 3. เลือกรายการสินค้า (Select Items) - โทนแดงขาวดำ */}
                   {formData.selectedPrIds.length > 0 && (
                     <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-                      <div className="flex items-center justify-between px-5 py-2.5 bg-gradient-to-r from-slate-100 to-slate-200/80 border-b border-slate-300">
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 bg-slate-800 rounded-lg flex items-center justify-center">
+                      <div className="flex items-center justify-between gap-2 px-3 sm:px-5 py-2 sm:py-2.5 bg-gradient-to-r from-slate-100 to-slate-200/80 border-b border-slate-300">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-6 h-6 shrink-0 bg-slate-800 rounded-lg flex items-center justify-center">
                             <Package size={13} className="text-white" />
                           </div>
-                          <span className="text-xs font-bold text-slate-800 tracking-wide uppercase">
+                          <span className="text-[11px] sm:text-xs font-bold text-slate-800 tracking-wide uppercase leading-tight">
                             {L.selectItems}
                           </span>
                         </div>
                         <button
                           type="button"
-                          className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-slate-800 text-white text-xs font-semibold hover:bg-slate-700 transition-all shadow-sm"
+                          className="shrink-0 flex items-center gap-1.5 px-3 sm:px-4 py-1.5 rounded-xl bg-slate-800 text-white text-xs font-semibold whitespace-nowrap hover:bg-slate-700 transition-all shadow-sm"
                           onClick={addFreeItem}
                         >
                           <Plus size={13} /> เพิ่มรายการ
                         </button>
                       </div>
 
-                      <div className="p-4 overflow-hidden w-full min-w-0">
+                      <div className="p-2 sm:p-4 overflow-hidden w-full min-w-0">
                         {hasPaidLockedPoItems && (
                           <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                             รายการที่บันทึกใน Payment สถานะ Paid แล้วถูกล็อก ไม่สามารถแก้ไขหรือลบได้ทุกงวด แต่สามารถเพิ่มรายการ PO ใหม่ได้
                           </div>
                         )}
-                        <div ref={selectItemsTableRef} className="w-full min-w-0 overflow-x-auto pb-1">
+                        {/* Phones: one card per item instead of the wide table */}
+                        <div className="md:hidden space-y-2">
+                          {(() => {
+                            const mobileInputCls = "w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed focus:border-red-400 focus:ring-1 focus:ring-red-100 bg-white";
+                            const mobileField = (label, content, className = "") => (
+                              <div className={`min-w-0 ${className}`}>
+                                <p className="text-[10px] font-semibold text-slate-500 mb-0.5">{label}</p>
+                                {content}
+                              </div>
+                            );
+                            const disPrButton = (plan, key, disabled, highlightEmpty) => (
+                              <button
+                                type="button"
+                                disabled={disabled}
+                                onClick={(e) => toggleDisPrPick(key, (e.currentTarget as any)?.getBoundingClientRect?.() || null)}
+                                className={`w-full min-w-0 text-left rounded-lg px-2 py-1.5 text-xs bg-white border ${highlightEmpty && plan.length === 0 ? "border-red-300 ring-1 ring-red-100" : "border-slate-200"} disabled:bg-slate-50 disabled:text-slate-400`}
+                                title="เลือก PR ที่จะตัดยอด (เรียงตามลำดับที่เลือก)"
+                              >
+                                {plan.length === 0 ? (
+                                  <span className="text-slate-400">เลือก Dis PR...</span>
+                                ) : (
+                                  <span className="flex flex-wrap gap-1">
+                                    {plan.map((p) => (
+                                      <span key={p} className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 text-[10px] font-semibold whitespace-nowrap">
+                                        {p}
+                                      </span>
+                                    ))}
+                                  </span>
+                                )}
+                              </button>
+                            );
+                            return (
+                              <>
+                                {availableItems.map((item) => {
+                                  const isSelected = formData.items.some(i => !String(i.id || "").startsWith("free-") && i.prId === item.prId && i.prItemIndex === item.prItemIndex);
+                                  const selectedData = formData.items.find(i => !String(i.id || "").startsWith("free-") && i.prId === item.prId && i.prItemIndex === item.prItemIndex) || item;
+                                  const selectedFormIndex = formData.items.indexOf(selectedData);
+                                  const isPaidLocked = isSelected && paidLockedPoItemIndexes.has(selectedFormIndex);
+                                  const fieldDisabled = !isSelected || isPaidLocked;
+                                  const plan: string[] = Array.isArray(selectedData.disPrPlan) ? selectedData.disPrPlan : [];
+                                  return (
+                                    <div
+                                      key={`m-${item.prId}-${item.prItemIndex}`}
+                                      className={`rounded-xl border p-2.5 space-y-2 ${isSelected ? "border-slate-300 bg-white shadow-sm" : "border-slate-200 bg-slate-50/70"}`}
+                                    >
+                                      <label className={`flex items-start gap-2 ${isPaidLocked ? "cursor-not-allowed" : "cursor-pointer"}`}>
+                                        <input
+                                          type="checkbox"
+                                          checked={isSelected}
+                                          disabled={isPaidLocked}
+                                          onChange={() => handleItemToggle(item)}
+                                          className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 disabled:cursor-not-allowed"
+                                          title={isPaidLocked ? "ล็อกโดย Payment Paid" : ""}
+                                        />
+                                        <div className="min-w-0 flex-1">
+                                          <div className="flex items-center gap-1.5 flex-wrap">
+                                            <span className="text-xs font-bold text-slate-800">{item.prNo}</span>
+                                            {item.alreadyOpenedInPO && (
+                                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 border border-amber-200">{L.alreadyOpened}</span>
+                                            )}
+                                            {isPaidLocked && (
+                                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200">ล็อก (Paid)</span>
+                                            )}
+                                          </div>
+                                          <p className={`text-[11px] leading-snug break-words ${isSelected ? "text-slate-600" : "text-slate-400"}`}>
+                                            {selectedData.description || item.description || "-"}
+                                          </p>
+                                        </div>
+                                        <span className={`shrink-0 text-xs font-bold ${isSelected ? "text-slate-800" : "text-slate-400"}`}>
+                                          {formatCurrency(Number(selectedData.quantity) * Number(selectedData.price))}
+                                        </span>
+                                      </label>
+                                      {isSelected && (
+                                        <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-100">
+                                          {mobileField("Material No.", (
+                                            <MaterialAutoComplete
+                                              value={selectedData.materialNo ?? ""}
+                                              className={mobileInputCls}
+                                              disabled={fieldDisabled}
+                                              placeholder="ระบุ Material No."
+                                              materials={materials}
+                                              onLookup={loadMaterials}
+                                              onChange={(val) => handleItemChange(item.prId, item.prItemIndex, "materialNo", val)}
+                                              onSelectMaterial={(mat) => handleItemSelectMaterial(item.prId, item.prItemIndex, mat)}
+                                            />
+                                          ), "col-span-3")}
+                                          {mobileField("รายการ", (
+                                            <MaterialAutoComplete
+                                              value={selectedData.description ?? ""}
+                                              className={mobileInputCls}
+                                              disabled={fieldDisabled}
+                                              placeholder="รายการสินค้า"
+                                              materials={materials}
+                                              onLookup={loadMaterials}
+                                              onChange={(val) => handleItemChange(item.prId, item.prItemIndex, "description", val)}
+                                              onSelectMaterial={(mat) => handleItemSelectMaterial(item.prId, item.prItemIndex, mat)}
+                                            />
+                                          ), "col-span-3")}
+                                          {mobileField("หน่วย", (
+                                            <input
+                                              type="text"
+                                              className={mobileInputCls}
+                                              disabled={fieldDisabled}
+                                              value={selectedData.unit ?? item.unit ?? ""}
+                                              placeholder="หน่วย"
+                                              onChange={(e) => handleItemChange(item.prId, item.prItemIndex, "unit", e.target.value)}
+                                            />
+                                          ))}
+                                          {mobileField("สั่งซื้อ (QTY)", (
+                                            <input
+                                              type="text"
+                                              inputMode="decimal"
+                                              className={`${mobileInputCls} text-right`}
+                                              disabled={fieldDisabled}
+                                              value={formatNumericInput(selectedData.quantity)}
+                                              onChange={(e) => handleItemChange(item.prId, item.prItemIndex, "quantity", normalizeNumericInput(e.target.value))}
+                                            />
+                                          ))}
+                                          {mobileField("ราคา/หน่วย", (
+                                            <input
+                                              type="text"
+                                              inputMode="decimal"
+                                              className={`${mobileInputCls} text-right`}
+                                              disabled={fieldDisabled}
+                                              value={formatNumericInput(selectedData.price)}
+                                              onChange={(e) => handleItemChange(item.prId, item.prItemIndex, "price", normalizeNumericInput(e.target.value))}
+                                            />
+                                          ))}
+                                          {mobileField("Dis PR", disPrButton(plan, getDisPrKeyForItem(item.prId, item.prItemIndex), fieldDisabled, true), "col-span-3")}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                                {formData.items.filter(i => i.id && String(i.id).startsWith("free-")).map((freeItem) => {
+                                  const freeFormIndex = formData.items.indexOf(freeItem);
+                                  const isPaidLocked = paidLockedPoItemIndexes.has(freeFormIndex);
+                                  const sourcePrId = freeItem.sourcePrId || freeItem.prId || "";
+                                  const sourcePrItemIndex = Number(freeItem.sourcePrItemIndex ?? freeItem.prItemIndex);
+                                  const routeValue = sourcePrId && Number.isInteger(sourcePrItemIndex) && sourcePrItemIndex >= 0
+                                    ? `${sourcePrId}::${sourcePrItemIndex}`
+                                    : "";
+                                  const plan: string[] = Array.isArray(freeItem.disPrPlan) ? freeItem.disPrPlan : [];
+                                  return (
+                                    <div key={`m-${freeItem.id}`} className="rounded-xl border border-amber-200 bg-amber-50/40 p-2.5 space-y-2 shadow-sm">
+                                      <div className="flex items-center gap-2">
+                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-800 border border-amber-200">รายการเพิ่ม</span>
+                                        <span className="ml-auto text-xs font-bold text-slate-800">
+                                          {formatCurrency(Number(freeItem.quantity) * Number(freeItem.price))}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          disabled={isPaidLocked}
+                                          className="text-red-400 hover:text-red-600 p-1 disabled:text-slate-300 disabled:cursor-not-allowed"
+                                          onClick={() => removeFreeItem(freeItem.id)}
+                                          title={isPaidLocked ? "ล็อกโดย Payment Paid" : "ลบรายการ"}
+                                        >
+                                          <Trash2 size={15} />
+                                        </button>
+                                      </div>
+                                      <div className="grid grid-cols-3 gap-2">
+                                        {mobileField("PR อ้างอิง", (
+                                          <select
+                                            className={`${mobileInputCls} ${routeValue ? "" : "border-red-300 ring-1 ring-red-100"}`}
+                                            value={routeValue}
+                                            disabled={isPaidLocked}
+                                            onChange={(e) => handleFreeItemPrRouteChange(freeItem.id, e.target.value)}
+                                            title="เลือกรายการย่อยของ PR ที่รายการ PO นี้ใช้อ้างอิง"
+                                          >
+                                            <option value="">เลือก PR และรายการอ้างอิง...</option>
+                                            {freeItemPrRouteOptions.map((option: any) => (
+                                              <option key={option.key} value={option.key}>{option.label}</option>
+                                            ))}
+                                          </select>
+                                        ), "col-span-3")}
+                                        {mobileField("Material No.", (
+                                          <MaterialAutoComplete value={freeItem.materialNo || ""} className={mobileInputCls} disabled={isPaidLocked} placeholder="Material No." materials={materials} onLookup={loadMaterials} onChange={(val) => handleFreeItemChange(freeItem.id, "materialNo", val)} onSelectMaterial={(mat) => setFreeItemMaterial(freeItem.id, mat)} />
+                                        ), "col-span-3")}
+                                        {mobileField("รายการ", (
+                                          <input type="text" className={mobileInputCls} disabled={isPaidLocked} placeholder="รายการ" value={freeItem.description || ""} onChange={e => handleFreeItemChange(freeItem.id, "description", e.target.value)} />
+                                        ), "col-span-3")}
+                                        {mobileField("หน่วย", (
+                                          <input type="text" className={mobileInputCls} disabled={isPaidLocked} placeholder="หน่วย" value={freeItem.unit || ""} onChange={e => handleFreeItemChange(freeItem.id, "unit", e.target.value)} />
+                                        ))}
+                                        {mobileField("สั่งซื้อ (QTY)", (
+                                          <input type="text" inputMode="decimal" className={`${mobileInputCls} text-right`} disabled={isPaidLocked} value={formatNumericInput(freeItem.quantity)} onChange={e => handleFreeItemChange(freeItem.id, "quantity", normalizeNumericInput(e.target.value))} />
+                                        ))}
+                                        {mobileField("ราคา/หน่วย", (
+                                          <input type="text" inputMode="decimal" className={`${mobileInputCls} text-right`} disabled={isPaidLocked} value={formatNumericInput(freeItem.price)} onChange={e => handleFreeItemChange(freeItem.id, "price", normalizeNumericInput(e.target.value))} />
+                                        ))}
+                                        {mobileField("Dis PR", disPrButton(plan, getDisPrKeyForFree(freeItem.id), isPaidLocked, true), "col-span-3")}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </>
+                            );
+                          })()}
+                        </div>
+
+                        <div ref={selectItemsTableRef} className="hidden md:block w-full min-w-0 overflow-x-auto pb-1">
                           <table
                             className="text-left text-xs rounded-xl border border-slate-200 table-fixed"
                             style={{ width: "max-content", minWidth: "100%" }}
