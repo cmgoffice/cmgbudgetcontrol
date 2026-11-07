@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { PDFDocument, StandardFonts, rgb, PDFName, PDFString } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb, PDFName, PDFString, PDFRef } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 import { getDownloadURL, ref, uploadBytes, uploadBytesResumable, getBytes, deleteObject } from "firebase/storage";
 import { storage, FORM_TEMPLATE_PATHS } from "./firebase";
@@ -247,6 +247,36 @@ function clearFieldBackgrounds(pdfDoc: any, customFont?: any) {
       }
     } catch (_) {}
   } catch (_) {}
+}
+
+/**
+ * ลบ /Annots ที่ชี้ไปยัง object ที่ถูกลบแล้ว
+ * pdf-lib form.flatten() ลบ widget ของฟิลด์ที่มีหลาย widget (เช่น reason ใน PO, description16 ใน Payment)
+ * แต่ไม่เอาออกจาก /Annots ของหน้า ทำให้ Adobe Acrobat เปิดไม่ได้ (error 18)
+ * และ appearance stream เดิมของ template บางฟิลด์ไม่มี /Subtype พอ flatten กลายเป็น XObject ที่ผิด spec
+ * เรียกหลัง flatten และตอนโหลดไฟล์เดิมมา stamp เพื่อซ่อมไฟล์ที่สร้างไว้ก่อนหน้า
+ */
+function removeDanglingAnnots(pdfDoc: any) {
+  for (const page of pdfDoc.getPages()) {
+    const annots = page.node.Annots();
+    if (annots) {
+      for (let i = annots.size() - 1; i >= 0; i--) {
+        const entry = annots.get(i);
+        if (entry instanceof PDFRef && pdfDoc.context.lookup(entry) === undefined) annots.remove(i);
+      }
+    }
+    try {
+      const xObjects = page.node.Resources()?.lookup(PDFName.of("XObject"));
+      if (!xObjects) continue;
+      for (const [, ref] of xObjects.entries()) {
+        const dict = pdfDoc.context.lookup(ref)?.dict;
+        if (dict && !dict.has(PDFName.of("Subtype")) && dict.has(PDFName.of("BBox"))) {
+          dict.set(PDFName.of("Type"), PDFName.of("XObject"));
+          dict.set(PDFName.of("Subtype"), PDFName.of("Form"));
+        }
+      }
+    } catch (_) {}
+  }
 }
 
 function fillItemsTable(form: any, items: any[], maxRows = 20, customFont?: any, startIndex = 1) {
@@ -523,6 +553,7 @@ export async function generatePRPdfBytes(pr: any, { projectName = "", budgetDesc
       ["prcm", "prpm", "pr_cm", "pr_pm"].forEach(saveFieldRect);
 
       try { form.flatten(); } catch (_) {}
+      removeDanglingAnnots(pdfDoc);
       const [copiedPage] = await mergedPdf.copyPages(pdfDoc, [0]);
       mergedPdf.addPage(copiedPage);
     }
@@ -681,6 +712,7 @@ export async function generatePOPdfBytes(
       // ลบ background สีฟ้าของ form fields และ regenerate appearances ก่อน flatten
       clearFieldBackgrounds(pdfDoc, pageCustomFont);
       try { form.flatten(); } catch (_) {}
+      removeDanglingAnnots(pdfDoc);
       const [copiedPage] = await mergedPdf.copyPages(pdfDoc, [0]);
       mergedPdf.addPage(copiedPage);
     }
@@ -924,6 +956,7 @@ export async function generatePaymentPdfBytes(
       setTextIfExists(form, ["grandnetcurr", "netcurr", "net_period_amount"], fmtMoney(paymentNetPeriodAmount), pageCustomFont);
 
       try { form.flatten(); } catch (_) {}
+      removeDanglingAnnots(pdfDoc);
 
       const [copiedPage] = await mergedPdf.copyPages(pdfDoc, [0]);
       mergedPdf.addPage(copiedPage);
@@ -1085,6 +1118,7 @@ export async function generateRPPdfBytes(
       ["user", "User", "Signature1"].forEach(saveFieldRect);
 
       try { form.flatten(); } catch (_) {}
+      removeDanglingAnnots(pdfDoc);
       const [copiedPage] = await mergedPdf.copyPages(pdfDoc, [0]);
       mergedPdf.addPage(copiedPage);
     }
@@ -1150,6 +1184,7 @@ async function stampSignatureToFieldByName(
   padding = 4
 ): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.load(pdfBytes);
+  removeDanglingAnnots(pdfDoc);
 
   let imgBytes: ArrayBuffer;
   if (signatureImageUrl.startsWith("data:")) {
@@ -1245,6 +1280,7 @@ export async function stampSignatureToField(
   padding = 4
 ): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.load(pdfBytes);
+  removeDanglingAnnots(pdfDoc);
 
   let imgBytes: ArrayBuffer;
   if (signatureImageUrl.startsWith("data:")) {
@@ -1349,6 +1385,7 @@ export async function stampTextToFieldRect(
   opts: { fontSize?: number; padding?: number; fontKind?: "pr" | "po" | "rp" | "payment" } = {}
 ): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.load(pdfBytes);
+  removeDanglingAnnots(pdfDoc);
   const pages = pdfDoc.getPages();
   const padding = opts.padding ?? 3;
   const fontSize = opts.fontSize ?? (fieldName === "reason" ? 10 : 9);
@@ -1432,6 +1469,7 @@ export async function stampSignatureToPdf(
   options: { x: number; y: number; width?: number; height?: number; pageIndex?: number } = { x: 0, y: 0 }
 ): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.load(pdfBytes);
+  removeDanglingAnnots(pdfDoc);
 
   // Fetch the signature image
   let imgBytes: ArrayBuffer;
